@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use futures::{Stream, StreamExt};
 use serde_json::json;
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
@@ -31,7 +32,8 @@ struct OrderedMockTool {
     order_counter: Arc<AtomicU32>,
     /// Records the order number when this tool executed.
     execution_order: Arc<Mutex<Vec<u32>>>,
-    delay: Option<Duration>,
+    started_notify: Option<Arc<Notify>>,
+    wait_for: Option<Arc<Notify>>,
 }
 
 impl OrderedMockTool {
@@ -49,12 +51,18 @@ impl OrderedMockTool {
             }),
             order_counter,
             execution_order,
-            delay: None,
+            started_notify: None,
+            wait_for: None,
         }
     }
 
-    const fn with_delay(mut self, delay: Duration) -> Self {
-        self.delay = Some(delay);
+    fn with_started_notify(mut self, started_notify: Arc<Notify>) -> Self {
+        self.started_notify = Some(started_notify);
+        self
+    }
+
+    fn with_wait_for(mut self, wait_for: Arc<Notify>) -> Self {
+        self.wait_for = Some(wait_for);
         self
     }
 }
@@ -87,10 +95,14 @@ impl AgentTool for OrderedMockTool {
     ) -> Pin<Box<dyn std::future::Future<Output = AgentToolResult> + Send + '_>> {
         let order = self.order_counter.fetch_add(1, Ordering::SeqCst);
         self.execution_order.lock().unwrap().push(order);
-        let delay = self.delay;
+        let started_notify = self.started_notify.clone();
+        let wait_for = self.wait_for.clone();
         Box::pin(async move {
-            if let Some(d) = delay {
-                tokio::time::sleep(d).await;
+            if let Some(started_notify) = started_notify {
+                started_notify.notify_one();
+            }
+            if let Some(wait_for) = wait_for {
+                wait_for.notified().await;
             }
             AgentToolResult::text("ok")
         })
@@ -202,6 +214,12 @@ async fn collect_events(stream: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>) 
     stream.collect().await
 }
 
+async fn wait_for_notify(notify: &Notify, label: &str) {
+    tokio::time::timeout(Duration::from_secs(5), notify.notified())
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for {label}"));
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -264,19 +282,21 @@ async fn priority_policy_executes_higher_priority_first() {
     let order_b = Arc::new(Mutex::new(Vec::new()));
     let order_c = Arc::new(Mutex::new(Vec::new()));
 
-    // Each tool gets a small delay to prevent timing races in sequential groups
-    let tool_a = Arc::new(
-        OrderedMockTool::new("tool_a", Arc::clone(&order_counter), Arc::clone(&order_a))
-            .with_delay(Duration::from_millis(5)),
-    ) as Arc<dyn AgentTool>;
-    let tool_b = Arc::new(
-        OrderedMockTool::new("tool_b", Arc::clone(&order_counter), Arc::clone(&order_b))
-            .with_delay(Duration::from_millis(5)),
-    ) as Arc<dyn AgentTool>;
-    let tool_c = Arc::new(
-        OrderedMockTool::new("tool_c", Arc::clone(&order_counter), Arc::clone(&order_c))
-            .with_delay(Duration::from_millis(5)),
-    ) as Arc<dyn AgentTool>;
+    let tool_a = Arc::new(OrderedMockTool::new(
+        "tool_a",
+        Arc::clone(&order_counter),
+        Arc::clone(&order_a),
+    )) as Arc<dyn AgentTool>;
+    let tool_b = Arc::new(OrderedMockTool::new(
+        "tool_b",
+        Arc::clone(&order_counter),
+        Arc::clone(&order_b),
+    )) as Arc<dyn AgentTool>;
+    let tool_c = Arc::new(OrderedMockTool::new(
+        "tool_c",
+        Arc::clone(&order_counter),
+        Arc::clone(&order_c),
+    )) as Arc<dyn AgentTool>;
 
     let stream_fn = Arc::new(MockStreamFn::new(three_tool_call_events()));
 
@@ -328,18 +348,19 @@ async fn concurrent_policy_is_default_and_spawns_all() {
     let order_counter = Arc::new(AtomicU32::new(0));
     let order_a = Arc::new(Mutex::new(Vec::new()));
     let order_b = Arc::new(Mutex::new(Vec::new()));
+    let blocked_started = Arc::new(Notify::new());
+    let peer_started = Arc::new(Notify::new());
+    let unblock_tool = Arc::new(Notify::new());
 
-    // Give tool_a a delay — in concurrent mode, tool_b should still start
-    // (potentially before tool_a finishes).
     let tool_a = Arc::new(
         OrderedMockTool::new("tool_a", Arc::clone(&order_counter), Arc::clone(&order_a))
-            .with_delay(Duration::from_millis(50)),
+            .with_started_notify(Arc::clone(&blocked_started))
+            .with_wait_for(Arc::clone(&unblock_tool)),
     ) as Arc<dyn AgentTool>;
-    let tool_b = Arc::new(OrderedMockTool::new(
-        "tool_b",
-        Arc::clone(&order_counter),
-        Arc::clone(&order_b),
-    )) as Arc<dyn AgentTool>;
+    let tool_b = Arc::new(
+        OrderedMockTool::new("tool_b", Arc::clone(&order_counter), Arc::clone(&order_b))
+            .with_started_notify(Arc::clone(&peer_started)),
+    ) as Arc<dyn AgentTool>;
 
     let events = vec![
         vec![
@@ -390,7 +411,12 @@ async fn concurrent_policy_is_default_and_spawns_all() {
 
     let stream =
         swink_agent::agent_loop(prompt, "test".to_string(), config, CancellationToken::new());
-    let _ = collect_events(stream).await;
+    let collection = tokio::spawn(collect_events(stream));
+
+    wait_for_notify(&blocked_started, "tool_a to start").await;
+    wait_for_notify(&peer_started, "tool_b to start while tool_a is blocked").await;
+    unblock_tool.notify_one();
+    let _ = collection.await.unwrap();
 
     // Both tools should have executed.
     assert!(
@@ -475,20 +501,24 @@ async fn priority_groups_with_equal_priority_run_concurrently() {
     let order_a = Arc::new(Mutex::new(Vec::new()));
     let order_b = Arc::new(Mutex::new(Vec::new()));
     let order_c = Arc::new(Mutex::new(Vec::new()));
+    let blocked_started = Arc::new(Notify::new());
+    let peer_started = Arc::new(Notify::new());
+    let unblock_tool = Arc::new(Notify::new());
 
-    // Give all tools a delay so concurrent tools overlap in time.
     let tool_a = Arc::new(
         OrderedMockTool::new("tool_a", Arc::clone(&order_counter), Arc::clone(&order_a))
-            .with_delay(Duration::from_millis(10)),
+            .with_started_notify(Arc::clone(&blocked_started))
+            .with_wait_for(Arc::clone(&unblock_tool)),
     ) as Arc<dyn AgentTool>;
     let tool_b = Arc::new(
         OrderedMockTool::new("tool_b", Arc::clone(&order_counter), Arc::clone(&order_b))
-            .with_delay(Duration::from_millis(10)),
+            .with_started_notify(Arc::clone(&peer_started)),
     ) as Arc<dyn AgentTool>;
-    let tool_c = Arc::new(
-        OrderedMockTool::new("tool_c", Arc::clone(&order_counter), Arc::clone(&order_c))
-            .with_delay(Duration::from_millis(10)),
-    ) as Arc<dyn AgentTool>;
+    let tool_c = Arc::new(OrderedMockTool::new(
+        "tool_c",
+        Arc::clone(&order_counter),
+        Arc::clone(&order_c),
+    )) as Arc<dyn AgentTool>;
 
     let stream_fn = Arc::new(MockStreamFn::new(three_tool_call_events()));
 
@@ -517,7 +547,12 @@ async fn priority_groups_with_equal_priority_run_concurrently() {
 
     let stream =
         swink_agent::agent_loop(prompt, "test".to_string(), config, CancellationToken::new());
-    let _ = collect_events(stream).await;
+    let collection = tokio::spawn(collect_events(stream));
+
+    wait_for_notify(&blocked_started, "tool_a to start").await;
+    wait_for_notify(&peer_started, "tool_b to start while tool_a is blocked").await;
+    unblock_tool.notify_one();
+    let _ = collection.await.unwrap();
 
     let a = order_a.lock().unwrap()[0];
     let b = order_b.lock().unwrap()[0];
