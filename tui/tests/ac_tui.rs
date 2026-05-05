@@ -8,7 +8,10 @@
 //! `ApprovalMode`, `MessageRole`, `AgentStatus`, `DisplayMessage`, and
 //! `TuiConfig`.
 
-use swink_agent::ApprovalMode;
+use std::sync::Arc;
+
+use swink_agent::testing::SimpleMockStreamFn;
+use swink_agent::{Agent, AgentOptions, ApprovalMode, ModelSpec};
 use swink_agent_tui::{AgentStatus, App, DisplayMessage, MessageRole, OperatingMode, TuiConfig};
 
 // ---------------------------------------------------------------------------
@@ -35,6 +38,13 @@ fn credentials_module_accessible_with_cli_feature() {
 
 fn make_app() -> App {
     App::new(TuiConfig::default())
+}
+
+fn make_agent_with_approval_mode(mode: ApprovalMode) -> Agent {
+    let stream = Arc::new(SimpleMockStreamFn::from_text("ok"));
+    let options = AgentOptions::new_simple("system", ModelSpec::new("mock", "test"), stream)
+        .with_approval_mode(mode);
+    Agent::new(options)
 }
 
 fn make_display_message(role: MessageRole) -> DisplayMessage {
@@ -299,6 +309,17 @@ fn approval_mode_is_readable() {
     let app = make_app();
     // Default is Smart (no agent installed).
     assert_eq!(app.approval_mode(), ApprovalMode::Smart);
+}
+
+#[test]
+fn approval_mode_reflects_installed_agent() {
+    let mut app = make_app();
+
+    app.set_agent(make_agent_with_approval_mode(ApprovalMode::Bypassed));
+    assert_eq!(app.approval_mode(), ApprovalMode::Bypassed);
+
+    app.set_agent(make_agent_with_approval_mode(ApprovalMode::Enabled));
+    assert_eq!(app.approval_mode(), ApprovalMode::Enabled);
 }
 
 #[test]
