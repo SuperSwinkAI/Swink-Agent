@@ -13,7 +13,7 @@ use swink_agent::testing::{MockStreamFn, default_convert, default_model, text_on
 use crate::pipeline::events::PipelineEvent;
 use crate::pipeline::executor::{PipelineExecutor, SimpleAgentFactory};
 use crate::pipeline::registry::PipelineRegistry;
-use crate::pipeline::types::{Pipeline, PipelineId};
+use crate::pipeline::types::{ExitCondition, MergeStrategy, Pipeline, PipelineId};
 
 fn make_text_agent(text: &str) -> Agent {
     let events = text_only_events(text);
@@ -84,6 +84,81 @@ async fn sequential_pipeline_emits_correct_event_sequence() {
     assert!(matches!(&captured[5], PipelineEvent::Completed { .. }));
 }
 
+#[tokio::test]
+async fn parallel_pipeline_emits_started_and_completed_events() {
+    let mut factory = SimpleAgentFactory::new();
+    factory.register("agent-a", || make_text_agent("hello"));
+    factory.register("agent-b", || make_text_agent("world"));
+
+    let registry = PipelineRegistry::new();
+    let pipeline = Pipeline::parallel(
+        "parallel-two-step",
+        vec!["agent-a".into(), "agent-b".into()],
+        MergeStrategy::Concat {
+            separator: " ".to_owned(),
+        },
+    );
+    let id = pipeline.id().clone();
+    registry.register(pipeline);
+
+    let (executor, events) = build_executor_with_events(factory, registry);
+    let token = CancellationToken::new();
+
+    let output = executor.run(&id, "input".into(), token).await.unwrap();
+    assert_eq!(output.final_response, "hello world");
+
+    let captured = events.lock().unwrap();
+    assert!(
+        matches!(&captured[0], PipelineEvent::Started { pipeline_name, .. } if pipeline_name == "parallel-two-step"),
+        "expected Started first, got: {captured:?}"
+    );
+    assert!(
+        captured
+            .iter()
+            .any(|event| matches!(event, PipelineEvent::StepStarted { agent_name, .. } if agent_name == "agent-a"))
+    );
+    assert!(
+        captured
+            .iter()
+            .any(|event| matches!(event, PipelineEvent::StepStarted { agent_name, .. } if agent_name == "agent-b"))
+    );
+    assert!(
+        matches!(captured.last(), Some(PipelineEvent::Completed { .. })),
+        "expected Completed last, got: {captured:?}"
+    );
+}
+
+#[tokio::test]
+async fn loop_pipeline_emits_started_before_step_events() {
+    let mut factory = SimpleAgentFactory::new();
+    factory.register("body", || make_text_agent("done"));
+
+    let registry = PipelineRegistry::new();
+    let pipeline = Pipeline::loop_with_max("loop-once", "body", ExitCondition::MaxIterations, 1);
+    let id = pipeline.id().clone();
+    registry.register(pipeline);
+
+    let (executor, events) = build_executor_with_events(factory, registry);
+    let token = CancellationToken::new();
+
+    let output = executor.run(&id, "input".into(), token).await.unwrap();
+    assert_eq!(output.final_response, "done");
+
+    let captured = events.lock().unwrap();
+    assert!(
+        matches!(&captured[0], PipelineEvent::Started { pipeline_name, .. } if pipeline_name == "loop-once"),
+        "expected Started first, got: {captured:?}"
+    );
+    assert!(
+        matches!(&captured[1], PipelineEvent::StepStarted { step_index: 0, agent_name, .. } if agent_name == "body"),
+        "expected first loop step after Started, got: {captured:?}"
+    );
+    assert!(
+        matches!(captured.last(), Some(PipelineEvent::Completed { .. })),
+        "expected Completed last, got: {captured:?}"
+    );
+}
+
 // T055: Failed pipeline emits Failed event
 #[tokio::test]
 async fn failed_pipeline_emits_failed_event() {
@@ -119,7 +194,7 @@ async fn failed_parallel_pipeline_emits_failed_event() {
     let pipeline = Pipeline::parallel(
         "parallel-failing",
         vec!["agent-a".into(), "ghost".into()],
-        crate::pipeline::types::MergeStrategy::Concat {
+        MergeStrategy::Concat {
             separator: "\n".to_owned(),
         },
     );
@@ -146,11 +221,7 @@ async fn failed_loop_pipeline_emits_failed_event() {
     let factory = SimpleAgentFactory::new();
 
     let registry = PipelineRegistry::new();
-    let pipeline = Pipeline::loop_(
-        "loop-failing",
-        "ghost",
-        crate::pipeline::types::ExitCondition::MaxIterations,
-    );
+    let pipeline = Pipeline::loop_("loop-failing", "ghost", ExitCondition::MaxIterations);
     let id = pipeline.id().clone();
     registry.register(pipeline);
 

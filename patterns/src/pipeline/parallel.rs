@@ -44,7 +44,7 @@ pub(crate) async fn run_parallel(
     factory: &Arc<dyn AgentFactory>,
     event_handler: &Option<Arc<dyn Fn(PipelineEvent) + Send + Sync>>,
     id: PipelineId,
-    _name: String,
+    name: String,
     branches: Vec<String>,
     merge_strategy: MergeStrategy,
     input: String,
@@ -52,6 +52,13 @@ pub(crate) async fn run_parallel(
 ) -> Result<PipelineOutput, PipelineError> {
     if cancellation_token.is_cancelled() {
         return Err(PipelineError::Cancelled);
+    }
+
+    if let Some(handler) = event_handler {
+        handler(PipelineEvent::Started {
+            pipeline_id: id.clone(),
+            pipeline_name: name,
+        });
     }
 
     let pipeline_start = Instant::now();
@@ -149,7 +156,7 @@ pub(crate) async fn run_parallel(
     // Drop our copy so the channel closes when all tasks finish.
     drop(tx);
 
-    match merge_strategy {
+    let result = match merge_strategy {
         MergeStrategy::Concat { separator } => {
             merge_concat(&mut rx, branch_count, separator, id, pipeline_start).await
         }
@@ -169,7 +176,17 @@ pub(crate) async fn run_parallel(
             )
             .await
         }
+    };
+
+    if let (Ok(output), Some(handler)) = (&result, event_handler) {
+        handler(PipelineEvent::Completed {
+            pipeline_id: output.pipeline_id.clone(),
+            total_duration: output.total_duration,
+            total_usage: output.total_usage.clone(),
+        });
     }
+
+    result
 }
 
 /// Concat: wait for all branches, fail if any errors.

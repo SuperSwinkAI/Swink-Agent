@@ -18,13 +18,20 @@ pub(crate) async fn run_loop(
     factory: &Arc<dyn AgentFactory>,
     event_handler: &Option<Arc<dyn Fn(PipelineEvent) + Send + Sync>>,
     id: PipelineId,
-    _name: String,
+    name: String,
     body: String,
     exit_condition: ExitCondition,
     max_iterations: usize,
     input: String,
     cancellation_token: CancellationToken,
 ) -> Result<PipelineOutput, PipelineError> {
+    if let Some(handler) = event_handler {
+        handler(PipelineEvent::Started {
+            pipeline_id: id.clone(),
+            pipeline_name: name,
+        });
+    }
+
     let pipeline_start = Instant::now();
     let mut steps: Vec<StepResult> = Vec::new();
     let mut total_usage = Usage::default();
