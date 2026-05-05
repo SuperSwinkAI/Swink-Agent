@@ -58,7 +58,7 @@ pub(crate) async fn run_parallel(
     let child_token = cancellation_token.child_token();
     let branch_count = branches.len();
     let (tx, mut rx) =
-        tokio::sync::mpsc::channel::<Result<BranchResult, PipelineError>>(branch_count);
+        tokio::sync::mpsc::channel::<Result<BranchResult, PipelineError>>(branch_count.max(1));
 
     // Spawn a task for each branch.
     for (index, branch_name) in branches.iter().enumerate() {
@@ -664,6 +664,30 @@ mod tests {
         assert_eq!(result.final_response, "only-one");
         assert_eq!(result.steps.len(), 1);
         assert_eq!(result.steps[0].agent_name, "solo");
+    }
+
+    #[tokio::test]
+    async fn concat_with_no_branches_returns_empty_output() {
+        let factory = make_factory(vec![]);
+
+        let result = super::run_parallel(
+            &(factory as Arc<dyn super::super::executor::AgentFactory>),
+            &None,
+            PipelineId::new("test-empty-concat"),
+            "test".to_owned(),
+            vec![],
+            MergeStrategy::Concat {
+                separator: "\n".to_owned(),
+            },
+            "hello".to_owned(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.final_response, "");
+        assert!(result.steps.is_empty());
+        assert_eq!(result.total_usage, Usage::default());
     }
 
     #[tokio::test]
