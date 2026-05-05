@@ -287,19 +287,23 @@ fn report_returns_two_when_result_missing() {
 }
 
 #[test]
-fn run_requires_real_execution_configuration() {
+fn run_executes_eval_set_writes_result_and_reports() {
     let dir = TempDir::new().unwrap();
-    let set_yaml = r#"
-id: cli-run-needs-config
-name: CLI run needs config
-cases:
-  - id: c1
-    name: Case 1
-    system_prompt: You are a test agent.
-    user_messages: ["hi"]
-"#;
-    let set_path = dir.path().join("set.yaml");
-    fs::write(&set_path, set_yaml).unwrap();
+    let set_path = write_json(
+        &dir,
+        "set.json",
+        &serde_json::json!({
+            "id": "cli-run",
+            "name": "CLI run",
+            "cases": [{
+                "id": "c1",
+                "name": "Case 1",
+                "system_prompt": "You are a test agent.",
+                "user_messages": ["hi"],
+                "expected_response": { "mode": "contains", "substring": "hi" }
+            }]
+        }),
+    );
     let out_path = dir.path().join("result.json");
 
     let out = Command::new(binary_path())
@@ -316,15 +320,60 @@ cases:
         ])
         .output()
         .expect("spawn");
-    assert_eq!(out.status.code(), Some(2));
-    assert!(
-        !out_path.exists(),
-        "run should not write a false-green artifact when no real execution configuration exists"
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
     );
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let result: EvalSetResult =
+        serde_json::from_slice(&fs::read(&out_path).expect("result should be written"))
+            .expect("result JSON should decode");
+    assert_eq!(result.eval_set_id, "cli-run");
+    assert_eq!(result.summary.total_cases, 1);
+    assert_eq!(result.summary.passed, 1);
+    let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stderr.contains("real agent and evaluator configuration is required"),
-        "configuration error details should be emitted to stderr; got: {stderr}"
+        stdout.contains("cli-run") || stdout.contains("c1"),
+        "console report should render the executed result; got: {stdout}"
+    );
+}
+
+#[test]
+fn run_returns_one_when_eval_set_fails() {
+    let dir = TempDir::new().unwrap();
+    let set_path = write_json(
+        &dir,
+        "set.json",
+        &serde_json::json!({
+            "id": "cli-run-fails",
+            "name": "CLI run fails",
+            "cases": [{
+                "id": "c1",
+                "name": "Case 1",
+                "system_prompt": "You are a test agent.",
+                "user_messages": ["actual response"],
+                "expected_response": { "mode": "contains", "substring": "different" }
+            }]
+        }),
+    );
+
+    let out = Command::new(binary_path())
+        .args([
+            "run",
+            "--set",
+            set_path.to_str().unwrap(),
+            "--parallelism",
+            "1",
+            "--reporter",
+            "console",
+        ])
+        .output()
+        .expect("spawn");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "failing eval cases should map to gate-failed exit 1"
     );
 }
 

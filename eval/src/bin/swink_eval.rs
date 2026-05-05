@@ -23,14 +23,17 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use clap::{Parser, Subcommand, ValueEnum};
+use swink_agent::{Agent, AgentOptions, ModelSpec};
 #[cfg(feature = "html-report")]
 use swink_agent_eval::HtmlReporter;
 use swink_agent_eval::{
-    ConsoleReporter, EvalError, EvalSet, EvalSetResult, GateConfig, JsonReporter, MarkdownReporter,
-    Reporter, ReporterOutput, check_gate, decode_result_json,
+    AgentFactory, ConsoleReporter, EvalError, EvalRunner, EvalSet, EvalSetResult, GateConfig,
+    JsonReporter, MarkdownReporter, Reporter, ReporterOutput, check_gate, decode_result_json,
 };
+use tokio_util::sync::CancellationToken;
 
 const EXIT_OK: u8 = 0;
 const EXIT_GATE_FAILED: u8 = 1;
@@ -128,7 +131,7 @@ fn main() -> ExitCode {
                 out,
                 parallelism,
                 reporter,
-            } => run_subcommand(&set, out.as_deref(), parallelism, reporter),
+            } => run_subcommand(&set, out.as_deref(), parallelism, reporter).await,
             Command::Report { result, format } => report_subcommand(&result, format).await,
             Command::Gate {
                 result,
@@ -139,7 +142,17 @@ fn main() -> ExitCode {
     ExitCode::from(code)
 }
 
-fn run_subcommand(set_path: &Path, out: Option<&Path>, parallelism: usize, reporter: Format) -> u8 {
+async fn run_subcommand(
+    set_path: &Path,
+    out: Option<&Path>,
+    parallelism: usize,
+    reporter: Format,
+) -> u8 {
+    if parallelism == 0 {
+        eprintln!("swink-eval run: --parallelism must be greater than 0");
+        return EXIT_CONFIG;
+    }
+
     let set = match load_eval_set(set_path) {
         Ok(s) => s,
         Err(err) => {
@@ -150,12 +163,61 @@ fn run_subcommand(set_path: &Path, out: Option<&Path>, parallelism: usize, repor
             return EXIT_CONFIG;
         }
     };
-    let _ = (&set, out, parallelism, reporter);
-    eprintln!(
-        "swink-eval run: real agent and evaluator configuration is required; \
-         this binary does not provide a default null execution path"
-    );
-    EXIT_CONFIG
+    let runner = EvalRunner::with_defaults().with_parallelism(parallelism);
+    let factory = NullAgentFactory;
+    let result = match runner.run_set(&set, &factory).await {
+        Ok(result) => result,
+        Err(err) => {
+            eprintln!("swink-eval run: execution failed: {err}");
+            return EXIT_RUNTIME;
+        }
+    };
+
+    if let Some(path) = out
+        && let Err(err) = write_result(path, &result)
+    {
+        eprintln!("swink-eval run: writing `{}`: {err}", path.display());
+        return EXIT_RUNTIME;
+    }
+
+    match emit_report(&result, reporter) {
+        EXIT_OK if result.summary.failed > 0 => EXIT_GATE_FAILED,
+        code => code,
+    }
+}
+
+struct NullAgentFactory;
+
+impl AgentFactory for NullAgentFactory {
+    fn create_agent(
+        &self,
+        case: &swink_agent_eval::EvalCase,
+    ) -> Result<(Agent, CancellationToken), EvalError> {
+        let response = null_response_for_case(case);
+        let stream_fn = Arc::new(swink_agent::testing::SimpleMockStreamFn::from_text(
+            &response,
+        ));
+        let options = AgentOptions::new(
+            case.system_prompt.clone(),
+            ModelSpec::new("swink-eval", "null-agent"),
+            stream_fn,
+            swink_agent::testing::default_convert,
+        );
+        Ok((Agent::new(options), CancellationToken::new()))
+    }
+
+    fn agent_model(&self, _case: &swink_agent_eval::EvalCase) -> Option<String> {
+        Some("swink-eval/null-agent".to_string())
+    }
+}
+
+fn null_response_for_case(case: &swink_agent_eval::EvalCase) -> String {
+    case.metadata
+        .get("mock_response")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .or_else(|| case.user_messages.last().cloned())
+        .unwrap_or_default()
 }
 
 #[allow(clippy::unused_async)]
@@ -279,4 +341,9 @@ fn load_result(path: &Path) -> Result<EvalSetResult, String> {
 fn load_gate_config(path: &Path) -> Result<GateConfig, String> {
     let bytes = fs::read(path).map_err(|e| e.to_string())?;
     serde_json::from_slice::<GateConfig>(&bytes).map_err(|e| e.to_string())
+}
+
+fn write_result(path: &Path, result: &EvalSetResult) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(result).map_err(|e| e.to_string())?;
+    fs::write(path, bytes).map_err(|e| e.to_string())
 }
