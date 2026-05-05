@@ -187,8 +187,8 @@ impl AgentClient {
         let Some(dto) = params
             .and_then(|v| serde_json::from_value::<crate::dto::ToolApprovalRequestDto>(v).ok())
         else {
-            warn!("could not parse tool.approve params; auto-approving");
-            return ToolApproval::Approved;
+            warn!("could not parse tool.approve params; rejecting");
+            return ToolApproval::Rejected;
         };
         let req = ToolApprovalRequest {
             tool_call_id: dto.id,
@@ -327,6 +327,92 @@ mod tests {
                     id,
                     PromptResult {
                         turn_id: "2".into(),
+                    },
+                )
+                .unwrap();
+            let _ = client_done_rx.await;
+        });
+
+        let events = client.prompt_text("run tool").await.unwrap();
+        let _ = client_done_tx.send(());
+
+        assert!(events.is_empty());
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn prompt_text_auto_approves_tool_approval_requests_without_handler() {
+        let (mut client, mut server) = make_client_pair();
+        let server_sender = server.sender();
+        let (client_done_tx, client_done_rx) = oneshot::channel();
+
+        let server_task = tokio::spawn(async move {
+            let incoming = server.recv_incoming().await.unwrap();
+            let IncomingMessage::Request { id, method, .. } = incoming else {
+                panic!("expected prompt request");
+            };
+            assert_eq!(method, method::PROMPT);
+
+            let approval = server_sender
+                .request::<_, ToolApprovalDto>(
+                    method::TOOL_APPROVE,
+                    &ToolApprovalRequestDto {
+                        id: "call-1".into(),
+                        name: "dangerous_tool".into(),
+                        arguments: serde_json::json!({"path": "/tmp/example"}),
+                        requires_approval: true,
+                        context: None,
+                    },
+                )
+                .await
+                .unwrap();
+            assert!(matches!(approval, ToolApprovalDto::Approved));
+
+            server_sender
+                .respond_ok(
+                    id,
+                    PromptResult {
+                        turn_id: "3".into(),
+                    },
+                )
+                .unwrap();
+            let _ = client_done_rx.await;
+        });
+
+        let events = client.prompt_text("run tool").await.unwrap();
+        let _ = client_done_tx.send(());
+
+        assert!(events.is_empty());
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn prompt_text_rejects_malformed_tool_approval_requests_with_handler() {
+        let (client, mut server) = make_client_pair();
+        let mut client = client.with_approval_handler(|_| {
+            panic!("malformed approval requests must not reach the handler");
+        });
+        let server_sender = server.sender();
+        let (client_done_tx, client_done_rx) = oneshot::channel();
+
+        let server_task = tokio::spawn(async move {
+            let incoming = server.recv_incoming().await.unwrap();
+            let IncomingMessage::Request { id, method, .. } = incoming else {
+                panic!("expected prompt request");
+            };
+            assert_eq!(method, method::PROMPT);
+
+            let approval = server_sender
+                .request::<_, ToolApprovalDto>(method::TOOL_APPROVE, &serde_json::json!({}))
+                .await
+                .unwrap();
+            assert!(matches!(approval, ToolApprovalDto::Rejected));
+
+            server_sender
+                .respond_ok(
+                    id,
+                    PromptResult {
+                        turn_id: "4".into(),
                     },
                 )
                 .unwrap();
