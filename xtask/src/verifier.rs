@@ -189,6 +189,9 @@ fn extract_array_ids(json: &Value, array_key: &str, id_key: &str) -> HashSet<Str
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
 
     use serde_json::json;
 
@@ -304,5 +307,73 @@ mod tests {
         let ids = super::extract_array_ids(&json, "data", "id");
 
         assert_eq!(ids, HashSet::from(["model-a".to_owned()]));
+    }
+
+    #[tokio::test]
+    async fn fetch_google_models_paginates_and_normalizes_model_names() {
+        let server = TestHttpServer::new(vec![
+            r#"{"models":[{"name":"models/gemini-a"},{"name":"raw-model"}],"nextPageToken":"next-page"}"#,
+            r#"{"models":[{"name":"models/gemini-b"}]}"#,
+        ]);
+
+        let url = format!("{}/v1beta/models", server.base_url());
+        let ids = super::fetch_google_models(&reqwest::Client::new(), &url, "test-key")
+            .await
+            .expect("google model list should parse");
+        let requests = server.join();
+
+        assert_eq!(
+            ids,
+            HashSet::from([
+                "gemini-a".to_owned(),
+                "raw-model".to_owned(),
+                "gemini-b".to_owned(),
+            ])
+        );
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].starts_with("GET /v1beta/models HTTP/1.1"));
+        assert!(requests[0].contains("x-goog-api-key: test-key"));
+        assert!(requests[1].starts_with("GET /v1beta/models?pageToken=next-page HTTP/1.1"));
+    }
+
+    struct TestHttpServer {
+        addr: std::net::SocketAddr,
+        handle: thread::JoinHandle<Vec<String>>,
+    }
+
+    impl TestHttpServer {
+        fn new(responses: Vec<&'static str>) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
+            let addr = listener.local_addr().expect("test server should have addr");
+            let handle = thread::spawn(move || {
+                let mut requests = Vec::new();
+                for response in responses {
+                    let (mut stream, _) = listener.accept().expect("request should connect");
+                    let mut buffer = [0_u8; 4096];
+                    let len = stream.read(&mut buffer).expect("request should read");
+                    requests.push(String::from_utf8_lossy(&buffer[..len]).into_owned());
+
+                    let http = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                        response.len(),
+                        response
+                    );
+                    stream
+                        .write_all(http.as_bytes())
+                        .expect("response should write");
+                }
+                requests
+            });
+
+            Self { addr, handle }
+        }
+
+        fn base_url(&self) -> String {
+            format!("http://{}", self.addr)
+        }
+
+        fn join(self) -> Vec<String> {
+            self.handle.join().expect("test server should finish")
+        }
     }
 }
