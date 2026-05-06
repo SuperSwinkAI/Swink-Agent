@@ -3,15 +3,22 @@
 
 mod common;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use common::{
     MockContextCapturingStreamFn, MockStreamFn, MockTool, default_convert, default_model,
     text_only_events, tool_call_events, user_msg,
 };
+use futures::stream::StreamExt;
+use serde_json::{Value, json};
+use tokio::sync::oneshot;
+use tokio_util::sync::CancellationToken;
 
-use swink_agent::{Agent, AgentOptions, AgentTool, DefaultRetryStrategy, SteeringMode, StreamFn};
+use swink_agent::{
+    Agent, AgentEvent, AgentOptions, AgentTool, AgentToolResult, DefaultRetryStrategy,
+    ResolvedCredential, SessionState, SteeringMode, StreamFn, ToolFuture, TurnEndReason,
+};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -48,6 +55,61 @@ fn make_agent_with_tools(stream_fn: Arc<dyn StreamFn>, tools: Vec<Arc<dyn AgentT
     )
 }
 
+struct BlockingTool {
+    schema: Value,
+    release: Mutex<Option<oneshot::Receiver<()>>>,
+}
+
+impl BlockingTool {
+    fn new(release: oneshot::Receiver<()>) -> Self {
+        Self {
+            schema: json!({ "type": "object", "additionalProperties": true }),
+            release: Mutex::new(Some(release)),
+        }
+    }
+}
+
+impl AgentTool for BlockingTool {
+    fn name(&self) -> &str {
+        "my_tool"
+    }
+
+    fn label(&self) -> &str {
+        "my_tool"
+    }
+
+    fn description(&self) -> &'static str {
+        "A blocking tool for steering tests"
+    }
+
+    fn parameters_schema(&self) -> &Value {
+        &self.schema
+    }
+
+    fn execute(
+        &self,
+        _tool_call_id: &str,
+        _params: Value,
+        cancellation_token: CancellationToken,
+        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+        _state: Arc<std::sync::RwLock<SessionState>>,
+        _credential: Option<ResolvedCredential>,
+    ) -> ToolFuture<'_> {
+        let release = self
+            .release
+            .lock()
+            .unwrap()
+            .take()
+            .expect("blocking tool should execute once");
+        Box::pin(async move {
+            tokio::select! {
+                _ = release => AgentToolResult::text("released"),
+                () = cancellation_token.cancelled() => AgentToolResult::text("cancelled"),
+            }
+        })
+    }
+}
+
 // ─── 4.6: steer() during a run causes steering interrupt ─────────────────
 
 #[tokio::test]
@@ -58,16 +120,58 @@ async fn steer_during_run() {
         tool_call_events("tc_1", "my_tool", "{}"),
         text_only_events("after steering"),
     ]));
-    let tool = Arc::new(MockTool::new("my_tool").with_delay(Duration::from_millis(50)));
+    let (release_tool, release_rx) = oneshot::channel();
+    let mut release_tool = Some(release_tool);
+    let tool = Arc::new(BlockingTool::new(release_rx));
     let mut agent = make_agent_with_tools(stream_fn, vec![tool]);
 
-    // Queue a steering message before the run.
-    agent.steer(user_msg("change direction"));
+    let mut stream = agent.prompt_stream(vec![user_msg("go")]).unwrap();
+    let mut saw_tool_start = false;
+    let mut saw_steering_interrupt = false;
+    let mut saw_after_steering = false;
 
-    let result = agent.prompt_async(vec![user_msg("go")]).await.unwrap();
+    while let Some(event) = stream.next().await {
+        match event {
+            AgentEvent::ToolExecutionStart { name, .. } if name == "my_tool" => {
+                saw_tool_start = true;
+                agent.steer(user_msg("change direction"));
+                release_tool
+                    .take()
+                    .expect("tool should release once")
+                    .send(())
+                    .expect("blocking tool should still be waiting");
+            }
+            AgentEvent::TurnEnd { reason, .. } => {
+                if matches!(reason, TurnEndReason::SteeringInterrupt) {
+                    saw_steering_interrupt = true;
+                }
+            }
+            AgentEvent::MessageEnd { message } => {
+                saw_after_steering |= message.content.iter().any(|block| {
+                    matches!(block, swink_agent::ContentBlock::Text { text } if text == "after steering")
+                });
+            }
+            AgentEvent::AgentEnd { .. } => break,
+            _ => {}
+        }
+    }
 
-    // The run should complete (the steering message is consumed by the loop).
-    assert!(!result.messages.is_empty(), "should have produced messages");
+    assert!(
+        saw_tool_start,
+        "tool should start before steering is queued"
+    );
+    assert!(
+        saw_steering_interrupt,
+        "steering queued during the tool batch should interrupt the turn"
+    );
+    assert!(
+        saw_after_steering,
+        "loop should consume steering and continue to the next response"
+    );
+    assert!(
+        !agent.has_pending_messages(),
+        "steering message should be consumed before AgentEnd"
+    );
 }
 
 // ─── 4.7: follow_up() causes continuation after natural stop ─────────────
