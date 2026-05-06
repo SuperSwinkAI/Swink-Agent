@@ -16,7 +16,7 @@ use uuid::Uuid;
 use swink_agent::stream_assembly::{BlockAccumulator, finalize_blocks};
 use swink_agent::{
     AgentContext, AssistantMessageEvent, Cost, ModelSpec, StopReason, StreamFn, StreamOptions,
-    Usage,
+    ThinkingLevel, Usage,
 };
 
 use crate::error::LocalModelError;
@@ -1178,6 +1178,14 @@ where
     }
 }
 
+fn thinking_enabled_for_model(model: &ModelSpec) -> bool {
+    model.thinking_level != ThinkingLevel::Off
+        && model
+            .capabilities
+            .as_ref()
+            .is_some_and(|capabilities| capabilities.supports_thinking)
+}
+
 // ─── Stream implementation ──────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
@@ -1205,10 +1213,7 @@ fn local_stream<'a>(
         #[cfg(not(feature = "gemma4"))]
         let is_gemma4 = false;
 
-        let thinking_enabled = model
-            .capabilities
-            .as_ref()
-            .is_some_and(|c| c.supports_thinking);
+        let thinking_enabled = thinking_enabled_for_model(model);
 
         let local_messages = crate::convert::convert_context_messages(
             context,
@@ -1473,6 +1478,26 @@ mod tests {
         assert_eq!(prompt_token_budget(0), 0);
         assert_eq!(prompt_token_budget(1), 1);
         assert_eq!(prompt_token_budget(4), 3);
+    }
+
+    #[test]
+    fn thinking_enabled_requires_capability_and_non_off_level() {
+        let mut model = ModelSpec::new("local", "gemma-4-E2B-it");
+        model.capabilities = Some(swink_agent::ModelCapabilities {
+            supports_thinking: true,
+            ..Default::default()
+        });
+
+        assert!(!thinking_enabled_for_model(&model));
+
+        model.thinking_level = ThinkingLevel::Low;
+        assert!(thinking_enabled_for_model(&model));
+
+        model.capabilities = Some(swink_agent::ModelCapabilities {
+            supports_thinking: false,
+            ..Default::default()
+        });
+        assert!(!thinking_enabled_for_model(&model));
     }
 
     #[test]
