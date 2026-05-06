@@ -6,7 +6,7 @@ use crate::agent_options::{ApproveToolFn, GetApiKeyFn};
 use crate::async_context_transformer::AsyncContextTransformer;
 use crate::fallback::ModelFallback;
 use crate::message_provider::MessageProvider;
-use crate::retry::RetryStrategy;
+use crate::retry::{DefaultRetryStrategy, RetryStrategy};
 use crate::stream::{StreamFn, StreamOptions};
 use crate::tool::{AgentTool, ApprovalMode};
 use crate::tool_execution_policy::ToolExecutionPolicy;
@@ -66,16 +66,14 @@ pub struct AgentLoopConfig {
     pub message_provider: Option<Arc<dyn MessageProvider>>,
 
     /// Shared snapshot of loop-local pending messages for pause checkpoints.
-    #[allow(private_interfaces)]
-    pub pending_message_snapshot: Arc<crate::pause_state::PendingMessageSnapshot>,
+    pub(crate) pending_message_snapshot: Arc<crate::pause_state::PendingMessageSnapshot>,
 
     /// Shared snapshot of the loop's full `context_messages` for pause checkpoints.
     ///
     /// Updated after each turn's pending-message drain so that `Agent::pause()`
     /// can reconstruct the complete message history even for messages that have
     /// been moved out of the shared pending queue and into loop-local context.
-    #[allow(private_interfaces)]
-    pub loop_context_snapshot: Arc<crate::pause_state::LoopContextSnapshot>,
+    pub(crate) loop_context_snapshot: Arc<crate::pause_state::LoopContextSnapshot>,
 
     /// Optional async callback for approving/rejecting tool calls before execution.
     /// When `Some` and `approval_mode` is `Enabled`, each tool call is sent through
@@ -134,6 +132,60 @@ pub struct AgentLoopConfig {
     /// Its output is injected as a user-role message after the system prompt
     /// to avoid invalidating provider-side caches.
     pub dynamic_system_prompt: Option<Arc<dyn Fn() -> String + Send + Sync>>,
+}
+
+impl AgentLoopConfig {
+    /// Create a loop configuration with public runtime defaults.
+    ///
+    /// The state used by `Agent::pause()` is initialized internally so low-level
+    /// loop callers do not need to construct private checkpoint plumbing.
+    #[must_use]
+    pub fn new(
+        model: ModelSpec,
+        stream_fn: Arc<dyn StreamFn>,
+        convert_to_llm: Box<ConvertToLlmFn>,
+    ) -> Self {
+        Self {
+            agent_name: None,
+            transfer_chain: None,
+            model,
+            stream_options: StreamOptions::default(),
+            retry_strategy: Box::new(DefaultRetryStrategy::default()),
+            stream_fn,
+            tools: vec![],
+            convert_to_llm,
+            transform_context: None,
+            get_api_key: None,
+            message_provider: None,
+            pending_message_snapshot: Arc::default(),
+            loop_context_snapshot: Arc::default(),
+            approve_tool: None,
+            approval_mode: ApprovalMode::default(),
+            pre_turn_policies: vec![],
+            pre_dispatch_policies: vec![],
+            post_turn_policies: vec![],
+            post_loop_policies: vec![],
+            async_transform_context: None,
+            metrics_collector: None,
+            fallback: None,
+            tool_execution_policy: ToolExecutionPolicy::default(),
+            session_state: Arc::new(std::sync::RwLock::new(crate::SessionState::new())),
+            credential_resolver: None,
+            cache_config: None,
+            cache_state: std::sync::Mutex::new(crate::context_cache::CacheState::default()),
+            dynamic_system_prompt: None,
+        }
+    }
+
+    pub(crate) fn with_runtime_snapshots(
+        mut self,
+        pending_message_snapshot: Arc<crate::pause_state::PendingMessageSnapshot>,
+        loop_context_snapshot: Arc<crate::pause_state::LoopContextSnapshot>,
+    ) -> Self {
+        self.pending_message_snapshot = pending_message_snapshot;
+        self.loop_context_snapshot = loop_context_snapshot;
+        self
+    }
 }
 
 impl std::fmt::Debug for AgentLoopConfig {

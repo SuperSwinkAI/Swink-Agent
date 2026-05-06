@@ -16,8 +16,8 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
     AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolResult, AssistantMessageEvent,
-    ContentBlock, Cost, DefaultRetryStrategy, LlmMessage, StopReason, StreamFn, StreamOptions,
-    ToolCallSummary, ToolExecutionPolicy, ToolExecutionStrategy, Usage, UserMessage,
+    ContentBlock, Cost, DefaultRetryStrategy, LlmMessage, StopReason, StreamFn, ToolCallSummary,
+    ToolExecutionPolicy, ToolExecutionStrategy, Usage, UserMessage,
 };
 
 use common::{MockStreamFn, default_model, text_only_events};
@@ -125,42 +125,15 @@ fn make_config(
     tools: Vec<Arc<dyn AgentTool>>,
     policy: ToolExecutionPolicy,
 ) -> AgentLoopConfig {
-    AgentLoopConfig {
-        agent_name: None,
-        transfer_chain: None,
-        model: default_model(),
-        stream_options: StreamOptions::default(),
-        retry_strategy: Box::new(
-            DefaultRetryStrategy::default()
-                .with_jitter(false)
-                .with_base_delay(Duration::from_millis(1)),
-        ),
-        stream_fn,
-        tools,
-        convert_to_llm: default_convert_to_llm(),
-        transform_context: None,
-        get_api_key: None,
-        message_provider: None,
-        pending_message_snapshot: Arc::default(),
-        loop_context_snapshot: Arc::default(),
-        approve_tool: None,
-        approval_mode: swink_agent::ApprovalMode::default(),
-        pre_turn_policies: vec![],
-        pre_dispatch_policies: vec![],
-        post_turn_policies: vec![],
-        post_loop_policies: vec![],
-        async_transform_context: None,
-        metrics_collector: None,
-        fallback: None,
-        tool_execution_policy: policy,
-        session_state: std::sync::Arc::new(
-            std::sync::RwLock::new(swink_agent::SessionState::new()),
-        ),
-        credential_resolver: None,
-        cache_config: None,
-        cache_state: std::sync::Mutex::new(swink_agent::CacheState::default()),
-        dynamic_system_prompt: None,
-    }
+    let mut config = AgentLoopConfig::new(default_model(), stream_fn, default_convert_to_llm());
+    config.retry_strategy = Box::new(
+        DefaultRetryStrategy::default()
+            .with_jitter(false)
+            .with_base_delay(Duration::from_millis(1)),
+    );
+    config.tools = tools;
+    config.tool_execution_policy = policy;
+    config
 }
 
 /// Build events that call three tools, then a text-only response.

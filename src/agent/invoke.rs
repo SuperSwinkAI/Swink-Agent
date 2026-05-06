@@ -345,40 +345,50 @@ impl Agent {
                 queue_provider
             };
 
-        AgentLoopConfig {
-            agent_name: self.agent_name.clone(),
-            transfer_chain: self.transfer_chain.clone(),
-            model: self.state.model.clone(),
-            stream_options: self.stream_options.clone(),
-            retry_strategy: Box::new(SharedRetryStrategy(Arc::clone(&self.retry_strategy))),
-            stream_fn: Arc::clone(&self.stream_fn),
-            tools: self.state.tools.clone(),
-            convert_to_llm: convert_box,
-            transform_context: transform,
-            get_api_key: api_key_box,
-            message_provider: Some(message_provider),
-            pending_message_snapshot: Arc::clone(&self.pending_message_snapshot),
-            loop_context_snapshot: Arc::clone(&self.loop_context_snapshot),
-            approve_tool: self.approve_tool.as_ref().map(|a| {
-                let a = Arc::clone(a);
-                let b: Box<ApproveToolFn> = Box::new(move |req| a(req));
-                b
-            }),
-            approval_mode: self.approval_mode,
-            pre_turn_policies: self.pre_turn_policies.clone(),
-            pre_dispatch_policies: self.pre_dispatch_policies.clone(),
-            post_turn_policies: self.post_turn_policies.clone(),
-            post_loop_policies: self.post_loop_policies.clone(),
-            async_transform_context: self.async_transform_context.as_ref().map(Arc::clone),
-            metrics_collector: self.metrics_collector.as_ref().map(Arc::clone),
-            fallback: self.fallback.clone(),
-            tool_execution_policy: self.tool_execution_policy.clone(),
-            session_state: Arc::clone(&self.session_state),
-            credential_resolver: self.credential_resolver.as_ref().map(Arc::clone),
-            cache_config: self.cache_config.clone(),
-            cache_state: std::sync::Mutex::new(crate::context_cache::CacheState::new()),
-            dynamic_system_prompt: self.dynamic_system_prompt.clone(),
-        }
+        let mut config = AgentLoopConfig::new(
+            self.state.model.clone(),
+            Arc::clone(&self.stream_fn),
+            convert_box,
+        )
+        .with_runtime_snapshots(
+            Arc::clone(&self.pending_message_snapshot),
+            Arc::clone(&self.loop_context_snapshot),
+        );
+        config.agent_name.clone_from(&self.agent_name);
+        config.transfer_chain.clone_from(&self.transfer_chain);
+        config.stream_options = self.stream_options.clone();
+        config.retry_strategy = Box::new(SharedRetryStrategy(Arc::clone(&self.retry_strategy)));
+        config.tools.clone_from(&self.state.tools);
+        config.transform_context = transform;
+        config.get_api_key = api_key_box;
+        config.message_provider = Some(message_provider);
+        config.approve_tool = self.approve_tool.as_ref().map(|a| {
+            let a = Arc::clone(a);
+            let b: Box<ApproveToolFn> = Box::new(move |req| a(req));
+            b
+        });
+        config.approval_mode = self.approval_mode;
+        config.pre_turn_policies.clone_from(&self.pre_turn_policies);
+        config
+            .pre_dispatch_policies
+            .clone_from(&self.pre_dispatch_policies);
+        config
+            .post_turn_policies
+            .clone_from(&self.post_turn_policies);
+        config
+            .post_loop_policies
+            .clone_from(&self.post_loop_policies);
+        config.async_transform_context = self.async_transform_context.as_ref().map(Arc::clone);
+        config.metrics_collector = self.metrics_collector.as_ref().map(Arc::clone);
+        config.fallback.clone_from(&self.fallback);
+        config.tool_execution_policy = self.tool_execution_policy.clone();
+        config.session_state = Arc::clone(&self.session_state);
+        config.credential_resolver = self.credential_resolver.as_ref().map(Arc::clone);
+        config.cache_config.clone_from(&self.cache_config);
+        config
+            .dynamic_system_prompt
+            .clone_from(&self.dynamic_system_prompt);
+        config
     }
 }
 

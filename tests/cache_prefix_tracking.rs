@@ -72,42 +72,15 @@ fn default_convert_to_llm() -> ConvertToLlmBoxed {
 }
 
 fn base_config(stream_fn: Arc<dyn StreamFn>, cache_config: Option<CacheConfig>) -> AgentLoopConfig {
-    AgentLoopConfig {
-        agent_name: None,
-        transfer_chain: None,
-        model: default_model(),
-        stream_options: StreamOptions::default(),
-        retry_strategy: Box::new(
-            DefaultRetryStrategy::default()
-                .with_jitter(false)
-                .with_base_delay(Duration::from_millis(1)),
-        ),
-        stream_fn,
-        tools: vec![],
-        convert_to_llm: default_convert_to_llm(),
-        transform_context: None,
-        get_api_key: None,
-        message_provider: None,
-        pending_message_snapshot: Arc::default(),
-        loop_context_snapshot: Arc::default(),
-        approve_tool: None,
-        approval_mode: swink_agent::ApprovalMode::default(),
-        pre_turn_policies: vec![],
-        pre_dispatch_policies: vec![],
-        post_turn_policies: vec![],
-        post_loop_policies: vec![],
-        async_transform_context: None,
-        metrics_collector: None,
-        fallback: None,
-        tool_execution_policy: swink_agent::ToolExecutionPolicy::default(),
-        session_state: std::sync::Arc::new(
-            std::sync::RwLock::new(swink_agent::SessionState::new()),
-        ),
-        credential_resolver: None,
-        cache_config,
-        cache_state: std::sync::Mutex::new(CacheState::default()),
-        dynamic_system_prompt: None,
-    }
+    let mut config = AgentLoopConfig::new(default_model(), stream_fn, default_convert_to_llm());
+    config.retry_strategy = Box::new(
+        DefaultRetryStrategy::default()
+            .with_jitter(false)
+            .with_base_delay(Duration::from_millis(1)),
+    );
+    config.cache_config = cache_config;
+    config.cache_state = std::sync::Mutex::new(CacheState::default());
+    config
 }
 
 /// Create a user message whose text is roughly `token_count * 4` characters

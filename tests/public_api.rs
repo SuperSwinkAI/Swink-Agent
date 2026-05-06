@@ -89,6 +89,36 @@ fn context_and_config_types_re_exported() {
 }
 
 #[test]
+fn agent_loop_config_constructor_hides_runtime_snapshots() {
+    struct EmptyStreamFn;
+
+    impl swink_agent::StreamFn for EmptyStreamFn {
+        fn stream<'a>(
+            &'a self,
+            _model: &'a swink_agent::ModelSpec,
+            _context: &'a swink_agent::AgentContext,
+            _options: &'a swink_agent::StreamOptions,
+            _cancellation_token: tokio_util::sync::CancellationToken,
+        ) -> std::pin::Pin<
+            Box<dyn futures::Stream<Item = swink_agent::AssistantMessageEvent> + Send + 'a>,
+        > {
+            Box::pin(futures::stream::iter(
+                swink_agent::AssistantMessageEvent::text_response("ok"),
+            ))
+        }
+    }
+
+    let config = swink_agent::AgentLoopConfig::new(
+        swink_agent::ModelSpec::new("test", "model"),
+        std::sync::Arc::new(EmptyStreamFn),
+        Box::new(swink_agent::default_convert),
+    );
+
+    assert!(config.tools.is_empty());
+    assert!(config.message_provider.is_none());
+}
+
+#[test]
 fn metrics_types_re_exported() {
     fn _assert_metrics<T: swink_agent::MetricsCollector>() {}
     let _ = std::any::type_name::<swink_agent::TurnMetrics>();

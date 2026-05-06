@@ -8,7 +8,7 @@ use futures::{Stream, StreamExt};
 use std::pin::Pin;
 use swink_agent::{
     AgentEvent, AgentLoopConfig, AgentMessage, AssistantMessageEvent, DefaultRetryStrategy,
-    LlmMessage, ModelFallback, ModelSpec, StopReason, StreamFn, StreamOptions, agent_loop,
+    LlmMessage, ModelFallback, ModelSpec, StopReason, StreamFn, agent_loop,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -47,43 +47,15 @@ fn default_config(
     stream_fn: Arc<dyn StreamFn>,
     fallback: Option<ModelFallback>,
 ) -> AgentLoopConfig {
-    AgentLoopConfig {
-        agent_name: None,
-        transfer_chain: None,
-        model: primary_model(),
-        stream_options: StreamOptions::default(),
-        retry_strategy: Box::new(
-            DefaultRetryStrategy::default()
-                .with_max_attempts(1) // exhaust immediately
-                .with_jitter(false)
-                .with_base_delay(Duration::from_millis(1)),
-        ),
-        stream_fn,
-        tools: vec![],
-        convert_to_llm: default_convert_to_llm(),
-        transform_context: None,
-        get_api_key: None,
-        message_provider: None,
-        pending_message_snapshot: Arc::default(),
-        loop_context_snapshot: Arc::default(),
-        approve_tool: None,
-        approval_mode: swink_agent::ApprovalMode::default(),
-        pre_turn_policies: vec![],
-        pre_dispatch_policies: vec![],
-        post_turn_policies: vec![],
-        post_loop_policies: vec![],
-        async_transform_context: None,
-        metrics_collector: None,
-        fallback,
-        tool_execution_policy: swink_agent::ToolExecutionPolicy::default(),
-        session_state: std::sync::Arc::new(
-            std::sync::RwLock::new(swink_agent::SessionState::new()),
-        ),
-        credential_resolver: None,
-        cache_config: None,
-        cache_state: std::sync::Mutex::new(swink_agent::CacheState::default()),
-        dynamic_system_prompt: None,
-    }
+    let mut config = AgentLoopConfig::new(primary_model(), stream_fn, default_convert_to_llm());
+    config.retry_strategy = Box::new(
+        DefaultRetryStrategy::default()
+            .with_max_attempts(1) // exhaust immediately
+            .with_jitter(false)
+            .with_base_delay(Duration::from_millis(1)),
+    );
+    config.fallback = fallback;
+    config
 }
 
 async fn collect_events(stream: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>) -> Vec<AgentEvent> {
