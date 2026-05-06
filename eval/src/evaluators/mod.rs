@@ -414,6 +414,9 @@ pub enum DispatchError {
     /// Attachment materialization failed.
     #[error("attachment: {0}")]
     Attachment(#[from] AttachmentError),
+    /// A configured cancellation token fired before judge dispatch completed.
+    #[error("cancelled")]
+    Cancelled,
 }
 
 /// Structured errors surfaced by concrete evaluators in this module tree (T080–T082).
@@ -527,18 +530,27 @@ pub async fn dispatch_judge(
 async fn judge_with_retry(
     config: &JudgeEvaluatorConfig,
     rendered_prompt: &str,
-) -> Result<JudgeVerdict, JudgeError> {
+) -> Result<JudgeVerdict, DispatchError> {
     let policy = config.judge_registry.retry_policy();
     let retry = retry_builder(policy);
     let client = Arc::clone(config.judge_registry.client());
 
-    (|| {
+    let dispatch = (|| {
         let client = Arc::clone(&client);
         async move { client.judge(rendered_prompt).await }
     })
     .retry(retry)
-    .when(is_retryable_judge_error)
-    .await
+    .when(is_retryable_judge_error);
+
+    if let Some(cancel) = config.judge_registry.cancellation() {
+        tokio::select! {
+            biased;
+            () = cancel.cancelled() => Err(DispatchError::Cancelled),
+            result = dispatch => result.map_err(DispatchError::Judge),
+        }
+    } else {
+        dispatch.await.map_err(DispatchError::Judge)
+    }
 }
 
 fn retry_builder(policy: &RetryPolicy) -> ExponentialBuilder {
@@ -741,9 +753,12 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::Arc;
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     use swink_agent::{Cost, ModelSpec, StopReason, Usage};
+    use tokio::sync::Notify;
+    use tokio_util::sync::CancellationToken;
 
     struct FixedJudge {
         score: f64,
@@ -792,6 +807,28 @@ mod tests {
                     .unwrap()
                     .pop_front()
                     .unwrap_or_else(|| Err(JudgeError::Other("script exhausted".to_string())))
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct PendingJudge {
+        started: Notify,
+        prompts: AtomicUsize,
+    }
+
+    impl PendingJudge {
+        fn prompt_count(&self) -> usize {
+            self.prompts.load(Ordering::SeqCst)
+        }
+    }
+
+    impl JudgeClient for PendingJudge {
+        fn judge<'a>(&'a self, _prompt: &'a str) -> crate::judge::JudgeFuture<'a> {
+            Box::pin(async move {
+                self.prompts.fetch_add(1, Ordering::SeqCst);
+                self.started.notify_one();
+                futures::future::pending().await
             })
         }
     }
@@ -953,6 +990,36 @@ mod tests {
             err,
             DispatchError::Judge(JudgeError::MalformedResponse(_))
         ));
+        assert_eq!(judge.prompt_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn dispatch_cancels_in_flight_judge_future() {
+        let judge = Arc::new(PendingJudge::default());
+        let cancel = CancellationToken::new();
+        let registry = Arc::new(
+            JudgeRegistry::builder(Arc::clone(&judge) as Arc<dyn JudgeClient>, "mock-model")
+                .with_cancellation(cancel.clone())
+                .build()
+                .expect("registry builds"),
+        );
+        let config = JudgeEvaluatorConfig::default_with(registry);
+        let template = make_template();
+        let case = make_case();
+        let invocation = make_invocation();
+        let ctx = make_context(&case, &invocation);
+
+        let started = judge.started.notified();
+        let dispatch = tokio::spawn(async move { dispatch_judge(&config, template, &ctx).await });
+        started.await;
+        cancel.cancel();
+
+        let err = dispatch
+            .await
+            .expect("dispatch task should not panic")
+            .expect_err("in-flight judge dispatch should cancel");
+
+        assert!(matches!(err, DispatchError::Cancelled));
         assert_eq!(judge.prompt_count(), 1);
     }
 

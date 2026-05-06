@@ -42,6 +42,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tokio_util::sync::CancellationToken;
 
 pub use crate::url_filter::{DefaultUrlFilter, UrlFilter};
 
@@ -387,6 +388,7 @@ pub struct JudgeRegistry {
     client: Arc<dyn JudgeClient>,
     model_id: String,
     retry_policy: RetryPolicy,
+    cancellation: Option<CancellationToken>,
     batch_size: usize,
     url_filter: Arc<dyn UrlFilter>,
 }
@@ -396,6 +398,7 @@ impl std::fmt::Debug for JudgeRegistry {
         f.debug_struct("JudgeRegistry")
             .field("model_id", &self.model_id)
             .field("retry_policy", &self.retry_policy)
+            .field("cancellation", &self.cancellation.is_some())
             .field("batch_size", &self.batch_size)
             .finish_non_exhaustive()
     }
@@ -412,6 +415,7 @@ impl JudgeRegistry {
             client,
             model_id: model_id.into(),
             retry_policy: RetryPolicy::default(),
+            cancellation: None,
             batch_size: 1,
             url_filter: Arc::new(DefaultUrlFilter),
         }
@@ -435,6 +439,12 @@ impl JudgeRegistry {
         &self.retry_policy
     }
 
+    /// Return the optional cancellation token used by judge-backed evaluators.
+    #[must_use]
+    pub const fn cancellation(&self) -> Option<&CancellationToken> {
+        self.cancellation.as_ref()
+    }
+
     /// Return the bounded batch size for judge dispatch.
     #[must_use]
     pub const fn batch_size(&self) -> usize {
@@ -453,6 +463,7 @@ pub struct JudgeRegistryBuilder {
     client: Arc<dyn JudgeClient>,
     model_id: String,
     retry_policy: RetryPolicy,
+    cancellation: Option<CancellationToken>,
     batch_size: usize,
     url_filter: Arc<dyn UrlFilter>,
 }
@@ -462,6 +473,13 @@ impl JudgeRegistryBuilder {
     #[must_use]
     pub fn with_retry_policy(mut self, retry_policy: RetryPolicy) -> Self {
         self.retry_policy = retry_policy;
+        self
+    }
+
+    /// Attach a cancellation token observed by judge-backed evaluator dispatch.
+    #[must_use]
+    pub fn with_cancellation(mut self, cancellation: CancellationToken) -> Self {
+        self.cancellation = Some(cancellation);
         self
     }
 
@@ -508,6 +526,7 @@ impl JudgeRegistryBuilder {
             client: self.client,
             model_id,
             retry_policy: self.retry_policy,
+            cancellation: self.cancellation,
             batch_size: self.batch_size,
             url_filter: self.url_filter,
         })
