@@ -28,6 +28,7 @@ const META_LINE_PADDING: usize = 64;
 enum SessionRecord {
     Llm(Box<LlmMessage>),
     Custom(serde_json::Value),
+    AppendBegin,
     Meta(Box<SessionMeta>),
     State(serde_json::Value),
 }
@@ -38,7 +39,7 @@ impl SessionRecord {
         match Self::parse(&line).ok()? {
             Self::Llm(llm) => Some(Self::Llm(llm)),
             Self::Custom(envelope) => Some(Self::Custom(envelope)),
-            Self::Meta(_) | Self::State(_) => None,
+            Self::AppendBegin | Self::Meta(_) | Self::State(_) => None,
         }
     }
 
@@ -50,6 +51,11 @@ impl SessionRecord {
         match self {
             Self::Llm(message) => serde_json::to_string(message).map_err(io::Error::other),
             Self::Custom(envelope) => serde_json::to_string(envelope).map_err(io::Error::other),
+            Self::AppendBegin => serde_json::to_string(&serde_json::json!({
+                "_append": true,
+                "phase": "begin"
+            }))
+            .map_err(io::Error::other),
             Self::Meta(meta) => serde_json::to_string(&serde_json::json!({
                 "_meta": true,
                 "data": meta
@@ -72,6 +78,9 @@ impl SessionRecord {
                     .cloned()
                     .unwrap_or(serde_json::Value::Null),
             ));
+        }
+        if value.get("_append").and_then(serde_json::Value::as_bool) == Some(true) {
+            return Ok(Self::AppendBegin);
         }
         if value.get("_meta").and_then(serde_json::Value::as_bool) == Some(true) {
             return serde_json::from_value::<SessionMeta>(
@@ -170,15 +179,34 @@ fn read_meta_and_message_lines(path: &Path, id: &str) -> io::Result<(SessionMeta
     let mut meta =
         canonical_meta_for_id(serde_json::from_str(&meta_line).map_err(invalid_meta)?, id);
     let mut remaining_lines = Vec::new();
+    let mut pending_append_lines: Option<Vec<String>> = None;
     for line in lines {
         let line = line?;
         match SessionRecord::parse(&line) {
+            Ok(SessionRecord::AppendBegin) => {
+                if pending_append_lines.is_some() {
+                    tracing::warn!("discarding uncommitted nested append records in session {id}");
+                }
+                pending_append_lines = Some(Vec::new());
+            }
             Ok(SessionRecord::Meta(meta_update)) => {
+                if let Some(mut lines) = pending_append_lines.take() {
+                    remaining_lines.append(&mut lines);
+                }
                 meta = canonical_meta_for_id(*meta_update, id);
             }
             Ok(SessionRecord::Llm(_) | SessionRecord::Custom(_) | SessionRecord::State(_))
-            | Err(_) => remaining_lines.push(line),
+            | Err(_) => {
+                if let Some(lines) = pending_append_lines.as_mut() {
+                    lines.push(line);
+                } else {
+                    remaining_lines.push(line);
+                }
+            }
         }
+    }
+    if pending_append_lines.is_some() {
+        tracing::warn!("discarding uncommitted append records in session {id}");
     }
 
     Ok((meta, remaining_lines))
@@ -259,7 +287,12 @@ fn preserve_existing_lines(
 fn preserve_for_message_save(line: &str) -> bool {
     match SessionRecord::parse(line) {
         Ok(SessionRecord::State(_)) => true,
-        Ok(SessionRecord::Llm(_) | SessionRecord::Custom(_) | SessionRecord::Meta(_)) => false,
+        Ok(
+            SessionRecord::AppendBegin
+            | SessionRecord::Llm(_)
+            | SessionRecord::Custom(_)
+            | SessionRecord::Meta(_),
+        ) => false,
         Err(_) => matches!(
             SessionEntry::parse(line),
             Ok(entry) if !matches!(entry, SessionEntry::Message(_))
@@ -381,6 +414,24 @@ fn append_records_in_place_with_hook(
     record_lines: &[String],
     after_commit_append: impl FnOnce(&mut std::fs::File) -> io::Result<()>,
 ) -> io::Result<bool> {
+    append_records_in_place_with_hooks(
+        path,
+        meta,
+        meta_line_len,
+        record_lines,
+        |_| Ok(()),
+        after_commit_append,
+    )
+}
+
+fn append_records_in_place_with_hooks(
+    path: &Path,
+    meta: &SessionMeta,
+    meta_line_len: usize,
+    record_lines: &[String],
+    after_records_append: impl FnOnce(&mut std::fs::File) -> io::Result<()>,
+    after_commit_append: impl FnOnce(&mut std::fs::File) -> io::Result<()>,
+) -> io::Result<bool> {
     let meta_line = serde_json::to_string(meta).map_err(io::Error::other)?;
     if meta_line.len() + 1 > meta_line_len {
         return Ok(false);
@@ -392,11 +443,14 @@ fn append_records_in_place_with_hook(
         .open(path)?;
 
     file.seek(SeekFrom::End(0))?;
+    writeln!(file, "{}", SessionRecord::AppendBegin.to_json_line()?)?;
     for line in record_lines {
         if !line.is_empty() {
             writeln!(file, "{line}")?;
         }
     }
+    file.flush()?;
+    after_records_append(&mut file)?;
     writeln!(
         file,
         "{}",
@@ -2212,13 +2266,57 @@ mod tests {
         );
         assert_eq!(
             after_lines.len(),
-            4,
-            "append should add the record plus an internal metadata commit line"
+            5,
+            "append should add begin, record, and internal metadata commit lines"
         );
 
         let (loaded_meta, loaded_messages) = store.load("append-in-place", None).unwrap();
         assert_eq!(loaded_meta.sequence, 2);
         assert_eq!(loaded_messages.len(), 2);
+    }
+
+    #[test]
+    fn append_failure_before_metadata_commit_discards_uncommitted_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("append-before-commit");
+        store
+            .save("append-before-commit", &meta, &[user_msg("first", 1)])
+            .unwrap();
+
+        let path = session_path(dir.path(), "append-before-commit");
+        let (mut append_meta, meta_line_len) =
+            read_meta_with_line_len(&path, "append-before-commit").unwrap();
+        append_meta.updated_at = now_utc();
+        append_meta.sequence += 1;
+        let second_line =
+            SessionRecord::from_message(&user_msg("second", 2), "append-before-commit")
+                .unwrap()
+                .to_json_line()
+                .unwrap();
+
+        let err = append_records_in_place_with_hooks(
+            &path,
+            &append_meta,
+            meta_line_len,
+            &[second_line],
+            |_| Err(io::Error::other("simulated commit write failure")),
+            |_| Ok(()),
+        )
+        .unwrap_err();
+        assert_eq!(err.to_string(), "simulated commit write failure");
+
+        let (loaded_meta, loaded_messages) = store.load("append-before-commit", None).unwrap();
+        assert_eq!(
+            loaded_meta.sequence, 1,
+            "metadata must remain at the prior committed sequence"
+        );
+        assert_eq!(
+            loaded_messages.len(),
+            1,
+            "record lines after an unclosed append-begin marker are uncommitted"
+        );
     }
 
     #[test]
