@@ -591,7 +591,7 @@ Each tool invocation and its result are rendered as a discrete, collapsible bloc
 
 Extends the existing binary approval system (`#approve on` / `#approve off`) with a third `Smart` mode. Smart mode auto-approves read-only tools and prompts only for tools that could modify state.
 
-- Three modes: `Enabled` (prompt for all), `Smart` (auto-approve reads, prompt for writes/deletes/commands), `Bypassed` (auto-approve all)
+- Three modes: `Enabled` (prompt for all), `Smart` (auto-approve read-only and trusted tools, prompt for writes/deletes/commands), `Bypassed` (auto-approve all)
 - Classification uses the existing `requires_approval()` trait method — tools that return `false` are always auto-approved regardless of mode
 - Per-tool session trust: after approving a specific tool once in Smart mode, the user can choose "always approve this tool for this session." Trusted tools are auto-approved for the remainder of the session
 - Configurable via `#approve smart`, `#approve on`, `#approve off` commands. `Smart` is the new default

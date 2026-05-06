@@ -205,9 +205,10 @@ impl App {
         request: swink_agent::ToolApprovalRequest,
         responder: tokio::sync::oneshot::Sender<ToolApproval>,
     ) {
-        if self.approval_mode() == swink_agent::ApprovalMode::Smart
-            && self.session_trusted_tools.contains(&request.tool_name)
-        {
+        let smart_auto_approved = self.approval_mode() == swink_agent::ApprovalMode::Smart
+            && (!request.requires_approval
+                || self.session_trusted_tools.contains(&request.tool_name));
+        if smart_auto_approved {
             let _ = responder.send(ToolApproval::Approved);
         } else {
             // Clear any active trust follow-up when a new approval arrives.

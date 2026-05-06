@@ -226,7 +226,7 @@ Two command prefixes are supported:
 - `#load <id>` — load a saved session
 - `#keys` — show configured API keys
 - `#key <provider> <key>` — set an API key
-- `#approve smart` — enable smart approval mode (auto-approve reads, prompt for writes)
+- `#approve smart` — enable smart approval mode (auto-approve read-only and trusted tools, prompt for writes)
 - `#approve on` / `#approve off` — enable Enabled / Bypassed mode
 - `#approve untrust <tool>` — remove a tool from session-trusted set
 - `#approve untrust` — clear all session-trusted tools
@@ -545,7 +545,7 @@ New variant in `ApprovalMode` enum (`src/tool.rs`):
 ```rust
 enum ApprovalMode {
     Enabled,    // prompt for all tool calls
-    Smart,      // auto-approve reads, prompt for writes (new default)
+    Smart,      // auto-approve read-only and trusted tools, prompt for writes (new default)
     Bypassed,   // auto-approve all tool calls
 }
 ```

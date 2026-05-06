@@ -592,7 +592,7 @@ impl App {
                     ApprovalModeArg::On => "enabled",
                     ApprovalModeArg::Off => "disabled (auto-approve)",
                     ApprovalModeArg::Smart => {
-                        "smart (auto-approve trusted tools, prompt for untrusted tools)"
+                        "smart (auto-approve read-only and trusted tools, prompt for writes)"
                     }
                 };
                 self.push_system_message(format!("Tool approval: {label}"));
@@ -621,7 +621,7 @@ impl App {
                     ApprovalMode::Enabled => "enabled",
                     ApprovalMode::Bypassed => "disabled (auto-approve)",
                     ApprovalMode::Smart => {
-                        "smart (auto-approve trusted tools, prompt for untrusted tools)"
+                        "smart (auto-approve read-only and trusted tools, prompt for writes)"
                     }
                     _ => "unknown",
                 };

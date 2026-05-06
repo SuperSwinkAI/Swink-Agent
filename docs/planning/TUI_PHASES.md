@@ -172,7 +172,7 @@ UX polish, configuration, command system, inline diffs, external editor, plan mo
   - Platform directory resolution via `dirs`
 - `commands.rs` — dual command system:
   - Hash commands: `#help`, `#clear`, `#info`, `#copy`, `#copy all`, `#copy code`, `#approve on/off/smart`
-  - Slash commands: `/quit`, `/model`, `/thinking`, `/system`, `/reset`, `/plan`, `/editor`
+  - Slash commands: `/quit`, `/thinking`, `/system`, `/reset`, `/plan`, `/editor`
 - `editor.rs` — external editor integration:
   - Resolves editor from config override > `$EDITOR` > `$VISUAL` > `vi`
   - TUI suspends while editor is open, submits content on close
@@ -190,7 +190,7 @@ UX polish, configuration, command system, inline diffs, external editor, plan mo
   - Restricts agent to read-only tools; plan output styled distinctly
   - Switching to execute mode re-registers write tools
 - Tiered approval modes:
-  - Three modes: Enabled (prompt for all), Smart (auto-approve reads, prompt for writes), Bypassed (auto-approve all)
+  - Three modes: Enabled (prompt for all), Smart (auto-approve read-only and trusted tools, prompt for writes), Bypassed (auto-approve all)
   - Per-tool session trust: "always approve this tool" persists for session duration
   - Configurable via `#approve smart/on/off` commands
 - Context window progress bar:
