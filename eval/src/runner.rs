@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -287,9 +287,8 @@ impl EvalRunner {
                 {
                     return (index, cancelled_case_result(case));
                 }
-                let permit = match sem.acquire_owned().await {
-                    Ok(p) => p,
-                    Err(_) => return (index, cancelled_case_result(case)),
+                let Some(permit) = acquire_case_permit(sem, cancel.as_ref()).await else {
+                    return (index, cancelled_case_result(case));
                 };
                 if let Some(tok) = &cancel
                     && tok.is_cancelled()
@@ -664,6 +663,21 @@ fn run_registry_once(
     registry.evaluate(case, invocation)
 }
 
+async fn acquire_case_permit(
+    semaphore: Arc<Semaphore>,
+    cancel: Option<&CancellationToken>,
+) -> Option<OwnedSemaphorePermit> {
+    if let Some(tok) = cancel {
+        tokio::select! {
+            biased;
+            () = tok.cancelled() => None,
+            permit = semaphore.acquire_owned() => permit.ok(),
+        }
+    } else {
+        semaphore.acquire_owned().await.ok()
+    }
+}
+
 fn cancelled_case_result(case: &EvalCase) -> EvalCaseResult {
     EvalCaseResult {
         case_id: case.id.clone(),
@@ -732,5 +746,28 @@ fn error_invocation(error_message: Option<String>) -> Invocation {
         final_response: None,
         stop_reason: StopReason::Error,
         model: ModelSpec::new("unknown", "unknown"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn acquire_case_permit_cancels_while_waiting_for_capacity() {
+        let semaphore = Arc::new(Semaphore::new(0));
+        let token = CancellationToken::new();
+        let waiter_token = token.clone();
+        let waiter_semaphore = Arc::clone(&semaphore);
+        let waiter = tokio::spawn(async move {
+            acquire_case_permit(waiter_semaphore, Some(&waiter_token))
+                .await
+                .is_none()
+        });
+
+        tokio::task::yield_now().await;
+        token.cancel();
+
+        assert!(waiter.await.expect("permit waiter should not panic"));
     }
 }
