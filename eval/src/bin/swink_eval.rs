@@ -22,11 +22,16 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::process::ExitCode;
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use swink_agent::{Agent, AgentOptions, ModelSpec};
+use futures::Stream;
+use swink_agent::{
+    Agent, AgentContext, AgentOptions, AssistantMessageEvent, Cost, ModelSpec, StopReason,
+    StreamFn, StreamOptions, Usage,
+};
 #[cfg(feature = "html-report")]
 use swink_agent_eval::HtmlReporter;
 use swink_agent_eval::{
@@ -194,20 +199,55 @@ impl AgentFactory for NullAgentFactory {
         case: &swink_agent_eval::EvalCase,
     ) -> Result<(Agent, CancellationToken), EvalError> {
         let response = null_response_for_case(case);
-        let stream_fn = Arc::new(swink_agent::testing::SimpleMockStreamFn::from_text(
-            &response,
-        ));
-        let options = AgentOptions::new(
+        let stream_fn = Arc::new(NullStreamFn::new(response));
+        let options = AgentOptions::new_simple(
             case.system_prompt.clone(),
             ModelSpec::new("swink-eval", "null-agent"),
             stream_fn,
-            swink_agent::testing::default_convert,
         );
         Ok((Agent::new(options), CancellationToken::new()))
     }
 
     fn agent_model(&self, _case: &swink_agent_eval::EvalCase) -> Option<String> {
         Some("swink-eval/null-agent".to_string())
+    }
+}
+
+struct NullStreamFn {
+    response: Arc<str>,
+}
+
+impl NullStreamFn {
+    fn new(response: String) -> Self {
+        Self {
+            response: Arc::from(response),
+        }
+    }
+}
+
+impl StreamFn for NullStreamFn {
+    fn stream<'a>(
+        &'a self,
+        _model: &'a ModelSpec,
+        _context: &'a AgentContext,
+        _options: &'a StreamOptions,
+        _cancellation_token: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        let events = vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::TextStart { content_index: 0 },
+            AssistantMessageEvent::TextDelta {
+                content_index: 0,
+                delta: self.response.to_string(),
+            },
+            AssistantMessageEvent::TextEnd { content_index: 0 },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::Stop,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
+        ];
+        Box::pin(futures::stream::iter(events))
     }
 }
 

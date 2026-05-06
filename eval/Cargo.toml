@@ -81,7 +81,7 @@ trace-cloudwatch = ["trace-ingest"]
 telemetry = ["dep:opentelemetry", "dep:opentelemetry_sdk"]
 html-report = ["dep:askama"]
 langsmith = ["dep:reqwest"]
-cli = ["dep:clap", "swink-agent/testkit"]
+cli = ["dep:clap"]
 training-export = []
 
 [dev-dependencies]
