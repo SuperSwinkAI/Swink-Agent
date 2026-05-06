@@ -5,6 +5,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 use tokio::runtime::{Handle, RuntimeFlavor};
+#[cfg(feature = "judge-core")]
+use tokio_util::sync::CancellationToken;
 
 use crate::error::EvalError;
 use crate::judge::JudgeClient;
@@ -170,7 +172,31 @@ impl EvaluatorRegistry {
     /// in that list are run. Otherwise, all registered evaluators are run.
     #[must_use]
     pub fn evaluate(&self, case: &EvalCase, invocation: &Invocation) -> Vec<EvalMetricResult> {
-        self.evaluate_instrumented(case, invocation, |_name, run| run())
+        self.evaluate_instrumented_internal(
+            case,
+            invocation,
+            #[cfg(feature = "judge-core")]
+            None,
+            |_name, run| run(),
+        )
+    }
+
+    /// Run all applicable evaluators while exposing `cancellation` to any
+    /// judge-backed evaluator dispatch performed under panic isolation.
+    #[cfg(feature = "judge-core")]
+    #[must_use]
+    pub(crate) fn evaluate_with_judge_cancellation(
+        &self,
+        case: &EvalCase,
+        invocation: &Invocation,
+        cancellation: Option<&CancellationToken>,
+    ) -> Vec<EvalMetricResult> {
+        self.evaluate_instrumented_with_judge_cancellation(
+            case,
+            invocation,
+            cancellation,
+            |_name, run| run(),
+        )
     }
 
     /// Variant of [`Self::evaluate`] that lets the caller wrap each
@@ -186,11 +212,48 @@ impl EvaluatorRegistry {
         &self,
         case: &EvalCase,
         invocation: &Invocation,
+        wrap: F,
+    ) -> Vec<EvalMetricResult>
+    where
+        F: FnMut(&str, &mut dyn FnMut() -> Option<EvalMetricResult>) -> Option<EvalMetricResult>,
+    {
+        self.evaluate_instrumented_internal(
+            case,
+            invocation,
+            #[cfg(feature = "judge-core")]
+            None,
+            wrap,
+        )
+    }
+
+    /// Instrumented evaluator dispatch with runner cancellation available to
+    /// judge-backed evaluators.
+    #[cfg(feature = "judge-core")]
+    pub(crate) fn evaluate_instrumented_with_judge_cancellation<F>(
+        &self,
+        case: &EvalCase,
+        invocation: &Invocation,
+        cancellation: Option<&CancellationToken>,
+        wrap: F,
+    ) -> Vec<EvalMetricResult>
+    where
+        F: FnMut(&str, &mut dyn FnMut() -> Option<EvalMetricResult>) -> Option<EvalMetricResult>,
+    {
+        self.evaluate_instrumented_internal(case, invocation, cancellation, wrap)
+    }
+
+    fn evaluate_instrumented_internal<F>(
+        &self,
+        case: &EvalCase,
+        invocation: &Invocation,
+        #[cfg(feature = "judge-core")] cancellation: Option<&CancellationToken>,
         mut wrap: F,
     ) -> Vec<EvalMetricResult>
     where
         F: FnMut(&str, &mut dyn FnMut() -> Option<EvalMetricResult>) -> Option<EvalMetricResult>,
     {
+        #[cfg(feature = "judge-core")]
+        let cancellation = cancellation.cloned();
         let filter = &case.evaluators;
         self.evaluators
             .iter()
@@ -198,11 +261,23 @@ impl EvaluatorRegistry {
             .filter_map(|e| {
                 let name = e.name();
                 let evaluator = Arc::clone(e);
+                #[cfg(feature = "judge-core")]
+                let cancellation = cancellation.clone();
                 let mut runner = move || {
                     let evaluator = Arc::clone(&evaluator);
                     let case = case.clone();
                     let invocation = invocation.clone();
+                    #[cfg(feature = "judge-core")]
+                    let cancellation = cancellation.clone();
                     isolate_panic(evaluator.name(), move || {
+                        #[cfg(feature = "judge-core")]
+                        {
+                            crate::judge::with_scoped_judge_cancellation(
+                                cancellation.as_ref(),
+                                || evaluator.evaluate(&case, &invocation),
+                            )
+                        }
+                        #[cfg(not(feature = "judge-core"))]
                         evaluator.evaluate(&case, &invocation)
                     })
                 };

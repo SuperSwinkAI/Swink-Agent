@@ -55,6 +55,43 @@ pub const MAX_BATCH_SIZE: usize = 128;
 /// Default number of judge verdicts retained in memory.
 pub const DEFAULT_JUDGE_CACHE_CAPACITY: usize = 1024;
 
+#[cfg(feature = "judge-core")]
+thread_local! {
+    static SCOPED_JUDGE_CANCELLATION: std::cell::RefCell<Vec<CancellationToken>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(feature = "judge-core")]
+pub(crate) fn with_scoped_judge_cancellation<T>(
+    cancellation: Option<&CancellationToken>,
+    run: impl FnOnce() -> T,
+) -> T {
+    let Some(cancellation) = cancellation else {
+        return run();
+    };
+
+    SCOPED_JUDGE_CANCELLATION.with(|stack| stack.borrow_mut().push(cancellation.clone()));
+    let _guard = ScopedJudgeCancellationGuard;
+    run()
+}
+
+#[cfg(feature = "judge-core")]
+pub(crate) fn scoped_judge_cancellation() -> Option<CancellationToken> {
+    SCOPED_JUDGE_CANCELLATION.with(|stack| stack.borrow().last().cloned())
+}
+
+#[cfg(feature = "judge-core")]
+struct ScopedJudgeCancellationGuard;
+
+#[cfg(feature = "judge-core")]
+impl Drop for ScopedJudgeCancellationGuard {
+    fn drop(&mut self) {
+        SCOPED_JUDGE_CANCELLATION.with(|stack| {
+            stack.borrow_mut().pop();
+        });
+    }
+}
+
 /// LLM-as-judge client used by semantic evaluators.
 ///
 /// The trait exposes a single async method that accepts a rendered prompt and

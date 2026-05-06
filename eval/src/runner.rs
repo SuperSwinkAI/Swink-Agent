@@ -571,6 +571,7 @@ fn dispatch_evaluators(
             registry,
             case,
             invocation,
+            cancel,
             #[cfg(feature = "telemetry")]
             telemetry,
             #[cfg(feature = "telemetry")]
@@ -599,6 +600,7 @@ fn dispatch_evaluators(
             registry,
             case,
             invocation,
+            cancel,
             #[cfg(feature = "telemetry")]
             iteration_telemetry,
             #[cfg(feature = "telemetry")]
@@ -653,11 +655,28 @@ fn run_registry_once(
     registry: &EvaluatorRegistry,
     case: &EvalCase,
     invocation: &Invocation,
+    cancel: Option<&CancellationToken>,
     #[cfg(feature = "telemetry")] telemetry: Option<&EvalsTelemetry>,
     #[cfg(feature = "telemetry")] case_span: Option<&CaseSpan>,
 ) -> Vec<EvalMetricResult> {
     #[cfg(feature = "telemetry")]
     if let (Some(t), Some(parent)) = (telemetry, case_span) {
+        #[cfg(feature = "judge-core")]
+        return registry.evaluate_instrumented_with_judge_cancellation(
+            case,
+            invocation,
+            cancel,
+            |name, run| {
+                let span = t.start_evaluator_span(parent, name);
+                let outcome = run();
+                match outcome.as_ref() {
+                    Some(metric) => span.end(metric),
+                    None => span.end_inapplicable(name),
+                }
+                outcome
+            },
+        );
+        #[cfg(not(feature = "judge-core"))]
         return registry.evaluate_instrumented(case, invocation, |name, run| {
             let span = t.start_evaluator_span(parent, name);
             let outcome = run();
@@ -668,7 +687,17 @@ fn run_registry_once(
             outcome
         });
     }
-    registry.evaluate(case, invocation)
+
+    #[cfg(feature = "judge-core")]
+    {
+        registry.evaluate_with_judge_cancellation(case, invocation, cancel)
+    }
+
+    #[cfg(not(feature = "judge-core"))]
+    {
+        let _ = cancel;
+        registry.evaluate(case, invocation)
+    }
 }
 
 async fn acquire_case_permit(

@@ -16,6 +16,11 @@ use swink_agent_eval::{
     AgentFactory, EvalCase, EvalError, EvalMetricResult, EvalRunner, EvalSet, Evaluator,
     EvaluatorRegistry, Invocation, Score,
 };
+#[cfg(feature = "judge-core")]
+use swink_agent_eval::{
+    JudgeClient, JudgeEvaluatorConfig, JudgeFuture, JudgeRegistry, JudgeVerdict, PromptContext,
+    evaluate_with_builtin,
+};
 
 mod common;
 
@@ -124,6 +129,50 @@ impl AgentFactory for CancellingFactory {
     }
 }
 
+#[cfg(feature = "judge-core")]
+struct RunnerCancellingJudge {
+    runner_cancel: CancellationToken,
+}
+
+#[cfg(feature = "judge-core")]
+impl JudgeClient for RunnerCancellingJudge {
+    fn judge<'a>(&'a self, _prompt: &'a str) -> JudgeFuture<'a> {
+        let runner_cancel = self.runner_cancel.clone();
+        Box::pin(async move {
+            runner_cancel.cancel();
+            tokio::task::yield_now().await;
+            Ok(JudgeVerdict {
+                score: 1.0,
+                pass: true,
+                reason: Some("would pass without runner cancellation".to_string()),
+                label: None,
+            })
+        })
+    }
+}
+
+#[cfg(feature = "judge-core")]
+struct JudgeBackedEvaluator {
+    config: JudgeEvaluatorConfig,
+}
+
+#[cfg(feature = "judge-core")]
+impl Evaluator for JudgeBackedEvaluator {
+    fn name(&self) -> &'static str {
+        "runner_judge"
+    }
+
+    fn evaluate(&self, case: &EvalCase, invocation: &Invocation) -> Option<EvalMetricResult> {
+        let ctx = PromptContext::new(Arc::new(case.clone()), Arc::new(invocation.clone()));
+        Some(evaluate_with_builtin(
+            self.name(),
+            "helpfulness_v0",
+            &self.config,
+            &ctx,
+        ))
+    }
+}
+
 fn single_case_set() -> EvalSet {
     EvalSet {
         id: "nr".into(),
@@ -221,6 +270,39 @@ async fn cancelled_single_run_dispatch_records_failure_metric_without_evaluating
             .as_deref()
             .is_some_and(|details| details.contains("before evaluator dispatch")),
         "unexpected cancellation details: {cancelled_metric:?}"
+    );
+}
+
+#[cfg(feature = "judge-core")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runner_cancellation_reaches_judge_backed_evaluators() {
+    let cancel = CancellationToken::new();
+    let judge = Arc::new(RunnerCancellingJudge {
+        runner_cancel: cancel.clone(),
+    });
+    let judge_registry = JudgeRegistry::builder(judge as Arc<dyn JudgeClient>, "mock-model")
+        .build()
+        .unwrap();
+    let mut registry = EvaluatorRegistry::new();
+    registry.register(JudgeBackedEvaluator {
+        config: JudgeEvaluatorConfig::default_with(Arc::new(judge_registry)),
+    });
+
+    let result = EvalRunner::new(registry)
+        .with_cancellation(cancel)
+        .run_set(&single_case_set(), &CountingFactory::new())
+        .await
+        .unwrap();
+
+    let metric = &result.case_results[0].metric_results[0];
+    assert_eq!(metric.evaluator_name, "runner_judge");
+    assert_eq!(metric.score.verdict(), swink_agent_eval::Verdict::Fail);
+    assert!(
+        metric
+            .details
+            .as_deref()
+            .is_some_and(|details| details.contains("cancelled")),
+        "expected judge dispatch to observe runner cancellation: {metric:?}"
     );
 }
 

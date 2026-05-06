@@ -534,6 +534,8 @@ async fn judge_with_retry(
     let policy = config.judge_registry.retry_policy();
     let retry = retry_builder(policy);
     let client = Arc::clone(config.judge_registry.client());
+    let registry_cancel = config.judge_registry.cancellation().cloned();
+    let scoped_cancel = crate::judge::scoped_judge_cancellation();
 
     let dispatch = (|| {
         let client = Arc::clone(&client);
@@ -542,14 +544,23 @@ async fn judge_with_retry(
     .retry(retry)
     .when(is_retryable_judge_error);
 
-    if let Some(cancel) = config.judge_registry.cancellation() {
-        tokio::select! {
-            biased;
-            () = cancel.cancelled() => Err(DispatchError::Cancelled),
-            result = dispatch => result.map_err(DispatchError::Judge),
+    match (registry_cancel, scoped_cancel) {
+        (None, None) => dispatch.await.map_err(DispatchError::Judge),
+        (Some(cancel), None) | (None, Some(cancel)) => {
+            tokio::select! {
+                biased;
+                () = cancel.cancelled() => Err(DispatchError::Cancelled),
+                result = dispatch => result.map_err(DispatchError::Judge),
+            }
         }
-    } else {
-        dispatch.await.map_err(DispatchError::Judge)
+        (Some(registry_cancel), Some(scoped_cancel)) => {
+            tokio::select! {
+                biased;
+                () = registry_cancel.cancelled() => Err(DispatchError::Cancelled),
+                () = scoped_cancel.cancelled() => Err(DispatchError::Cancelled),
+                result = dispatch => result.map_err(DispatchError::Judge),
+            }
+        }
     }
 }
 
