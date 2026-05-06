@@ -3,19 +3,89 @@
 
 mod common;
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use swink_agent::{Agent, AgentEvent, AgentOptions};
+use serde_json::json;
+use swink_agent::{
+    Agent, AgentEvent, AgentOptions, AgentTool, AgentToolResult, ResolvedCredential, SessionState,
+};
+use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
 
 use common::{
-    MockStreamFn, MockTool, default_convert, default_model, text_events, tool_call_events_multi,
-    user_msg,
+    MockStreamFn, default_convert, default_model, text_events, tool_call_events_multi, user_msg,
 };
 
 const TOOL_COUNT: usize = 50;
-const TOOL_DELAY_MS: u64 = 10;
+
+struct StressGateTool {
+    name: String,
+    schema: serde_json::Value,
+    started_count: Arc<AtomicUsize>,
+    all_started: Arc<Notify>,
+}
+
+impl StressGateTool {
+    fn new(name: String, started_count: Arc<AtomicUsize>, all_started: Arc<Notify>) -> Self {
+        Self {
+            name,
+            schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+            }),
+            started_count,
+            all_started,
+        }
+    }
+}
+
+impl AgentTool for StressGateTool {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn label(&self) -> &str {
+        &self.name
+    }
+
+    fn description(&self) -> &'static str {
+        "stress gate tool"
+    }
+
+    fn parameters_schema(&self) -> &serde_json::Value {
+        &self.schema
+    }
+
+    fn execute(
+        &self,
+        _tool_call_id: &str,
+        _params: serde_json::Value,
+        _cancellation_token: CancellationToken,
+        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+        _state: Arc<std::sync::RwLock<SessionState>>,
+        _credential: Option<ResolvedCredential>,
+    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+        let started_count = Arc::clone(&self.started_count);
+        let all_started = Arc::clone(&self.all_started);
+        Box::pin(async move {
+            let started = started_count.fetch_add(1, Ordering::SeqCst) + 1;
+            if started == TOOL_COUNT {
+                all_started.notify_waiters();
+            }
+
+            while started_count.load(Ordering::SeqCst) < TOOL_COUNT {
+                all_started.notified().await;
+            }
+
+            AgentToolResult::text("ok")
+        })
+    }
+}
 
 #[tokio::test]
 async fn fifty_concurrent_tool_calls() {
@@ -33,13 +103,17 @@ async fn fifty_concurrent_tool_calls() {
 
     let stream_fn = Arc::new(MockStreamFn::new(responses));
 
-    // Register 50 tools, each with a 10ms async delay.
+    let started_count = Arc::new(AtomicUsize::new(0));
+    let all_started = Arc::new(Notify::new());
+
+    // Register 50 tools that cannot finish until every tool has started.
     let tools: Vec<Arc<dyn swink_agent::AgentTool>> = (0..TOOL_COUNT)
         .map(|i| {
-            Arc::new(
-                MockTool::new(&format!("tool_{i}"))
-                    .with_delay(Duration::from_millis(TOOL_DELAY_MS)),
-            ) as Arc<dyn swink_agent::AgentTool>
+            Arc::new(StressGateTool::new(
+                format!("tool_{i}"),
+                Arc::clone(&started_count),
+                Arc::clone(&all_started),
+            )) as Arc<dyn swink_agent::AgentTool>
         })
         .collect();
 
@@ -69,15 +143,11 @@ async fn fifty_concurrent_tool_calls() {
         _ => {}
     });
 
-    let start = Instant::now();
-
     let result = tokio::time::timeout(
         Duration::from_secs(15),
         agent.prompt_async(vec![user_msg("use all tools")]),
     )
     .await;
-
-    let elapsed = start.elapsed();
 
     assert!(result.is_ok(), "agent timed out after 15s");
     let agent_result = result.unwrap();
@@ -97,12 +167,5 @@ async fn fifty_concurrent_tool_calls() {
     assert_eq!(
         ends, TOOL_COUNT,
         "expected {TOOL_COUNT} ToolExecutionEnd events, got {ends}"
-    );
-
-    // If tools ran sequentially, it would take at least 50 × 10ms = 500ms.
-    // With concurrent execution, it should be much less.
-    assert!(
-        elapsed < Duration::from_millis(500),
-        "tools took {elapsed:?}, which suggests sequential execution (expected < 500ms)"
     );
 }
