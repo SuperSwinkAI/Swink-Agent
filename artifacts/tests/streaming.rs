@@ -357,6 +357,30 @@ async fn streaming_load_returns_invalid_data_for_orphaned_explicit_version_file(
 }
 
 #[tokio::test]
+async fn streaming_load_latest_returns_invalid_data_for_orphaned_version_file_without_meta() {
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let store = FileArtifactStore::new(tmpdir.path());
+
+    let artifact_dir = tmpdir
+        .path()
+        .join("sess-stream-orphan-latest")
+        .join("report.md");
+    tokio::fs::create_dir_all(&artifact_dir)
+        .await
+        .expect("artifact directory should be creatable");
+    tokio::fs::write(artifact_dir.join("v1.bin"), b"orphan")
+        .await
+        .expect("orphaned content file should be creatable");
+
+    let err = store
+        .load_stream("sess-stream-orphan-latest", "report.md", None)
+        .await
+        .err()
+        .expect("orphaned latest content should be surfaced as corruption");
+    assert_invalid_data_storage_error(err, "without metadata membership");
+}
+
+#[tokio::test]
 async fn streaming_save_refuses_to_overwrite_orphaned_next_version_file() {
     let tmpdir = tempfile::TempDir::new().unwrap();
     let store = FileArtifactStore::new(tmpdir.path());

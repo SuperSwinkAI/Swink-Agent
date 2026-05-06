@@ -166,9 +166,12 @@ impl StreamingArtifactStore for FileArtifactStore {
                 return Ok(None);
             }
         } else {
-            match meta.versions.last() {
-                Some(entry) => entry,
-                None => return Ok(None),
+            if let Some(entry) = meta.versions.last() {
+                entry
+            } else {
+                self.reject_content_files_without_metadata(session_id, name, &meta)
+                    .await?;
+                return Ok(None);
             }
         };
 

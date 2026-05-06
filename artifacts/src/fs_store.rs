@@ -274,8 +274,9 @@ impl FileArtifactStore {
 
     /// Scan a session directory to find all artifact names.
     ///
-    /// Recursively discovers artifact directories (those containing `meta.json`),
-    /// returning artifact names relative to the session directory.
+    /// Recursively discovers artifact directories (those containing `meta.json`
+    /// or direct `vN.bin` content files), returning artifact names relative to
+    /// the session directory.
     async fn discover_artifacts(&self, session_id: &str) -> Result<Vec<String>, ArtifactError> {
         let session_dir = self.resolve_session_dir(session_id)?;
         if !session_dir.exists() {
@@ -287,24 +288,33 @@ impl FileArtifactStore {
 
         while let Some(dir) = stack.pop() {
             let mut entries = tokio::fs::read_dir(&dir).await.map_err(storage_err)?;
+            let mut is_artifact_dir = false;
             while let Some(entry) = entries.next_entry().await.map_err(storage_err)? {
                 let path = entry.path();
-                if path.is_dir() {
-                    // Check if this directory contains meta.json
-                    let meta_candidate = path.join("meta.json");
-                    if meta_candidate.exists() {
-                        // This is an artifact directory — derive the name
-                        if let Ok(relative) = path.strip_prefix(&session_dir)
-                            && let Some(name) = relative.to_str()
-                        {
-                            names.push(name.replace('\\', "/"));
-                        }
-                    }
-                    // Also recurse into it (for nested artifact names like "tool/output")
+                let file_type = entry.file_type().await.map_err(storage_err)?;
+                if file_type.is_dir() {
+                    // Recurse into child directories for nested artifact names like
+                    // "tool/output".
                     stack.push(path);
+                } else if file_type.is_file()
+                    && (entry.file_name() == "meta.json"
+                        || parse_version_file_name(&entry.file_name()).is_some())
+                {
+                    is_artifact_dir = true;
                 }
             }
+
+            if is_artifact_dir
+                && let Ok(relative) = dir.strip_prefix(&session_dir)
+                && let Some(name) = relative.to_str()
+                && !name.is_empty()
+            {
+                names.push(name.replace('\\', "/"));
+            }
         }
+
+        names.sort();
+        names.dedup();
 
         Ok(names)
     }
@@ -405,6 +415,21 @@ impl FileArtifactStore {
         }
 
         Ok(())
+    }
+
+    pub(crate) async fn reject_content_files_without_metadata(
+        &self,
+        session_id: &str,
+        name: &str,
+        meta: &MetaFile,
+    ) -> Result<(), ArtifactError> {
+        let known_versions = meta
+            .versions
+            .iter()
+            .map(|record| record.version)
+            .collect::<HashSet<_>>();
+        self.reject_orphan_content_files(session_id, name, &known_versions)
+            .await
     }
 
     pub(crate) async fn next_version(
@@ -511,6 +536,8 @@ impl ArtifactStore for FileArtifactStore {
     ) -> Result<Option<(ArtifactData, ArtifactVersion)>, ArtifactError> {
         self.resolve_artifact_dir(session_id, name)?;
         let meta = self.read_meta(session_id, name).await?;
+        self.reject_content_files_without_metadata(session_id, name, &meta)
+            .await?;
         let Some(record) = meta.versions.last() else {
             tracing::debug!(session_id, name, "artifact not found");
             return Ok(None);
@@ -616,6 +643,8 @@ impl ArtifactStore for FileArtifactStore {
         let mut metas = Vec::with_capacity(names.len());
         for name in &names {
             let meta = self.read_meta(session_id, name).await?;
+            self.reject_content_files_without_metadata(session_id, name, &meta)
+                .await?;
             if let (Some(first), Some(last)) = (meta.versions.first(), meta.versions.last()) {
                 metas.push(ArtifactMeta {
                     name: name.clone(),
