@@ -5,18 +5,22 @@
 mod common;
 
 use std::collections::HashSet;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use serde_json::json;
 use swink_agent::{
     Agent, AgentEvent, AgentMessage, AgentOptions, AgentTool, AgentToolResult, ContentBlock,
-    LlmMessage,
+    LlmMessage, ResolvedCredential, SessionState,
 };
+use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
 
 use common::{
-    MockStreamFn, MockTool, default_convert, default_model, text_events, tool_call_events_multi,
-    user_msg,
+    MockStreamFn, default_convert, default_model, text_events, tool_call_events_multi, user_msg,
 };
 
 const TOOL_COUNT: usize = 12;
@@ -27,9 +31,6 @@ const TOOL_NAMES: [&str; TOOL_COUNT] = [
     "kilo", "lima",
 ];
 
-/// Deterministic per-tool delays in milliseconds (1-50ms range).
-const DELAYS_MS: [u64; TOOL_COUNT] = [23, 7, 42, 15, 1, 38, 11, 50, 3, 29, 19, 46];
-
 fn build_tool_calls() -> Vec<(String, String, String)> {
     TOOL_NAMES
         .iter()
@@ -38,16 +39,84 @@ fn build_tool_calls() -> Vec<(String, String, String)> {
         .collect()
 }
 
-fn build_tools() -> Vec<Arc<dyn AgentTool>> {
+struct StressResultGateTool {
+    name: String,
+    schema: serde_json::Value,
+    started_count: Arc<AtomicUsize>,
+    all_started: Arc<Notify>,
+}
+
+impl StressResultGateTool {
+    fn new(name: &str, started_count: Arc<AtomicUsize>, all_started: Arc<Notify>) -> Self {
+        Self {
+            name: name.to_string(),
+            schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+            }),
+            started_count,
+            all_started,
+        }
+    }
+}
+
+impl AgentTool for StressResultGateTool {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn label(&self) -> &str {
+        &self.name
+    }
+
+    fn description(&self) -> &'static str {
+        "stress result gate tool"
+    }
+
+    fn parameters_schema(&self) -> &serde_json::Value {
+        &self.schema
+    }
+
+    fn execute(
+        &self,
+        _tool_call_id: &str,
+        _params: serde_json::Value,
+        _cancellation_token: CancellationToken,
+        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+        _state: Arc<std::sync::RwLock<SessionState>>,
+        _credential: Option<ResolvedCredential>,
+    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+        let name = self.name.clone();
+        let started_count = Arc::clone(&self.started_count);
+        let all_started = Arc::clone(&self.all_started);
+        Box::pin(async move {
+            let started = started_count.fetch_add(1, Ordering::SeqCst) + 1;
+            if started == TOOL_COUNT {
+                all_started.notify_waiters();
+            }
+
+            while started_count.load(Ordering::SeqCst) < TOOL_COUNT {
+                all_started.notified().await;
+            }
+
+            AgentToolResult::text(format!("result_from_{name}"))
+        })
+    }
+}
+
+fn build_tools(
+    started_count: &Arc<AtomicUsize>,
+    all_started: &Arc<Notify>,
+) -> Vec<Arc<dyn AgentTool>> {
     TOOL_NAMES
         .iter()
-        .enumerate()
-        .map(|(i, name)| {
-            Arc::new(
-                MockTool::new(name)
-                    .with_delay(Duration::from_millis(DELAYS_MS[i]))
-                    .with_result(AgentToolResult::text(format!("result_from_{name}"))),
-            ) as Arc<dyn AgentTool>
+        .map(|name| {
+            Arc::new(StressResultGateTool::new(
+                name,
+                Arc::clone(started_count),
+                Arc::clone(all_started),
+            )) as Arc<dyn AgentTool>
         })
         .collect()
 }
@@ -79,7 +148,9 @@ async fn twelve_concurrent_tool_calls_no_duplicates_no_lost() {
     let responses = vec![tool_call_events_multi(&call_refs), text_events("done")];
 
     let stream_fn = Arc::new(MockStreamFn::new(responses));
-    let tools = build_tools();
+    let tool_started_count = Arc::new(AtomicUsize::new(0));
+    let all_tools_started = Arc::new(Notify::new());
+    let tools = build_tools(&tool_started_count, &all_tools_started);
 
     let opts = AgentOptions::new(
         "You are a tool-using assistant.",
@@ -132,6 +203,11 @@ async fn twelve_concurrent_tool_calls_no_duplicates_no_lost() {
     assert_eq!(
         starts, TOOL_COUNT,
         "expected {TOOL_COUNT} ToolExecutionStart events, got {starts}"
+    );
+    assert_eq!(
+        tool_started_count.load(Ordering::SeqCst),
+        TOOL_COUNT,
+        "expected all {TOOL_COUNT} tool futures to start before any completed"
     );
 
     // ── Verify all 12 ToolExecutionEnd events received ──
