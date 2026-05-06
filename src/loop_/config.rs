@@ -10,9 +10,49 @@ use crate::retry::{DefaultRetryStrategy, RetryStrategy};
 use crate::stream::{StreamFn, StreamOptions};
 use crate::tool::{AgentTool, ApprovalMode};
 use crate::tool_execution_policy::ToolExecutionPolicy;
-use crate::types::ModelSpec;
+use crate::types::{AgentMessage, ModelSpec};
 
 use super::ConvertToLlmFn;
+
+// ─── AgentLoopRuntimeState ──────────────────────────────────────────────────
+
+#[derive(Default)]
+pub(crate) struct AgentLoopRuntimeState {
+    /// Shared snapshot of loop-local pending messages for pause checkpoints.
+    pending_messages: Arc<crate::pause_state::PendingMessageSnapshot>,
+
+    /// Shared snapshot of the loop's full `context_messages` for pause checkpoints.
+    ///
+    /// Updated after each turn's pending-message drain so that `Agent::pause()`
+    /// can reconstruct the complete message history even for messages that have
+    /// been moved out of the shared pending queue and into loop-local context.
+    loop_context: Arc<crate::pause_state::LoopContextSnapshot>,
+}
+
+impl AgentLoopRuntimeState {
+    #[must_use]
+    pub(crate) fn from_snapshots(
+        pending_messages: Arc<crate::pause_state::PendingMessageSnapshot>,
+        loop_context: Arc<crate::pause_state::LoopContextSnapshot>,
+    ) -> Self {
+        Self {
+            pending_messages,
+            loop_context,
+        }
+    }
+
+    pub(crate) fn clear_pending_messages(&self) {
+        self.pending_messages.clear();
+    }
+
+    pub(crate) fn replace_pending_messages(&self, messages: &[AgentMessage]) {
+        self.pending_messages.replace(messages);
+    }
+
+    pub(crate) fn replace_loop_context(&self, messages: &[AgentMessage]) {
+        self.loop_context.replace(messages);
+    }
+}
 
 // ─── AgentLoopConfig ─────────────────────────────────────────────────────────
 
@@ -65,15 +105,9 @@ pub struct AgentLoopConfig {
     /// [`MessageProvider::poll_follow_up`] is called when the agent would otherwise stop.
     pub message_provider: Option<Arc<dyn MessageProvider>>,
 
-    /// Shared snapshot of loop-local pending messages for pause checkpoints.
-    pub(crate) pending_message_snapshot: Arc<crate::pause_state::PendingMessageSnapshot>,
-
-    /// Shared snapshot of the loop's full `context_messages` for pause checkpoints.
-    ///
-    /// Updated after each turn's pending-message drain so that `Agent::pause()`
-    /// can reconstruct the complete message history even for messages that have
-    /// been moved out of the shared pending queue and into loop-local context.
-    pub(crate) loop_context_snapshot: Arc<crate::pause_state::LoopContextSnapshot>,
+    /// Runtime-only loop state owned by `Agent` or initialized internally for
+    /// low-level loop callers.
+    pub(crate) runtime_state: AgentLoopRuntimeState,
 
     /// Optional async callback for approving/rejecting tool calls before execution.
     /// When `Some` and `approval_mode` is `Enabled`, each tool call is sent through
@@ -157,8 +191,7 @@ impl AgentLoopConfig {
             transform_context: None,
             get_api_key: None,
             message_provider: None,
-            pending_message_snapshot: Arc::default(),
-            loop_context_snapshot: Arc::default(),
+            runtime_state: AgentLoopRuntimeState::default(),
             approve_tool: None,
             approval_mode: ApprovalMode::default(),
             pre_turn_policies: vec![],
@@ -182,8 +215,8 @@ impl AgentLoopConfig {
         pending_message_snapshot: Arc<crate::pause_state::PendingMessageSnapshot>,
         loop_context_snapshot: Arc<crate::pause_state::LoopContextSnapshot>,
     ) -> Self {
-        self.pending_message_snapshot = pending_message_snapshot;
-        self.loop_context_snapshot = loop_context_snapshot;
+        self.runtime_state =
+            AgentLoopRuntimeState::from_snapshots(pending_message_snapshot, loop_context_snapshot);
         self
     }
 }

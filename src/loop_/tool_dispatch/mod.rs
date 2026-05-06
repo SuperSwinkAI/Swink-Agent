@@ -339,7 +339,7 @@ mod tests {
     use crate::tool::{AgentToolResult, ApprovalMode};
     use crate::types::{AgentMessage, ContentBlock, LlmMessage, UserMessage};
     use crate::{
-        DefaultRetryStrategy, StreamOptions, ToolApproval, ToolCallSummary, ToolExecutionPolicy,
+        DefaultRetryStrategy, ToolApproval, ToolCallSummary, ToolExecutionPolicy,
         ToolExecutionStrategy,
     };
 
@@ -647,36 +647,19 @@ mod tests {
         tool_execution_policy: ToolExecutionPolicy,
         message_provider: Option<Arc<dyn MessageProvider>>,
     ) -> Arc<AgentLoopConfig> {
-        Arc::new(AgentLoopConfig {
-            agent_name: None,
-            transfer_chain: None,
-            model: default_model(),
-            stream_options: StreamOptions::default(),
-            retry_strategy: Box::new(DefaultRetryStrategy::default()),
-            stream_fn: Arc::new(MockStreamFn::new(vec![])),
-            tools,
-            convert_to_llm: Box::new(default_convert),
-            transform_context: None,
-            get_api_key: None,
-            message_provider,
-            pending_message_snapshot: Arc::default(),
-            loop_context_snapshot: Arc::default(),
-            approve_tool,
-            approval_mode,
-            pre_turn_policies: vec![],
-            pre_dispatch_policies,
-            post_turn_policies: vec![],
-            post_loop_policies: vec![],
-            async_transform_context: None,
-            metrics_collector: None,
-            fallback: None,
-            tool_execution_policy,
-            session_state: Arc::new(std::sync::RwLock::new(crate::SessionState::new())),
-            credential_resolver: None,
-            cache_config: None,
-            cache_state: std::sync::Mutex::new(crate::CacheState::default()),
-            dynamic_system_prompt: None,
-        })
+        let mut config = AgentLoopConfig::new(
+            default_model(),
+            Arc::new(MockStreamFn::new(vec![])),
+            Box::new(default_convert),
+        );
+        config.retry_strategy = Box::new(DefaultRetryStrategy::default());
+        config.tools = tools;
+        config.message_provider = message_provider;
+        config.approve_tool = approve_tool;
+        config.approval_mode = approval_mode;
+        config.pre_dispatch_policies = pre_dispatch_policies;
+        config.tool_execution_policy = tool_execution_policy;
+        Arc::new(config)
     }
 
     fn drain_events(rx: &mut mpsc::Receiver<AgentEvent>) -> Vec<AgentEvent> {

@@ -265,8 +265,8 @@ async fn run_loop_inner(
                     PolicyVerdict::Inject(msgs) => {
                         state.pending_messages.extend(msgs);
                         config
-                            .pending_message_snapshot
-                            .replace(&state.pending_messages);
+                            .runtime_state
+                            .replace_pending_messages(&state.pending_messages);
                         continue 'outer;
                     }
                 }
@@ -278,8 +278,8 @@ async fn run_loop_inner(
                 if !msgs.is_empty() {
                     state.pending_messages.extend(msgs);
                     config
-                        .pending_message_snapshot
-                        .replace(&state.pending_messages);
+                        .runtime_state
+                        .replace_pending_messages(&state.pending_messages);
                     continue 'outer;
                 }
             }

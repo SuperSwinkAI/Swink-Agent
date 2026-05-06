@@ -467,13 +467,13 @@ pub(super) async fn run_context_transformers(
 }
 
 fn clear_pending_message_snapshot(config: &AgentLoopConfig) {
-    config.pending_message_snapshot.clear();
+    config.runtime_state.clear_pending_messages();
 }
 
 fn sync_pending_message_snapshot(config: &AgentLoopConfig, state: &LoopState) {
     config
-        .pending_message_snapshot
-        .replace(&state.pending_messages);
+        .runtime_state
+        .replace_pending_messages(&state.pending_messages);
 }
 
 fn mark_assistant_message_aborted(message: &AssistantMessage) -> AssistantMessage {
@@ -490,8 +490,8 @@ fn mark_assistant_message_aborted(message: &AssistantMessage) -> AssistantMessag
 /// queue but not yet reflected in `in_flight_messages`.
 fn sync_loop_context_snapshot(config: &AgentLoopConfig, state: &LoopState) {
     config
-        .loop_context_snapshot
-        .replace(&state.context_messages);
+        .runtime_state
+        .replace_loop_context(&state.context_messages);
 }
 
 // ─── Shared helpers ──────────────────────────────────────────────────────
