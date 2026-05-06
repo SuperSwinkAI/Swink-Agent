@@ -351,6 +351,10 @@ mod tests {
         started: Arc<AtomicBool>,
     }
 
+    struct YieldingTool {
+        name: &'static str,
+    }
+
     struct OneShotSteeringProvider {
         poll_count: AtomicU32,
     }
@@ -461,6 +465,46 @@ mod tests {
             Box::pin(async move {
                 std::future::pending::<()>().await;
                 AgentToolResult::text("unreachable")
+            })
+        }
+    }
+
+    impl crate::tool::AgentTool for YieldingTool {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn label(&self) -> &'static str {
+            self.name
+        }
+
+        fn description(&self) -> &'static str {
+            "Yields once before returning a result"
+        }
+
+        fn parameters_schema(&self) -> &serde_json::Value {
+            static SCHEMA: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+            SCHEMA.get_or_init(|| {
+                json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": true
+                })
+            })
+        }
+
+        fn execute(
+            &self,
+            _tool_call_id: &str,
+            _params: serde_json::Value,
+            _cancellation_token: CancellationToken,
+            _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+            _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
+            _credential: Option<crate::ResolvedCredential>,
+        ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+            Box::pin(async move {
+                tokio::task::yield_now().await;
+                AgentToolResult::text("mock result")
             })
         }
     }
@@ -1494,10 +1538,8 @@ mod tests {
 
     #[tokio::test]
     async fn steering_interrupt_preserves_worker_polled_messages() {
-        let fast_tool =
-            Arc::new(MockTool::new("fast_tool").with_delay(std::time::Duration::from_millis(10)));
-        let slow_tool =
-            Arc::new(MockTool::new("slow_tool").with_delay(std::time::Duration::from_secs(5)));
+        let fast_tool = Arc::new(MockTool::new("fast_tool"));
+        let slow_tool = Arc::new(YieldingTool { name: "slow_tool" });
         let config = test_loop_config_with_message_provider(
             vec![],
             vec![
