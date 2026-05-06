@@ -12,12 +12,14 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
+use backon::{ExponentialBuilder, Retryable};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::aggregator::{Aggregator, Average};
-use crate::judge::{JudgeError, JudgeRegistry, JudgeVerdict};
+use crate::judge::{JudgeError, JudgeRegistry, JudgeVerdict, RetryPolicy};
 use crate::prompt::{JudgePromptTemplate, PromptContext, PromptError};
 use crate::score::Score;
 use crate::types::{AttachmentError, EvalMetricResult, MaterializedAttachment};
@@ -493,7 +495,7 @@ pub async fn dispatch_judge(
     // config-level few-shot examples prepended to case-level ones, and the
     // `custom.*` namespace populated). Render verbatim.
     let rendered = template.render(context)?;
-    let verdict = config.judge_registry.client().judge(&rendered).await?;
+    let verdict = judge_with_retry(config, &rendered).await?;
 
     let mut details = DetailBuffer::new();
     details.push(Detail::PromptVersion {
@@ -520,6 +522,40 @@ pub async fn dispatch_judge(
         details,
         verdict,
     })
+}
+
+async fn judge_with_retry(
+    config: &JudgeEvaluatorConfig,
+    rendered_prompt: &str,
+) -> Result<JudgeVerdict, JudgeError> {
+    let policy = config.judge_registry.retry_policy();
+    let retry = retry_builder(policy);
+    let client = Arc::clone(config.judge_registry.client());
+
+    (|| {
+        let client = Arc::clone(&client);
+        async move { client.judge(rendered_prompt).await }
+    })
+    .retry(retry)
+    .when(is_retryable_judge_error)
+    .await
+}
+
+fn retry_builder(policy: &RetryPolicy) -> ExponentialBuilder {
+    let max_retries = policy.max_attempts.saturating_sub(1) as usize;
+    let min_delay = std::cmp::min(Duration::from_secs(1), policy.max_delay);
+    let mut builder = ExponentialBuilder::default()
+        .with_max_times(max_retries)
+        .with_min_delay(min_delay)
+        .with_max_delay(policy.max_delay);
+    if policy.jitter {
+        builder = builder.with_jitter();
+    }
+    builder
+}
+
+fn is_retryable_judge_error(error: &JudgeError) -> bool {
+    matches!(error, JudgeError::Transport(_))
 }
 
 /// Drive an async future to completion from the sync `Evaluator::evaluate`
@@ -702,6 +738,7 @@ mod tests {
     use crate::judge::{JudgeClient, JudgeRegistry};
     use crate::prompt::{MinijinjaTemplate, PromptContext, PromptFamily};
     use crate::types::{EvalCase, Invocation};
+    use std::collections::VecDeque;
     use std::sync::Arc;
     use std::sync::Mutex;
     use std::time::Duration;
@@ -724,6 +761,37 @@ mod tests {
                     reason: self.reason.clone(),
                     label: None,
                 })
+            })
+        }
+    }
+
+    struct ScriptedJudge {
+        outcomes: Mutex<VecDeque<Result<JudgeVerdict, JudgeError>>>,
+        prompts: Mutex<Vec<String>>,
+    }
+
+    impl ScriptedJudge {
+        fn new(outcomes: Vec<Result<JudgeVerdict, JudgeError>>) -> Self {
+            Self {
+                outcomes: Mutex::new(outcomes.into()),
+                prompts: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn prompt_count(&self) -> usize {
+            self.prompts.lock().unwrap().len()
+        }
+    }
+
+    impl JudgeClient for ScriptedJudge {
+        fn judge<'a>(&'a self, prompt: &'a str) -> crate::judge::JudgeFuture<'a> {
+            Box::pin(async move {
+                self.prompts.lock().unwrap().push(prompt.to_string());
+                self.outcomes
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .unwrap_or_else(|| Err(JudgeError::Other("script exhausted".to_string())))
             })
         }
     }
@@ -776,6 +844,19 @@ mod tests {
         (Arc::new(registry), judge)
     }
 
+    fn make_retry_registry(judge: Arc<ScriptedJudge>, max_attempts: u32) -> Arc<JudgeRegistry> {
+        Arc::new(
+            JudgeRegistry::builder(judge as Arc<dyn JudgeClient>, "mock-model")
+                .with_retry_policy(crate::judge::RetryPolicy::new(
+                    max_attempts,
+                    Duration::from_millis(1),
+                    false,
+                ))
+                .build()
+                .expect("registry builds"),
+        )
+    }
+
     fn make_template() -> Arc<dyn JudgePromptTemplate> {
         Arc::new(
             MinijinjaTemplate::new(
@@ -817,6 +898,62 @@ mod tests {
                 .any(|d| matches!(d, Detail::ScoreClamped { .. }))
         );
         assert!((outcome.score.value - 0.8).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn dispatch_retries_transport_errors_with_registry_policy() {
+        let judge = Arc::new(ScriptedJudge::new(vec![
+            Err(JudgeError::Transport("temporary 503".to_string())),
+            Err(JudgeError::Transport("temporary 429".to_string())),
+            Ok(JudgeVerdict {
+                score: 0.9,
+                pass: true,
+                reason: Some("recovered".to_string()),
+                label: None,
+            }),
+        ]));
+        let registry = make_retry_registry(Arc::clone(&judge), 3);
+        let config = JudgeEvaluatorConfig::default_with(registry);
+        let template = make_template();
+        let case = make_case();
+        let invocation = make_invocation();
+        let ctx = make_context(&case, &invocation);
+
+        let outcome = dispatch_judge(&config, template, &ctx)
+            .await
+            .expect("transport failures should retry and recover");
+
+        assert!((outcome.score.value - 0.9).abs() < f64::EPSILON);
+        assert_eq!(judge.prompt_count(), 3);
+    }
+
+    #[tokio::test]
+    async fn dispatch_does_not_retry_terminal_judge_errors() {
+        let judge = Arc::new(ScriptedJudge::new(vec![
+            Err(JudgeError::MalformedResponse("bad json".to_string())),
+            Ok(JudgeVerdict {
+                score: 1.0,
+                pass: true,
+                reason: None,
+                label: None,
+            }),
+        ]));
+        let registry = make_retry_registry(Arc::clone(&judge), 3);
+        let config = JudgeEvaluatorConfig::default_with(registry);
+        let template = make_template();
+        let case = make_case();
+        let invocation = make_invocation();
+        let ctx = make_context(&case, &invocation);
+
+        let err = dispatch_judge(&config, template, &ctx)
+            .await
+            .expect_err("malformed verdicts are terminal");
+
+        assert!(matches!(
+            err,
+            DispatchError::Judge(JudgeError::MalformedResponse(_))
+        ));
+        assert_eq!(judge.prompt_count(), 1);
     }
 
     #[tokio::test]
