@@ -426,6 +426,47 @@ mod tests {
         server_task.await.unwrap();
     }
 
+    #[tokio::test]
+    async fn prompt_text_replies_method_not_found_to_unknown_requests() {
+        let (mut client, mut server) = make_client_pair();
+        let server_sender = server.sender();
+        let (client_done_tx, client_done_rx) = oneshot::channel();
+
+        let server_task = tokio::spawn(async move {
+            let incoming = server.recv_incoming().await.unwrap();
+            let IncomingMessage::Request { id, method, .. } = incoming else {
+                panic!("expected prompt request");
+            };
+            assert_eq!(method, method::PROMPT);
+
+            let err = server_sender
+                .request::<_, serde_json::Value>("server.unknown", &serde_json::json!({}))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code, RpcError::METHOD_NOT_FOUND);
+            assert_eq!(err.message, "method not found: server.unknown");
+
+            server_sender
+                .respond_ok(
+                    id,
+                    PromptResult {
+                        turn_id: "5".into(),
+                    },
+                )
+                .unwrap();
+            let _ = client_done_rx.await;
+        });
+
+        let events = client
+            .prompt_text("run unknown server request")
+            .await
+            .unwrap();
+        let _ = client_done_tx.send(());
+
+        assert!(events.is_empty());
+        server_task.await.unwrap();
+    }
+
     #[cfg(not(unix))]
     #[tokio::test]
     async fn connect_reports_unix_transport_unavailable_on_non_unix_hosts() {
