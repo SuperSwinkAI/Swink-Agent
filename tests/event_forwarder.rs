@@ -1,7 +1,10 @@
 #![cfg(feature = "testkit")]
 mod common;
 
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use common::*;
 use swink_agent::{Agent, AgentEvent, AgentOptions};
@@ -109,4 +112,32 @@ async fn add_forwarder_at_runtime() {
         received.contains(&"AgentEnd".to_string()),
         "runtime forwarder should receive AgentEnd"
     );
+}
+
+#[tokio::test]
+async fn panicking_forwarder_is_removed_after_first_panic() {
+    let panicking_calls = Arc::new(AtomicUsize::new(0));
+    let healthy_calls = Arc::new(AtomicUsize::new(0));
+    let panicking_calls_clone = Arc::clone(&panicking_calls);
+    let healthy_calls_clone = Arc::clone(&healthy_calls);
+
+    let options = AgentOptions::new_simple(
+        "prompt",
+        default_model(),
+        Arc::new(MockStreamFn::new(vec![text_only_events("hi")])),
+    )
+    .with_event_forwarder(move |_event: AgentEvent| {
+        panicking_calls_clone.fetch_add(1, Ordering::SeqCst);
+        panic!("forwarder failed");
+    })
+    .with_event_forwarder(move |_event: AgentEvent| {
+        healthy_calls_clone.fetch_add(1, Ordering::SeqCst);
+    });
+    let mut agent = Agent::new(options);
+
+    agent.forward_event(&AgentEvent::TurnStart);
+    agent.forward_event(&AgentEvent::AgentStart);
+
+    assert_eq!(panicking_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(healthy_calls.load(Ordering::SeqCst), 2);
 }
