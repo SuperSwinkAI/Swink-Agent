@@ -47,6 +47,25 @@ impl Evaluator for SequenceEvaluator {
     }
 }
 
+struct CallCountingEvaluator {
+    calls: Arc<AtomicUsize>,
+}
+
+impl Evaluator for CallCountingEvaluator {
+    fn name(&self) -> &'static str {
+        "call_counter"
+    }
+
+    fn evaluate(&self, _c: &EvalCase, _i: &Invocation) -> Option<EvalMetricResult> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Some(EvalMetricResult {
+            evaluator_name: self.name().to_string(),
+            score: Score::pass(),
+            details: None,
+        })
+    }
+}
+
 struct CountingFactory {
     invocations: Arc<AtomicUsize>,
 }
@@ -162,6 +181,47 @@ async fn num_runs_reuses_single_invocation() {
     let _ = runner.run_set(&single_case_set(), &factory).await.unwrap();
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(runner.agent_invocation_count(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelled_single_run_dispatch_records_failure_metric_without_evaluating() {
+    let cancel = CancellationToken::new();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut registry = EvaluatorRegistry::new();
+    registry.register(CallCountingEvaluator {
+        calls: Arc::clone(&calls),
+    });
+
+    let result = EvalRunner::new(registry)
+        .with_cancellation(cancel.clone())
+        .run_set(
+            &single_case_set(),
+            &CancellingFactory {
+                runner_cancel: cancel,
+            },
+        )
+        .await
+        .unwrap();
+
+    let case_result = &result.case_results[0];
+    assert_eq!(case_result.verdict, swink_agent_eval::Verdict::Fail);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let cancelled_metric = case_result
+        .metric_results
+        .iter()
+        .find(|metric| metric.evaluator_name == "cancelled")
+        .expect("cancellation during single-run dispatch should record a metric");
+    assert_eq!(
+        cancelled_metric.score.verdict(),
+        swink_agent_eval::Verdict::Fail
+    );
+    assert!(
+        cancelled_metric
+            .details
+            .as_deref()
+            .is_some_and(|details| details.contains("before evaluator dispatch")),
+        "unexpected cancellation details: {cancelled_metric:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

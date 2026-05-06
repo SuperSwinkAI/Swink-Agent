@@ -559,6 +559,14 @@ fn dispatch_evaluators(
 ) -> Vec<EvalMetricResult> {
     debug_assert!(num_runs > 0);
     if num_runs == 1 {
+        if let Some(tok) = cancel
+            && tok.is_cancelled()
+        {
+            return vec![cancelled_metric_result(
+                "runner cancellation observed before evaluator dispatch",
+            )];
+        }
+
         return run_registry_once(
             registry,
             case,
