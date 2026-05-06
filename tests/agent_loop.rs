@@ -14,6 +14,7 @@ use common::{
 use futures::Stream;
 use futures::stream::StreamExt;
 use serde_json::json;
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
@@ -127,6 +128,65 @@ impl AgentTool for MockCancellationIgnoringTool {
         _credential: Option<swink_agent::ResolvedCredential>,
     ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
         Box::pin(async move { std::future::pending::<AgentToolResult>().await })
+    }
+}
+
+struct ConcurrentGateTool {
+    tool_name: &'static str,
+    started: Arc<Notify>,
+    peer_started: Arc<Notify>,
+}
+
+impl ConcurrentGateTool {
+    fn new(tool_name: &'static str, started: Arc<Notify>, peer_started: Arc<Notify>) -> Self {
+        Self {
+            tool_name,
+            started,
+            peer_started,
+        }
+    }
+}
+
+impl AgentTool for ConcurrentGateTool {
+    fn name(&self) -> &str {
+        self.tool_name
+    }
+
+    fn label(&self) -> &str {
+        self.tool_name
+    }
+
+    fn description(&self) -> &'static str {
+        "A tool that waits until a peer tool starts"
+    }
+
+    fn parameters_schema(&self) -> &serde_json::Value {
+        static SCHEMA: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+        SCHEMA.get_or_init(|| {
+            json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+            })
+        })
+    }
+
+    fn execute(
+        &self,
+        _tool_call_id: &str,
+        _params: serde_json::Value,
+        _cancellation_token: CancellationToken,
+        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+        _state: std::sync::Arc<std::sync::RwLock<swink_agent::SessionState>>,
+        _credential: Option<swink_agent::ResolvedCredential>,
+    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+        let started = Arc::clone(&self.started);
+        let peer_started = Arc::clone(&self.peer_started);
+        Box::pin(async move {
+            started.notify_one();
+            peer_started.notified().await;
+            AgentToolResult::text("mock result")
+        })
     }
 }
 
@@ -1036,29 +1096,43 @@ async fn concurrent_execution() {
         text_only_events("done"),
     ]));
 
-    let delay = Duration::from_millis(100);
-    let tool1 = Arc::new(MockTool::new("slow_tool").with_delay(delay));
-    let tool2 = Arc::new(MockTool::new("slow_tool2").with_delay(delay));
-    let tool3 = Arc::new(MockTool::new("slow_tool3").with_delay(delay));
+    let tool1_started = Arc::new(Notify::new());
+    let tool2_started = Arc::new(Notify::new());
+    let tool3_started = Arc::new(Notify::new());
+
+    let tool1 = Arc::new(ConcurrentGateTool::new(
+        "slow_tool",
+        Arc::clone(&tool1_started),
+        Arc::clone(&tool2_started),
+    ));
+    let tool2 = Arc::new(ConcurrentGateTool::new(
+        "slow_tool2",
+        Arc::clone(&tool2_started),
+        Arc::clone(&tool3_started),
+    ));
+    let tool3 = Arc::new(ConcurrentGateTool::new(
+        "slow_tool3",
+        Arc::clone(&tool3_started),
+        Arc::clone(&tool1_started),
+    ));
 
     let mut config = default_config(stream_fn);
     config.tools = vec![tool1, tool2, tool3];
 
-    let start = std::time::Instant::now();
-    let events = collect_events(agent_loop(
-        vec![],
-        "system".to_string(),
-        config,
-        CancellationToken::new(),
-    ))
-    .await;
-    let elapsed = start.elapsed();
+    let events = tokio::time::timeout(
+        Duration::from_secs(5),
+        collect_events(agent_loop(
+            vec![],
+            "system".to_string(),
+            config,
+            CancellationToken::new(),
+        )),
+    )
+    .await
+    .expect("tools should not deadlock under concurrent dispatch");
 
     assert!(has_event(&events, "AgentEnd"));
-    assert!(
-        elapsed < Duration::from_millis(500),
-        "tools should execute concurrently, took {elapsed:?}"
-    );
+    assert_eq!(count_events(&events, "ToolExecutionEnd"), 3);
 }
 
 // ─── 3.7: Steering interrupt ─────────────────────────────────────────────
