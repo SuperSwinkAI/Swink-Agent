@@ -216,13 +216,21 @@ async function blockedByFilter(rawUrl, filter, lookup = dns.lookup) {
   return null;
 }
 
-async function installNavigationFilter(page, filter) {
+function newContextOptions(req) {
+  const options = { serviceWorkers: 'block' };
+  if (req.viewport) {
+    options.viewport = { width: req.viewport.width, height: req.viewport.height };
+  }
+  return options;
+}
+
+async function installNavigationFilter(context, filter) {
   let blockedReason = null;
   if (!filter) {
     return () => blockedReason;
   }
 
-  await page.route('**/*', async (route) => {
+  await context.route('**/*', async (route) => {
     const reason = await blockedByFilter(route.request().url(), filter);
     if (reason) {
       blockedReason = reason;
@@ -238,13 +246,9 @@ async function installNavigationFilter(page, filter) {
 
 async function handleScreenshot(req) {
   const b = await ensureBrowser();
-  const context = await b.newContext(
-    req.viewport
-      ? { viewport: { width: req.viewport.width, height: req.viewport.height } }
-      : {}
-  );
+  const context = await b.newContext(newContextOptions(req));
+  const blockedReason = await installNavigationFilter(context, req.filter);
   const page = await context.newPage();
-  const blockedReason = await installNavigationFilter(page, req.filter);
   try {
     await page.goto(req.url, { waitUntil: 'load', timeout: 30000 });
     const buf = await page.screenshot({ type: 'png', fullPage: false });
@@ -326,9 +330,9 @@ function extractElementData(el, preset) {
 
 async function handleExtract(req) {
   const b = await ensureBrowser();
-  const context = await b.newContext();
+  const context = await b.newContext(newContextOptions(req));
+  const blockedReason = await installNavigationFilter(context, req.filter);
   const page = await context.newPage();
-  const blockedReason = await installNavigationFilter(page, req.filter);
   try {
     await page.goto(req.url, { waitUntil: 'load', timeout: 30000 });
 
@@ -456,5 +460,7 @@ module.exports = {
   buildExtractionPlan,
   collectAttributes,
   extractElementData,
+  installNavigationFilter,
   isBlockedPrivateHost,
+  newContextOptions,
 };

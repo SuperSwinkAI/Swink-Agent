@@ -574,6 +574,72 @@ if (!String(await bridge.blockedByFilter(
     }
 
     #[test]
+    fn bridge_script_uses_context_routing_with_service_workers_blocked() {
+        let bridge_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/playwright_bridge.js");
+        let node_script = format!(
+            r"
+const bridge = require({bridge_path});
+
+void (async () => {{
+const options = bridge.newContextOptions({{ viewport: {{ width: 640, height: 480 }} }});
+if (options.serviceWorkers !== 'block') {{
+  throw new Error('service workers should be blocked for routed browser contexts');
+}}
+if (options.viewport.width !== 640 || options.viewport.height !== 480) {{
+  throw new Error('viewport options were not preserved: ' + JSON.stringify(options));
+}}
+
+let pattern = null;
+let abortReason = null;
+const context = {{
+  async route(routePattern, handler) {{
+    pattern = routePattern;
+    await handler({{
+      request() {{
+        return {{ url() {{ return 'http://127.0.0.1/admin'; }} }};
+      }},
+      async abort(reason) {{ abortReason = reason; }},
+      async continue() {{ throw new Error('blocked private request should not continue'); }},
+    }});
+  }},
+}};
+
+const blockedReason = await bridge.installNavigationFilter(
+  context,
+  {{ allowlist: [], denylist: [], blockPrivateIps: true }}
+);
+if (pattern !== '**/*') {{
+  throw new Error('context route should cover all requests, got: ' + pattern);
+}}
+if (abortReason !== 'blockedbyclient') {{
+  throw new Error('blocked request should be aborted by client, got: ' + abortReason);
+}}
+if (!String(blockedReason()).includes('private/internal host')) {{
+  throw new Error('blocked reason was not retained: ' + blockedReason());
+}}
+}})().catch((error) => {{
+  console.error(error.stack || error);
+  process.exit(1);
+}});
+",
+            bridge_path = serde_json::to_string(&bridge_path.display().to_string())
+                .expect("path should serialize"),
+        );
+
+        let output = StdCommand::new(resolve_node_path(None))
+            .arg("-e")
+            .arg(node_script)
+            .output()
+            .expect("node should run bridge context routing assertions");
+
+        assert!(
+            output.status.success(),
+            "node assertions failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
     fn bridge_script_exports_data_only_extract_helpers() {
         assert!(!BRIDGE_SCRIPT.contains("eval("));
 
