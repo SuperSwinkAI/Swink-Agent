@@ -147,6 +147,8 @@ impl StreamingArtifactStore for FileArtifactStore {
     ) -> Result<Option<ArtifactByteStream>, ArtifactError> {
         self.resolve_artifact_dir(session_id, name)?;
         let meta = self.read_meta(session_id, name).await?;
+        self.reject_metadata_content_mismatch(session_id, name, &meta)
+            .await?;
 
         let target_record = if let Some(version) = version {
             if let Some(record) = meta
@@ -169,8 +171,6 @@ impl StreamingArtifactStore for FileArtifactStore {
             if let Some(entry) = meta.versions.last() {
                 entry
             } else {
-                self.reject_content_files_without_metadata(session_id, name, &meta)
-                    .await?;
                 return Ok(None);
             }
         };

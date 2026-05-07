@@ -432,6 +432,53 @@ impl FileArtifactStore {
             .await
     }
 
+    async fn reject_metadata_without_content_files(
+        &self,
+        session_id: &str,
+        name: &str,
+        meta: &MetaFile,
+    ) -> Result<(), ArtifactError> {
+        for record in &meta.versions {
+            let content_path = self.version_path(session_id, name, record.version);
+            match tokio::fs::metadata(&content_path).await {
+                Ok(metadata) if metadata.is_file() => {}
+                Ok(_) => {
+                    return Err(storage_err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!(
+                            "artifact '{name}' in session '{session_id}' metadata references non-file content for version {}: {}",
+                            record.version,
+                            content_path.display()
+                        ),
+                    )));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(missing_content_err(
+                        session_id,
+                        name,
+                        record.version,
+                        &content_path,
+                    ));
+                }
+                Err(error) => return Err(storage_err(error)),
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) async fn reject_metadata_content_mismatch(
+        &self,
+        session_id: &str,
+        name: &str,
+        meta: &MetaFile,
+    ) -> Result<(), ArtifactError> {
+        self.reject_content_files_without_metadata(session_id, name, meta)
+            .await?;
+        self.reject_metadata_without_content_files(session_id, name, meta)
+            .await
+    }
+
     pub(crate) async fn next_version(
         &self,
         session_id: &str,
@@ -458,6 +505,8 @@ impl FileArtifactStore {
         }
 
         self.reject_orphan_content_files(session_id, name, &known_versions)
+            .await?;
+        self.reject_metadata_without_content_files(session_id, name, meta)
             .await?;
 
         Ok(expected)
@@ -536,7 +585,7 @@ impl ArtifactStore for FileArtifactStore {
     ) -> Result<Option<(ArtifactData, ArtifactVersion)>, ArtifactError> {
         self.resolve_artifact_dir(session_id, name)?;
         let meta = self.read_meta(session_id, name).await?;
-        self.reject_content_files_without_metadata(session_id, name, &meta)
+        self.reject_metadata_content_mismatch(session_id, name, &meta)
             .await?;
         let Some(record) = meta.versions.last() else {
             tracing::debug!(session_id, name, "artifact not found");
@@ -593,6 +642,8 @@ impl ArtifactStore for FileArtifactStore {
     ) -> Result<Option<(ArtifactData, ArtifactVersion)>, ArtifactError> {
         self.resolve_artifact_dir(session_id, name)?;
         let meta = self.read_meta(session_id, name).await?;
+        self.reject_metadata_content_mismatch(session_id, name, &meta)
+            .await?;
         let Some(record) = meta.versions.iter().find(|r| r.version == version) else {
             let content_path = self.version_path(session_id, name, version);
             if tokio::fs::try_exists(&content_path)
@@ -643,7 +694,7 @@ impl ArtifactStore for FileArtifactStore {
         let mut metas = Vec::with_capacity(names.len());
         for name in &names {
             let meta = self.read_meta(session_id, name).await?;
-            self.reject_content_files_without_metadata(session_id, name, &meta)
+            self.reject_metadata_content_mismatch(session_id, name, &meta)
                 .await?;
             if let (Some(first), Some(last)) = (meta.versions.first(), meta.versions.last()) {
                 metas.push(ArtifactMeta {
