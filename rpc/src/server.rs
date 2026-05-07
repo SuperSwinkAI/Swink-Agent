@@ -387,6 +387,7 @@ fn peer_uid(_stream: &tokio::net::UnixStream) -> std::io::Result<u32> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::ErrorKind;
     use std::sync::Arc;
 
     use swink_agent::{AgentEvent, AgentOptions, AgentTool, StreamFn};
@@ -418,6 +419,42 @@ mod tests {
             stream_fn,
             swink_agent::testing::default_convert,
         )
+    }
+
+    #[test]
+    fn bind_rejects_existing_socket_path_without_force() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("swink.sock");
+        std::fs::write(&path, b"stale socket placeholder").unwrap();
+
+        let err = match AgentServer::bind(&path, || test_agent_options("unused")) {
+            Ok(_) => panic!("bind should reject existing socket path"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.kind(), ErrorKind::AlreadyExists);
+        assert!(
+            err.to_string().contains("remove it or pass --force"),
+            "unexpected bind error: {err}"
+        );
+        assert!(
+            path.exists(),
+            "bind without force must not remove the existing path"
+        );
+    }
+
+    #[test]
+    fn bind_force_removes_existing_stale_socket_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("swink.sock");
+        std::fs::write(&path, b"stale socket placeholder").unwrap();
+
+        let _server = AgentServer::bind_force(&path, || test_agent_options("unused"));
+
+        assert!(
+            !path.exists(),
+            "bind_force should remove a stale socket path before serving"
+        );
     }
 
     async fn initialize(peer: &mut JsonRpcPeer) {
