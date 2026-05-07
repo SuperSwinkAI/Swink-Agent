@@ -541,6 +541,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_session_rejects_invalid_prompt_params_without_ending_session() {
+        let (mut client, mut server) = make_peer_pair();
+
+        let server_task = tokio::spawn(async move {
+            run_session(&mut server, &|| test_agent_options("valid follow-up"))
+                .await
+                .unwrap();
+        });
+
+        initialize(&mut client).await;
+
+        let sender = client.sender();
+        let err = sender
+            .request::<_, PromptResult>(
+                method::PROMPT,
+                &serde_json::json!({
+                    "session_id": "missing-text"
+                }),
+            )
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.code, crate::jsonrpc::RpcError::INVALID_REQUEST);
+        assert!(
+            err.message.contains("missing or invalid prompt params"),
+            "unexpected prompt error: {}",
+            err.message
+        );
+
+        let params = PromptParams {
+            text: "recover after invalid params".into(),
+            session_id: None,
+        };
+        let prompt = sender.request::<_, PromptResult>(method::PROMPT, &params);
+        let mut prompt = std::pin::pin!(prompt);
+        let mut events = Vec::new();
+        let result = loop {
+            tokio::select! {
+                result = &mut prompt => {
+                    let result = result.unwrap();
+                    while let Some(incoming) = client.try_recv_incoming() {
+                        collect_agent_event(incoming, &mut events);
+                    }
+                    break result;
+                }
+                incoming = client.recv_incoming() => {
+                    let incoming = incoming.expect("server should stay connected after rejecting invalid prompt");
+                    collect_agent_event(incoming, &mut events);
+                }
+            }
+        };
+
+        assert!(!result.turn_id.is_empty());
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                AgentEvent::MessageEnd { message } if message
+                    .content
+                    .iter()
+                    .any(|block| matches!(block, swink_agent::ContentBlock::Text { text } if text == "valid follow-up"))
+            )),
+            "server should continue serving valid prompts after an invalid request"
+        );
+
+        client
+            .sender()
+            .notify(method::SHUTDOWN, &serde_json::Value::Null)
+            .await
+            .unwrap();
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn run_session_round_trips_tool_approval_during_prompt() {
         let (mut client, mut server) = make_peer_pair();
         let stream_fn: Arc<dyn StreamFn> = Arc::new(swink_agent::testing::MockStreamFn::new(vec![
