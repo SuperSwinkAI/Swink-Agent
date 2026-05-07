@@ -147,7 +147,7 @@ fn is_fallback_eligible_error(msg: &AssistantMessage) -> bool {
 }
 
 /// Run the retry loop for a single model/stream-fn pair.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn stream_with_retry_single(
     model: &ModelSpec,
     stream_fn: &Arc<dyn StreamFn>,
@@ -172,6 +172,7 @@ async fn stream_with_retry_single(
     let _llm_guard = llm_span.enter();
 
     let mut attempt: u32 = 0;
+    let mut attempt_llm_messages = llm_messages.to_vec();
 
     loop {
         attempt += 1;
@@ -185,7 +186,7 @@ async fn stream_with_retry_single(
         // Build the context with LLM messages for this call
         let call_context = AgentContext {
             system_prompt: system_prompt.to_string(),
-            messages: llm_messages
+            messages: attempt_llm_messages
                 .iter()
                 .map(|m| AgentMessage::Llm(m.clone()))
                 .collect(),
@@ -242,7 +243,17 @@ async fn stream_with_retry_single(
             );
             match retry_result {
                 StreamErrorAction::ContextOverflow => return StreamResult::ContextOverflow,
-                StreamErrorAction::Retry(delay) => {
+                StreamErrorAction::Retry {
+                    delay,
+                    cache_miss_prior_prefix_len,
+                } => {
+                    if let Some(prior_prefix_len) = cache_miss_prior_prefix_len {
+                        prepare_cache_miss_retry(
+                            config,
+                            &mut attempt_llm_messages,
+                            prior_prefix_len,
+                        );
+                    }
                     tokio::time::sleep(delay).await;
                     continue;
                 }
@@ -283,7 +294,10 @@ async fn stream_with_retry_single(
 #[allow(clippy::large_enum_variant)]
 enum StreamErrorAction {
     ContextOverflow,
-    Retry(std::time::Duration),
+    Retry {
+        delay: std::time::Duration,
+        cache_miss_prior_prefix_len: Option<usize>,
+    },
     FatalError {
         result: StreamResult,
         message: AssistantMessage,
@@ -442,13 +456,15 @@ fn handle_stream_error(
     let mut retry_strategy_consulted = false;
     if matches!(harness_error, AgentError::CacheMiss) {
         warn!("provider cache miss, resetting cache state for retry");
-        {
+        let prior_prefix_len = {
             let mut cache_state = config
                 .cache_state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let prior_prefix_len = cache_state.cached_prefix_len;
             cache_state.reset();
-        }
+            prior_prefix_len
+        };
         retry_strategy_consulted = true;
         if config.retry_strategy.should_retry(&harness_error, attempt) {
             let delay = config.retry_strategy.delay(attempt);
@@ -458,7 +474,10 @@ fn handle_stream_error(
                 error = %harness_error,
                 "retrying after cache miss"
             );
-            return StreamErrorAction::Retry(delay);
+            return StreamErrorAction::Retry {
+                delay,
+                cache_miss_prior_prefix_len: Some(prior_prefix_len),
+            };
         }
     }
 
@@ -476,7 +495,10 @@ fn handle_stream_error(
     if !retry_strategy_consulted && config.retry_strategy.should_retry(&harness_error, attempt) {
         let delay = config.retry_strategy.delay(attempt);
         warn!(attempt, ?delay, error = %harness_error, "retrying after transient error");
-        return StreamErrorAction::Retry(delay);
+        return StreamErrorAction::Retry {
+            delay,
+            cache_miss_prior_prefix_len: None,
+        };
     }
 
     // Non-retryable error
@@ -485,6 +507,58 @@ fn handle_stream_error(
     StreamErrorAction::FatalError {
         result: StreamResult::Message(error_msg.clone()),
         message: error_msg,
+    }
+}
+
+fn prepare_cache_miss_retry(
+    config: &Arc<AgentLoopConfig>,
+    messages: &mut [LlmMessage],
+    prior_prefix_len: usize,
+) {
+    let Some(cache_config) = config.cache_config.as_ref() else {
+        return;
+    };
+
+    let write_hint = crate::context_cache::CacheHint::Write {
+        ttl: cache_config.ttl,
+    };
+    let mut saw_cached_message = false;
+    for message in messages {
+        if llm_cache_hint(message).is_some() {
+            saw_cached_message = true;
+            set_llm_cache_hint(message, write_hint.clone());
+        }
+    }
+
+    if !saw_cached_message && prior_prefix_len == 0 {
+        return;
+    }
+
+    let mut cache_state = config
+        .cache_state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let hint = cache_state.advance_turn(cache_config);
+    debug_assert!(matches!(
+        hint,
+        crate::context_cache::CacheHint::Write { .. }
+    ));
+    cache_state.cached_prefix_len = prior_prefix_len;
+}
+
+fn llm_cache_hint(message: &LlmMessage) -> Option<&crate::context_cache::CacheHint> {
+    match message {
+        LlmMessage::User(message) => message.cache_hint.as_ref(),
+        LlmMessage::Assistant(message) => message.cache_hint.as_ref(),
+        LlmMessage::ToolResult(message) => message.cache_hint.as_ref(),
+    }
+}
+
+fn set_llm_cache_hint(message: &mut LlmMessage, hint: crate::context_cache::CacheHint) {
+    match message {
+        LlmMessage::User(message) => message.cache_hint = Some(hint),
+        LlmMessage::Assistant(message) => message.cache_hint = Some(hint),
+        LlmMessage::ToolResult(message) => message.cache_hint = Some(hint),
     }
 }
 
