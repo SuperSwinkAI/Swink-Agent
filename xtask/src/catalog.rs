@@ -104,6 +104,23 @@ fn resolve_endpoint(provider: &ProviderCatalog) -> ProviderEndpoint {
 
 #[cfg(test)]
 mod tests {
+    use swink_agent::{AuthMode, ProviderCatalog, ProviderKind};
+
+    fn provider(key: &str) -> ProviderCatalog {
+        ProviderCatalog {
+            key: key.to_owned(),
+            display_name: key.to_owned(),
+            kind: ProviderKind::Remote,
+            auth_mode: Some(AuthMode::Bearer),
+            credential_env_var: None,
+            base_url_env_var: None,
+            default_base_url: Some(format!("https://api.{key}.example")),
+            requires_base_url: false,
+            region_env_var: None,
+            presets: Vec::new(),
+        }
+    }
+
     #[test]
     fn unknown_provider_filter_reports_valid_keys() {
         let result = super::build_verify_tasks(Some("does-not-exist"));
@@ -135,5 +152,62 @@ mod tests {
             "expected anthropic provider to produce verification tasks"
         );
         assert!(tasks.iter().all(|task| task.provider_key == "anthropic"));
+    }
+
+    #[test]
+    fn local_provider_endpoint_is_skipped_before_credentials() {
+        let mut provider = provider("local");
+        provider.kind = ProviderKind::Local;
+
+        let endpoint = super::resolve_endpoint(&provider);
+
+        assert!(matches!(
+            endpoint,
+            super::ProviderEndpoint::Skipped {
+                reason: "local provider"
+            }
+        ));
+    }
+
+    #[test]
+    fn requires_base_url_endpoint_is_skipped_before_credentials() {
+        let mut provider = provider("custom");
+        provider.requires_base_url = true;
+
+        let endpoint = super::resolve_endpoint(&provider);
+
+        assert!(matches!(
+            endpoint,
+            super::ProviderEndpoint::Skipped {
+                reason: "requires_base_url"
+            }
+        ));
+    }
+
+    #[test]
+    fn aws_sigv4_endpoint_is_skipped_before_credentials() {
+        let mut provider = provider("bedrock");
+        provider.auth_mode = Some(AuthMode::AwsSigv4);
+
+        let endpoint = super::resolve_endpoint(&provider);
+
+        assert!(matches!(
+            endpoint,
+            super::ProviderEndpoint::Skipped {
+                reason: "aws_sigv4 auth"
+            }
+        ));
+    }
+
+    #[test]
+    fn provider_without_credential_env_var_is_skipped() {
+        let endpoint = super::resolve_endpoint(&provider("openai"));
+
+        assert!(matches!(
+            endpoint,
+            super::ProviderEndpoint::Skipped {
+                reason: "no credential_env_var"
+            }
+        ));
     }
 }
