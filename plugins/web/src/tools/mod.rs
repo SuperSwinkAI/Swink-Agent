@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::domain::DomainFilter;
+use crate::playwright::PlaywrightError;
 use crate::policy::ContentSanitizerPolicy;
 
 pub use extract::ExtractTool;
@@ -75,6 +76,15 @@ fn validate_url_against_filter(
     Ok(())
 }
 
+fn reset_bridge_after_ambiguous_playwright_error<T>(
+    bridge: &mut Option<T>,
+    error: &PlaywrightError,
+) {
+    if matches!(error, PlaywrightError::Timeout(_)) {
+        *bridge = None;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::future::pending;
@@ -87,10 +97,11 @@ mod tests {
     use url::Url;
 
     use crate::domain::DomainFilter;
+    use crate::playwright::PlaywrightError;
 
     use super::{
-        OperationOutcome, await_with_cancellation, sanitize_web_tool_text,
-        validate_url_against_filter,
+        OperationOutcome, await_with_cancellation, reset_bridge_after_ambiguous_playwright_error,
+        sanitize_web_tool_text, validate_url_against_filter,
     };
 
     #[tokio::test]
@@ -155,5 +166,29 @@ mod tests {
 
         assert!(error.contains("Redirect URL blocked by domain filter"));
         assert!(error.contains("evil.com"));
+    }
+
+    #[test]
+    fn playwright_internal_timeout_resets_cached_bridge() {
+        let mut bridge = Some(());
+
+        reset_bridge_after_ambiguous_playwright_error(
+            &mut bridge,
+            &PlaywrightError::Timeout(Duration::from_millis(10)),
+        );
+
+        assert!(bridge.is_none());
+    }
+
+    #[test]
+    fn ordinary_playwright_errors_keep_cached_bridge() {
+        let mut bridge = Some(());
+
+        reset_bridge_after_ambiguous_playwright_error(
+            &mut bridge,
+            &PlaywrightError::BridgeError("navigation failed".to_owned()),
+        );
+
+        assert!(bridge.is_some());
     }
 }
