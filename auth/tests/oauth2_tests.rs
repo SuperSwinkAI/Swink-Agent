@@ -75,6 +75,47 @@ async fn expired_oauth2_triggers_refresh() {
     }
 }
 
+#[tokio::test]
+async fn expired_oauth2_refresh_preserves_existing_refresh_token_when_not_rotated() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "new-access-token",
+            "expires_in": 3600,
+            "token_type": "Bearer"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let token_url = format!("{}/token", mock_server.uri());
+    let store = store(
+        InMemoryCredentialStore::empty().with_credential("oauth-key", expired_oauth2(&token_url)),
+    );
+    let resolver = DefaultCredentialResolver::new(Arc::clone(&store));
+
+    let result = resolver.resolve("oauth-key").await.unwrap();
+    assert!(matches!(
+        result,
+        ResolvedCredential::OAuth2AccessToken(token) if token == "new-access-token"
+    ));
+
+    let updated = store.get("oauth-key").await.unwrap().unwrap();
+    match updated {
+        Credential::OAuth2 {
+            access_token,
+            refresh_token,
+            ..
+        } => {
+            assert_eq!(access_token, "new-access-token");
+            assert_eq!(refresh_token.as_deref(), Some("my-refresh-token"));
+        }
+        other => panic!("expected OAuth2, got {other:?}"),
+    }
+}
+
 // T047: Refresh fails with HTTP error
 #[tokio::test]
 async fn refresh_failure_returns_error() {
