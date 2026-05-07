@@ -94,13 +94,17 @@ fn github_summary_markdown(rows: &[VerifyRow]) -> std::io::Result<String> {
     md.push_str("| Provider | Preset | Model ID | Result |\n");
     md.push_str("|---|---|---|---|\n");
     for row in rows {
-        let key = &row.task.provider_key;
-        let preset = &row.task.preset_display;
-        let model = &row.task.model_id;
-        let result = result_label(&row.result);
+        let key = escape_table_cell(&row.task.provider_key);
+        let preset = escape_table_cell(&row.task.preset_display);
+        let model = escape_table_cell(&row.task.model_id);
+        let result = escape_table_cell(&result_label(&row.result));
         writeln!(md, "| {key} | {preset} | {model} | {result} |").map_err(std::io::Error::other)?;
     }
     Ok(md)
+}
+
+fn escape_table_cell(value: &str) -> String {
+    value.replace('|', "\\|").replace('\n', "<br>")
 }
 
 struct ResultCounts {
@@ -213,5 +217,23 @@ mod tests {
             markdown.contains("| google | Gemini | google-model | SKIPPED (missing credential) |")
         );
         assert!(markdown.contains("| proxy | Proxy | proxy-model | ERROR (timeout) |"));
+    }
+
+    #[test]
+    fn github_summary_escapes_table_cell_boundaries() {
+        let mut row = row(
+            "custom|provider",
+            "Preset\nName",
+            PresetResult::NetworkError {
+                error: "bad | response".to_owned(),
+            },
+        );
+        row.task.model_id = "model|id".to_owned();
+
+        let markdown = super::github_summary_markdown(&[row]).expect("summary builds");
+
+        assert!(markdown.contains(
+            "| custom\\|provider | Preset<br>Name | model\\|id | ERROR (bad \\| response) |"
+        ));
     }
 }
