@@ -175,6 +175,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn file_checkpoint_store_list_skips_unrelated_and_invalid_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileCheckpointStore::new(dir.path().to_path_buf()).unwrap();
+
+        let mut checkpoint = Checkpoint::new("valid", "prompt", "provider", "model", &[]);
+        checkpoint.created_at = 10;
+        store.save_checkpoint(checkpoint).await.unwrap();
+
+        std::fs::write(dir.path().join("scratch.tmp"), "not a checkpoint").unwrap();
+        std::fs::write(dir.path().join("broken.json"), "{not valid json").unwrap();
+        std::fs::write(
+            dir.path().join("wrong-shape.json"),
+            serde_json::json!({"id": "wrong-shape"}).to_string(),
+        )
+        .unwrap();
+
+        let ids = store.list_checkpoints().await.unwrap();
+
+        assert_eq!(ids, vec!["valid".to_string()]);
+    }
+
+    #[tokio::test]
     async fn file_checkpoint_store_rejects_unsafe_checkpoint_ids() {
         let dir = tempfile::tempdir().unwrap();
         let store = FileCheckpointStore::new(dir.path().to_path_buf()).unwrap();
