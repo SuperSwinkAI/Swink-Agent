@@ -310,6 +310,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fetch_anthropic_models_sends_required_headers_and_extracts_ids() {
+        let server = TestHttpServer::new(vec![r#"{"data":[{"id":"claude-a"},{"id":"claude-b"}]}"#]);
+
+        let url = format!("{}/v1/models", server.base_url());
+        let ids = super::fetch_anthropic_models(&reqwest::Client::new(), &url, "test-key")
+            .await
+            .expect("anthropic model list should parse");
+        let requests = server.join();
+
+        assert_eq!(
+            ids,
+            HashSet::from(["claude-a".to_owned(), "claude-b".to_owned()])
+        );
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("GET /v1/models HTTP/1.1"));
+        assert!(requests[0].contains("x-api-key: test-key"));
+        assert!(requests[0].contains("anthropic-version: 2023-06-01"));
+    }
+
+    #[tokio::test]
+    async fn fetch_openai_models_sends_bearer_header_and_extracts_ids() {
+        let server = TestHttpServer::new(vec![r#"{"data":[{"id":"gpt-a"},{"id":"gpt-b"}]}"#]);
+
+        let url = format!("{}/v1/models", server.base_url());
+        let ids = super::fetch_openai_models(&reqwest::Client::new(), &url, "test-key")
+            .await
+            .expect("openai-compatible model list should parse");
+        let requests = server.join();
+
+        assert_eq!(ids, HashSet::from(["gpt-a".to_owned(), "gpt-b".to_owned()]));
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("GET /v1/models HTTP/1.1"));
+        assert!(requests[0].contains("authorization: Bearer test-key"));
+    }
+
+    #[tokio::test]
     async fn fetch_google_models_paginates_and_normalizes_model_names() {
         let server = TestHttpServer::new(vec![
             r#"{"models":[{"name":"models/gemini-a"},{"name":"raw-model"}],"nextPageToken":"next-page"}"#,
