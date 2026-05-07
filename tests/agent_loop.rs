@@ -82,59 +82,18 @@ impl AgentTool for MockUpdatingTool {
     }
 }
 
-struct MockCancellationIgnoringTool {
-    tool_name: String,
-}
-
-impl MockCancellationIgnoringTool {
-    fn new(name: &str) -> Self {
-        Self {
-            tool_name: name.to_string(),
-        }
-    }
-}
-
-impl AgentTool for MockCancellationIgnoringTool {
-    fn name(&self) -> &str {
-        &self.tool_name
-    }
-
-    fn label(&self) -> &str {
-        &self.tool_name
-    }
-
-    fn description(&self) -> &'static str {
-        "A tool that ignores cancellation and never completes unless aborted"
-    }
-
-    fn parameters_schema(&self) -> &serde_json::Value {
-        static SCHEMA: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
-        SCHEMA.get_or_init(|| {
-            json!({
-                "type": "object",
-                "properties": {},
-                "additionalProperties": true
-            })
-        })
-    }
-
-    fn execute(
-        &self,
-        _tool_call_id: &str,
-        _params: serde_json::Value,
-        _cancellation_token: CancellationToken,
-        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
-        _state: std::sync::Arc<std::sync::RwLock<swink_agent::SessionState>>,
-        _credential: Option<swink_agent::ResolvedCredential>,
-    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
-        Box::pin(async move { std::future::pending::<AgentToolResult>().await })
-    }
+#[derive(Clone, Copy)]
+enum GateToolOutcome {
+    Complete,
+    CompleteOnCancel,
+    Pending,
 }
 
 struct ConcurrentGateTool {
     tool_name: &'static str,
     started: Arc<Notify>,
     peer_started: Arc<Notify>,
+    outcome: GateToolOutcome,
 }
 
 impl ConcurrentGateTool {
@@ -143,7 +102,13 @@ impl ConcurrentGateTool {
             tool_name,
             started,
             peer_started,
+            outcome: GateToolOutcome::Complete,
         }
+    }
+
+    const fn with_outcome(mut self, outcome: GateToolOutcome) -> Self {
+        self.outcome = outcome;
+        self
     }
 }
 
@@ -175,17 +140,25 @@ impl AgentTool for ConcurrentGateTool {
         &self,
         _tool_call_id: &str,
         _params: serde_json::Value,
-        _cancellation_token: CancellationToken,
+        cancellation_token: CancellationToken,
         _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
         _state: std::sync::Arc<std::sync::RwLock<swink_agent::SessionState>>,
         _credential: Option<swink_agent::ResolvedCredential>,
     ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
         let started = Arc::clone(&self.started);
         let peer_started = Arc::clone(&self.peer_started);
+        let outcome = self.outcome;
         Box::pin(async move {
             started.notify_one();
             peer_started.notified().await;
-            AgentToolResult::text("mock result")
+            match outcome {
+                GateToolOutcome::Complete => AgentToolResult::text("mock result"),
+                GateToolOutcome::CompleteOnCancel => {
+                    cancellation_token.cancelled().await;
+                    AgentToolResult::text("cancelled")
+                }
+                GateToolOutcome::Pending => std::future::pending::<AgentToolResult>().await,
+            }
         })
     }
 }
@@ -1144,8 +1117,21 @@ async fn steering_interrupt() {
         text_only_events("after steering"),
     ]));
 
-    let fast_tool = Arc::new(MockTool::new("fast_tool").with_delay(Duration::from_millis(10)));
-    let slow_tool = Arc::new(MockTool::new("slow_tool").with_delay(Duration::from_millis(500)));
+    let fast_started = Arc::new(Notify::new());
+    let slow_started = Arc::new(Notify::new());
+    let fast_tool = Arc::new(ConcurrentGateTool::new(
+        "fast_tool",
+        Arc::clone(&fast_started),
+        Arc::clone(&slow_started),
+    ));
+    let slow_tool = Arc::new(
+        ConcurrentGateTool::new(
+            "slow_tool",
+            Arc::clone(&slow_started),
+            Arc::clone(&fast_started),
+        )
+        .with_outcome(GateToolOutcome::CompleteOnCancel),
+    );
 
     let steering_call_count = Arc::new(AtomicU32::new(0));
     let steering_count_clone = Arc::clone(&steering_call_count);
@@ -1215,8 +1201,21 @@ async fn steering_interrupt_aborts_cancellation_unaware_tools() {
         text_only_events("after steering"),
     ]));
 
-    let fast_tool = Arc::new(MockTool::new("fast_tool").with_delay(Duration::from_millis(10)));
-    let stuck_tool = Arc::new(MockCancellationIgnoringTool::new("stuck_tool"));
+    let fast_started = Arc::new(Notify::new());
+    let stuck_started = Arc::new(Notify::new());
+    let fast_tool = Arc::new(ConcurrentGateTool::new(
+        "fast_tool",
+        Arc::clone(&fast_started),
+        Arc::clone(&stuck_started),
+    ));
+    let stuck_tool = Arc::new(
+        ConcurrentGateTool::new(
+            "stuck_tool",
+            Arc::clone(&stuck_started),
+            Arc::clone(&fast_started),
+        )
+        .with_outcome(GateToolOutcome::Pending),
+    );
 
     let steering_call_count = Arc::new(AtomicU32::new(0));
     let steering_count_clone = Arc::clone(&steering_call_count);
