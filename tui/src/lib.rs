@@ -50,7 +50,7 @@ use std::pin::Pin;
 use tokio::sync::{mpsc, oneshot};
 use tracing::warn;
 
-use swink_agent::{Agent, ToolApproval, ToolApprovalRequest, selective_approve};
+use swink_agent::{Agent, ToolApproval, ToolApprovalRequest};
 
 pub use app::{AgentStatus, App, DisplayMessage, MessageRole, OperatingMode};
 pub use config::TuiConfig;
@@ -108,12 +108,12 @@ pub fn resolve_system_prompt(explicit: Option<String>, config: &TuiConfig) -> St
 
 /// Build the standard TUI approval callback.
 ///
-/// Returns an approval closure (wrapped with [`selective_approve`]) that forwards
-/// approval requests through the TUI's approval channel. Use this when constructing
-/// an [`Agent`] that will be driven by the TUI event loop.
+/// Returns an approval closure that forwards approval requests through the TUI's
+/// approval channel. Use this when constructing an [`Agent`] that will be driven by
+/// the TUI event loop.
 pub fn tui_approval_callback(approval_tx: &ApprovalSender) -> ApprovalCallbackFn {
     let tx = approval_tx.clone();
-    selective_approve(move |request: ToolApprovalRequest| {
+    Box::new(move |request: ToolApprovalRequest| {
         let tx = tx.clone();
         Box::pin(async move {
             let (resp_tx, resp_rx) = oneshot::channel();
@@ -194,6 +194,16 @@ mod tests {
             tool_name: "write_file".into(),
             arguments: serde_json::json!({"path": "secret.txt"}),
             requires_approval: true,
+            context: None,
+        }
+    }
+
+    fn read_only_approval_request() -> ToolApprovalRequest {
+        ToolApprovalRequest {
+            tool_call_id: "call_read".into(),
+            tool_name: "read_file".into(),
+            arguments: serde_json::json!({"path": "notes.md"}),
+            requires_approval: false,
             context: None,
         }
     }
@@ -286,5 +296,27 @@ mod tests {
         drop(responder);
 
         assert_eq!(approval_task.await.unwrap(), ToolApproval::Rejected);
+    }
+
+    #[tokio::test]
+    async fn approval_callback_forwards_read_only_requests_to_tui() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let callback = tui_approval_callback(&tx);
+
+        let approval_task =
+            tokio::spawn(async move { callback(read_only_approval_request()).await });
+
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+
+        let (request, responder) = rx
+            .try_recv()
+            .expect("read-only approval request should be forwarded");
+        assert_eq!(request.tool_name, "read_file");
+        assert!(!request.requires_approval);
+
+        responder.send(ToolApproval::Approved).unwrap();
+        assert_eq!(approval_task.await.unwrap(), ToolApproval::Approved);
     }
 }
