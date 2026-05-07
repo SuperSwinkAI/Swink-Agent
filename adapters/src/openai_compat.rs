@@ -18,7 +18,7 @@ use swink_agent::AgentTool;
 use swink_agent::ContentBlock;
 use swink_agent::{
     AssistantMessage as HarnessAssistantMessage, AssistantMessageEvent, Cost, StopReason,
-    StreamErrorKind, ToolResultMessage, Usage, UserMessage,
+    ToolResultMessage, Usage, UserMessage,
 };
 
 use crate::convert::{MessageConverter, extract_tool_schemas};
@@ -463,7 +463,7 @@ pub fn process_oai_chunk(
                     stop_reason: StopReason::Error,
                     error_message: "Mistral reported finish_reason=error".to_string(),
                     usage: state.usage.clone(),
-                    error_kind: Some(StreamErrorKind::Network),
+                    error_kind: None,
                 });
                 return;
             }
@@ -1061,7 +1061,7 @@ mod tests {
         );
         match &events[error_index] {
             AssistantMessageEvent::Error { error_kind, .. } => {
-                assert_eq!(*error_kind, Some(StreamErrorKind::Network));
+                assert_eq!(*error_kind, Some(swink_agent::StreamErrorKind::Network));
             }
             event => panic!("expected network error, got {event:?}"),
         }

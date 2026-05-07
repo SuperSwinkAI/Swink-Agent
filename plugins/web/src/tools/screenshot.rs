@@ -11,7 +11,10 @@ use swink_agent::{AgentTool, AgentToolResult, ContentBlock, ImageSource, ToolFut
 
 use crate::domain::DomainFilter;
 use crate::playwright::{PlaywrightBridge, PlaywrightError, ScreenshotOutput, Viewport};
-use crate::tools::{OperationOutcome, await_with_cancellation, validate_url_against_filter};
+use crate::tools::{
+    OperationOutcome, await_with_cancellation, reset_bridge_after_ambiguous_playwright_error,
+    validate_url_against_filter,
+};
 
 /// Tool for taking screenshots of web pages.
 ///
@@ -167,6 +170,7 @@ impl AgentTool for ScreenshotTool {
                     )
                 }
                 OperationOutcome::Completed(Err(e)) => {
+                    reset_bridge_after_ambiguous_playwright_error(&mut guard, &e);
                     AgentToolResult::error(format!("Screenshot failed: {e}"))
                 }
                 OperationOutcome::Cancelled => {

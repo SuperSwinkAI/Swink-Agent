@@ -827,10 +827,10 @@ fn process_sse_event(
                     AssistantMessageEvent::error_auth(&msg)
                 }
                 Some("rate_limit_error") => AssistantMessageEvent::error_throttled(&msg),
-                Some("overloaded_error" | "api_error") => {
+                Some("overloaded_error" | "api_error" | "server_error") => {
                     AssistantMessageEvent::error_network(&msg)
                 }
-                _ => AssistantMessageEvent::error_network(&msg),
+                _ => AssistantMessageEvent::error(&msg),
             };
             events.push(event);
         }

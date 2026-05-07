@@ -12,7 +12,8 @@ use crate::domain::DomainFilter;
 use crate::playwright::{ExtractOutput, ExtractionPreset, PlaywrightBridge, PlaywrightError};
 use crate::policy::ContentSanitizerPolicy;
 use crate::tools::{
-    OperationOutcome, await_with_cancellation, sanitize_web_tool_text, validate_url_against_filter,
+    OperationOutcome, await_with_cancellation, reset_bridge_after_ambiguous_playwright_error,
+    sanitize_web_tool_text, validate_url_against_filter,
 };
 
 struct ExtractRequest {
@@ -192,6 +193,7 @@ impl AgentTool for ExtractTool {
                     )
                 }
                 OperationOutcome::Completed(Err(e)) => {
+                    reset_bridge_after_ambiguous_playwright_error(&mut guard, &e);
                     AgentToolResult::error(format!("Extraction failed: {e}"))
                 }
                 OperationOutcome::Cancelled => {
