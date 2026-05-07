@@ -403,6 +403,31 @@ pub fn accumulate_message(
             })
     }
 
+    fn validate_terminal_open_blocks(
+        event_name: &str,
+        content: Option<&[ContentBlock]>,
+        open_blocks: &[bool],
+        tolerate_truncated_tool_args: bool,
+    ) -> Result<(), String> {
+        if let Some(idx) = open_blocks.iter().position(|open| *open) {
+            let content = content.ok_or_else(|| format!("{event_name} before Start"))?;
+            if tolerate_truncated_tool_args && all_open_blocks_are_tool_calls(content, open_blocks)
+            {
+                // Max-tokens truncation: leave open tool-call blocks with
+                // `partial_json` set so the loop can recover on the next turn.
+                tracing::debug!(
+                    "{event_name}(Length) with unterminated content block at index {idx} - tolerating for max-tokens recovery"
+                );
+            } else {
+                return Err(format!(
+                    "{event_name} received with unterminated content block at index {idx}"
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
     let mut content: Option<Vec<ContentBlock>> = None;
     // Parallel to `content`: tracks whether each block is still open (awaiting
     // its matching `*End` event). Finalization (on `Done`) fails if any block
@@ -425,9 +450,6 @@ pub fn accumulate_message(
         matches!(
             e,
             AssistantMessageEvent::Done {
-                stop_reason: StopReason::Length,
-                ..
-            } | AssistantMessageEvent::Error {
                 stop_reason: StopReason::Length,
                 ..
             }
@@ -676,24 +698,12 @@ pub fn accumulate_message(
                 usage: u,
                 cost: c,
             } => {
-                if let Some(idx) = open_blocks.iter().position(|open| *open) {
-                    let content = content.as_ref().ok_or("Done before Start")?;
-                    if tolerate_truncated_tool_args
-                        && all_open_blocks_are_tool_calls(content, &open_blocks)
-                    {
-                        // Max-tokens truncation: leave open tool-call blocks
-                        // with `partial_json` set so the loop's
-                        // `recover_incomplete_tool_calls` path can convert
-                        // them into error tool results on the next turn.
-                        tracing::debug!(
-                            "Done(Length) with unterminated content block at index {idx} — tolerating for max-tokens recovery"
-                        );
-                    } else {
-                        return Err(format!(
-                            "Done received with unterminated content block at index {idx}"
-                        ));
-                    }
-                }
+                validate_terminal_open_blocks(
+                    "Done",
+                    content.as_deref(),
+                    &open_blocks,
+                    tolerate_truncated_tool_args,
+                )?;
                 stop_reason = Some(sr);
                 usage = Some(u);
                 cost = Some(c);
@@ -706,6 +716,7 @@ pub fn accumulate_message(
                 usage: u,
                 error_kind: ek,
             } => {
+                validate_terminal_open_blocks("Error", content.as_deref(), &open_blocks, false)?;
                 stop_reason = Some(sr);
                 error_message = Some(em);
                 error_kind = ek;
@@ -818,9 +829,7 @@ mod tests {
     }
 
     #[test]
-    fn error_with_unterminated_block_is_allowed() {
-        // Errors may legitimately abort mid-block; don't mask them with a
-        // validation failure.
+    fn error_with_unterminated_text_block_is_rejected() {
         let events = vec![
             AssistantMessageEvent::Start,
             AssistantMessageEvent::TextStart { content_index: 0 },
@@ -831,8 +840,55 @@ mod tests {
                 error_kind: None,
             },
         ];
-        let msg = accumulate_message(events, "test", "test").expect("error terminal ok");
-        assert_eq!(msg.error_message.as_deref(), Some("boom"));
+
+        let err = accumulate_message(events, "test", "test").unwrap_err();
+        assert!(err.contains("unterminated content block"), "got: {err}");
+    }
+
+    #[test]
+    fn error_with_unterminated_thinking_block_is_rejected() {
+        let events = vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::ThinkingStart { content_index: 0 },
+            AssistantMessageEvent::ThinkingDelta {
+                content_index: 0,
+                delta: "partial".into(),
+            },
+            AssistantMessageEvent::Error {
+                stop_reason: StopReason::Error,
+                error_message: "boom".into(),
+                usage: None,
+                error_kind: None,
+            },
+        ];
+
+        let err = accumulate_message(events, "test", "test").unwrap_err();
+        assert!(err.contains("unterminated content block"), "got: {err}");
+    }
+
+    #[test]
+    fn error_with_unterminated_tool_call_block_is_rejected() {
+        let events = vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::ToolCallStart {
+                content_index: 0,
+                id: "tc_1".into(),
+                name: "read_file".into(),
+            },
+            AssistantMessageEvent::ToolCallDelta {
+                content_index: 0,
+                delta: r#"{"path": "/tmp"#.into(),
+            },
+            AssistantMessageEvent::Error {
+                stop_reason: StopReason::Error,
+                error_message: "boom".into(),
+                usage: None,
+                error_kind: None,
+            },
+        ];
+
+        let err = accumulate_message(events, "test", "test").unwrap_err();
+        assert!(err.contains("unterminated content block"), "got: {err}");
     }
 
     #[test]
