@@ -173,9 +173,12 @@ impl EvalStore for FsEvalStore {
         let mut timestamps: Vec<u64> = fs::read_dir(dir)?
             .filter_map(Result::ok)
             .filter_map(|entry| {
-                entry
-                    .path()
-                    .file_stem()
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                    return None;
+                }
+
+                path.file_stem()
                     .and_then(|s| s.to_str())
                     .and_then(|s| s.parse::<u64>().ok())
             })
@@ -188,7 +191,7 @@ impl EvalStore for FsEvalStore {
 
 #[cfg(test)]
 mod tests {
-    use super::FsEvalStore;
+    use super::{EvalStore, FsEvalStore};
     use std::fs;
     use std::io::{self, Write};
 
@@ -215,5 +218,21 @@ mod tests {
             .filter(|name| name.starts_with(".suite.json.tmp."))
             .collect();
         assert!(temp_files.is_empty());
+    }
+
+    #[test]
+    fn list_results_returns_only_json_timestamp_files_sorted() {
+        let dir = tempfile::tempdir().unwrap();
+        let result_dir = dir.path().join("results").join("suite");
+        fs::create_dir_all(&result_dir).unwrap();
+        fs::write(result_dir.join("20.json"), "{}").unwrap();
+        fs::write(result_dir.join("10.json"), "{}").unwrap();
+        fs::write(result_dir.join("not-a-timestamp.json"), "{}").unwrap();
+        fs::write(result_dir.join("30.tmp"), "{}").unwrap();
+        fs::write(result_dir.join("40"), "{}").unwrap();
+
+        let store = FsEvalStore::new(dir.path());
+
+        assert_eq!(store.list_results("suite").unwrap(), vec![10, 20]);
     }
 }
