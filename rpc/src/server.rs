@@ -614,6 +614,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_session_rejects_unknown_requests_without_ending_session() {
+        let (mut client, mut server) = make_peer_pair();
+
+        let server_task = tokio::spawn(async move {
+            run_session(&mut server, &|| test_agent_options("unused"))
+                .await
+                .unwrap();
+        });
+
+        initialize(&mut client).await;
+
+        let sender = client.sender();
+        let err = sender
+            .request::<_, serde_json::Value>("rpc.unknown", &serde_json::json!({}))
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.code, crate::jsonrpc::RpcError::METHOD_NOT_FOUND);
+        assert_eq!(err.message, "method not found: rpc.unknown");
+
+        sender
+            .notify(method::SHUTDOWN, &serde_json::Value::Null)
+            .await
+            .unwrap();
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn run_session_round_trips_tool_approval_during_prompt() {
         let (mut client, mut server) = make_peer_pair();
         let stream_fn: Arc<dyn StreamFn> = Arc::new(swink_agent::testing::MockStreamFn::new(vec![
