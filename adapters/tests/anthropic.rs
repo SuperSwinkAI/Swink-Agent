@@ -402,6 +402,36 @@ async fn anthropic_stream_error_event() {
 }
 
 #[tokio::test]
+async fn anthropic_unknown_stream_error_is_non_retryable() {
+    let body = [
+        "event: error",
+        r#"data: {"type":"error","error":{"type":"invalid_request_error","message":"bad request"}}"#,
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    let error_kind = events
+        .iter()
+        .find_map(|event| match event {
+            AssistantMessageEvent::Error { error_kind, .. } => Some(*error_kind),
+            _ => None,
+        })
+        .expect("expected error event");
+    assert_eq!(error_kind, None);
+}
+
+#[tokio::test]
 async fn anthropic_cancellation() {
     let body = [
         "event: message_start",

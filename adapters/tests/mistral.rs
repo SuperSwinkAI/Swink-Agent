@@ -16,8 +16,8 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use swink_agent::{
     AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessage,
-    AssistantMessageEvent, ContentBlock, LlmMessage, ModelSpec, StopReason, StreamErrorKind,
-    StreamFn, StreamOptions, ToolResultMessage, UserMessage,
+    AssistantMessageEvent, ContentBlock, LlmMessage, ModelSpec, StopReason, StreamFn,
+    StreamOptions, ToolResultMessage, UserMessage,
 };
 use swink_agent_adapters::MistralStreamFn;
 
@@ -770,7 +770,7 @@ async fn finish_reason_error() {
         message.contains("finish_reason=error"),
         "expected finish_reason in message, got: {message}"
     );
-    assert_eq!(error_kind, Some(StreamErrorKind::Network));
+    assert_eq!(error_kind, None);
 
     let usage = usage.expect("expected usage on terminal error");
     assert_eq!(usage.input, 5);
