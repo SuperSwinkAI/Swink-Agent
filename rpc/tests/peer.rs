@@ -211,3 +211,32 @@ async fn oversize_line_without_newline_closes_connection() {
         "connection should close before reading an oversized unterminated line"
     );
 }
+
+#[tokio::test]
+async fn malformed_json_line_is_dropped_without_closing_connection() {
+    use tokio::io::AsyncWriteExt as _;
+
+    let (raw_reader, mut raw_writer) = duplex(8192);
+    let (sink_reader, sink_writer) = duplex(8192);
+    let mut peer = JsonRpcPeer::new(raw_reader, sink_writer);
+    drop(sink_reader);
+
+    raw_writer.write_all(b"{not json}\n").await.unwrap();
+    raw_writer
+        .write_all(br#"{"jsonrpc":"2.0","method":"still.open","params":{"ok":true}}"#)
+        .await
+        .unwrap();
+    raw_writer.write_all(b"\n").await.unwrap();
+    drop(raw_writer);
+
+    let msg = peer.recv_incoming().await.unwrap();
+    match msg {
+        IncomingMessage::Notification { method, params } => {
+            assert_eq!(method, "still.open");
+            assert_eq!(params.unwrap()["ok"], true);
+        }
+        other @ IncomingMessage::Request { .. } => {
+            panic!("expected notification after malformed line, got {other:?}")
+        }
+    }
+}
