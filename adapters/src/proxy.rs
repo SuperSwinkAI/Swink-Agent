@@ -316,6 +316,9 @@ fn parse_sse_stream(
                         Some(SseLine::TransportError(message)) => AssistantMessageEvent::error_network(format!(
                                 "network error: {message}",
                             )),
+                        Some(SseLine::ProtocolError(message)) => AssistantMessageEvent::error(
+                            format!("proxy SSE protocol error: {message}"),
+                        ),
                         Some(_) => AssistantMessageEvent::error("unexpected non-data SSE line"),
                     }
                 }
@@ -884,6 +887,12 @@ mod tests {
                             }
                             Some(SseLine::TransportError(msg)) => Some((
                                 AssistantMessageEvent::error_network(format!("network error: {msg}")),
+                                (sse, token, true),
+                            )),
+                            Some(SseLine::ProtocolError(msg)) => Some((
+                                AssistantMessageEvent::error(format!(
+                                    "proxy SSE protocol error: {msg}"
+                                )),
                                 (sse, token, true),
                             )),
                             Some(_) => Some((AssistantMessageEvent::error_network(

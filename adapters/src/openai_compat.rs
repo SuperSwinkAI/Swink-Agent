@@ -682,6 +682,9 @@ pub fn parse_oai_sse_stream(
             Some(SseLine::TransportError(message)) => SseAction::Done(state.emit_terminal_error(
                 AssistantMessageEvent::error_network(format!("{provider} {message}")),
             )),
+            Some(SseLine::ProtocolError(message)) => SseAction::Done(state.emit_terminal_error(
+                AssistantMessageEvent::error(format!("{provider} {message}")),
+            )),
             Some(_) => SseAction::Skip,
         },
     )

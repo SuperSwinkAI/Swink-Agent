@@ -512,6 +512,13 @@ fn parse_sse_stream(
                 )));
                 SseAction::Done(events)
             }
+            Some(SseEvent { event_type, data })
+                if event_type == crate::sse::SSE_PROTOCOL_ERROR_EVENT =>
+            {
+                let mut events = crate::finalize::finalize_blocks(state);
+                events.push(AssistantMessageEvent::error(format!("Anthropic {data}")));
+                SseAction::Done(events)
+            }
             Some(SseEvent { event_type, data }) => {
                 let mut done = false;
                 let events = process_sse_event(&event_type, &data, state, &mut done);

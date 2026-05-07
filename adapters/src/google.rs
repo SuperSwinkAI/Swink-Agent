@@ -663,6 +663,10 @@ fn parse_sse_stream(
             Some(SseLine::TransportError(message)) => SseAction::Done(
                 state.emit_terminal_network_error(format!("Google {message}"), true),
             ),
+            Some(SseLine::ProtocolError(message)) => SseAction::Done(state.emit_terminal_error(
+                AssistantMessageEvent::error(format!("Google {message}")),
+                true,
+            )),
             Some(_) => SseAction::Skip,
         },
         |state| {
