@@ -205,10 +205,10 @@ pub async fn execute_tools_concurrently(
 
         for &prepared_idx in &group {
             if batch_token.is_cancelled() {
-                for (_, handle) in handles {
-                    handle.abort();
-                    let _ = handle.await;
-                }
+                collect::abort_join_handles_with_grace(
+                    handles.into_iter().map(|(_, handle)| handle).collect(),
+                )
+                .await;
 
                 return collect::build_aborted_outcome(
                     tool_calls,
@@ -243,13 +243,13 @@ pub async fn execute_tools_concurrently(
                 DispatchResult::Spawned(h) => handles.push((prep.idx, h)),
                 DispatchResult::Inline => {}
                 DispatchResult::ChannelClosed => {
-                    // Cancel the batch and abort/join all already-spawned handles
-                    // before returning to prevent orphaned side-effecting tasks.
+                    // Cancel the batch and give already-spawned handles a bounded
+                    // shutdown window before returning.
                     batch_token.cancel();
-                    for (_, h) in handles {
-                        h.abort();
-                        let _ = h.await;
-                    }
+                    collect::abort_join_handles_with_grace(
+                        handles.into_iter().map(|(_, handle)| handle).collect(),
+                    )
+                    .await;
                     return ToolExecOutcome::ChannelClosed;
                 }
             }
@@ -351,8 +351,9 @@ mod tests {
         started: Arc<AtomicBool>,
     }
 
-    struct YieldingTool {
-        name: &'static str,
+    struct BlockingUntilReleasedTool {
+        started: Arc<AtomicBool>,
+        release: Arc<AtomicBool>,
     }
 
     struct OneShotSteeringProvider {
@@ -469,17 +470,17 @@ mod tests {
         }
     }
 
-    impl crate::tool::AgentTool for YieldingTool {
+    impl crate::tool::AgentTool for BlockingUntilReleasedTool {
         fn name(&self) -> &'static str {
-            self.name
+            "blocking_tool"
         }
 
         fn label(&self) -> &'static str {
-            self.name
+            "blocking_tool"
         }
 
         fn description(&self) -> &'static str {
-            "Yields once before returning a result"
+            "Blocks without yielding until a test release flag is set"
         }
 
         fn parameters_schema(&self) -> &serde_json::Value {
@@ -502,9 +503,14 @@ mod tests {
             _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
             _credential: Option<crate::ResolvedCredential>,
         ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+            let started = Arc::clone(&self.started);
+            let release = Arc::clone(&self.release);
             Box::pin(async move {
-                tokio::task::yield_now().await;
-                AgentToolResult::text("mock result")
+                started.store(true, Ordering::SeqCst);
+                while !release.load(Ordering::SeqCst) {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                AgentToolResult::text("released")
             })
         }
     }
@@ -1522,7 +1528,9 @@ mod tests {
     #[tokio::test]
     async fn steering_interrupt_preserves_worker_polled_messages() {
         let fast_tool = Arc::new(MockTool::new("fast_tool"));
-        let slow_tool = Arc::new(YieldingTool { name: "slow_tool" });
+        let slow_tool = Arc::new(NonCancellingTool {
+            started: Arc::new(AtomicBool::new(false)),
+        });
         let config = test_loop_config_with_message_provider(
             vec![],
             vec![
@@ -1546,7 +1554,7 @@ mod tests {
             },
             ToolCallInfo {
                 id: "call_slow".to_string(),
-                name: "slow_tool".to_string(),
+                name: "non_cancelling_tool".to_string(),
                 arguments: json!({}),
                 is_incomplete: false,
             },
@@ -1631,6 +1639,61 @@ mod tests {
             "aborted batches should preserve result parity"
         );
         assert_eq!(results[0].tool_call_id, "call_abort");
+        assert!(results[0].is_error);
+        assert!(matches!(
+            results[0].content.as_slice(),
+            [ContentBlock::Text { text }] if text.contains("operation aborted")
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn parent_cancellation_does_not_wait_forever_for_blocking_tool() {
+        let started = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(AtomicBool::new(false));
+        let tool = Arc::new(BlockingUntilReleasedTool {
+            started: Arc::clone(&started),
+            release: Arc::clone(&release),
+        });
+        let config = test_loop_config_with_options(
+            vec![],
+            vec![tool as Arc<dyn crate::tool::AgentTool>],
+            None,
+            ApprovalMode::Bypassed,
+            ToolExecutionPolicy::Concurrent,
+        );
+        let tool_calls = vec![ToolCallInfo {
+            id: "call_blocking".to_string(),
+            name: "blocking_tool".to_string(),
+            arguments: json!({}),
+            is_incomplete: false,
+        }];
+        let cancellation_token = CancellationToken::new();
+        let cancel_clone = cancellation_token.clone();
+        let (tx, mut rx) = mpsc::channel(8);
+
+        tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                if matches!(event, AgentEvent::ToolExecutionStart { .. }) {
+                    cancel_clone.cancel();
+                    break;
+                }
+            }
+        });
+
+        let timed_outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx),
+        )
+        .await;
+        release.store(true, Ordering::SeqCst);
+        let outcome = timed_outcome
+            .expect("parent cancellation must not wait forever for blocking tool work");
+
+        let ToolExecOutcome::Aborted { results, .. } = outcome else {
+            panic!("expected aborted outcome");
+        };
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].tool_call_id, "call_blocking");
         assert!(results[0].is_error);
         assert!(matches!(
             results[0].content.as_slice(),

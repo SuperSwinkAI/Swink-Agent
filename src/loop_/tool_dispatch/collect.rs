@@ -1,11 +1,15 @@
 //! Collect phase: result ordering, interrupt outcomes, metrics assembly.
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::mpsc;
-use tracing::error;
+use tokio::task::{AbortHandle, JoinError, JoinHandle};
+use tracing::{error, warn};
 
 use crate::tool::AgentToolResult;
 use crate::types::{AgentMessage, ContentBlock, ToolResultMessage};
@@ -28,6 +32,107 @@ pub(super) enum GroupOutcome {
     Aborted,
 }
 
+const INTERRUPT_ABORT_GRACE: Duration = Duration::from_millis(50);
+
+type ToolJoinResult = (usize, Result<(), JoinError>);
+type ToolJoinFuture = Pin<Box<dyn Future<Output = ToolJoinResult> + Send>>;
+
+fn tool_join_future(idx: usize, handle: JoinHandle<()>) -> ToolJoinFuture {
+    Box::pin(async move { (idx, handle.await) })
+}
+
+async fn drain_completed_within_grace(
+    futs: &mut FuturesUnordered<ToolJoinFuture>,
+) -> Vec<ToolJoinResult> {
+    let mut completed = Vec::new();
+    let grace = tokio::time::sleep(INTERRUPT_ABORT_GRACE);
+    tokio::pin!(grace);
+
+    loop {
+        if futs.is_empty() {
+            break;
+        }
+
+        tokio::select! {
+            () = &mut grace => break,
+            result = futs.next() => {
+                let Some(result) = result else {
+                    break;
+                };
+                completed.push(result);
+            }
+        }
+    }
+
+    completed
+}
+
+async fn cancel_remaining_with_bounded_wait(
+    futs: &mut FuturesUnordered<ToolJoinFuture>,
+    abort_handles: &[AbortHandle],
+) -> Vec<ToolJoinResult> {
+    let completed = drain_completed_within_grace(futs).await;
+
+    if !futs.is_empty() {
+        for handle in abort_handles {
+            handle.abort();
+        }
+        warn!(
+            remaining = futs.len(),
+            grace_ms = INTERRUPT_ABORT_GRACE.as_millis(),
+            "tool tasks did not finish within cancellation grace; aborting without waiting"
+        );
+    }
+
+    completed
+}
+
+async fn emit_join_failure(
+    idx: usize,
+    join_error: JoinError,
+    tool_calls: &[ToolCallInfo],
+    results: &Arc<tokio::sync::Mutex<Vec<(usize, ToolResultMessage)>>>,
+    tx: &mpsc::Sender<super::AgentEvent>,
+) {
+    let panic_message = if join_error.is_panic() {
+        let panic_value = join_error.into_panic();
+        panic_payload_message(panic_value.as_ref())
+    } else {
+        format!("{join_error}")
+    };
+
+    let tc = &tool_calls[idx];
+    error!(
+        tool_call_id = %tc.id,
+        tool_name = %tc.name,
+        "tool execution panicked: {panic_message}"
+    );
+
+    emit_error_result(
+        &tc.name,
+        &tc.id,
+        AgentToolResult::error(format!("tool execution panicked: {panic_message}")),
+        idx,
+        results,
+        tx,
+    )
+    .await;
+}
+
+pub(super) async fn abort_join_handles_with_grace(handles: Vec<JoinHandle<()>>) {
+    if handles.is_empty() {
+        return;
+    }
+
+    let abort_handles: Vec<_> = handles.iter().map(JoinHandle::abort_handle).collect();
+    let mut futs: FuturesUnordered<_> = handles
+        .into_iter()
+        .enumerate()
+        .map(|(idx, handle)| tool_join_future(idx, handle))
+        .collect();
+    let _ = cancel_remaining_with_bounded_wait(&mut futs, &abort_handles).await;
+}
+
 // ─── Group result collection ────────────────────────────────────────────────
 
 /// Collect results for a single execution group's spawned handles.
@@ -44,9 +149,9 @@ pub(super) async fn collect_group_results(
         .iter()
         .map(|(_, handle)| handle.abort_handle())
         .collect();
-    let mut futs: FuturesUnordered<_> = handles
+    let mut futs: FuturesUnordered<ToolJoinFuture> = handles
         .into_iter()
-        .map(|(idx, handle)| async move { (idx, handle.await) })
+        .map(|(idx, handle)| tool_join_future(idx, handle))
         .collect();
 
     loop {
@@ -57,10 +162,13 @@ pub(super) async fn collect_group_results(
         let Some((idx, join_result)) = (tokio::select! {
             biased;
             () = batch_token.cancelled() => {
-                for handle in &abort_handles {
-                    handle.abort();
+                let completed =
+                    cancel_remaining_with_bounded_wait(&mut futs, &abort_handles).await;
+                for (idx, join_result) in completed {
+                    if let Err(join_error) = join_result {
+                        emit_join_failure(idx, join_error, tool_calls, results, tx).await;
+                    }
                 }
-                while futs.next().await.is_some() {}
                 return GroupOutcome::Aborted;
             }
             result = futs.next() => result
@@ -69,47 +177,29 @@ pub(super) async fn collect_group_results(
         };
 
         if let Err(join_error) = join_result {
-            let panic_message = if join_error.is_panic() {
-                let panic_value = join_error.into_panic();
-                panic_payload_message(panic_value.as_ref())
-            } else {
-                format!("{join_error}")
-            };
-
-            let tc = &tool_calls[idx];
-            error!(
-                tool_call_id = %tc.id,
-                tool_name = %tc.name,
-                "tool execution panicked: {panic_message}"
-            );
-
-            emit_error_result(
-                &tc.name,
-                &tc.id,
-                AgentToolResult::error(format!("tool execution panicked: {panic_message}")),
-                idx,
-                results,
-                tx,
-            )
-            .await;
+            emit_join_failure(idx, join_error, tool_calls, results, tx).await;
             continue;
         }
 
         if steering_detected.load(std::sync::atomic::Ordering::SeqCst) {
             batch_token.cancel();
-            for handle in &abort_handles {
-                handle.abort();
+            let completed = cancel_remaining_with_bounded_wait(&mut futs, &abort_handles).await;
+            for (idx, join_result) in completed {
+                if let Err(join_error) = join_result {
+                    emit_join_failure(idx, join_error, tool_calls, results, tx).await;
+                }
             }
-            while futs.next().await.is_some() {}
             return GroupOutcome::SteeringInterrupt;
         }
 
         if transfer_detected.load(std::sync::atomic::Ordering::SeqCst) {
             batch_token.cancel();
-            for handle in &abort_handles {
-                handle.abort();
+            let completed = cancel_remaining_with_bounded_wait(&mut futs, &abort_handles).await;
+            for (idx, join_result) in completed {
+                if let Err(join_error) = join_result {
+                    emit_join_failure(idx, join_error, tool_calls, results, tx).await;
+                }
             }
-            while futs.next().await.is_some() {}
             return GroupOutcome::TransferInterrupt;
         }
     }
