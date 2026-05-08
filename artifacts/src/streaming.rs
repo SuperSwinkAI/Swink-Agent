@@ -146,6 +146,10 @@ impl StreamingArtifactStore for FileArtifactStore {
         version: Option<u32>,
     ) -> Result<Option<ArtifactByteStream>, ArtifactError> {
         self.resolve_artifact_dir(session_id, name)?;
+
+        let lock = self.artifact_lock(session_id, name).await;
+        let _guard = lock.lock().await;
+
         let meta = self.read_meta(session_id, name).await?;
         self.reject_metadata_content_mismatch(session_id, name, &meta)
             .await?;

@@ -584,6 +584,10 @@ impl ArtifactStore for FileArtifactStore {
         name: &str,
     ) -> Result<Option<(ArtifactData, ArtifactVersion)>, ArtifactError> {
         self.resolve_artifact_dir(session_id, name)?;
+
+        let lock = self.artifact_lock(session_id, name).await;
+        let _guard = lock.lock().await;
+
         let meta = self.read_meta(session_id, name).await?;
         self.reject_metadata_content_mismatch(session_id, name, &meta)
             .await?;
@@ -641,6 +645,10 @@ impl ArtifactStore for FileArtifactStore {
         version: u32,
     ) -> Result<Option<(ArtifactData, ArtifactVersion)>, ArtifactError> {
         self.resolve_artifact_dir(session_id, name)?;
+
+        let lock = self.artifact_lock(session_id, name).await;
+        let _guard = lock.lock().await;
+
         let meta = self.read_meta(session_id, name).await?;
         self.reject_metadata_content_mismatch(session_id, name, &meta)
             .await?;
@@ -693,6 +701,9 @@ impl ArtifactStore for FileArtifactStore {
 
         let mut metas = Vec::with_capacity(names.len());
         for name in &names {
+            let lock = self.artifact_lock(session_id, name).await;
+            let _guard = lock.lock().await;
+
             let meta = self.read_meta(session_id, name).await?;
             self.reject_metadata_content_mismatch(session_id, name, &meta)
                 .await?;
@@ -730,10 +741,11 @@ mod tests {
     use std::io::ErrorKind;
     use std::sync::Arc;
 
+    use chrono::Utc;
     use tokio::sync::oneshot;
     use tokio::task::yield_now;
 
-    use super::FileArtifactStore;
+    use super::{FileArtifactStore, VersionRecord};
     use swink_agent::{ArtifactData, ArtifactError, ArtifactStore};
 
     fn text_data(content: &str) -> ArtifactData {
@@ -895,5 +907,125 @@ mod tests {
             .await
             .expect_err("missing content should be surfaced as corruption");
         assert_invalid_data_storage_error(err, "metadata references missing content");
+    }
+
+    #[tokio::test]
+    async fn load_version_waits_for_in_flight_metadata_commit() {
+        let tmpdir = tempfile::TempDir::new().expect("tempdir");
+        let store = Arc::new(FileArtifactStore::new(tmpdir.path()));
+        store
+            .save("s1", "report.md", text_data("v1"))
+            .await
+            .expect("initial save");
+
+        let lock = store.artifact_lock("s1", "report.md").await;
+        let guard = lock.lock().await;
+
+        let content_path = store.version_path("s1", "report.md", 2);
+        tokio::fs::write(&content_path, b"v2")
+            .await
+            .expect("stage new content before metadata commit");
+
+        let mut meta = store
+            .read_meta("s1", "report.md")
+            .await
+            .expect("read current metadata");
+        let now = Utc::now();
+        meta.versions.push(VersionRecord {
+            name: "report.md".to_string(),
+            version: 2,
+            created_at: now,
+            size: 2,
+            content_type: "text/plain".to_string(),
+            metadata: HashMap::new(),
+        });
+
+        let (started_tx, started_rx) = oneshot::channel();
+        let load_store = Arc::clone(&store);
+        let load_task = tokio::spawn(async move {
+            started_tx.send(()).expect("notify load start");
+            load_store.load_version("s1", "report.md", 2).await
+        });
+
+        started_rx.await.expect("load task started");
+        yield_now().await;
+        assert!(
+            !load_task.is_finished(),
+            "load_version should wait for the artifact lock while metadata is being committed"
+        );
+
+        store
+            .write_meta("s1", "report.md", &meta)
+            .await
+            .expect("commit metadata");
+        drop(guard);
+
+        let (data, version) = load_task
+            .await
+            .expect("load task join")
+            .expect("load should succeed after metadata commit")
+            .expect("version should exist after metadata commit");
+        assert_eq!(data.content, b"v2");
+        assert_eq!(version.version, 2);
+    }
+
+    #[tokio::test]
+    async fn list_waits_for_in_flight_metadata_commit() {
+        let tmpdir = tempfile::TempDir::new().expect("tempdir");
+        let store = Arc::new(FileArtifactStore::new(tmpdir.path()));
+        store
+            .save("s1", "report.md", text_data("v1"))
+            .await
+            .expect("initial save");
+
+        let lock = store.artifact_lock("s1", "report.md").await;
+        let guard = lock.lock().await;
+
+        let content_path = store.version_path("s1", "report.md", 2);
+        tokio::fs::write(&content_path, b"v2")
+            .await
+            .expect("stage new content before metadata commit");
+
+        let mut meta = store
+            .read_meta("s1", "report.md")
+            .await
+            .expect("read current metadata");
+        let now = Utc::now();
+        meta.versions.push(VersionRecord {
+            name: "report.md".to_string(),
+            version: 2,
+            created_at: now,
+            size: 2,
+            content_type: "text/plain".to_string(),
+            metadata: HashMap::new(),
+        });
+
+        let (started_tx, started_rx) = oneshot::channel();
+        let list_store = Arc::clone(&store);
+        let list_task = tokio::spawn(async move {
+            started_tx.send(()).expect("notify list start");
+            list_store.list("s1").await
+        });
+
+        started_rx.await.expect("list task started");
+        yield_now().await;
+        assert!(
+            !list_task.is_finished(),
+            "list should wait for the artifact lock while metadata is being committed"
+        );
+
+        store
+            .write_meta("s1", "report.md", &meta)
+            .await
+            .expect("commit metadata");
+        drop(guard);
+
+        let artifacts = list_task
+            .await
+            .expect("list task join")
+            .expect("list should succeed after metadata commit");
+        assert_eq!(artifacts.len(), 1);
+        assert_eq!(artifacts[0].name, "report.md");
+        assert_eq!(artifacts[0].latest_version, 2);
     }
 }
