@@ -1,6 +1,7 @@
 //! Core artifact types and trait, gated behind the `artifact-store` feature.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::pin::Pin;
 
 use bytes::Bytes;
@@ -61,6 +62,10 @@ pub struct ArtifactMeta {
 
 // ─── Trait ───────────────────────────────────────────────────────────────────
 
+/// Boxed future returned by artifact store operations.
+pub type ArtifactFuture<'a, T> =
+    Pin<Box<dyn Future<Output = Result<T, ArtifactError>> + Send + 'a>>;
+
 /// Pluggable storage backend for session-attached versioned artifacts.
 ///
 /// All methods are scoped by session ID. Implementations must be safe for
@@ -70,52 +75,41 @@ pub trait ArtifactStore: Send + Sync {
     ///
     /// Returns the version record on success. Version numbers are
     /// monotonically increasing per artifact per session, starting at 1.
-    fn save(
-        &self,
-        session_id: &str,
-        name: &str,
+    fn save<'a>(
+        &'a self,
+        session_id: &'a str,
+        name: &'a str,
         data: ArtifactData,
-    ) -> impl std::future::Future<Output = Result<ArtifactVersion, ArtifactError>> + Send;
+    ) -> ArtifactFuture<'a, ArtifactVersion>;
 
     /// Load the latest version of the named artifact.
     ///
     /// Returns `None` if the artifact does not exist.
-    fn load(
-        &self,
-        session_id: &str,
-        name: &str,
-    ) -> impl std::future::Future<
-        Output = Result<Option<(ArtifactData, ArtifactVersion)>, ArtifactError>,
-    > + Send;
+    fn load<'a>(
+        &'a self,
+        session_id: &'a str,
+        name: &'a str,
+    ) -> ArtifactFuture<'a, Option<(ArtifactData, ArtifactVersion)>>;
 
     /// Load a specific version of the named artifact.
     ///
     /// Returns `None` if the artifact or version does not exist.
-    fn load_version(
-        &self,
-        session_id: &str,
-        name: &str,
+    fn load_version<'a>(
+        &'a self,
+        session_id: &'a str,
+        name: &'a str,
         version: u32,
-    ) -> impl std::future::Future<
-        Output = Result<Option<(ArtifactData, ArtifactVersion)>, ArtifactError>,
-    > + Send;
+    ) -> ArtifactFuture<'a, Option<(ArtifactData, ArtifactVersion)>>;
 
     /// List metadata for all artifacts in a session.
     ///
     /// Returns an empty vec if the session has no artifacts.
-    fn list(
-        &self,
-        session_id: &str,
-    ) -> impl std::future::Future<Output = Result<Vec<ArtifactMeta>, ArtifactError>> + Send;
+    fn list<'a>(&'a self, session_id: &'a str) -> ArtifactFuture<'a, Vec<ArtifactMeta>>;
 
     /// Delete all versions of the named artifact.
     ///
     /// Succeeds silently if the artifact does not exist (idempotent).
-    fn delete(
-        &self,
-        session_id: &str,
-        name: &str,
-    ) -> impl std::future::Future<Output = Result<(), ArtifactError>> + Send;
+    fn delete<'a>(&'a self, session_id: &'a str, name: &'a str) -> ArtifactFuture<'a, ()>;
 }
 
 /// A boxed byte stream used by [`StreamingArtifactStore`].
@@ -127,24 +121,24 @@ pub type ArtifactByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, ArtifactEr
 /// useful for large artifacts that should not be buffered entirely in memory.
 pub trait StreamingArtifactStore: ArtifactStore {
     /// Save content from a byte stream as a new version.
-    fn save_stream(
-        &self,
-        session_id: &str,
-        name: &str,
+    fn save_stream<'a>(
+        &'a self,
+        session_id: &'a str,
+        name: &'a str,
         content_type: String,
         metadata: HashMap<String, String>,
         stream: ArtifactByteStream,
-    ) -> impl std::future::Future<Output = Result<ArtifactVersion, ArtifactError>> + Send;
+    ) -> ArtifactFuture<'a, ArtifactVersion>;
 
     /// Load an artifact version as a byte stream.
     ///
     /// If `version` is `None`, loads the latest version.
-    fn load_stream(
-        &self,
-        session_id: &str,
-        name: &str,
+    fn load_stream<'a>(
+        &'a self,
+        session_id: &'a str,
+        name: &'a str,
         version: Option<u32>,
-    ) -> impl std::future::Future<Output = Result<Option<ArtifactByteStream>, ArtifactError>> + Send;
+    ) -> ArtifactFuture<'a, Option<ArtifactByteStream>>;
 }
 
 /// Validate an artifact name. Returns `Ok(())` if valid.

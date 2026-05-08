@@ -514,224 +514,241 @@ impl FileArtifactStore {
 }
 
 impl ArtifactStore for FileArtifactStore {
-    async fn save(
-        &self,
-        session_id: &str,
-        name: &str,
+    fn save<'a>(
+        &'a self,
+        session_id: &'a str,
+        name: &'a str,
         data: ArtifactData,
-    ) -> Result<ArtifactVersion, ArtifactError> {
-        let dir = self.resolve_artifact_dir(session_id, name)?;
+    ) -> swink_agent::ArtifactFuture<'a, ArtifactVersion> {
+        Box::pin(async move {
+            let dir = self.resolve_artifact_dir(session_id, name)?;
 
-        let lock = self.artifact_lock(session_id, name).await;
-        let _guard = lock.lock().await;
+            let lock = self.artifact_lock(session_id, name).await;
+            let _guard = lock.lock().await;
 
-        tokio::fs::create_dir_all(&dir).await.map_err(storage_err)?;
+            tokio::fs::create_dir_all(&dir).await.map_err(storage_err)?;
 
-        // Read or create meta
-        let mut meta = self.read_meta(session_id, name).await?;
+            // Read or create meta
+            let mut meta = self.read_meta(session_id, name).await?;
 
-        let next_version = self.next_version(session_id, name, &meta).await?;
-        let now = Utc::now();
+            let next_version = self.next_version(session_id, name, &meta).await?;
+            let now = Utc::now();
 
-        let record = VersionRecord {
-            name: name.to_string(),
-            version: next_version,
-            created_at: now,
-            size: data.content.len(),
-            content_type: data.content_type.clone(),
-            metadata: data.metadata.clone(),
-        };
+            let record = VersionRecord {
+                name: name.to_string(),
+                version: next_version,
+                created_at: now,
+                size: data.content.len(),
+                content_type: data.content_type.clone(),
+                metadata: data.metadata.clone(),
+            };
 
-        // Write content atomically via the shared helper.
-        let content_path = self.version_path(session_id, name, next_version);
-        let content_bytes = data.content.clone();
-        tokio::task::spawn_blocking({
-            let content_path = content_path.clone();
-            move || swink_agent::atomic_fs::atomic_write_bytes(&content_path, &content_bytes)
+            // Write content atomically via the shared helper.
+            let content_path = self.version_path(session_id, name, next_version);
+            let content_bytes = data.content.clone();
+            tokio::task::spawn_blocking({
+                let content_path = content_path.clone();
+                move || swink_agent::atomic_fs::atomic_write_bytes(&content_path, &content_bytes)
+            })
+            .await
+            .map_err(|e| storage_err(std::io::Error::other(e)))?
+            .map_err(storage_err)?;
+
+            // Update meta.json
+            let version = ArtifactVersion {
+                name: name.to_string(),
+                version: next_version,
+                created_at: now,
+                size: data.content.len(),
+                content_type: data.content_type,
+            };
+            meta.versions.push(record);
+            if let Err(error) = self.write_meta(session_id, name, &meta).await {
+                Self::rollback_version_file(&content_path).await;
+                return Err(error);
+            }
+
+            tracing::info!(
+                session_id,
+                name,
+                version = next_version,
+                size = data.content.len(),
+                "artifact saved"
+            );
+
+            Ok(version)
         })
-        .await
-        .map_err(|e| storage_err(std::io::Error::other(e)))?
-        .map_err(storage_err)?;
-
-        // Update meta.json
-        let version = ArtifactVersion {
-            name: name.to_string(),
-            version: next_version,
-            created_at: now,
-            size: data.content.len(),
-            content_type: data.content_type,
-        };
-        meta.versions.push(record);
-        if let Err(error) = self.write_meta(session_id, name, &meta).await {
-            Self::rollback_version_file(&content_path).await;
-            return Err(error);
-        }
-
-        tracing::info!(
-            session_id,
-            name,
-            version = next_version,
-            size = data.content.len(),
-            "artifact saved"
-        );
-
-        Ok(version)
     }
 
-    async fn load(
-        &self,
-        session_id: &str,
-        name: &str,
-    ) -> Result<Option<(ArtifactData, ArtifactVersion)>, ArtifactError> {
-        self.resolve_artifact_dir(session_id, name)?;
+    fn load<'a>(
+        &'a self,
+        session_id: &'a str,
+        name: &'a str,
+    ) -> swink_agent::ArtifactFuture<'a, Option<(ArtifactData, ArtifactVersion)>> {
+        Box::pin(async move {
+            self.resolve_artifact_dir(session_id, name)?;
 
-        let lock = self.artifact_lock(session_id, name).await;
-        let _guard = lock.lock().await;
-
-        let meta = self.read_meta(session_id, name).await?;
-        self.reject_metadata_content_mismatch(session_id, name, &meta)
-            .await?;
-        let Some(record) = meta.versions.last() else {
-            tracing::debug!(session_id, name, "artifact not found");
-            return Ok(None);
-        };
-
-        let content_path = self.version_path(session_id, name, record.version);
-        let content = match tokio::fs::read(&content_path).await {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                tracing::debug!(
-                    session_id,
-                    name,
-                    version = record.version,
-                    "content file missing"
-                );
-                return Err(missing_content_err(
-                    session_id,
-                    name,
-                    record.version,
-                    &content_path,
-                ));
-            }
-            Err(e) => return Err(storage_err(e)),
-        };
-
-        let data = ArtifactData {
-            content,
-            content_type: record.content_type.clone(),
-            metadata: record.metadata.clone(),
-        };
-        let version = ArtifactVersion {
-            name: record.name.clone(),
-            version: record.version,
-            created_at: record.created_at,
-            size: record.size,
-            content_type: record.content_type.clone(),
-        };
-
-        tracing::debug!(
-            session_id,
-            name,
-            version = record.version,
-            "artifact loaded"
-        );
-        Ok(Some((data, version)))
-    }
-
-    async fn load_version(
-        &self,
-        session_id: &str,
-        name: &str,
-        version: u32,
-    ) -> Result<Option<(ArtifactData, ArtifactVersion)>, ArtifactError> {
-        self.resolve_artifact_dir(session_id, name)?;
-
-        let lock = self.artifact_lock(session_id, name).await;
-        let _guard = lock.lock().await;
-
-        let meta = self.read_meta(session_id, name).await?;
-        self.reject_metadata_content_mismatch(session_id, name, &meta)
-            .await?;
-        let Some(record) = meta.versions.iter().find(|r| r.version == version) else {
-            let content_path = self.version_path(session_id, name, version);
-            if tokio::fs::try_exists(&content_path)
-                .await
-                .map_err(storage_err)?
-            {
-                return Err(orphan_content_err(session_id, name, version, &content_path));
-            }
-            tracing::debug!(session_id, name, version, "version not found");
-            return Ok(None);
-        };
-
-        let content_path = self.version_path(session_id, name, version);
-        let content = match tokio::fs::read(&content_path).await {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                tracing::debug!(session_id, name, version, "content file missing");
-                return Err(missing_content_err(
-                    session_id,
-                    name,
-                    version,
-                    &content_path,
-                ));
-            }
-            Err(e) => return Err(storage_err(e)),
-        };
-
-        let data = ArtifactData {
-            content,
-            content_type: record.content_type.clone(),
-            metadata: record.metadata.clone(),
-        };
-        let artifact_version = ArtifactVersion {
-            name: record.name.clone(),
-            version: record.version,
-            created_at: record.created_at,
-            size: record.size,
-            content_type: record.content_type.clone(),
-        };
-
-        tracing::debug!(session_id, name, version, "artifact version loaded");
-        Ok(Some((data, artifact_version)))
-    }
-
-    async fn list(&self, session_id: &str) -> Result<Vec<ArtifactMeta>, ArtifactError> {
-        let names = self.discover_artifacts(session_id).await?;
-
-        let mut metas = Vec::with_capacity(names.len());
-        for name in &names {
             let lock = self.artifact_lock(session_id, name).await;
             let _guard = lock.lock().await;
 
             let meta = self.read_meta(session_id, name).await?;
             self.reject_metadata_content_mismatch(session_id, name, &meta)
                 .await?;
-            if let (Some(first), Some(last)) = (meta.versions.first(), meta.versions.last()) {
-                metas.push(ArtifactMeta {
-                    name: name.clone(),
-                    latest_version: last.version,
-                    created_at: first.created_at,
-                    updated_at: last.created_at,
-                    content_type: last.content_type.clone(),
-                });
-            }
-        }
+            let Some(record) = meta.versions.last() else {
+                tracing::debug!(session_id, name, "artifact not found");
+                return Ok(None);
+            };
 
-        tracing::debug!(session_id, count = metas.len(), "artifacts listed");
-        Ok(metas)
+            let content_path = self.version_path(session_id, name, record.version);
+            let content = match tokio::fs::read(&content_path).await {
+                Ok(bytes) => bytes,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    tracing::debug!(
+                        session_id,
+                        name,
+                        version = record.version,
+                        "content file missing"
+                    );
+                    return Err(missing_content_err(
+                        session_id,
+                        name,
+                        record.version,
+                        &content_path,
+                    ));
+                }
+                Err(e) => return Err(storage_err(e)),
+            };
+
+            let data = ArtifactData {
+                content,
+                content_type: record.content_type.clone(),
+                metadata: record.metadata.clone(),
+            };
+            let version = ArtifactVersion {
+                name: record.name.clone(),
+                version: record.version,
+                created_at: record.created_at,
+                size: record.size,
+                content_type: record.content_type.clone(),
+            };
+
+            tracing::debug!(
+                session_id,
+                name,
+                version = record.version,
+                "artifact loaded"
+            );
+            Ok(Some((data, version)))
+        })
     }
 
-    async fn delete(&self, session_id: &str, name: &str) -> Result<(), ArtifactError> {
-        let dir = self.resolve_artifact_dir(session_id, name)?;
-        let lock = self.artifact_lock(session_id, name).await;
-        let _guard = lock.lock().await;
+    fn load_version<'a>(
+        &'a self,
+        session_id: &'a str,
+        name: &'a str,
+        version: u32,
+    ) -> swink_agent::ArtifactFuture<'a, Option<(ArtifactData, ArtifactVersion)>> {
+        Box::pin(async move {
+            self.resolve_artifact_dir(session_id, name)?;
 
-        self.delete_artifact_files(&dir).await?;
-        self.prune_empty_artifact_dirs(session_id, name).await?;
+            let lock = self.artifact_lock(session_id, name).await;
+            let _guard = lock.lock().await;
 
-        tracing::debug!(session_id, name, "artifact deleted");
-        Ok(())
+            let meta = self.read_meta(session_id, name).await?;
+            self.reject_metadata_content_mismatch(session_id, name, &meta)
+                .await?;
+            let Some(record) = meta.versions.iter().find(|r| r.version == version) else {
+                let content_path = self.version_path(session_id, name, version);
+                if tokio::fs::try_exists(&content_path)
+                    .await
+                    .map_err(storage_err)?
+                {
+                    return Err(orphan_content_err(session_id, name, version, &content_path));
+                }
+                tracing::debug!(session_id, name, version, "version not found");
+                return Ok(None);
+            };
+
+            let content_path = self.version_path(session_id, name, version);
+            let content = match tokio::fs::read(&content_path).await {
+                Ok(bytes) => bytes,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    tracing::debug!(session_id, name, version, "content file missing");
+                    return Err(missing_content_err(
+                        session_id,
+                        name,
+                        version,
+                        &content_path,
+                    ));
+                }
+                Err(e) => return Err(storage_err(e)),
+            };
+
+            let data = ArtifactData {
+                content,
+                content_type: record.content_type.clone(),
+                metadata: record.metadata.clone(),
+            };
+            let artifact_version = ArtifactVersion {
+                name: record.name.clone(),
+                version: record.version,
+                created_at: record.created_at,
+                size: record.size,
+                content_type: record.content_type.clone(),
+            };
+
+            tracing::debug!(session_id, name, version, "artifact version loaded");
+            Ok(Some((data, artifact_version)))
+        })
+    }
+
+    fn list<'a>(
+        &'a self,
+        session_id: &'a str,
+    ) -> swink_agent::ArtifactFuture<'a, Vec<ArtifactMeta>> {
+        Box::pin(async move {
+            let names = self.discover_artifacts(session_id).await?;
+
+            let mut metas = Vec::with_capacity(names.len());
+            for name in &names {
+                let lock = self.artifact_lock(session_id, name).await;
+                let _guard = lock.lock().await;
+
+                let meta = self.read_meta(session_id, name).await?;
+                self.reject_metadata_content_mismatch(session_id, name, &meta)
+                    .await?;
+                if let (Some(first), Some(last)) = (meta.versions.first(), meta.versions.last()) {
+                    metas.push(ArtifactMeta {
+                        name: name.clone(),
+                        latest_version: last.version,
+                        created_at: first.created_at,
+                        updated_at: last.created_at,
+                        content_type: last.content_type.clone(),
+                    });
+                }
+            }
+
+            tracing::debug!(session_id, count = metas.len(), "artifacts listed");
+            Ok(metas)
+        })
+    }
+
+    fn delete<'a>(
+        &'a self,
+        session_id: &'a str,
+        name: &'a str,
+    ) -> swink_agent::ArtifactFuture<'a, ()> {
+        Box::pin(async move {
+            let dir = self.resolve_artifact_dir(session_id, name)?;
+            let lock = self.artifact_lock(session_id, name).await;
+            let _guard = lock.lock().await;
+
+            self.delete_artifact_files(&dir).await?;
+            self.prune_empty_artifact_dirs(session_id, name).await?;
+
+            tracing::debug!(session_id, name, "artifact deleted");
+            Ok(())
+        })
     }
 }
 

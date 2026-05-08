@@ -79,133 +79,138 @@ async fn write_stream_to_temp_file(
 }
 
 impl StreamingArtifactStore for FileArtifactStore {
-    async fn save_stream(
-        &self,
-        session_id: &str,
-        name: &str,
+    fn save_stream<'a>(
+        &'a self,
+        session_id: &'a str,
+        name: &'a str,
         content_type: String,
         metadata: HashMap<String, String>,
         stream: ArtifactByteStream,
-    ) -> Result<ArtifactVersion, ArtifactError> {
-        let dir = self.resolve_artifact_dir(session_id, name)?;
+    ) -> swink_agent::ArtifactFuture<'a, ArtifactVersion> {
+        Box::pin(async move {
+            let dir = self.resolve_artifact_dir(session_id, name)?;
 
-        let lock = self.artifact_lock(session_id, name).await;
-        let _guard = lock.lock().await;
+            let lock = self.artifact_lock(session_id, name).await;
+            let _guard = lock.lock().await;
 
-        tokio::fs::create_dir_all(&dir).await.map_err(storage_err)?;
+            tokio::fs::create_dir_all(&dir).await.map_err(storage_err)?;
 
-        let mut meta = self.read_meta(session_id, name).await?;
+            let mut meta = self.read_meta(session_id, name).await?;
 
-        let next_version = self.next_version(session_id, name, &meta).await?;
-        let now = chrono::Utc::now();
-        let content_path = self.version_path(session_id, name, next_version);
-        let temp_path = temp_version_path(&content_path)?;
-        let size = write_stream_to_temp_file(&temp_path, stream).await?;
+            let next_version = self.next_version(session_id, name, &meta).await?;
+            let now = chrono::Utc::now();
+            let content_path = self.version_path(session_id, name, next_version);
+            let temp_path = temp_version_path(&content_path)?;
+            let size = write_stream_to_temp_file(&temp_path, stream).await?;
 
-        if let Err(error) = tokio::fs::rename(&temp_path, &content_path).await {
-            let _ = tokio::fs::remove_file(&temp_path).await;
-            return Err(storage_err(error));
-        }
+            if let Err(error) = tokio::fs::rename(&temp_path, &content_path).await {
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                return Err(storage_err(error));
+            }
 
-        let record = VersionRecord {
-            name: name.to_string(),
-            version: next_version,
-            created_at: now,
-            size,
-            content_type: content_type.clone(),
-            metadata: metadata.clone(),
-        };
-        let version = ArtifactVersion {
-            name: name.to_string(),
-            version: next_version,
-            created_at: now,
-            size,
-            content_type,
-        };
-        meta.versions.push(record);
-        if let Err(error) = self.write_meta(session_id, name, &meta).await {
-            Self::rollback_version_file(&content_path).await;
-            return Err(error);
-        }
+            let record = VersionRecord {
+                name: name.to_string(),
+                version: next_version,
+                created_at: now,
+                size,
+                content_type: content_type.clone(),
+                metadata: metadata.clone(),
+            };
+            let version = ArtifactVersion {
+                name: name.to_string(),
+                version: next_version,
+                created_at: now,
+                size,
+                content_type,
+            };
+            meta.versions.push(record);
+            if let Err(error) = self.write_meta(session_id, name, &meta).await {
+                Self::rollback_version_file(&content_path).await;
+                return Err(error);
+            }
 
-        tracing::info!(
-            session_id,
-            name,
-            version = next_version,
-            size,
-            "artifact saved from stream"
-        );
+            tracing::info!(
+                session_id,
+                name,
+                version = next_version,
+                size,
+                "artifact saved from stream"
+            );
 
-        Ok(version)
+            Ok(version)
+        })
     }
 
-    async fn load_stream(
-        &self,
-        session_id: &str,
-        name: &str,
+    fn load_stream<'a>(
+        &'a self,
+        session_id: &'a str,
+        name: &'a str,
         version: Option<u32>,
-    ) -> Result<Option<ArtifactByteStream>, ArtifactError> {
-        self.resolve_artifact_dir(session_id, name)?;
+    ) -> swink_agent::ArtifactFuture<'a, Option<ArtifactByteStream>> {
+        Box::pin(async move {
+            self.resolve_artifact_dir(session_id, name)?;
 
-        let lock = self.artifact_lock(session_id, name).await;
-        let _guard = lock.lock().await;
+            let lock = self.artifact_lock(session_id, name).await;
+            let _guard = lock.lock().await;
 
-        let meta = self.read_meta(session_id, name).await?;
-        self.reject_metadata_content_mismatch(session_id, name, &meta)
-            .await?;
+            let meta = self.read_meta(session_id, name).await?;
+            self.reject_metadata_content_mismatch(session_id, name, &meta)
+                .await?;
 
-        let target_record = if let Some(version) = version {
-            if let Some(record) = meta
-                .versions
-                .iter()
-                .find(|record| record.version == version)
-            {
-                record
-            } else {
-                let content_path = self.version_path(session_id, name, version);
-                if tokio::fs::try_exists(&content_path)
-                    .await
-                    .map_err(storage_err)?
+            let target_record = if let Some(version) = version {
+                if let Some(record) = meta
+                    .versions
+                    .iter()
+                    .find(|record| record.version == version)
                 {
-                    return Err(orphan_content_err(session_id, name, version, &content_path));
+                    record
+                } else {
+                    let content_path = self.version_path(session_id, name, version);
+                    if tokio::fs::try_exists(&content_path)
+                        .await
+                        .map_err(storage_err)?
+                    {
+                        return Err(orphan_content_err(session_id, name, version, &content_path));
+                    }
+                    return Ok(None);
                 }
-                return Ok(None);
-            }
-        } else {
-            if let Some(entry) = meta.versions.last() {
-                entry
             } else {
-                return Ok(None);
-            }
-        };
+                if let Some(entry) = meta.versions.last() {
+                    entry
+                } else {
+                    return Ok(None);
+                }
+            };
 
-        let file_path = self.version_path(session_id, name, target_record.version);
-        let file = match tokio::fs::File::open(&file_path).await {
-            Ok(f) => f,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Err(missing_content_err(
-                    session_id,
-                    name,
-                    target_record.version,
-                    &file_path,
-                ));
-            }
-            Err(e) => return Err(storage_err(e)),
-        };
+            let file_path = self.version_path(session_id, name, target_record.version);
+            let file = match tokio::fs::File::open(&file_path).await {
+                Ok(f) => f,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(missing_content_err(
+                        session_id,
+                        name,
+                        target_record.version,
+                        &file_path,
+                    ));
+                }
+                Err(e) => return Err(storage_err(e)),
+            };
 
-        let reader = BufReader::with_capacity(CHUNK_SIZE, file);
+            let reader = BufReader::with_capacity(CHUNK_SIZE, file);
 
-        // Use try_unfold to produce a stream of 64KB chunks.
-        let chunk_stream = stream::try_unfold(reader, |mut reader| async move {
-            let mut buf = vec![0u8; CHUNK_SIZE];
-            let n = reader.read(&mut buf).await.map_err(storage_err)?;
-            if n == 0 {
-                return Ok(None);
-            }
-            buf.truncate(n);
-            Ok(Some((Bytes::from(buf), reader)))
-        });
+            // Use try_unfold to produce a stream of 64KB chunks.
+            let chunk_stream = stream::try_unfold(reader, |mut reader| async move {
+                let mut buf = vec![0u8; CHUNK_SIZE];
+                let n = reader.read(&mut buf).await.map_err(storage_err)?;
+                if n == 0 {
+                    return Ok(None);
+                }
+                buf.truncate(n);
+                Ok(Some((Bytes::from(buf), reader)))
+            });
 
-        Ok(Some(Box::pin(chunk_stream)))
+            let stream: ArtifactByteStream = Box::pin(chunk_stream);
+            Ok(Some(stream))
+        })
     }
 }

@@ -41,6 +41,22 @@ fn assert_invalid_data_storage_error(err: swink_agent::ArtifactError, expected_s
     );
 }
 
+#[tokio::test]
+async fn dyn_artifact_store_round_trips_file_artifacts() {
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let store: Arc<dyn ArtifactStore> = Arc::new(FileArtifactStore::new(tmpdir.path()));
+
+    store
+        .save("s1", "report.md", text_data("hello"))
+        .await
+        .unwrap();
+    let (data, version) = store.load("s1", "report.md").await.unwrap().unwrap();
+
+    assert_eq!(data.content, b"hello");
+    assert_eq!(version.name, "report.md");
+    assert_eq!(version.version, 1);
+}
+
 // T035: fs_save_and_load_round_trip
 #[tokio::test]
 async fn fs_save_and_load_round_trip() {

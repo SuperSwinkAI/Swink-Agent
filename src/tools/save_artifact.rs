@@ -12,15 +12,15 @@ use crate::artifact::{ArtifactData, ArtifactStore, validate_session_id};
 use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validated_schema_for};
 
 /// Built-in tool that saves content as a versioned artifact.
-pub struct SaveArtifactTool<S: ArtifactStore + 'static> {
-    store: Arc<S>,
+pub struct SaveArtifactTool {
+    store: Arc<dyn ArtifactStore>,
     schema: Value,
 }
 
-impl<S: ArtifactStore + 'static> SaveArtifactTool<S> {
+impl SaveArtifactTool {
     /// Create a new `SaveArtifactTool` backed by the given store.
     #[must_use]
-    pub fn new(store: Arc<S>) -> Self {
+    pub fn new(store: Arc<dyn ArtifactStore>) -> Self {
         Self {
             store,
             schema: validated_schema_for::<Params>(),
@@ -39,8 +39,7 @@ struct Params {
     content_type: Option<String>,
 }
 
-#[allow(clippy::unnecessary_literal_bound)]
-impl<S: ArtifactStore + 'static> AgentTool for SaveArtifactTool<S> {
+impl AgentTool for SaveArtifactTool {
     fn name(&self) -> &str {
         "save_artifact"
     }
