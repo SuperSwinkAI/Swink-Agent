@@ -241,6 +241,10 @@ Enable GPU acceleration via Cargo feature flags on `swink-agent-local-llm`:
 | `cuda`       | NVIDIA CUDA    | Linux, Windows    |
 | `vulkan`     | Vulkan         | Linux, Windows    |
 
+Hosted docs on docs.rs are built with the portable CPU backend plus the `gemma4`
+API surface. Hardware backend features are documented here but are not enabled
+for docs.rs because they require platform-specific toolchains.
+
 Gemma 4 E2B works on CPU (unlike the previous mistralrs-based implementation), but GPU acceleration is strongly recommended for usable performance:
 
 ```toml

@@ -11,7 +11,7 @@ keywords = ["llm", "local", "inference", "gguf", "embedding"]
 categories = ["development-tools", "science"]
 
 [package.metadata.docs.rs]
-all-features = true
+features = ["gemma4"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
