@@ -5,6 +5,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use common::{
@@ -193,6 +194,53 @@ impl StreamFn for CancelsOnTextStartStreamFn {
                 cancellation_token.cancel();
             }
         }))
+    }
+}
+
+struct CancelsThenStallsStreamFn;
+
+impl StreamFn for CancelsThenStallsStreamFn {
+    fn stream<'a>(
+        &'a self,
+        _model: &'a ModelSpec,
+        _context: &'a AgentContext,
+        _options: &'a StreamOptions,
+        cancellation_token: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        Box::pin(CancelsThenStallsStream {
+            cancellation_token,
+            state: StalledStreamState::Start,
+        })
+    }
+}
+
+enum StalledStreamState {
+    Start,
+    CancelThenPending,
+    Pending,
+}
+
+struct CancelsThenStallsStream {
+    cancellation_token: CancellationToken,
+    state: StalledStreamState,
+}
+
+impl Stream for CancelsThenStallsStream {
+    type Item = AssistantMessageEvent;
+
+    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match self.state {
+            StalledStreamState::Start => {
+                self.state = StalledStreamState::CancelThenPending;
+                Poll::Ready(Some(AssistantMessageEvent::Start))
+            }
+            StalledStreamState::CancelThenPending => {
+                self.cancellation_token.cancel();
+                self.state = StalledStreamState::Pending;
+                Poll::Pending
+            }
+            StalledStreamState::Pending => Poll::Pending,
+        }
     }
 }
 
@@ -1345,6 +1393,32 @@ async fn abort() {
         event,
         AgentEvent::MessageEnd { message }
             if message.stop_reason == StopReason::Aborted
+    )));
+    assert!(has_event(&events, "AgentEnd"));
+}
+
+#[tokio::test]
+async fn abort_during_stalled_stream_completes_turn() {
+    let token = CancellationToken::new();
+    let token_for_assertion = token.clone();
+    let stream_fn = Arc::new(CancelsThenStallsStreamFn);
+
+    let config = default_config(stream_fn);
+
+    let events = tokio::time::timeout(
+        Duration::from_secs(5),
+        collect_events_until_agent_end(agent_loop(vec![], "system".to_string(), config, token)),
+    )
+    .await
+    .expect("stalled provider stream should not block cancellation");
+
+    assert!(token_for_assertion.is_cancelled());
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::TurnEnd {
+            reason: swink_agent::TurnEndReason::Aborted,
+            ..
+        }
     )));
     assert!(has_event(&events, "AgentEnd"));
 }

@@ -351,7 +351,22 @@ async fn stream_single_attempt(
         Option<crate::stream::StreamErrorKind>,
     )> = None;
 
-    while let Some(event) = stream.next().await {
+    loop {
+        let event = tokio::select! {
+            () = cancellation_token.cancelled() => {
+                return StreamAttemptResult::EarlyExit {
+                    result: StreamResult::Aborted,
+                    events,
+                };
+            }
+            next = stream.next() => {
+                let Some(event) = next else {
+                    break;
+                };
+                event
+            }
+        };
+
         if cancellation_token.is_cancelled() {
             return StreamAttemptResult::EarlyExit {
                 result: StreamResult::Aborted,
