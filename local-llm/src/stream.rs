@@ -1559,18 +1559,21 @@ mod tests {
     async fn token_stream_cancellation_wins_while_waiting_for_runner_event() {
         let (_tx, rx) = tokio::sync::mpsc::channel(1);
         let token = CancellationToken::new();
-        let cancel_token = token.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            cancel_token.cancel();
-        });
+        let stream = drain_token_stream(rx, &token, false);
+        tokio::pin!(stream);
 
-        let events = tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            drain_token_stream(rx, &token, false),
-        )
-        .await
-        .expect("cancellation should interrupt a quiet runner channel");
+        std::future::poll_fn(|cx| match stream.as_mut().poll(cx) {
+            std::task::Poll::Pending => std::task::Poll::Ready(()),
+            std::task::Poll::Ready(events) => {
+                panic!("quiet runner channel resolved before cancellation: {events:?}")
+            }
+        })
+        .await;
+        token.cancel();
+
+        let events = tokio::time::timeout(std::time::Duration::from_secs(1), stream)
+            .await
+            .expect("cancellation should interrupt a quiet runner channel");
 
         assert!(matches!(
             events.last(),
@@ -1924,17 +1927,19 @@ mod tests {
     #[tokio::test]
     async fn race_pre_stream_cancellation_aborts_in_flight_readiness() {
         let token = CancellationToken::new();
+        let readiness_started = Arc::new(tokio::sync::Notify::new());
         let cancel_token = token.clone();
+        let cancel_on_readiness = Arc::clone(&readiness_started);
         tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            cancel_on_readiness.notified().await;
             cancel_token.cancel();
         });
 
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(1),
             race_pre_stream_cancellation(&token, async {
-                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-                Ok::<_, AssistantMessageEvent>("ready")
+                readiness_started.notify_one();
+                std::future::pending::<Result<&str, AssistantMessageEvent>>().await
             }),
         )
         .await
