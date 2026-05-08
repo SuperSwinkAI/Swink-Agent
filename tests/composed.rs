@@ -7,7 +7,7 @@
 
 mod common;
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -20,8 +20,8 @@ use serde_json::json;
 
 use swink_agent::{
     Agent, AgentEvent, AgentMessage, AgentOptions, AgentTool, AgentToolResult,
-    AssistantMessageEvent, ContentBlock, Cost, DefaultRetryStrategy, LlmMessage, StopReason,
-    ToolApproval, Usage, selective_approve,
+    AssistantMessageDelta, AssistantMessageEvent, ContentBlock, Cost, DefaultRetryStrategy,
+    LlmMessage, StopReason, ToolApproval, ToolFuture, Usage, selective_approve,
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -81,6 +81,75 @@ fn make_options(
             .with_jitter(false)
             .with_base_delay(Duration::from_millis(1)),
     ))
+}
+
+struct CancelAwareTool {
+    executed: Arc<AtomicBool>,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl CancelAwareTool {
+    fn new() -> Self {
+        Self {
+            executed: Arc::new(AtomicBool::new(false)),
+            cancelled: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn was_executed(&self) -> bool {
+        self.executed.load(Ordering::SeqCst)
+    }
+
+    fn was_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+}
+
+impl AgentTool for CancelAwareTool {
+    fn name(&self) -> &str {
+        "slow_approved"
+    }
+
+    fn label(&self) -> &str {
+        "slow_approved"
+    }
+
+    fn description(&self) -> &str {
+        "Waits until cancellation is observed"
+    }
+
+    fn parameters_schema(&self) -> &serde_json::Value {
+        static SCHEMA: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+        SCHEMA.get_or_init(|| {
+            json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+            })
+        })
+    }
+
+    fn requires_approval(&self) -> bool {
+        true
+    }
+
+    fn execute(
+        &self,
+        _tool_call_id: &str,
+        _params: serde_json::Value,
+        cancellation_token: tokio_util::sync::CancellationToken,
+        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+        _state: std::sync::Arc<std::sync::RwLock<swink_agent::SessionState>>,
+        _credential: Option<swink_agent::ResolvedCredential>,
+    ) -> ToolFuture<'_> {
+        self.executed.store(true, Ordering::SeqCst);
+        let cancelled = Arc::clone(&self.cancelled);
+        Box::pin(async move {
+            cancellation_token.cancelled().await;
+            cancelled.store(true, Ordering::SeqCst);
+            AgentToolResult::text("cancelled")
+        })
+    }
 }
 
 // ─── Test 1: Approval with steering interrupt ────────────────────────────
@@ -250,11 +319,8 @@ async fn follow_up_after_tool_error() {
 /// cancellation propagates and the agent stops cleanly.
 #[tokio::test]
 async fn abort_during_tool_execution_with_approval() {
-    let tool = Arc::new(
-        MockTool::new("slow_approved")
-            .with_requires_approval(true)
-            .with_delay(Duration::from_secs(10)),
-    );
+    let tool = Arc::new(CancelAwareTool::new());
+    let tool_ref = Arc::clone(&tool);
 
     let responses = vec![
         tool_call_events("tc1", "slow_approved", "{}"),
@@ -270,24 +336,44 @@ async fn abort_during_tool_execution_with_approval() {
     // Consume events until we see tool execution start, then abort.
     let mut saw_tool_start = false;
     let mut saw_approval_requested = false;
-    while let Some(event) = stream.next().await {
-        if matches!(event, AgentEvent::ToolApprovalRequested { .. }) {
-            saw_approval_requested = true;
+    let mut saw_unreachable_text = false;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(event) = stream.next().await {
+            if matches!(event, AgentEvent::ToolApprovalRequested { .. }) {
+                saw_approval_requested = true;
+            }
+            if matches!(event, AgentEvent::ToolExecutionStart { .. }) {
+                saw_tool_start = true;
+                agent.abort();
+            }
+            if matches!(
+                event,
+                AgentEvent::MessageUpdate {
+                    delta: AssistantMessageDelta::Text { ref delta, .. },
+                } if delta.as_ref() == "should not reach"
+            ) {
+                saw_unreachable_text = true;
+            }
+            // Once aborted the stream will end.
         }
-        if matches!(event, AgentEvent::ToolExecutionStart { .. }) {
-            saw_tool_start = true;
-            agent.abort();
-        }
-        // Once aborted the stream will end.
-    }
+    })
+    .await
+    .expect("abort must cancel the pending approved tool instead of hanging");
 
     assert!(
         saw_approval_requested,
         "should see approval requested event"
     );
     assert!(saw_tool_start, "should see tool execution start");
-    // The stream ended (we exited the while loop), meaning the abort
-    // propagated and the agent loop terminated cleanly.
+    assert!(tool_ref.was_executed(), "approved tool should start");
+    assert!(
+        tool_ref.was_cancelled(),
+        "abort should propagate cancellation into the running tool"
+    );
+    assert!(
+        !saw_unreachable_text,
+        "cancelled turn should not continue to the next model response"
+    );
 }
 
 // ─── Test 5: Context overflow triggers retry with tools ──────────────────
