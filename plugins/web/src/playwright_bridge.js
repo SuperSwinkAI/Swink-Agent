@@ -3,6 +3,7 @@
 
 const net = require('net');
 const dns = require('dns').promises;
+const http = require('http');
 const readline = require('readline');
 
 let browser = null;
@@ -216,12 +217,147 @@ async function blockedByFilter(rawUrl, filter, lookup = dns.lookup) {
   return null;
 }
 
-function newContextOptions(req) {
+function newContextOptions(req, proxy) {
   const options = { serviceWorkers: 'block' };
   if (req.viewport) {
     options.viewport = { width: req.viewport.width, height: req.viewport.height };
   }
+  if (proxy) {
+    options.proxy = { server: proxy.server };
+  }
   return options;
+}
+
+function filterNeedsProxy(filter) {
+  return Boolean(filter && filter.blockPrivateIps);
+}
+
+function defaultPortForScheme(scheme) {
+  return scheme === 'https' ? 443 : 80;
+}
+
+async function resolveProxyTarget(parsed, filter, lookup = dns.lookup) {
+  const scheme = parsed.protocol.replace(':', '');
+  if (scheme !== 'http' && scheme !== 'https') {
+    throw new Error(`URL scheme '${scheme}' is not allowed; only http and https are permitted`);
+  }
+
+  const host = normalizeHost(parsed.hostname);
+  if ((filter.allowlist || []).length > 0 && !hostMatches(filter.allowlist, host)) {
+    throw new Error(`Domain '${host}' is not on the allow list`);
+  }
+  if (hostMatches(filter.denylist, host)) {
+    throw new Error(`Domain '${host}' is on the deny list`);
+  }
+  if (filter.blockPrivateIps && isBlockedPrivateHost(host)) {
+    throw new Error(`Address ${host} is a private/internal host and is blocked`);
+  }
+
+  let address = host;
+  if (filter.blockPrivateIps && !net.isIP(host)) {
+    let addrs;
+    try {
+      addrs = await lookup(host, { all: true, verbatim: true });
+    } catch (err) {
+      throw new Error(`DNS resolution failed for '${host}': ${err.message}`);
+    }
+
+    const results = Array.isArray(addrs) ? addrs : [addrs];
+    if (results.length === 0) {
+      throw new Error(`DNS resolution failed for '${host}': no addresses found`);
+    }
+
+    address = null;
+    for (const result of results) {
+      const resolved = typeof result === 'string' ? result : result.address;
+      if (resolved && isBlockedPrivateHost(resolved)) {
+        throw new Error(`Address ${resolved} is a private/internal host and is blocked`);
+      }
+      if (!address && resolved) {
+        address = resolved;
+      }
+    }
+    if (!address) {
+      throw new Error(`DNS resolution failed for '${host}': no addresses found`);
+    }
+  }
+
+  return {
+    address,
+    host,
+    hostHeader: parsed.host,
+    port: Number(parsed.port || defaultPortForScheme(scheme)),
+  };
+}
+
+async function createFilteringProxy(filter) {
+  const server = http.createServer(async (clientReq, clientRes) => {
+    try {
+      const parsed = new URL(clientReq.url);
+      const target = await resolveProxyTarget(parsed, filter);
+      const headers = { ...clientReq.headers, host: target.hostHeader };
+      const upstream = http.request(
+        {
+          host: target.address,
+          port: target.port,
+          method: clientReq.method,
+          path: `${parsed.pathname}${parsed.search}`,
+          headers,
+        },
+        (upstreamRes) => {
+          clientRes.writeHead(upstreamRes.statusCode || 502, upstreamRes.headers);
+          upstreamRes.pipe(clientRes);
+        }
+      );
+      upstream.on('error', (err) => {
+        if (!clientRes.headersSent) {
+          clientRes.writeHead(502);
+        }
+        clientRes.end(err.message);
+      });
+      clientReq.pipe(upstream);
+    } catch (err) {
+      clientRes.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+      clientRes.end(err.message);
+    }
+  });
+
+  server.on('connect', async (req, clientSocket, head) => {
+    try {
+      const parsed = new URL(`https://${req.url}`);
+      const target = await resolveProxyTarget(parsed, filter);
+      const upstream = net.connect({ host: target.address, port: target.port }, () => {
+        clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+        if (head && head.length > 0) {
+          upstream.write(head);
+        }
+        upstream.pipe(clientSocket);
+        clientSocket.pipe(upstream);
+      });
+      upstream.on('error', (err) => {
+        clientSocket.end(`HTTP/1.1 502 Bad Gateway\r\n\r\n${err.message}`);
+      });
+      clientSocket.on('error', () => upstream.destroy());
+    } catch (err) {
+      clientSocket.end(`HTTP/1.1 403 Forbidden\r\n\r\n${err.message}`);
+    }
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+
+  const address = server.address();
+  return {
+    server: `http://127.0.0.1:${address.port}`,
+    async close() {
+      await new Promise((resolve) => server.close(resolve));
+    },
+  };
 }
 
 async function installNavigationFilter(context, filter) {
@@ -246,10 +382,13 @@ async function installNavigationFilter(context, filter) {
 
 async function handleScreenshot(req) {
   const b = await ensureBrowser();
-  const context = await b.newContext(newContextOptions(req));
-  const blockedReason = await installNavigationFilter(context, req.filter);
-  const page = await context.newPage();
+  const proxy = filterNeedsProxy(req.filter) ? await createFilteringProxy(req.filter) : null;
+  let context = null;
+  let blockedReason = () => null;
   try {
+    context = await b.newContext(newContextOptions(req, proxy));
+    blockedReason = await installNavigationFilter(context, req.filter);
+    const page = await context.newPage();
     await page.goto(req.url, { waitUntil: 'load', timeout: 30000 });
     const buf = await page.screenshot({ type: 'png', fullPage: false });
     const base64 = buf.toString('base64');
@@ -257,7 +396,12 @@ async function handleScreenshot(req) {
   } catch (err) {
     respond({ id: req.id, ok: false, error: blockedReason() || err.message });
   } finally {
-    await context.close();
+    if (context) {
+      await context.close();
+    }
+    if (proxy) {
+      await proxy.close();
+    }
   }
 }
 
@@ -330,10 +474,13 @@ function extractElementData(el, preset) {
 
 async function handleExtract(req) {
   const b = await ensureBrowser();
-  const context = await b.newContext(newContextOptions(req));
-  const blockedReason = await installNavigationFilter(context, req.filter);
-  const page = await context.newPage();
+  const proxy = filterNeedsProxy(req.filter) ? await createFilteringProxy(req.filter) : null;
+  let context = null;
+  let blockedReason = () => null;
   try {
+    context = await b.newContext(newContextOptions(req, proxy));
+    blockedReason = await installNavigationFilter(context, req.filter);
+    const page = await context.newPage();
     await page.goto(req.url, { waitUntil: 'load', timeout: 30000 });
 
     const plan = buildExtractionPlan(req);
@@ -390,7 +537,12 @@ async function handleExtract(req) {
   } catch (err) {
     respond({ id: req.id, ok: false, error: blockedReason() || err.message });
   } finally {
-    await context.close();
+    if (context) {
+      await context.close();
+    }
+    if (proxy) {
+      await proxy.close();
+    }
   }
 }
 
@@ -459,8 +611,11 @@ module.exports = {
   blockedByFilter,
   buildExtractionPlan,
   collectAttributes,
+  createFilteringProxy,
   extractElementData,
+  filterNeedsProxy,
   installNavigationFilter,
   isBlockedPrivateHost,
   newContextOptions,
+  resolveProxyTarget,
 };

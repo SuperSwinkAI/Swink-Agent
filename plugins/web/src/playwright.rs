@@ -588,6 +588,13 @@ if (options.serviceWorkers !== 'block') {{
 if (options.viewport.width !== 640 || options.viewport.height !== 480) {{
   throw new Error('viewport options were not preserved: ' + JSON.stringify(options));
 }}
+const proxiedOptions = bridge.newContextOptions(
+  {{ viewport: {{ width: 800, height: 600 }} }},
+  {{ server: 'http://127.0.0.1:43210' }}
+);
+if (proxiedOptions.proxy.server !== 'http://127.0.0.1:43210') {{
+  throw new Error('proxy options were not installed: ' + JSON.stringify(proxiedOptions));
+}}
 
 let pattern = null;
 let abortReason = null;
@@ -631,6 +638,82 @@ if (!String(blockedReason()).includes('private/internal host')) {{
             .arg(node_script)
             .output()
             .expect("node should run bridge context routing assertions");
+
+        assert!(
+            output.status.success(),
+            "node assertions failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn bridge_script_resolves_proxy_targets_with_single_checked_address() {
+        let bridge_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/playwright_bridge.js");
+        let node_script = format!(
+            r"
+const bridge = require({bridge_path});
+
+void (async () => {{
+async function resolvesTo(addresses) {{
+  return addresses.map((address) => {{
+    const family = address.includes(':') ? 6 : 4;
+    return {{ address, family }};
+  }});
+}}
+
+const filter = {{ allowlist: [], denylist: [], blockPrivateIps: true }};
+if (!bridge.filterNeedsProxy(filter)) {{
+  throw new Error('private-IP filtering should enable the browser proxy');
+}}
+
+const target = await bridge.resolveProxyTarget(
+  new URL('https://public.example/path?q=1'),
+  filter,
+  async () => resolvesTo(['93.184.216.34'])
+);
+if (target.address !== '93.184.216.34' || target.host !== 'public.example' || target.port !== 443) {{
+  throw new Error('unexpected proxy target: ' + JSON.stringify(target));
+}}
+
+try {{
+  await bridge.resolveProxyTarget(
+    new URL('https://rebind.example/'),
+    filter,
+    async () => resolvesTo(['93.184.216.34', '10.0.0.5'])
+  );
+  throw new Error('mixed public/private DNS answers should fail closed');
+}} catch (error) {{
+  if (!String(error.message).includes('private/internal host')) {{
+    throw error;
+  }}
+}}
+
+try {{
+  await bridge.resolveProxyTarget(
+    new URL('https://unresolvable.example/'),
+    filter,
+    async () => {{ throw new Error('lookup failed'); }}
+  );
+  throw new Error('DNS lookup failures should fail closed');
+}} catch (error) {{
+  if (!String(error.message).includes('DNS resolution failed')) {{
+    throw error;
+  }}
+}}
+}})().catch((error) => {{
+  console.error(error.stack || error);
+  process.exit(1);
+}});
+",
+            bridge_path = serde_json::to_string(&bridge_path.display().to_string())
+                .expect("path should serialize"),
+        );
+
+        let output = StdCommand::new(resolve_node_path(None))
+            .arg("-e")
+            .arg(node_script)
+            .output()
+            .expect("node should run bridge proxy assertions");
 
         assert!(
             output.status.success(),
