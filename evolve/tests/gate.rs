@@ -162,6 +162,31 @@ fn p1_regression_rejected() {
 }
 
 #[test]
+fn missing_p1_candidate_result_is_rejected() {
+    let baseline = build_baseline(
+        vec![
+            ("kept", 0.9, Verdict::Pass),
+            ("improved", 0.2, Verdict::Fail),
+        ],
+        0.55,
+    );
+    let cand = make_candidate(TargetComponent::FullPrompt, "v2");
+    let cr = build_candidate_result(cand, vec![("improved", 1.0, Verdict::Pass)], 0.8);
+    let gate = AcceptanceGate::new(0.01);
+    let result = gate.evaluate(&baseline, &[cr]);
+
+    assert!(
+        result.applied.is_empty(),
+        "omitting a baseline-passing P1 case should fail closed"
+    );
+    assert_eq!(result.rejected.len(), 1);
+    match &result.rejected[0].2 {
+        AcceptanceVerdict::P1Regression { case_id } => assert_eq!(case_id, "kept"),
+        other => panic!("expected P1Regression, got {:?}", other),
+    }
+}
+
+#[test]
 fn top_ranked_per_component() {
     // Two accepted candidates targeting the same component.
     // Higher improvement (v2) → Accepted (applied); lower (v3) → AcceptedNotApplied.

@@ -69,7 +69,7 @@ impl AcceptanceGate {
         baseline: &crate::types::BaselineSnapshot,
         candidates: &[CandidateResult],
     ) -> AcceptanceResult {
-        // Build baseline per-case verdict map.
+        // Build baseline per-case verdict map for fail-closed P1 regression checks.
         let baseline_pass: HashMap<&str, bool> = baseline
             .results
             .iter()
@@ -103,9 +103,14 @@ impl AcceptanceGate {
                 continue;
             }
 
-            // Check P1 regressions.
+            let candidate_pass: HashMap<&str, bool> = cr
+                .results
+                .iter()
+                .map(|r| (r.case_id.as_str(), r.verdict == Verdict::Pass))
+                .collect();
+
             let mut regression_case_id: Option<String> = None;
-            for case_result in &cr.results {
+            for case_result in &baseline.results {
                 if !self.is_p1(&case_result.case_id) {
                     continue;
                 }
@@ -113,8 +118,11 @@ impl AcceptanceGate {
                     .get(case_result.case_id.as_str())
                     .copied()
                     .unwrap_or(false);
-                let now_failing = case_result.verdict != Verdict::Pass;
-                if was_passing && now_failing {
+                let still_passing = candidate_pass
+                    .get(case_result.case_id.as_str())
+                    .copied()
+                    .unwrap_or(false);
+                if was_passing && !still_passing {
                     regression_case_id = Some(case_result.case_id.clone());
                     break;
                 }
