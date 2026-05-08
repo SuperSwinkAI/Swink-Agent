@@ -545,6 +545,41 @@ fn malformed_event_parse_error(
     events
 }
 
+fn malformed_event_protocol_error(
+    state: &mut SseStreamState,
+    event_type: &str,
+    message: impl std::fmt::Display,
+) -> Vec<AssistantMessageEvent> {
+    error!(event_type, error = %message, "Anthropic SSE protocol error");
+    let mut events = crate::finalize::finalize_blocks(state);
+    events.push(AssistantMessageEvent::error(format!(
+        "Anthropic {event_type} protocol error: {message}",
+    )));
+    events
+}
+
+fn required_index(parsed: &Value) -> Result<usize, String> {
+    let Some(index) = parsed.get("index") else {
+        return Err("missing required field `index`".to_string());
+    };
+    let Some(index) = index.as_u64() else {
+        return Err("required field `index` must be a non-negative integer".to_string());
+    };
+    index
+        .try_into()
+        .map_err(|_| "required field `index` exceeds platform usize".to_string())
+}
+
+fn required_non_empty_str<'a>(parsed: &'a Value, pointer: &str) -> Result<&'a str, String> {
+    let Some(value) = parsed.pointer(pointer).and_then(Value::as_str) else {
+        return Err(format!("missing required field `{pointer}`"));
+    };
+    if value.is_empty() {
+        return Err(format!("required field `{pointer}` must not be empty"));
+    }
+    Ok(value)
+}
+
 /// Process a single SSE event and return the resulting harness events.
 #[allow(clippy::too_many_lines)]
 fn process_sse_event(
@@ -593,11 +628,13 @@ fn process_sse_event(
                     return malformed_event_parse_error(state, event_type, &parse_error);
                 }
             };
-            let index = parsed["index"]
-                .as_u64()
-                .unwrap_or(0)
-                .try_into()
-                .unwrap_or(0);
+            let index = match required_index(&parsed) {
+                Ok(index) => index,
+                Err(error) => {
+                    *done = true;
+                    return malformed_event_protocol_error(state, event_type, error);
+                }
+            };
             let block_type = parsed
                 .pointer("/content_block/type")
                 .and_then(Value::as_str)
@@ -625,16 +662,20 @@ fn process_sse_event(
                     }
                 }
                 "tool_use" => {
-                    let id = parsed
-                        .pointer("/content_block/id")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string();
-                    let name = parsed
-                        .pointer("/content_block/name")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string();
+                    let id = match required_non_empty_str(&parsed, "/content_block/id") {
+                        Ok(id) => id.to_string(),
+                        Err(error) => {
+                            *done = true;
+                            return malformed_event_protocol_error(state, event_type, error);
+                        }
+                    };
+                    let name = match required_non_empty_str(&parsed, "/content_block/name") {
+                        Ok(name) => name.to_string(),
+                        Err(error) => {
+                            *done = true;
+                            return malformed_event_protocol_error(state, event_type, error);
+                        }
+                    };
                     let (content_index, start_ev) = state.blocks.open_tool_call(id, name);
                     state
                         .provider_blocks
@@ -653,11 +694,13 @@ fn process_sse_event(
                     return malformed_event_parse_error(state, event_type, &parse_error);
                 }
             };
-            let index = parsed["index"]
-                .as_u64()
-                .unwrap_or(0)
-                .try_into()
-                .unwrap_or(0);
+            let index = match required_index(&parsed) {
+                Ok(index) => index,
+                Err(error) => {
+                    *done = true;
+                    return malformed_event_protocol_error(state, event_type, error);
+                }
+            };
             let delta_type = parsed
                 .pointer("/delta/type")
                 .and_then(Value::as_str)
@@ -731,11 +774,13 @@ fn process_sse_event(
                     return malformed_event_parse_error(state, event_type, &parse_error);
                 }
             };
-            let index = parsed["index"]
-                .as_u64()
-                .unwrap_or(0)
-                .try_into()
-                .unwrap_or(0);
+            let index = match required_index(&parsed) {
+                Ok(index) => index,
+                Err(error) => {
+                    *done = true;
+                    return malformed_event_protocol_error(state, event_type, error);
+                }
+            };
 
             if let Some((block_type, content_index)) = state.provider_blocks.remove(&index) {
                 match block_type {
@@ -1294,6 +1339,114 @@ mod tests {
                 ..
             } if error_message.contains("Anthropic content_block_delta JSON parse error")
         ));
+    }
+
+    fn assert_protocol_error(
+        event: &AssistantMessageEvent,
+        event_type: &str,
+        expected_detail: &str,
+    ) {
+        assert!(matches!(
+            event,
+            AssistantMessageEvent::Error {
+                stop_reason: StopReason::Error,
+                error_kind: None,
+                error_message,
+                ..
+            } if error_message.contains(&format!("Anthropic {event_type} protocol error"))
+                && error_message.contains(expected_detail)
+        ));
+    }
+
+    #[test]
+    fn content_block_start_without_index_is_terminal_protocol_error() {
+        let mut state = new_state();
+
+        let (events, done) = process(
+            "content_block_start",
+            r#"{"content_block":{"type":"text","text":""}}"#,
+            &mut state,
+        );
+
+        assert!(done);
+        assert_eq!(events.len(), 1);
+        assert_protocol_error(&events[0], "content_block_start", "index");
+    }
+
+    #[test]
+    fn content_block_delta_with_non_numeric_index_finalizes_before_error() {
+        let mut state = new_state();
+
+        process(
+            "content_block_start",
+            r#"{"index":0,"content_block":{"type":"text","text":""}}"#,
+            &mut state,
+        );
+
+        let (events, done) = process(
+            "content_block_delta",
+            r#"{"index":"0","delta":{"type":"text_delta","text":"Hello"}}"#,
+            &mut state,
+        );
+
+        assert!(done);
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::TextEnd { content_index: 0 }
+        ));
+        assert_protocol_error(&events[1], "content_block_delta", "index");
+    }
+
+    #[test]
+    fn content_block_stop_without_index_finalizes_before_error() {
+        let mut state = new_state();
+
+        process(
+            "content_block_start",
+            r#"{"index":0,"content_block":{"type":"text","text":""}}"#,
+            &mut state,
+        );
+
+        let (events, done) = process("content_block_stop", r"{}", &mut state);
+
+        assert!(done);
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::TextEnd { content_index: 0 }
+        ));
+        assert_protocol_error(&events[1], "content_block_stop", "index");
+    }
+
+    #[test]
+    fn tool_use_start_without_id_is_terminal_protocol_error() {
+        let mut state = new_state();
+
+        let (events, done) = process(
+            "content_block_start",
+            r#"{"index":0,"content_block":{"type":"tool_use","name":"bash"}}"#,
+            &mut state,
+        );
+
+        assert!(done);
+        assert_eq!(events.len(), 1);
+        assert_protocol_error(&events[0], "content_block_start", "/content_block/id");
+    }
+
+    #[test]
+    fn tool_use_start_with_empty_name_is_terminal_protocol_error() {
+        let mut state = new_state();
+
+        let (events, done) = process(
+            "content_block_start",
+            r#"{"index":0,"content_block":{"type":"tool_use","id":"tu_1","name":""}}"#,
+            &mut state,
+        );
+
+        assert!(done);
+        assert_eq!(events.len(), 1);
+        assert_protocol_error(&events[0], "content_block_start", "/content_block/name");
     }
 
     #[test]
