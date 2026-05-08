@@ -64,6 +64,13 @@ pub fn build_verify_tasks(
 }
 
 fn resolve_endpoint(provider: &ProviderCatalog) -> ProviderEndpoint {
+    resolve_endpoint_with_env(provider, |env_var| std::env::var(env_var).ok())
+}
+
+fn resolve_endpoint_with_env(
+    provider: &ProviderCatalog,
+    env_var_value: impl Fn(&str) -> Option<String>,
+) -> ProviderEndpoint {
     if provider.kind == ProviderKind::Local {
         return ProviderEndpoint::Skipped {
             reason: "local provider",
@@ -80,8 +87,8 @@ fn resolve_endpoint(provider: &ProviderCatalog) -> ProviderEndpoint {
         };
     }
     let api_key = match &provider.credential_env_var {
-        Some(env_var) => match std::env::var(env_var) {
-            Ok(key) if !key.trim().is_empty() => key,
+        Some(env_var) => match env_var_value(env_var) {
+            Some(key) if !key.trim().is_empty() => key,
             _ => {
                 return ProviderEndpoint::Skipped {
                     reason: "missing credential",
@@ -208,6 +215,75 @@ mod tests {
             super::ProviderEndpoint::Skipped {
                 reason: "no credential_env_var"
             }
+        ));
+    }
+
+    #[test]
+    fn empty_credential_env_var_is_skipped() {
+        let mut provider = provider("openai");
+        provider.credential_env_var = Some("OPENAI_API_KEY".to_owned());
+
+        let endpoint = super::resolve_endpoint_with_env(&provider, |_| Some("  ".to_owned()));
+
+        assert!(matches!(
+            endpoint,
+            super::ProviderEndpoint::Skipped {
+                reason: "missing credential"
+            }
+        ));
+    }
+
+    #[test]
+    fn anthropic_endpoint_uses_anthropic_variant() {
+        let mut provider = provider("anthropic");
+        provider.credential_env_var = Some("ANTHROPIC_API_KEY".to_owned());
+
+        let endpoint =
+            super::resolve_endpoint_with_env(&provider, |name| Some(format!("{name}-value")));
+
+        assert!(matches!(
+            endpoint,
+            super::ProviderEndpoint::Anthropic {
+                base_url,
+                api_key
+            } if base_url == "https://api.anthropic.example"
+                && api_key == "ANTHROPIC_API_KEY-value"
+        ));
+    }
+
+    #[test]
+    fn google_endpoint_uses_google_variant() {
+        let mut provider = provider("google");
+        provider.credential_env_var = Some("GOOGLE_API_KEY".to_owned());
+
+        let endpoint =
+            super::resolve_endpoint_with_env(&provider, |name| Some(format!("{name}-value")));
+
+        assert!(matches!(
+            endpoint,
+            super::ProviderEndpoint::Google {
+                base_url,
+                api_key
+            } if base_url == "https://api.google.example"
+                && api_key == "GOOGLE_API_KEY-value"
+        ));
+    }
+
+    #[test]
+    fn bearer_remote_endpoint_uses_openai_compatible_variant() {
+        let mut provider = provider("mistral");
+        provider.credential_env_var = Some("MISTRAL_API_KEY".to_owned());
+
+        let endpoint =
+            super::resolve_endpoint_with_env(&provider, |name| Some(format!("{name}-value")));
+
+        assert!(matches!(
+            endpoint,
+            super::ProviderEndpoint::OpenAiCompat {
+                base_url,
+                api_key
+            } if base_url == "https://api.mistral.example"
+                && api_key == "MISTRAL_API_KEY-value"
         ));
     }
 }
