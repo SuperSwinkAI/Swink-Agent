@@ -274,7 +274,11 @@ async fn run_session(
                         .respond_ok(id, crate::dto::PromptResult { turn_id })?;
                 }
                 Err(e) => {
+                    let end_session = e.code == RpcError::DISCONNECTED;
                     peer.sender().respond_err(id, e)?;
+                    if end_session {
+                        break;
+                    }
                 }
             },
             Some(IncomingMessage::Request { id, method: m, .. }) => {
@@ -389,6 +393,7 @@ fn peer_uid(_stream: &tokio::net::UnixStream) -> std::io::Result<u32> {
 mod tests {
     use std::io::ErrorKind;
     use std::sync::Arc;
+    use std::time::Duration;
 
     use swink_agent::{AgentEvent, AgentOptions, AgentTool, StreamFn};
     use tokio::io::duplex;
@@ -419,6 +424,23 @@ mod tests {
             stream_fn,
             swink_agent::testing::default_convert,
         )
+    }
+
+    fn approval_blocking_agent_options() -> AgentOptions {
+        let stream_fn: Arc<dyn StreamFn> = Arc::new(swink_agent::testing::MockStreamFn::new(vec![
+            swink_agent::testing::tool_call_events("call-1", "blocked_tool", r"{}"),
+        ]));
+        let tool = Arc::new(
+            swink_agent::testing::MockTool::new("blocked_tool").with_requires_approval(true),
+        );
+
+        AgentOptions::new(
+            "test system",
+            swink_agent::testing::default_model(),
+            stream_fn,
+            swink_agent::testing::default_convert,
+        )
+        .with_tools(vec![tool as Arc<dyn AgentTool>])
     }
 
     #[test]
@@ -699,6 +721,60 @@ mod tests {
             .await
             .unwrap();
         server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_session_shutdown_during_prompt_ends_session() {
+        let (mut client, mut server) = make_peer_pair();
+
+        let server_task = tokio::spawn(async move {
+            run_session(&mut server, &|| approval_blocking_agent_options())
+                .await
+                .unwrap();
+        });
+
+        initialize(&mut client).await;
+
+        let sender = client.sender();
+        let params = PromptParams {
+            text: "start a long prompt".into(),
+            session_id: None,
+        };
+        let prompt_sender = sender.clone();
+        let prompt_task = tokio::spawn(async move {
+            prompt_sender
+                .request::<_, PromptResult>(method::PROMPT, &params)
+                .await
+        });
+        let mut prompt_task = std::pin::pin!(prompt_task);
+
+        loop {
+            tokio::select! {
+                result = &mut prompt_task => {
+                    panic!("prompt resolved before tool approval request: {result:?}");
+                }
+                incoming = client.recv_incoming() => {
+                    match incoming.expect("server should request approval before shutdown") {
+                        IncomingMessage::Request { method: m, .. } if m == method::TOOL_APPROVE => break,
+                        IncomingMessage::Notification { method: m, .. } if m == method::AGENT_EVENT => {}
+                        other => panic!("unexpected message while awaiting tool approval: {other:?}"),
+                    }
+                }
+            }
+        }
+
+        sender
+            .notify(method::SHUTDOWN, &serde_json::Value::Null)
+            .await
+            .unwrap();
+
+        let err = prompt_task.await.unwrap().unwrap_err();
+        assert_eq!(err.code, crate::jsonrpc::RpcError::DISCONNECTED);
+
+        tokio::time::timeout(Duration::from_secs(1), server_task)
+            .await
+            .expect("shutdown during a prompt should end the session")
+            .unwrap();
     }
 
     #[tokio::test]
