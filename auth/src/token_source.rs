@@ -1,3 +1,4 @@
+use std::fmt;
 use std::future::Future;
 use std::sync::{PoisonError, RwLock};
 use std::time::{Duration, Instant};
@@ -6,10 +7,19 @@ use futures::FutureExt;
 use futures::future::{BoxFuture, Shared};
 use tokio::sync::Mutex;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ExpiringValue<T> {
     value: T,
     expires_at: Instant,
+}
+
+impl<T> fmt::Debug for ExpiringValue<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExpiringValue")
+            .field("value", &"<redacted>")
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
 }
 
 impl<T> ExpiringValue<T> {
@@ -181,6 +191,23 @@ mod tests {
         assert_eq!(
             state.current.as_ref().map(|current| current.generation),
             Some(new_generation)
+        );
+    }
+
+    #[test]
+    fn expiring_value_debug_redacts_value() {
+        let expires_at = Instant::now() + Duration::from_secs(300);
+        let value = ExpiringValue::new("LEAK_SENTINEL_ABC123".to_string(), expires_at);
+
+        let debug = format!("{value:?}");
+
+        assert!(
+            !debug.contains("LEAK_SENTINEL_ABC123"),
+            "cached token leaked: {debug}"
+        );
+        assert!(
+            debug.contains("expires_at"),
+            "expiry metadata should remain visible: {debug}"
         );
     }
 }

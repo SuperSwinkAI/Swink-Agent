@@ -1,11 +1,13 @@
 //! OAuth2 token refresh helpers.
 
+use std::fmt;
+
 use serde::Deserialize;
 use swink_agent::CredentialError;
 use tracing::debug;
 
 /// Response from an OAuth2 token endpoint.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct TokenResponse {
     /// The new access token.
     pub access_token: String,
@@ -16,6 +18,20 @@ pub struct TokenResponse {
     /// Token type (usually "Bearer").
     #[serde(default)]
     pub token_type: Option<String>,
+}
+
+impl fmt::Debug for TokenResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TokenResponse")
+            .field("access_token", &"<redacted>")
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("expires_in", &self.expires_in)
+            .field("token_type", &self.token_type)
+            .finish()
+    }
 }
 
 /// Standard OAuth2 error response body (RFC 6749 §5.2).
@@ -207,6 +223,31 @@ mod tests {
         fn make_writer(&'a self) -> Self::Writer {
             SharedLogWriter(Arc::clone(&self.0))
         }
+    }
+
+    #[test]
+    fn token_response_debug_redacts_tokens() {
+        let response = TokenResponse {
+            access_token: LEAK_SENTINEL.to_string(),
+            refresh_token: Some("REFRESH_LEAK_SENTINEL".to_string()),
+            expires_in: Some(3600),
+            token_type: Some("Bearer".to_string()),
+        };
+
+        let debug = format!("{response:?}");
+
+        assert!(
+            !debug.contains(LEAK_SENTINEL),
+            "access token leaked: {debug}"
+        );
+        assert!(
+            !debug.contains("REFRESH_LEAK_SENTINEL"),
+            "refresh token leaked: {debug}"
+        );
+        assert!(
+            debug.contains("Bearer") && debug.contains("3600"),
+            "safe token metadata should remain visible: {debug}"
+        );
     }
 
     #[test]
