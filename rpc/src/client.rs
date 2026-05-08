@@ -467,6 +467,34 @@ mod tests {
         server_task.await.unwrap();
     }
 
+    #[tokio::test]
+    async fn cancel_sends_cancel_notification() {
+        let (client, mut server) = make_client_pair();
+
+        client.cancel().await.unwrap();
+
+        let Some(IncomingMessage::Notification { method, params: _ }) =
+            server.recv_incoming().await
+        else {
+            panic!("expected cancel notification");
+        };
+        assert_eq!(method, method::CANCEL);
+    }
+
+    #[tokio::test]
+    async fn shutdown_sends_shutdown_notification() {
+        let (client, mut server) = make_client_pair();
+
+        client.shutdown().await.unwrap();
+
+        let Some(IncomingMessage::Notification { method, params: _ }) =
+            server.recv_incoming().await
+        else {
+            panic!("expected shutdown notification");
+        };
+        assert_eq!(method, method::SHUTDOWN);
+    }
+
     #[cfg(not(unix))]
     #[tokio::test]
     async fn connect_reports_unix_transport_unavailable_on_non_unix_hosts() {
