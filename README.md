@@ -58,8 +58,8 @@ A pure-Rust library for building LLM-powered agentic loops. Provider-agnostic co
 cargo run -p swink-agent-tui     # launch the TUI (remote/Ollama defaults)
 cargo run -p swink-agent-tui --features local  # include bundled local-LLM support
 cargo run -p swink-agent-eval --features cli --bin swink-eval -- --help
-cargo test --workspace             # run all tests
-just validate                      # formatting, clippy, tests, package preflight
+cargo test --workspace             # default-feature workspace test baseline
+just validate                      # full local gate: fmt, clippy, tests, feature gates, package preflight
 ```
 
 Workspace-wide `cargo build/test/clippy` commands also compile `swink-agent-local-llm`. That crate currently depends on `llama-cpp-sys-2`, so contributor machines need LLVM/libclang available for `bindgen`; if auto-discovery fails, set `LIBCLANG_PATH` to the LLVM `bin` directory before running workspace checks.

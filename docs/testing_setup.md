@@ -27,21 +27,14 @@ This compiles all workspace crates: core library, adapters, local-llm, memory, e
 Verify the same local validation sequence required for PRs before connecting to live APIs:
 
 ```bash
-cargo fmt --all --check
-cargo clippy --workspace -- -D warnings
-cargo test --workspace
-cargo build --workspace
-cargo test --workspace --features testkit
-cargo test -p swink-agent --no-default-features
-cargo adapters-no-default-features
-cargo local-llm-no-default-features
-cargo workspace-no-default-features
-cargo eval-no-default-features
-cargo eval-advanced-no-default-features
-cargo publish --workspace --dry-run --locked --allow-dirty
+just validate
 ```
 
-`just validate` and `just check` run this exact command set.
+`cargo test --workspace` is the default-feature workspace test baseline, not
+the full local gate. `just validate` is the canonical source of truth and also
+runs the `testkit` workspace tests, core plugin regression tests, no-default
+feature sentinels, formatting, clippy, build, and package preflight. `just
+check` is a backward-compatible alias for the same gate.
 
 These validation commands intentionally do not load `.env`; they should not
 inherit provider API keys or cloud credentials. Live-provider tests load

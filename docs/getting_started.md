@@ -156,9 +156,13 @@ let result = agent.prompt_async(messages).await?;
 ## Tests
 
 ```bash
-cargo test --workspace          # all tests
+cargo test --workspace          # default-feature workspace test baseline
+cargo test --workspace --features testkit  # includes core testkit-gated integration tests
 cargo test -p swink-agent     # core library only
 ```
+
+For the full local validation gate, including formatting, clippy, feature-gate
+sentinels, plugin regressions, and package preflight, run `just validate`.
 
 ## Further Reading
 
