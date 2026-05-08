@@ -35,6 +35,16 @@ pub(crate) struct ResolvedHost {
 }
 
 impl DomainFilter {
+    /// Construct a filter that preserves open-domain access while blocking
+    /// private, loopback, link-local, and otherwise non-routable IP ranges.
+    #[must_use]
+    pub fn blocking_private_ips() -> Self {
+        Self {
+            block_private_ips: true,
+            ..Self::default()
+        }
+    }
+
     /// Check whether the given URL is permitted by the filter.
     ///
     /// Steps:
@@ -250,10 +260,7 @@ mod tests {
 
     #[test]
     fn private_ip_ranges_are_blocked() {
-        let filter = DomainFilter {
-            block_private_ips: true,
-            ..Default::default()
-        };
+        let filter = DomainFilter::blocking_private_ips();
 
         for url in [
             "http://0.0.0.0/admin",

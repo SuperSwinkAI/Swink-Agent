@@ -66,7 +66,7 @@ impl FetchTool {
             client,
             max_content_length,
             request_timeout,
-            domain_filter: None,
+            domain_filter: Some(DomainFilter::blocking_private_ips()),
             max_redirects: 10,
             sanitizer: Some(ContentSanitizerPolicy::new()),
             schema,
@@ -350,6 +350,13 @@ mod tests {
 
     use super::FetchTool;
 
+    fn localhost_filter() -> DomainFilter {
+        DomainFilter {
+            block_private_ips: false,
+            ..Default::default()
+        }
+    }
+
     #[tokio::test]
     async fn execute_returns_readable_content_for_html_under_cap() {
         let server = MockServer::start().await;
@@ -371,7 +378,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let tool = FetchTool::new(reqwest::Client::new(), 4_096, Duration::from_secs(5));
+        let tool = FetchTool::new(reqwest::Client::new(), 4_096, Duration::from_secs(5))
+            .with_domain_filter(localhost_filter(), 10);
         let state = Arc::new(RwLock::new(SessionState::default()));
         let result = tool
             .execute(
@@ -405,7 +413,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let tool = FetchTool::new(reqwest::Client::new(), 512, Duration::from_secs(5));
+        let tool = FetchTool::new(reqwest::Client::new(), 512, Duration::from_secs(5))
+            .with_domain_filter(localhost_filter(), 10);
         let state = Arc::new(RwLock::new(SessionState::default()));
         let result = tool
             .execute(
@@ -445,7 +454,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let tool = FetchTool::new(reqwest::Client::new(), 4_096, Duration::from_secs(5));
+        let tool = FetchTool::new(reqwest::Client::new(), 4_096, Duration::from_secs(5))
+            .with_domain_filter(localhost_filter(), 10);
         let state = Arc::new(RwLock::new(SessionState::default()));
         let result = tool
             .execute(
@@ -487,6 +497,7 @@ mod tests {
             .await;
 
         let tool = FetchTool::new(reqwest::Client::new(), 4_096, Duration::from_secs(5))
+            .with_domain_filter(localhost_filter(), 10)
             .with_sanitizer_enabled(false);
         let state = Arc::new(RwLock::new(SessionState::default()));
         let result = tool
@@ -544,6 +555,27 @@ mod tests {
         let text = format!("{:?}", result.content);
         assert!(text.contains("Redirect URL blocked by domain filter"));
         assert!(text.contains("evil.com"));
+    }
+
+    #[tokio::test]
+    async fn direct_constructor_blocks_private_ips_by_default() {
+        let tool = FetchTool::new(reqwest::Client::new(), 4_096, Duration::from_secs(5));
+        let state = Arc::new(RwLock::new(SessionState::default()));
+        let result = tool
+            .execute(
+                "call-private",
+                json!({ "url": "http://127.0.0.1/private" }),
+                CancellationToken::new(),
+                None,
+                state,
+                None,
+            )
+            .await;
+
+        assert!(result.is_error);
+        let text = format!("{:?}", result.content);
+        assert!(text.contains("Initial URL blocked by domain filter"));
+        assert!(text.contains("private/internal IP"));
     }
 
     #[tokio::test]

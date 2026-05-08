@@ -45,7 +45,7 @@ impl ScreenshotTool {
             playwright_path,
             default_viewport,
             timeout,
-            domain_filter: None,
+            domain_filter: Some(DomainFilter::blocking_private_ips()),
             schema: build_schema(),
         }
     }
@@ -248,4 +248,30 @@ fn build_schema() -> Value {
         "required": ["url"],
         "additionalProperties": false
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn direct_constructor_blocks_private_ips_by_default() {
+        let tool = ScreenshotTool::new(
+            Arc::new(Mutex::new(None)),
+            None,
+            Viewport {
+                width: 1280,
+                height: 720,
+            },
+            Duration::from_secs(15),
+        );
+
+        let filter = tool
+            .domain_filter
+            .as_ref()
+            .expect("direct screenshot tool should install a default filter");
+        let localhost = Url::parse("http://127.0.0.1/admin").unwrap();
+
+        assert!(filter.is_allowed(&localhost).is_err());
+    }
 }

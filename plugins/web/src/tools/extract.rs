@@ -67,7 +67,7 @@ impl ExtractTool {
             bridge,
             playwright_path,
             timeout,
-            domain_filter: None,
+            domain_filter: Some(DomainFilter::blocking_private_ips()),
             sanitizer: Some(ContentSanitizerPolicy::new()),
             schema,
         }
@@ -282,4 +282,22 @@ fn parse_extract_params(params: &Value) -> Result<ExtractRequest, String> {
         selector,
         preset,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn direct_constructor_blocks_private_ips_by_default() {
+        let tool = ExtractTool::new(Arc::new(Mutex::new(None)), None, Duration::from_secs(15));
+
+        let filter = tool
+            .domain_filter
+            .as_ref()
+            .expect("direct extract tool should install a default filter");
+        let localhost = Url::parse("http://127.0.0.1/admin").unwrap();
+
+        assert!(filter.is_allowed(&localhost).is_err());
+    }
 }
