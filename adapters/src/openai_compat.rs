@@ -110,6 +110,8 @@ pub struct OaiChoice {
     pub delta: OaiDelta,
     #[serde(default)]
     pub finish_reason: Option<String>,
+    #[serde(default)]
+    pub content_filter_results: Option<Value>,
 }
 
 /// The delta portion of a streaming choice.
@@ -347,6 +349,11 @@ pub struct OaiSseStreamState {
     pub terminal_error: Option<AssistantMessageEvent>,
 }
 
+#[derive(Clone, Copy, Default)]
+pub(crate) struct OaiParserOptions {
+    pub(crate) detect_content_filter_results: bool,
+}
+
 impl crate::finalize::StreamFinalize for OaiSseStreamState {
     fn drain_open_blocks(&mut self) -> Vec<crate::finalize::OpenBlock> {
         // Tool-call entries in the HashMap that were opened in `blocks` will be
@@ -392,11 +399,22 @@ impl OaiSseStreamState {
 ///
 /// This is the shared chunk-processing logic used by both `OpenAI` and Azure
 /// adapters. The `provider` label is used for fallback tool-call IDs.
+#[allow(dead_code)]
 pub fn process_oai_chunk(
     chunk: &OaiChunk,
     state: &mut OaiSseStreamState,
     events: &mut Vec<AssistantMessageEvent>,
     provider: &str,
+) {
+    process_oai_chunk_with_options(chunk, state, events, provider, OaiParserOptions::default());
+}
+
+fn process_oai_chunk_with_options(
+    chunk: &OaiChunk,
+    state: &mut OaiSseStreamState,
+    events: &mut Vec<AssistantMessageEvent>,
+    provider: &str,
+    options: OaiParserOptions,
 ) {
     if let Some(u) = &chunk.usage {
         state.usage = Some(u.to_usage());
@@ -446,6 +464,20 @@ pub fn process_oai_chunk(
             }
         }
 
+        if options.detect_content_filter_results
+            && choice
+                .content_filter_results
+                .as_ref()
+                .is_some_and(content_filter_results_filtered)
+        {
+            let _ = flush_pending_oai_tool_calls(state, events, provider);
+            events.extend(crate::finalize::finalize_blocks(state));
+            state.terminal_error = Some(AssistantMessageEvent::error_content_filtered(format!(
+                "{provider} response stopped by content filter"
+            )));
+            return;
+        }
+
         if let Some(reason) = &choice.finish_reason {
             if reason == "content_filter" {
                 let _ = flush_pending_oai_tool_calls(state, events, provider);
@@ -482,6 +514,17 @@ pub fn process_oai_chunk(
             events.extend(crate::finalize::finalize_blocks(state));
             state.stop_reason = Some(stop_reason);
         }
+    }
+}
+
+fn content_filter_results_filtered(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => {
+            matches!(map.get("filtered"), Some(Value::Bool(true)))
+                || map.values().any(content_filter_results_filtered)
+        }
+        Value::Array(values) => values.iter().any(content_filter_results_filtered),
+        _ => false,
     }
 }
 
@@ -632,11 +675,28 @@ fn flush_pending_oai_tool_calls(
 /// OAI-compatible adapters. The `provider` label is used in error messages
 /// and fallback tool-call IDs.
 #[allow(clippy::too_many_lines)]
+#[allow(dead_code)]
 pub fn parse_oai_sse_stream(
     response: reqwest::Response,
     cancellation_token: CancellationToken,
     provider: &'static str,
     on_raw_payload: Option<swink_agent::OnRawPayload>,
+) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send>> {
+    parse_oai_sse_stream_with_options(
+        response,
+        cancellation_token,
+        provider,
+        on_raw_payload,
+        OaiParserOptions::default(),
+    )
+}
+
+pub(crate) fn parse_oai_sse_stream_with_options(
+    response: reqwest::Response,
+    cancellation_token: CancellationToken,
+    provider: &'static str,
+    on_raw_payload: Option<swink_agent::OnRawPayload>,
+    options: OaiParserOptions,
 ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send>> {
     let line_stream = sse_data_lines_with_callback(response.bytes_stream(), on_raw_payload);
 
@@ -671,7 +731,7 @@ pub fn parse_oai_sse_stream(
                 };
 
                 let mut events = Vec::new();
-                process_oai_chunk(&chunk, state, &mut events, provider);
+                process_oai_chunk_with_options(&chunk, state, &mut events, provider, options);
                 if let Some(error) = state.terminal_error.take() {
                     events.push(error);
                     SseAction::Done(events)
@@ -700,6 +760,7 @@ mod tests {
             choices: vec![OaiChoice {
                 delta,
                 finish_reason: finish_reason.map(String::from),
+                content_filter_results: None,
             }],
             usage: None,
         }

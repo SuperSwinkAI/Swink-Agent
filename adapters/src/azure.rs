@@ -16,7 +16,8 @@ use swink_agent::{AgentContext, AssistantMessageEvent, ModelSpec, StreamFn, Stre
 use swink_agent_auth::{ExpiringValue, SingleFlightTokenSource};
 
 use crate::classify::{HttpErrorKind, classify_with_overrides};
-use crate::oai_transport::{OaiAdapterShell, oai_send_and_parse, prepare_oai_request};
+use crate::oai_transport::{OaiAdapterShell, oai_send_and_parse_with_options, prepare_oai_request};
+use crate::openai_compat::OaiParserOptions;
 
 /// Authentication method for Azure `OpenAI` deployments.
 #[derive(Clone)]
@@ -320,7 +321,7 @@ fn azure_stream<'a>(
             Err(event) => return stream::iter(crate::base::pre_stream_error(event)).left_stream(),
         };
 
-        oai_send_and_parse(
+        oai_send_and_parse_with_options(
             request,
             azure.shell.provider(),
             cancellation_token,
@@ -333,6 +334,9 @@ fn azure_stream<'a>(
                 } else {
                     None
                 }
+            },
+            OaiParserOptions {
+                detect_content_filter_results: true,
             },
         )
         .right_stream()

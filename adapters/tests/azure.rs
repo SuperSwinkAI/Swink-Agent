@@ -961,6 +961,66 @@ async fn sse_content_filter_finish_reason() {
     );
 }
 
+#[tokio::test]
+async fn sse_content_filter_results_filtered() {
+    let body = [
+        r#"data: {"choices":[{"delta":{"content":"partial"}}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{},"content_filter_results":{"hate":{"filtered":true,"severity":"medium"}},"finish_reason":null}],"usage":{"prompt_tokens":5,"completion_tokens":1}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let auth = AzureAuth::ApiKey("test-key".into());
+    let stream_fn = AzureStreamFn::new(server.uri(), auth);
+    let events = collect_events(&stream_fn).await;
+
+    let error_event = events
+        .iter()
+        .find(|e| matches!(e, AssistantMessageEvent::Error { .. }));
+    assert!(
+        error_event.is_some(),
+        "expected ContentFiltered error event, got: {events:?}"
+    );
+    match error_event.unwrap() {
+        AssistantMessageEvent::Error {
+            error_kind,
+            error_message,
+            ..
+        } => {
+            assert_eq!(*error_kind, Some(StreamErrorKind::ContentFiltered));
+            assert!(
+                error_message.contains("content filter"),
+                "message should mention content filter: {error_message}"
+            );
+        }
+        _ => unreachable!(),
+    }
+
+    let terminal_count = events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                AssistantMessageEvent::Done { .. } | AssistantMessageEvent::Error { .. }
+            )
+        })
+        .count();
+    assert_eq!(
+        terminal_count, 1,
+        "exactly one terminal event expected, got {terminal_count}"
+    );
+}
+
 // ── T045: HTTP error body with ContentFilterBlocked → ContentFiltered ──────
 
 #[tokio::test]

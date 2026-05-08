@@ -27,7 +27,8 @@ use swink_agent::{AgentContext, AssistantMessageEvent, ModelSpec, StreamOptions}
 use crate::base::AdapterBase;
 use crate::convert;
 use crate::openai_compat::{
-    OaiChatRequest, OaiConverter, OaiStreamOptions, build_oai_tools, parse_oai_sse_stream,
+    OaiChatRequest, OaiConverter, OaiParserOptions, OaiStreamOptions, build_oai_tools,
+    parse_oai_sse_stream_with_options,
 };
 
 /// Shared shell for Bearer-auth OpenAI-compatible adapters.
@@ -197,12 +198,31 @@ pub fn prepare_oai_request(
 /// error conditions (e.g., Azure content filter violations). Return
 /// `Some(event)` to override the default classification, `None` to fall
 /// through to standard HTTP status mapping.
+#[allow(dead_code)]
 pub fn oai_send_and_parse<'a>(
     request: reqwest::RequestBuilder,
     provider: &'static str,
     cancellation_token: tokio_util::sync::CancellationToken,
     on_raw_payload: Option<swink_agent::OnRawPayload>,
     classify_error: impl Fn(u16, &str) -> Option<AssistantMessageEvent> + Send + 'a,
+) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
+    oai_send_and_parse_with_options(
+        request,
+        provider,
+        cancellation_token,
+        on_raw_payload,
+        classify_error,
+        OaiParserOptions::default(),
+    )
+}
+
+pub(crate) fn oai_send_and_parse_with_options<'a>(
+    request: reqwest::RequestBuilder,
+    provider: &'static str,
+    cancellation_token: tokio_util::sync::CancellationToken,
+    on_raw_payload: Option<swink_agent::OnRawPayload>,
+    classify_error: impl Fn(u16, &str) -> Option<AssistantMessageEvent> + Send + 'a,
+    parser_options: OaiParserOptions,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
     stream::once(async move {
         let response = match tokio::select! {
@@ -252,7 +272,14 @@ pub fn oai_send_and_parse<'a>(
             return stream::iter(vec![AssistantMessageEvent::Start, event]).left_stream();
         }
 
-        parse_oai_sse_stream(response, cancellation_token, provider, on_raw_payload).right_stream()
+        parse_oai_sse_stream_with_options(
+            response,
+            cancellation_token,
+            provider,
+            on_raw_payload,
+            parser_options,
+        )
+        .right_stream()
     })
     .flatten()
 }
