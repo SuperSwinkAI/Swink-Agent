@@ -666,6 +666,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn concurrent_same_target_edits_preserve_disjoint_changes() {
+        use std::fmt::Write as _;
         use std::sync::{Arc, RwLock};
 
         use serde_json::json;
@@ -676,9 +677,10 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("test.txt");
-        let original = (0..16)
-            .map(|i| format!("line-{i:02}\n"))
-            .collect::<String>();
+        let original = (0..16).fold(String::new(), |mut output, i| {
+            writeln!(output, "line-{i:02}").unwrap();
+            output
+        });
         tokio::fs::write(&file, original).await.unwrap();
 
         let tool = Arc::new(EditFileTool::new());

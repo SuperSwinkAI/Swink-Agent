@@ -419,7 +419,7 @@ mod tests {
                     "custom:?".to_string()
                 }
             }
-            _ => "other".to_string(),
+            AgentMessage::Llm(LlmMessage::ToolResult(_)) => "other".to_string(),
         }
     }
 

@@ -644,15 +644,15 @@ mod tests {
         let mut acc = BlockAccumulator::new();
 
         // Thinking comes first
-        let t_start = acc.ensure_thinking_open().unwrap();
+        let thinking_start = acc.ensure_thinking_open().unwrap();
         assert!(matches!(
-            t_start,
+            thinking_start,
             AssistantMessageEvent::ThinkingStart { content_index: 0 }
         ));
 
-        let t_end = acc.close_thinking(None).unwrap();
+        let thinking_end = acc.close_thinking(None).unwrap();
         assert!(matches!(
-            t_end,
+            thinking_end,
             AssistantMessageEvent::ThinkingEnd {
                 content_index: 0,
                 ..
@@ -660,15 +660,15 @@ mod tests {
         ));
 
         // Text follows
-        let tx_start = acc.ensure_text_open().unwrap();
+        let text_start = acc.ensure_text_open().unwrap();
         assert!(matches!(
-            tx_start,
+            text_start,
             AssistantMessageEvent::TextStart { content_index: 1 }
         ));
 
-        let tx_end = acc.close_text().unwrap();
+        let text_end = acc.close_text().unwrap();
         assert!(matches!(
-            tx_end,
+            text_end,
             AssistantMessageEvent::TextEnd { content_index: 1 }
         ));
     }
