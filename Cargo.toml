@@ -35,7 +35,7 @@ strsim = "0.11.1"
 jsonschema = "0.30"
 opentelemetry = "0.31"
 opentelemetry_sdk = "0.31"
-opentelemetry-otlp = "0.31"
+opentelemetry-otlp = "0.32"
 askama = "0.13"
 clap = { version = "4", features = ["derive"] }
 libc = "0.2"
