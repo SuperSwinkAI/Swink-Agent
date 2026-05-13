@@ -29,7 +29,7 @@ thiserror.workspace = true
 regex.workspace = true
 url = "2"
 base64 = "0.22"
-scraper = "0.26"
+scraper = "0.27"
 
 [dev-dependencies]
 wiremock.workspace = true
