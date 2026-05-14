@@ -12,7 +12,7 @@ readme = "README.md"
 
 [dependencies]
 swink-agent = { path = "..", version = "0.9.0", default-features = false }
-rmcp = { version = "1.5", features = ["client", "client-side-sse", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "transport-child-process"] }
+rmcp = { version = "1.7", features = ["client", "client-side-sse", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "transport-child-process"] }
 reqwest = { workspace = true }
 futures.workspace = true
 tokio = { workspace = true, features = ["macros", "process", "rt", "sync", "time"] }
@@ -25,7 +25,7 @@ sse-stream = "0.2"
 
 [dev-dependencies]
 axum = "0.8"
-rmcp = { version = "1.5", features = ["client", "server", "macros", "client-side-sse", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "transport-child-process", "transport-streamable-http-server"] }
+rmcp = { version = "1.7", features = ["client", "server", "macros", "client-side-sse", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "transport-child-process", "transport-streamable-http-server"] }
 swink-agent = { path = "..", default-features = false }
 tokio = { workspace = true, features = ["full", "test-util"] }
 tokio-util = { workspace = true }
