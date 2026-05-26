@@ -133,7 +133,7 @@ fn reporters_render_the_same_eval_result_across_all_formats() {
     let validator = jsonschema::validator_for(&schema).expect("schema compiles");
     let errors: Vec<_> = validator
         .iter_errors(&json_doc)
-        .map(|err| format!("{err} @ {}", err.instance_path))
+        .map(|err| format!("{err} @ {}", err.instance_path()))
         .collect();
     assert!(errors.is_empty(), "schema validation failed: {errors:#?}");
 

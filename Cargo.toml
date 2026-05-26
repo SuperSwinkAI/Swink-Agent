@@ -32,10 +32,10 @@ serde_yaml = "0.9"
 minijinja = "2"
 backon = "1"
 strsim = "0.11.1"
-jsonschema = "0.30"
-opentelemetry = "0.31"
-opentelemetry_sdk = "0.31"
-opentelemetry-otlp = "0.31"
+jsonschema = "0.46"
+opentelemetry = "0.32"
+opentelemetry_sdk = "0.32"
+opentelemetry-otlp = "0.32"
 askama = "0.13"
 clap = { version = "4", features = ["derive"] }
 libc = "0.2"
@@ -146,7 +146,7 @@ toml.workspace = true
 chrono.workspace = true
 tiktoken-rs = { version = "0.6", optional = true }
 notify = { version = "7", optional = true }
-tracing-opentelemetry = { version = "0.32", optional = true }
+tracing-opentelemetry = { version = "0.33", optional = true }
 opentelemetry = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, features = ["rt-tokio"], optional = true }
 opentelemetry-otlp = { workspace = true, features = ["grpc-tonic"], optional = true }
@@ -167,7 +167,7 @@ proptest.workspace = true
 insta.workspace = true
 opentelemetry.workspace = true
 opentelemetry_sdk = { workspace = true, features = ["testing", "rt-tokio"] }
-tracing-opentelemetry = "0.32"
+tracing-opentelemetry = "0.33"
 tracing-subscriber = { version = "0.3", features = ["registry"] }
 
 [lints]
