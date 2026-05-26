@@ -4198,9 +4198,9 @@ dependencies = [
 
 [[package]]
 name = "reqwest"
-version = "0.13.3"
+version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62e0021ea2c22aed41653bc7e1419abb2c97e038ff2c33d0e1309e49a97deec0"
+checksum = "219c5811de6525e5416c7d5d53bb656d3afdbc6c5af816e0802bcfa42dbdc1c3"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -4272,7 +4272,7 @@ dependencies = [
  "pin-project-lite",
  "process-wrap",
  "rand 0.10.1",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "rmcp-macros",
  "schemars",
  "serde",
@@ -4964,7 +4964,7 @@ dependencies = [
  "futures",
  "insta",
  "pretty_assertions",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "rstest",
  "serde",
  "serde_json",
@@ -5001,7 +5001,7 @@ dependencies = [
  "chrono",
  "futures",
  "pretty_assertions",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "serde",
  "serde_json",
  "swink-agent",
@@ -5029,7 +5029,7 @@ dependencies = [
  "opentelemetry_sdk",
  "pretty_assertions",
  "regex",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -5052,7 +5052,7 @@ name = "swink-agent-eval-judges"
 version = "0.9.0"
 dependencies = [
  "backon",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "serde",
  "serde_json",
  "swink-agent-adapters",
@@ -5127,7 +5127,7 @@ version = "0.9.0"
 dependencies = [
  "axum",
  "futures",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "rmcp",
  "schemars",
  "serde",
@@ -5182,7 +5182,7 @@ dependencies = [
  "base64 0.22.1",
  "pretty_assertions",
  "regex",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "scraper",
  "serde",
  "serde_json",
@@ -7108,7 +7108,7 @@ version = "0.9.0"
 dependencies = [
  "clap",
  "futures",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "serde_json",
  "swink-agent",
  "tokio",
