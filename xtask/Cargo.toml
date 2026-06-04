@@ -8,7 +8,7 @@ license.workspace = true
 
 [dependencies]
 swink-agent = { path = "..", default-features = false }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4.6.1", features = ["derive"] }
 futures.workspace = true
 reqwest = { workspace = true, features = ["json", "query"] }
 serde_json.workspace = true
