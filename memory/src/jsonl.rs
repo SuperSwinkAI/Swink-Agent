@@ -1182,6 +1182,69 @@ impl JsonlSessionStore {
         Ok(())
     }
 
+    /// Append entries to an existing session without rewriting the whole file.
+    ///
+    /// This is the append-only counterpart to [`save_entries`]. Instead of
+    /// rewriting every record on each turn, it appends only the new `entries`
+    /// and patches the metadata line in place (reusing the same on-disk
+    /// machinery and locking guarantees as the internal append path).
+    ///
+    /// The caller's `meta.sequence` must match the on-disk sequence
+    /// (optimistic concurrency, identical to [`save_entries`]); a mismatch
+    /// returns an error. Every other `meta` field is written as provided —
+    /// only `id` and `sequence` are set by the store. The returned
+    /// [`SessionMeta`] carries the incremented sequence so callers stay in
+    /// sync without re-reading the file.
+    ///
+    /// If the metadata line can no longer be patched in place — its serialized
+    /// form would outgrow the slot reserved on disk — this transparently falls
+    /// back to a full rewrite that preserves all existing lines.
+    ///
+    /// Errors if the session file does not exist; use [`save_entries`] to
+    /// create a new session.
+    ///
+    /// When the `search` feature is enabled, the tantivy index is refreshed
+    /// from the full on-disk session afterwards (best-effort — index errors
+    /// are logged but do not fail the append).
+    pub fn append_entries(
+        &self,
+        id: &str,
+        meta: &SessionMeta,
+        entries: &[SessionEntry],
+    ) -> io::Result<SessionMeta> {
+        validate_session_id(id)?;
+        let path = session_path(&self.sessions_dir, id);
+
+        let write_meta = with_target_lock(&path, || {
+            check_sequence_path(&path, id, meta.sequence)?;
+            let (_, meta_line_len) = read_meta_with_line_len(&path, id)?;
+
+            let mut write_meta = meta.clone();
+            write_meta.id = id.to_string();
+            write_meta.sequence += 1;
+
+            let record_lines = entries
+                .iter()
+                .map(|entry| serde_json::to_string(entry).map_err(io::Error::other))
+                .collect::<io::Result<Vec<_>>>()?;
+
+            if !append_records_in_place(&path, &write_meta, meta_line_len, &record_lines)? {
+                // The patched metadata line would outgrow its on-disk slot —
+                // fall back to a full rewrite that keeps every existing line.
+                let (_, mut existing_lines) = read_meta_and_message_lines(&path, id)?;
+                existing_lines.extend(record_lines);
+                rewrite_session_file_locked(&path, &write_meta, &existing_lines)?;
+            }
+
+            Ok(write_meta)
+        })?;
+
+        #[cfg(feature = "search")]
+        self.refresh_active_search_index(id, "append_entries");
+
+        Ok(write_meta)
+    }
+
     /// Load a session with rich entry types.
     ///
     /// Parses each line after metadata as a [`SessionEntry`]. Old-format lines
@@ -2026,6 +2089,93 @@ mod tests {
             timestamp: ts,
             cache_hint: None,
         }))
+    }
+
+    #[test]
+    fn append_entries_appends_without_rewriting_existing_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("append-entries");
+        store
+            .save_entries("append-entries", &meta, &[user_entry("first", 1)])
+            .unwrap();
+        let (created_meta, _) = store.load_entries("append-entries").unwrap();
+
+        // Capture the byte length of the existing records so we can prove the
+        // append did not rewrite them.
+        let path = session_path(dir.path(), "append-entries");
+        let before = std::fs::read_to_string(&path).unwrap();
+
+        let returned = store
+            .append_entries(
+                "append-entries",
+                &created_meta,
+                &[user_entry("second", 2), user_entry("third", 3)],
+            )
+            .unwrap();
+
+        // Sequence bumped and returned without a re-read.
+        assert_eq!(returned.sequence, created_meta.sequence + 1);
+
+        // All entries are present and ordered.
+        let (loaded_meta, entries) = store.load_entries("append-entries").unwrap();
+        assert_eq!(loaded_meta.sequence, returned.sequence);
+        let texts: Vec<&str> = entries
+            .iter()
+            .filter_map(|e| match e {
+                SessionEntry::Message(LlmMessage::User(u)) => match &u.content[0] {
+                    swink_agent::ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["first", "second", "third"]);
+
+        // The original records remain verbatim at the head of the file —
+        // i.e. the append did not rewrite them.
+        let after = std::fs::read_to_string(&path).unwrap();
+        let first_record_line = before.lines().nth(1).unwrap();
+        assert!(
+            after.contains(first_record_line),
+            "first record should be preserved byte-for-byte by an in-place append"
+        );
+        assert!(
+            after.len() > before.len(),
+            "appended records should grow the file"
+        );
+    }
+
+    #[test]
+    fn append_entries_rejects_sequence_conflict() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("append-conflict");
+        store
+            .save_entries("append-conflict", &meta, &[user_entry("first", 1)])
+            .unwrap();
+
+        // Stale meta (sequence behind the on-disk value) must be rejected.
+        let mut stale = meta.clone();
+        stale.sequence = 99;
+        let err = store
+            .append_entries("append-conflict", &stale, &[user_entry("second", 2)])
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+    }
+
+    #[test]
+    fn append_entries_errors_on_missing_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("nope");
+        let err = store
+            .append_entries("nope", &meta, &[user_entry("x", 1)])
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
     }
 
     #[test]
