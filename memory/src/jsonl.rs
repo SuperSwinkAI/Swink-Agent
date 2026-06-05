@@ -1184,13 +1184,13 @@ impl JsonlSessionStore {
 
     /// Append entries to an existing session without rewriting the whole file.
     ///
-    /// This is the append-only counterpart to [`save_entries`]. Instead of
+    /// This is the append-only counterpart to [`Self::save_entries`]. Instead of
     /// rewriting every record on each turn, it appends only the new `entries`
     /// and patches the metadata line in place (reusing the same on-disk
     /// machinery and locking guarantees as the internal append path).
     ///
     /// The caller's `meta.sequence` must match the on-disk sequence
-    /// (optimistic concurrency, identical to [`save_entries`]); a mismatch
+    /// (optimistic concurrency, identical to [`Self::save_entries`]); a mismatch
     /// returns an error. Every other `meta` field is written as provided —
     /// only `id` and `sequence` are set by the store. The returned
     /// [`SessionMeta`] carries the incremented sequence so callers stay in
@@ -1200,7 +1200,7 @@ impl JsonlSessionStore {
     /// form would outgrow the slot reserved on disk — this transparently falls
     /// back to a full rewrite that preserves all existing lines.
     ///
-    /// Errors if the session file does not exist; use [`save_entries`] to
+    /// Errors if the session file does not exist; use [`Self::save_entries`] to
     /// create a new session.
     ///
     /// When the `search` feature is enabled, the tantivy index is refreshed
