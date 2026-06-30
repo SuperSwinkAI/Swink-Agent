@@ -2,12 +2,12 @@
 
 mod common;
 
-use rmcp::model::{CallToolResult, Content};
+use rmcp::model::{CallToolResult, ContentBlock as McpContentBlock};
 use swink_agent::ContentBlock;
 
 #[test]
 fn text_content_conversion() {
-    let content = Content::text("hello world");
+    let content = McpContentBlock::text("hello world");
     let block = swink_agent_mcp::convert::content_to_block(&content);
     match block {
         ContentBlock::Text { text } => assert_eq!(text, "hello world"),
@@ -17,7 +17,7 @@ fn text_content_conversion() {
 
 #[test]
 fn image_content_conversion() {
-    let content = Content::image("aW1hZ2VkYXRh", "image/png");
+    let content = McpContentBlock::image("aW1hZ2VkYXRh", "image/png");
     let block = swink_agent_mcp::convert::content_to_block(&content);
     match block {
         ContentBlock::Image { source } => match source {
@@ -35,7 +35,7 @@ fn image_content_conversion() {
 fn error_result_conversion() {
     let result = {
         let mut r = CallToolResult::default();
-        r.content = vec![Content::text("something went wrong")];
+        r.content = vec![McpContentBlock::text("something went wrong")];
         r.is_error = Some(true);
         r
     };
@@ -81,7 +81,7 @@ fn empty_error_content_handling() {
 fn success_result_conversion() {
     let result = {
         let mut r = CallToolResult::default();
-        r.content = vec![Content::text("success output")];
+        r.content = vec![McpContentBlock::text("success output")];
         r.is_error = Some(false);
         r
     };
@@ -92,7 +92,7 @@ fn success_result_conversion() {
 
 #[test]
 fn resource_content_fallback() {
-    let content = Content::embedded_text("file:///tmp/test.txt", "file content here");
+    let content = McpContentBlock::embedded_text("file:///tmp/test.txt", "file content here");
     let block = swink_agent_mcp::convert::content_to_block(&content);
     match block {
         ContentBlock::Text { text } => {
