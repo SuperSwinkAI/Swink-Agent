@@ -153,6 +153,22 @@ let id = agent.subscribe(|event| { /* handle AgentEvent */ });
 let result = agent.prompt_async(messages).await?;
 ```
 
+### Add Production Guardrails
+
+The snippet above runs with **no policies** — the library default is anything-goes (see [Policy Guardrails](policy-overview.md)). That's fine for a demo or a test, but any agent running unattended in production should wire at least budget, turn-count, sandbox, and tool-deny-list guardrails:
+
+```rust
+use swink_agent_policies::{BudgetPolicy, MaxTurnsPolicy, SandboxPolicy, ToolDenyListPolicy};
+
+let options = AgentOptions::new(/* ... */)
+    .with_pre_turn_policy(BudgetPolicy::new().max_cost(10.0))
+    .with_pre_turn_policy(MaxTurnsPolicy::new(50))
+    .with_pre_dispatch_policy(SandboxPolicy::new("/var/lib/agent-workspace"))
+    .with_pre_dispatch_policy(ToolDenyListPolicy::new(["bash"]));
+```
+
+See [Policy Guardrails: Recommended Production Policy Set](policy-overview.md#recommended-production-policy-set) for the full rationale. A bundled `RecommendedPolicies` preset is proposed in [#1065](https://github.com/SuperSwinkAI/Swink-Agent/issues/1065) — until it lands, wire these four policies by hand.
+
 ## Tests
 
 ```bash
@@ -167,6 +183,7 @@ sentinels, plugin regressions, and package preflight, run `just validate`.
 ## Further Reading
 
 - [Architecture (HLD)](architecture/HLD.md)
-- [Product Requirements](planning/PRD.md)
+- [Specification Tracker](planning/SPECIFICATION_TRACKER.md) — current project state, feature-by-feature
+- [Product Requirements (archived v0.1)](planning/PRD.md) — historical; superseded by the Specification Tracker above
 - [TUI Architecture](architecture/tui/README.md)
 - [Implementation Phases](planning/IMPLEMENTATION_PHASES.md)

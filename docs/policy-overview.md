@@ -42,6 +42,23 @@ Each guard can **approve**, **modify**, or **halt** the agent before the next st
 
 ---
 
+## Recommended Production Policy Set
+
+The library default is **anything-goes**: with no policies configured, the agent loop runs with no restrictions (`specs/031-policy-slots/spec.md` FR-009). That default is correct for the library — it's the right posture for experimentation, tests, and callers who want to compose their own guardrails from scratch.
+
+It is **not** a safe default for an autonomous agent running unattended in production. Embedders (for example, a daemon that runs agents on a schedule or in response to external events) MUST wire at least these four policies themselves:
+
+| Policy | Checkpoint | Crate path |
+|--------|-----------|------------|
+| **BudgetPolicy** | Pre-Turn | `policies/src/budget.rs` (`swink-agent-policies`, feature `budget`) |
+| **MaxTurnsPolicy** | Pre-Turn | `policies/src/max_turns.rs` (feature `max-turns`) |
+| **SandboxPolicy** | Pre-Dispatch | `policies/src/sandbox.rs` (feature `sandbox`) |
+| **ToolDenyListPolicy** | Pre-Dispatch | `policies/src/deny_list.rs` (feature `deny-list`) |
+
+Each is wired individually today via `AgentOptions::with_pre_turn_policy(...)` / `with_pre_dispatch_policy(...)` — see `policies/examples/with_policies.rs` and `policies/README.md` for the full chain. There is no bundled preset yet; [#1065](https://github.com/SuperSwinkAI/Swink-Agent/issues/1065) tracks adding a `RecommendedPolicies` builder to `swink-agent-policies` that applies sensible defaults for all four in one call, plus an integration-contract test embedders can run to verify their own wiring didn't accidentally drop a guardrail.
+
+---
+
 ## Key Properties
 
 - **Default-off.** No policies run unless explicitly enabled. Zero overhead when unused.
