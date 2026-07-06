@@ -22,7 +22,7 @@
 
 ## User Scenarios & Testing *(mandatory)*
 
-### User Story 1 - Limit Agent Turns and Cost (Priority: P1)
+### User Story 1 - Limit Agent Turns and Cost (Priority: P1) — **[Superseded by 031]**
 
 An operator configures policies to prevent runaway agent loops. They set a maximum turn count and a cost cap. The policies compose — the agent stops when either limit is hit. Simple policies can also be expressed as closures for ad-hoc rules.
 
@@ -70,7 +70,7 @@ An operator collects metrics on agent performance: turn count, turn latency, too
 
 ---
 
-### User Story 4 - Execute Logic After Each Turn (Priority: P2)
+### User Story 4 - Execute Logic After Each Turn (Priority: P2) — **[Superseded by 031]**
 
 A developer registers post-turn hooks that execute asynchronously after each turn completes. Hooks can persist state, send notifications, update dashboards, trigger side effects, stop the loop, or inject messages for the next turn. They run after the turn is finalized and return an action indicating how the loop should proceed.
 
@@ -88,7 +88,7 @@ A developer registers post-turn hooks that execute asynchronously after each tur
 
 ---
 
-### User Story 5 - Guard Against Budget Overruns in Real Time (Priority: P2)
+### User Story 5 - Guard Against Budget Overruns in Real Time (Priority: P2) — **[Superseded by 031]**
 
 An operator sets budget limits (cost, tokens) that are checked before each LLM call. If any threshold is exceeded, the next LLM call is blocked and the agent loop terminates. This provides hard limits that take effect before execution, complementing loop policies that check at turn boundaries. Turn-based limits are handled by `MaxTurnsPolicy` (US1), not by BudgetGuard.
 
@@ -151,15 +151,15 @@ An operator enables OpenTelemetry-compliant tracing so that Swink agents emit st
 
 ### Functional Requirements
 
-- **FR-001**: System MUST provide a loop policy trait with a method to determine whether the loop should continue after a turn.
-- **FR-002**: System MUST provide built-in policies: maximum turns, cost cap, and composed (multiple policies, any-trigger termination).
-- **FR-003**: Closures MUST be usable as loop policies for ad-hoc rules.
+- **FR-001**: **[Superseded by 031]** System MUST provide a loop policy trait with a method to determine whether the loop should continue after a turn.
+- **FR-002**: **[Superseded by 031]** System MUST provide built-in policies: maximum turns, cost cap, and composed (multiple policies, any-trigger termination).
+- **FR-003**: **[Superseded by 031]** Closures MUST be usable as loop policies for ad-hoc rules.
 - **FR-004**: System MUST provide stream middleware that wraps the streaming output using the decorator pattern.
 - **FR-005**: Stream middleware MUST be composable — multiple middleware can be chained.
 - **FR-006**: System MUST provide structured event emission for enriched event payloads.
 - **FR-007**: System MUST provide a metrics collector that records turn-level and tool-execution-level metrics (latency, tokens, cost, count).
-- **FR-008**: System MUST provide async post-turn hooks that execute after each turn and return a `PostTurnAction` (Continue, Stop, or InjectMessages) to influence loop behavior.
-- **FR-009**: System MUST provide a budget guard that monitors cost, token, and turn thresholds in real time during stream collection and cancels the agent when any threshold is exceeded.
+- **FR-008**: **[Superseded by 031]** System MUST provide async post-turn hooks that execute after each turn and return a `PostTurnAction` (Continue, Stop, or InjectMessages) to influence loop behavior.
+- **FR-009**: **[Superseded by 031]** System MUST provide a budget guard that monitors cost, token, and turn thresholds in real time during stream collection and cancels the agent when any threshold is exceeded.
 - **FR-010**: System MUST provide checkpoint snapshots at turn boundaries with save and restore capability.
 - **FR-011**: System MUST provide opt-in OpenTelemetry integration behind a `feature = "otel"` gate that emits structured spans with a hierarchy of `agent.run` → `agent.turn` → `agent.llm_call` / `agent.tool.{name}`.
 - **FR-012**: OTel spans MUST carry semantic attributes: `agent.model`, `agent.turn_index`, `agent.tokens.input`, `agent.tokens.output`, `agent.cost.total`, `agent.tool.name`, `agent.stop_reason`.
@@ -171,11 +171,11 @@ An operator enables OpenTelemetry-compliant tracing so that Swink agents emit st
 
 ### Key Entities
 
-- **LoopPolicy**: Trait for loop termination decisions — MaxTurnsPolicy, CostCapPolicy, ComposedPolicy.
+- **LoopPolicy**: **[Superseded by 031]** Trait for loop termination decisions — MaxTurnsPolicy, CostCapPolicy, ComposedPolicy.
 - **StreamMiddleware**: Decorator wrapping the streaming output for event interception/transformation.
 - **MetricsCollector**: Records turn and tool execution metrics.
-- **PostTurnHook**: Callback executed after each turn for side effects.
-- **BudgetGuard**: Real-time cost/token/turn monitor that cancels the agent on threshold breach.
+- **PostTurnHook**: **[Superseded by 031]** Callback executed after each turn for side effects.
+- **BudgetGuard**: **[Superseded by 031]** Real-time cost/token/turn monitor that cancels the agent on threshold breach.
 - **Checkpoint**: Serializable snapshot of loop state at a turn boundary.
 - **OtelInitConfig**: Configuration struct for the convenience `init_otel_layer()` function (service name, OTLP endpoint). Feature-gated behind `otel`.
 - **init_otel_layer()**: Convenience function returning a `tracing_subscriber::Layer` that bridges `tracing` spans to OpenTelemetry via `tracing-opentelemetry` with an OTLP gRPC exporter.
@@ -184,13 +184,13 @@ An operator enables OpenTelemetry-compliant tracing so that Swink agents emit st
 
 ### Measurable Outcomes
 
-- **SC-001**: MaxTurnsPolicy correctly terminates the loop at the configured turn count.
-- **SC-002**: CostCapPolicy correctly terminates the loop when cost exceeds the cap.
-- **SC-003**: Composed policies terminate when any constituent policy triggers.
+- **SC-001**: **[Superseded by 031]** MaxTurnsPolicy correctly terminates the loop at the configured turn count.
+- **SC-002**: **[Superseded by 031]** CostCapPolicy correctly terminates the loop when cost exceeds the cap.
+- **SC-003**: **[Superseded by 031]** Composed policies terminate when any constituent policy triggers.
 - **SC-004**: Stream middleware correctly intercepts and transforms events.
 - **SC-005**: Metrics collector accurately reports turn count, latency, token usage, and cost.
-- **SC-006**: Post-turn hooks execute after every turn without affecting loop control flow.
-- **SC-007**: Budget guard cancels the agent in real time when any threshold is exceeded.
+- **SC-006**: **[Superseded by 031]** Post-turn hooks execute after every turn without affecting loop control flow.
+- **SC-007**: **[Superseded by 031]** Budget guard cancels the agent in real time when any threshold is exceeded.
 - **SC-008**: Checkpoints can be saved and restored, enabling agent resumption from a prior state.
 - **SC-009**: With `otel` feature enabled, a mock OTel exporter captures the correct span hierarchy (`agent.run` → `agent.turn` → `agent.llm_call` / `agent.tool.{name}`).
 - **SC-010**: OTel span attributes (`agent.model`, `agent.turn_index`, `agent.tokens.input`, `agent.tokens.output`, `agent.cost.total`, `agent.tool.name`, `agent.stop_reason`) are correctly populated from loop state and `TurnMetrics` data.
