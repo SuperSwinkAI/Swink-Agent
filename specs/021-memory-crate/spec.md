@@ -282,6 +282,12 @@ A developer searches persisted conversations for prior decisions, corrections, a
 - Timestamps use a standard representation that is both human-readable and sortable.
 - Rich entry types are an extension of the existing JSONL format — backward compatibility with old sessions is mandatory.
 - Interrupt state is stored as a separate JSON file (`{session_id}.interrupt.json`), not inline in the JSONL stream, because the interrupt state is transient and should not be part of the permanent session log.
+
+## Addendum: Tolerate a Truncated Tail Line on Crash Recovery (2026-07-06)
+
+FR-004 and its Session 2026-03-20 clarification ("Skip bad lines, log warning, continue loading (partial recovery)") already cover a corrupted-but-valid-UTF-8 line — that path is implemented and tested. Not covered: a process crash mid-write can leave a **truncated multi-byte UTF-8 sequence** in the final line (most exposed on the append-in-place write path, which has no fsync unlike the full-rewrite `atomic_write` path). Today that case propagates an `io::Error` from `reader.lines()` and fails the entire session load before any per-line JSON classification runs — the one crash-recovery scenario FR-004 doesn't yet reach. Tracked in [#1067](https://github.com/SuperSwinkAI/Swink-Agent/issues/1067).
+
+FR-004 is extended: session load MUST tolerate an invalid-UTF-8 (or otherwise unparseable) tail line the same way it already tolerates a malformed-but-valid-UTF-8 line — log a warning and truncate/skip that one line rather than failing the whole load.
 - Session version starts at 1 for the original format. The current schema version is a constant in the crate.
 - The `sequence` field is incremented on every write (save or append). Optimistic concurrency is always checked by comparing `meta.sequence` against the stored sequence — callers use the loaded sequence, which matches unless another writer intervened. New sessions skip the check.
 - `LoadOptions` filtering is best-effort for JSONL — `last_n_entries` may require reading from the end of the file. Implementations may read the entire file and filter in memory if tail-reading is impractical.
