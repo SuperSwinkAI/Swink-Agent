@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 42 specs total — 42/42 have plans, 42/42 have tasks, 39/42 complete. Phase 0–8 done (including memory crate 021, Azure/xAI adapters). Phase 3: 9/10 complete (019-bedrock at 56%). Phase 9: 3/5 complete (038-mcp, 039-patterns, and 040-transfer/handoff done), 036 at 18%, 037 at 44%. Phase 10: 041 folded into spec 022, 042 (web browse plugin) complete. Next: finish bedrock adapter (019), continue artifact service (036) and plugin system (037).
+**Current Focus:** 42 specs total — 42/42 have plans, 42/42 have tasks, 39/42 complete. Phase 0–8 done (including memory crate 021, Azure/xAI adapters). Phase 3: 9/10 complete (019-bedrock at 56%). Phase 9: 036 and 037 are complete (see below — this line previously said 18%/44%, which was stale relative to `specs/spec-status.md` and both features' `tasks.md`, each showing 100% task completion). Phase 10: 041 folded into spec 022, 042 (web browse plugin) complete. Next: finish bedrock adapter (019).
 
 > **Numbering System:** Spec numbers (001–040) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -313,19 +313,19 @@ credential management — cross-cutting infrastructure for production readiness.
 orchestration patterns, and agent-to-agent handoff — capabilities that make the
 agent framework composable and extensible for production use cases.
 
-**Status:** 5/5 specs planned, 5/5 have tasks, 3/5 complete, 5/5 specs defined
+**Status:** 5/5 specs planned, 5/5 have tasks, 5/5 complete, 5/5 specs defined
 
-### Implementation Checklist
+<!-- 036 and 037 were previously listed as "In Progress" (18%/44%); reconciled 2026-07-06 against specs/spec-status.md and both features' tasks.md (81/81 and 47/47 tasks checked off respectively) — both are complete. -->
 
-- [ ] **9.1** Artifact Service — Versioned artifact storage, filesystem + in-memory backends, session-independent persistence
+- [x] **9.1** Artifact Service — Versioned artifact storage, filesystem + in-memory backends, session-independent persistence
   - Spec: `specs/036-artifact-service/spec.md`
   - Branch: `036-artifact-service`
-  - Status: In Progress (15/81 tasks, 18%)
+  - Status: Complete (81/81 tasks, merged to main)
   - Depends on: 0.2, 2.2
-- [ ] **9.2** Plugin System — Plugin trait, bundled policy/tool/event registration, priority-ordered composition
+- [x] **9.2** Plugin System — Plugin trait, bundled policy/tool/event registration, priority-ordered composition
   - Spec: `specs/037-plugin-system/spec.md`
   - Branch: `037-plugin-system`
-  - Status: In Progress (21/47 tasks, 44%)
+  - Status: Complete (47/47 tasks, merged to main)
   - Depends on: 7.1, 2.2
 - [x] **9.3** MCP Integration — MCP server connections (stdio/SSE), tool discovery, namespaced registration, policy integration
   - Spec: `specs/038-mcp-integration/spec.md`
