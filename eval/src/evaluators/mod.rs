@@ -603,9 +603,18 @@ where
     }
 
     if Handle::try_current().is_ok() {
+        // The scoped judge cancellation lives in a thread-local (see
+        // `crate::judge::with_scoped_judge_cancellation`); capture it here and
+        // re-install it on the helper thread so `judge_with_retry` still
+        // observes runner cancellation when the future is polled over there.
+        let scoped_cancel = crate::judge::scoped_judge_cancellation();
         return std::thread::scope(|scope| {
             scope
-                .spawn(move || block_on_future(future))
+                .spawn(move || {
+                    crate::judge::with_scoped_judge_cancellation(scoped_cancel.as_ref(), || {
+                        block_on_future(future)
+                    })
+                })
                 .join()
                 .expect("current-thread evaluator helper panicked")
         });
@@ -694,9 +703,17 @@ where
     }
 
     if Handle::try_current().is_ok() {
+        // Same thread-local hand-off as `block_on`: the scoped judge
+        // cancellation must be re-installed on the helper thread or
+        // `judge_with_retry` sees `None` and ignores runner cancellation.
+        let scoped_cancel = crate::judge::scoped_judge_cancellation();
         return std::thread::scope(|scope| {
             scope
-                .spawn(move || block_on_judge_future(make_future))
+                .spawn(move || {
+                    crate::judge::with_scoped_judge_cancellation(scoped_cancel.as_ref(), || {
+                        block_on_judge_future(make_future)
+                    })
+                })
                 .join()
                 .expect("current-thread judge helper panicked")
         });
@@ -1176,6 +1193,68 @@ mod tests {
             assert_eq!(block_result, 7);
             assert_eq!(judge_result, 11);
         });
+    }
+
+    /// Regression: on a current-thread runtime the sync bridges offload to a
+    /// helper thread; the scoped judge cancellation (a thread-local installed
+    /// by `with_scoped_judge_cancellation`) must be carried across that hop,
+    /// otherwise `judge_with_retry` sees `None` and the in-flight judge
+    /// dispatch ignores runner cancellation.
+    #[test]
+    fn scoped_cancellation_survives_current_thread_helper_hop() {
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        std::thread::spawn(move || {
+            let judge = Arc::new(PendingJudge::default());
+            let registry = Arc::new(
+                JudgeRegistry::builder(judge as Arc<dyn JudgeClient>, "mock-model")
+                    .build()
+                    .expect("registry builds"),
+            );
+            let config = JudgeEvaluatorConfig::default_with(registry);
+            let case = make_case();
+            let invocation = make_invocation();
+            let ctx = make_context(&case, &invocation);
+
+            // Pre-cancelled: the biased select in `judge_with_retry` must
+            // observe it immediately — but only if the token survives the
+            // hop onto the helper thread.
+            let cancel = CancellationToken::new();
+            cancel.cancel();
+
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("current-thread runtime");
+
+            let results = runtime.block_on(async {
+                crate::judge::with_scoped_judge_cancellation(Some(&cancel), || {
+                    let via_block_on = block_on(dispatch_judge(&config, make_template(), &ctx));
+                    let via_drive = drive_judge_call(|| async {
+                        dispatch_judge(&config, make_template(), &ctx).await
+                    });
+                    (via_block_on, via_drive)
+                })
+            });
+            let _ = tx.send(results);
+        });
+
+        // Without the fix the helper thread reads an empty thread-local, the
+        // pending judge future never resolves, and the dispatch blocks
+        // forever; fail fast instead of hanging the suite.
+        let (via_block_on, via_drive) = rx.recv_timeout(Duration::from_secs(10)).expect(
+            "judge dispatch must observe scoped cancellation \
+             (thread-local lost across helper-thread hop?)",
+        );
+
+        assert!(matches!(
+            via_block_on.expect_err("block_on path must cancel"),
+            DispatchError::Cancelled
+        ));
+        assert!(matches!(
+            via_drive.expect_err("drive_judge_call path must cancel"),
+            DispatchError::Cancelled
+        ));
     }
 
     #[test]

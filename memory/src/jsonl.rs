@@ -6,7 +6,7 @@
 //! Concurrent writes to the same session may corrupt the file.
 //! Callers are expected to enforce single-writer access.
 
-use std::io::{self, BufRead, Seek, SeekFrom, Write};
+use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use swink_agent::atomic_fs::{atomic_write, atomic_write_unlocked, with_target_lock};
@@ -222,6 +222,15 @@ fn extract_state_from_lines(lines: &[String], id: &str) -> io::Result<Option<ser
     Ok(None)
 }
 
+/// Reads the authoritative [`SessionMeta`] and the byte length of the padded
+/// first line (used for in-place metadata patches).
+///
+/// The append-in-place protocol commits metadata by appending a
+/// [`SessionRecord::Meta`] record at the tail and only afterwards patches the
+/// padded first line, so after a crash the first line may be stale: the LAST
+/// Meta record in the file wins, falling back to the first line when no Meta
+/// record exists. Meta records fully replace each other (no merging), and
+/// lines that fail to parse (e.g. a torn tail line) are skipped.
 fn read_meta_with_line_len(path: &Path, id: &str) -> io::Result<(SessionMeta, usize)> {
     let mut first_line = String::new();
     let file = open_session_file(path, id)?;
@@ -233,17 +242,101 @@ fn read_meta_with_line_len(path: &Path, id: &str) -> io::Result<(SessionMeta, us
     }
 
     let line_len = first_line.len();
-    let mut meta = canonical_meta_for_id(
+    let meta = canonical_meta_for_id(
         serde_json::from_str(first_line.trim_end()).map_err(invalid_meta)?,
         id,
     );
-    for line in reader.lines() {
+    let mut file = reader.into_inner();
+    match find_last_meta_commit(&mut file, line_len as u64)? {
+        Some(meta_update) => Ok((canonical_meta_for_id(meta_update, id), line_len)),
+        None => Ok((meta, line_len)),
+    }
+}
+
+/// Initial tail-window size for [`find_last_meta_commit`]'s backward scan.
+const META_TAIL_WINDOW: u64 = 64 * 1024;
+
+/// Finds the most recent committed [`SessionRecord::Meta`] record after the
+/// first line, or `None` if the file contains no parseable Meta record.
+///
+/// Because every committed append ends with a Meta commit record, the record
+/// we want is almost always within the last few bytes of the file. Rather
+/// than forward-parsing every line (O(file size), which made
+/// `SessionStore::list` a full-corpus scan), this reads geometrically growing
+/// tail windows (starting at [`META_TAIL_WINDOW`]) and scans their complete
+/// lines in reverse; when a window grows to cover the whole body it falls
+/// back to the historical forward line-by-line scan, so the result — last
+/// parseable Meta wins, unparseable lines skipped — is identical.
+///
+/// Invalid UTF-8 in a complete line is an error, mirroring
+/// [`BufRead::lines`] in the historical scan (spec 021 FR-004 addendum /
+/// issue #1067 track relaxing this). The one intentional divergence: invalid
+/// UTF-8 that lies before the tail window of a large file goes unnoticed when
+/// a later Meta commit is found, favoring recovery of the committed metadata.
+fn find_last_meta_commit(
+    file: &mut std::fs::File,
+    body_start: u64,
+) -> io::Result<Option<SessionMeta>> {
+    let file_len = file.metadata()?.len();
+    let body_len = file_len.saturating_sub(body_start);
+
+    let mut window = META_TAIL_WINDOW;
+    while window < body_len {
+        // `window < body_len` guarantees `start > body_start`.
+        let start = file_len - window;
+        file.seek(SeekFrom::Start(start))?;
+        let mut buf = vec![0u8; usize::try_from(window).map_err(io::Error::other)?];
+        file.read_exact(&mut buf)?;
+
+        // The window starts mid-line: bytes before the first newline are a
+        // partial line (they may even split a multi-byte character at the
+        // window boundary), so only the bytes after it are complete lines.
+        if let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+            if let Some(meta) = last_meta_in_complete_lines(&buf[pos + 1..])? {
+                return Ok(Some(meta));
+            }
+        }
+
+        window = window.saturating_mul(2);
+    }
+
+    // Terminal case: the remaining window covers the whole body. Stream
+    // forward line-by-line exactly like the historical implementation so
+    // memory stays bounded and error behavior is unchanged.
+    file.seek(SeekFrom::Start(body_start))?;
+    let mut meta = None;
+    for line in io::BufReader::new(file).lines() {
         let line = line?;
         if let Ok(SessionRecord::Meta(meta_update)) = SessionRecord::parse(&line) {
-            meta = canonical_meta_for_id(*meta_update, id);
+            meta = Some(*meta_update);
         }
     }
-    Ok((meta, line_len))
+    Ok(meta)
+}
+
+/// Scans complete lines in reverse for the last parseable Meta record.
+///
+/// `bytes` must start at a real line boundary and extend to end of file.
+fn last_meta_in_complete_lines(bytes: &[u8]) -> io::Result<Option<SessionMeta>> {
+    // Mirror `BufRead::lines`: complete lines must be valid UTF-8. This also
+    // covers a torn tail line that truncates a multi-byte character, which
+    // the historical forward scan rejected the same way.
+    let text = std::str::from_utf8(bytes).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "stream did not contain valid UTF-8",
+        )
+    })?;
+    for line in text.split('\n').rev() {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        if line.is_empty() {
+            continue;
+        }
+        if let Ok(SessionRecord::Meta(meta_update)) = SessionRecord::parse(line) {
+            return Ok(Some(*meta_update));
+        }
+    }
+    Ok(None)
 }
 
 fn canonical_meta_for_id(mut meta: SessionMeta, id: &str) -> SessionMeta {
@@ -2535,6 +2628,300 @@ mod tests {
             .save("append-commit-first", &stale, &[user_msg("stale", 3)])
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+    }
+
+    fn meta_commit_line(meta: &SessionMeta) -> String {
+        SessionRecord::Meta(Box::new(meta.clone()))
+            .to_json_line()
+            .unwrap()
+    }
+
+    fn message_line(text: &str, ts: u64, id: &str) -> String {
+        SessionRecord::from_message(&user_msg(text, ts), id)
+            .unwrap()
+            .to_json_line()
+            .unwrap()
+    }
+
+    /// Writes a session file with a padded first metadata line followed by
+    /// `body` verbatim (the caller controls trailing newlines / torn tails).
+    fn write_raw_session_file(path: &Path, first_meta: &SessionMeta, body: &[u8]) {
+        let mut file = std::fs::File::create(path).unwrap();
+        write_meta_line(&mut file, first_meta, META_LINE_PADDING).unwrap();
+        file.write_all(body).unwrap();
+    }
+
+    /// A ~1 KiB record line that is not a Meta commit.
+    fn pad_line() -> String {
+        format!("{{\"pad\":\"{}\"}}", "x".repeat(1024))
+    }
+
+    /// Asserts `read_meta_with_line_len` returns exactly what the forward
+    /// line-by-line scan (`read_meta_and_message_lines`) computes, then
+    /// returns the meta for further assertions.
+    fn read_meta_checked_against_forward_scan(path: &Path, id: &str) -> SessionMeta {
+        let (meta, _) = read_meta_with_line_len(path, id).unwrap();
+        let (oracle, _) = read_meta_and_message_lines(path, id).unwrap();
+        assert_eq!(
+            meta, oracle,
+            "tail scan must return exactly what the forward scan returns"
+        );
+        meta
+    }
+
+    #[test]
+    fn read_meta_falls_back_to_first_line_without_meta_commits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("no-commits.jsonl");
+        let first = fresh_meta("no-commits");
+        let body = format!(
+            "{}\n{}\n",
+            message_line("first", 1, "no-commits"),
+            message_line("second", 2, "no-commits"),
+        );
+        write_raw_session_file(&path, &first, body.as_bytes());
+
+        let meta = read_meta_checked_against_forward_scan(&path, "no-commits");
+        assert_eq!(meta, first);
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let (_, line_len) = read_meta_with_line_len(&path, "no-commits").unwrap();
+        assert_eq!(
+            line_len,
+            raw.find('\n').unwrap() + 1,
+            "line_len must be the padded first line including its newline"
+        );
+    }
+
+    #[test]
+    fn read_meta_returns_last_meta_commit_like_the_forward_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("multi-meta.jsonl");
+        let mut first = fresh_meta("multi-meta");
+        first.title = "stale".to_string();
+
+        let mut second = first.clone();
+        second.title = "second".to_string();
+        second.sequence = 2;
+        // Commit records deliberately carry a different id: the reader must
+        // canonicalize to the file id exactly like the forward scan did.
+        second.id = "not-the-file-id".to_string();
+        let mut third = second.clone();
+        third.title = "third".to_string();
+        third.sequence = 3;
+
+        let body = format!(
+            "{}\n{}\n{}\n{}\n",
+            message_line("m1", 1, "multi-meta"),
+            meta_commit_line(&second),
+            message_line("m2", 2, "multi-meta"),
+            meta_commit_line(&third),
+        );
+        write_raw_session_file(&path, &first, body.as_bytes());
+
+        let meta = read_meta_checked_against_forward_scan(&path, "multi-meta");
+        assert_eq!(meta.title, "third", "the LAST Meta commit record wins");
+        assert_eq!(meta.sequence, 3);
+        assert_eq!(
+            meta.id, "multi-meta",
+            "meta id must be canonicalized to the file id"
+        );
+    }
+
+    #[test]
+    fn read_meta_skips_trailing_partial_line_after_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("torn-tail.jsonl");
+        let first = fresh_meta("torn-tail");
+        let mut committed = first.clone();
+        committed.title = "committed".to_string();
+        committed.sequence = 2;
+
+        let mut body = format!(
+            "{}\n{}\n",
+            message_line("m1", 1, "torn-tail"),
+            meta_commit_line(&committed),
+        );
+        // Crash-torn tail: a truncated record with no trailing newline. It is
+        // valid UTF-8 but unparseable JSON, so it must be skipped.
+        body.push_str("{\"_meta\":true,\"data\":{\"id\":\"torn");
+        write_raw_session_file(&path, &first, body.as_bytes());
+
+        let meta = read_meta_checked_against_forward_scan(&path, "torn-tail");
+        assert_eq!(meta.title, "committed");
+        assert_eq!(meta.sequence, 2);
+    }
+
+    #[test]
+    fn read_meta_errors_on_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.jsonl");
+        std::fs::File::create(&path).unwrap();
+
+        let err = read_meta_with_line_len(&path, "empty").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("empty session file"));
+    }
+
+    #[test]
+    fn read_meta_finds_last_commit_within_tail_window_of_large_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("large-tail-commit.jsonl");
+        let first = fresh_meta("large-tail-commit");
+        let mut committed = first.clone();
+        committed.title = "committed".to_string();
+        committed.sequence = 2;
+
+        let mut body = String::new();
+        for _ in 0..80 {
+            body.push_str(&pad_line());
+            body.push('\n');
+        }
+        body.push_str(&meta_commit_line(&committed));
+        body.push('\n');
+        assert!(
+            body.len() as u64 > META_TAIL_WINDOW,
+            "body must exceed the initial tail window to exercise the windowed scan"
+        );
+        write_raw_session_file(&path, &first, body.as_bytes());
+
+        let meta = read_meta_checked_against_forward_scan(&path, "large-tail-commit");
+        assert_eq!(meta.title, "committed");
+        assert_eq!(meta.sequence, 2);
+    }
+
+    #[test]
+    fn read_meta_recovers_commit_buried_before_large_uncommitted_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("buried-commit.jsonl");
+        let first = fresh_meta("buried-commit");
+        let mut committed = first.clone();
+        committed.title = "committed".to_string();
+        committed.sequence = 2;
+
+        // The only Meta commit sits before a crashed (uncommitted) append
+        // whose records span several tail windows, forcing the scan to widen
+        // and ultimately fall back to the full forward pass.
+        let mut body = format!(
+            "{}\n{}\n{}\n",
+            message_line("m1", 1, "buried-commit"),
+            meta_commit_line(&committed),
+            SessionRecord::AppendBegin.to_json_line().unwrap(),
+        );
+        for _ in 0..200 {
+            body.push_str(&pad_line());
+            body.push('\n');
+        }
+        assert!(body.len() as u64 > 2 * META_TAIL_WINDOW);
+        write_raw_session_file(&path, &first, body.as_bytes());
+
+        let meta = read_meta_checked_against_forward_scan(&path, "buried-commit");
+        assert_eq!(meta.title, "committed");
+        assert_eq!(meta.sequence, 2);
+    }
+
+    #[test]
+    fn read_meta_first_line_wins_in_large_file_without_commits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("large-no-commits.jsonl");
+        let first = fresh_meta("large-no-commits");
+
+        let mut body = String::new();
+        for _ in 0..200 {
+            body.push_str(&pad_line());
+            body.push('\n');
+        }
+        assert!(body.len() as u64 > 2 * META_TAIL_WINDOW);
+        write_raw_session_file(&path, &first, body.as_bytes());
+
+        let meta = read_meta_checked_against_forward_scan(&path, "large-no-commits");
+        assert_eq!(meta, first);
+    }
+
+    #[test]
+    fn read_meta_errors_on_torn_multibyte_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("torn-utf8.jsonl");
+        let first = fresh_meta("torn-utf8");
+        let mut committed = first.clone();
+        committed.title = "committed".to_string();
+        committed.sequence = 2;
+
+        // A crash mid-write can truncate a multi-byte UTF-8 character in the
+        // tail line. Current semantics (spec 021 FR-004 addendum / #1067):
+        // the read fails with InvalidData, matching the forward scan.
+        let mut body = format!("{}\n", meta_commit_line(&committed)).into_bytes();
+        body.extend_from_slice(b"{\"_meta\":true,\xE2\x82");
+        write_raw_session_file(&path, &first, &body);
+
+        let err = read_meta_with_line_len(&path, "torn-utf8").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        let oracle_err = read_meta_and_message_lines(&path, "torn-utf8").unwrap_err();
+        assert_eq!(oracle_err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn read_meta_errors_on_torn_multibyte_tail_in_large_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("large-torn-utf8.jsonl");
+        let first = fresh_meta("large-torn-utf8");
+        let mut committed = first.clone();
+        committed.title = "committed".to_string();
+        committed.sequence = 2;
+
+        let mut body = String::new();
+        for _ in 0..80 {
+            body.push_str(&pad_line());
+            body.push('\n');
+        }
+        body.push_str(&meta_commit_line(&committed));
+        body.push('\n');
+        assert!(body.len() as u64 > META_TAIL_WINDOW);
+        let mut body = body.into_bytes();
+        body.extend_from_slice(b"{\"_meta\":true,\xE2\x82");
+        write_raw_session_file(&path, &first, &body);
+
+        let err = read_meta_with_line_len(&path, "large-torn-utf8").unwrap_err();
+        assert_eq!(
+            err.kind(),
+            io::ErrorKind::InvalidData,
+            "windowed tail scan must reject invalid UTF-8 like the forward scan"
+        );
+    }
+
+    #[test]
+    fn list_reports_last_committed_meta_despite_trailing_garbage() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let mut first = fresh_meta("listed-session");
+        first.title = "stale".to_string();
+        let mut second = first.clone();
+        second.title = "second".to_string();
+        second.sequence = 2;
+        let mut third = first.clone();
+        third.title = "third".to_string();
+        third.sequence = 3;
+
+        let mut body = format!(
+            "{}\n{}\n{}\n{}\n",
+            message_line("m1", 1, "listed-session"),
+            meta_commit_line(&second),
+            message_line("m2", 2, "listed-session"),
+            meta_commit_line(&third),
+        );
+        body.push_str("{\"_meta\":true,\"data\":{\"id\":\"torn");
+        let path = session_path(dir.path(), "listed-session");
+        write_raw_session_file(&path, &first, body.as_bytes());
+
+        let listed = store.list().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "listed-session");
+        assert_eq!(
+            listed[0].title, "third",
+            "list must surface the last committed Meta record"
+        );
+        assert_eq!(listed[0].sequence, 3);
     }
 
     #[test]

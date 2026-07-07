@@ -24,34 +24,20 @@ pub struct FetchTool {
     domain_filter: Option<DomainFilter>,
     max_redirects: usize,
     sanitizer: Option<ContentSanitizerPolicy>,
+    user_agent: Option<String>,
     schema: Value,
 }
 
 impl FetchTool {
-    /// Create a new `FetchTool` with a no-redirect HTTP client, content length
-    /// limit, and request timeout.
+    /// Create a new `FetchTool` with the given content length limit and
+    /// request timeout.
     ///
-    /// The `client` argument is retained for API compatibility but is not used:
+    /// The tool always builds its own no-redirect HTTP clients internally:
     /// fetch redirects must be observed and validated by this tool before any
-    /// follow-up request is sent.
-    pub fn new(
-        _client: reqwest::Client,
-        max_content_length: usize,
-        request_timeout: Duration,
-    ) -> Self {
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(request_timeout)
-            .build()
-            .expect("building no-redirect fetch HTTP client should not fail");
-        Self::from_redirect_checked_client(client, max_content_length, request_timeout)
-    }
-
-    fn from_redirect_checked_client(
-        client: reqwest::Client,
-        max_content_length: usize,
-        request_timeout: Duration,
-    ) -> Self {
+    /// follow-up request is sent, so callers cannot supply a pre-configured
+    /// client. Use [`FetchTool::with_user_agent`] to set the `User-Agent`
+    /// header on every request the tool makes.
+    pub fn new(max_content_length: usize, request_timeout: Duration) -> Self {
         let schema = serde_json::json!({
             "type": "object",
             "properties": {
@@ -63,14 +49,42 @@ impl FetchTool {
             "required": ["url"]
         });
         Self {
-            client,
+            client: Self::build_no_redirect_client(request_timeout, None),
             max_content_length,
             request_timeout,
             domain_filter: Some(DomainFilter::blocking_private_ips()),
             max_redirects: 10,
             sanitizer: Some(ContentSanitizerPolicy::new()),
+            user_agent: None,
             schema,
         }
+    }
+
+    fn build_no_redirect_client(
+        request_timeout: Duration,
+        user_agent: Option<&str>,
+    ) -> reqwest::Client {
+        let mut builder = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(request_timeout);
+        if let Some(user_agent) = user_agent {
+            builder = builder.user_agent(user_agent);
+        }
+        builder
+            .build()
+            .expect("building no-redirect fetch HTTP client should not fail")
+    }
+
+    /// Set the `User-Agent` header sent with every fetch request.
+    ///
+    /// Applies to both the fallback client and the DNS-pinned per-request
+    /// clients built for SSRF protection.
+    #[must_use]
+    pub fn with_user_agent(mut self, user_agent: impl Into<String>) -> Self {
+        let user_agent = user_agent.into();
+        self.client = Self::build_no_redirect_client(self.request_timeout, Some(&user_agent));
+        self.user_agent = Some(user_agent);
+        self
     }
 
     /// Re-validate initial and redirect targets inside the tool.
@@ -199,10 +213,14 @@ impl FetchTool {
             return Ok(self.client.clone());
         };
 
-        reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(self.request_timeout)
-            .resolve(&resolved_host.host, resolved_host.addr)
+            .resolve(&resolved_host.host, resolved_host.addr);
+        if let Some(user_agent) = self.user_agent.as_deref() {
+            builder = builder.user_agent(user_agent);
+        }
+        builder
             .build()
             .map_err(|error| format!("Failed to build pinned HTTP client: {error}"))
     }
@@ -343,10 +361,10 @@ mod tests {
     use serde_json::json;
     use swink_agent::{AgentTool, SessionState};
     use tokio_util::sync::CancellationToken;
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use crate::domain::DomainFilter;
+    use crate::domain::{DomainFilter, ResolvedHost};
 
     use super::FetchTool;
 
@@ -378,7 +396,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let tool = FetchTool::new(reqwest::Client::new(), 4_096, Duration::from_secs(5))
+        let tool = FetchTool::new(4_096, Duration::from_secs(5))
             .with_domain_filter(localhost_filter(), 10);
         let state = Arc::new(RwLock::new(SessionState::default()));
         let result = tool
@@ -413,8 +431,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let tool = FetchTool::new(reqwest::Client::new(), 512, Duration::from_secs(5))
-            .with_domain_filter(localhost_filter(), 10);
+        let tool =
+            FetchTool::new(512, Duration::from_secs(5)).with_domain_filter(localhost_filter(), 10);
         let state = Arc::new(RwLock::new(SessionState::default()));
         let result = tool
             .execute(
@@ -454,7 +472,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let tool = FetchTool::new(reqwest::Client::new(), 4_096, Duration::from_secs(5))
+        let tool = FetchTool::new(4_096, Duration::from_secs(5))
             .with_domain_filter(localhost_filter(), 10);
         let state = Arc::new(RwLock::new(SessionState::default()));
         let result = tool
@@ -496,7 +514,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let tool = FetchTool::new(reqwest::Client::new(), 4_096, Duration::from_secs(5))
+        let tool = FetchTool::new(4_096, Duration::from_secs(5))
             .with_domain_filter(localhost_filter(), 10)
             .with_sanitizer_enabled(false);
         let state = Arc::new(RwLock::new(SessionState::default()));
@@ -528,17 +546,12 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .unwrap();
         let filter = DomainFilter {
             denylist: vec!["evil.com".to_string()],
             block_private_ips: false,
             ..Default::default()
         };
-        let tool =
-            FetchTool::new(client, 4_096, Duration::from_secs(5)).with_domain_filter(filter, 10);
+        let tool = FetchTool::new(4_096, Duration::from_secs(5)).with_domain_filter(filter, 10);
         let state = Arc::new(RwLock::new(SessionState::default()));
         let result = tool
             .execute(
@@ -559,7 +572,7 @@ mod tests {
 
     #[tokio::test]
     async fn direct_constructor_blocks_private_ips_by_default() {
-        let tool = FetchTool::new(reqwest::Client::new(), 4_096, Duration::from_secs(5));
+        let tool = FetchTool::new(4_096, Duration::from_secs(5));
         let state = Arc::new(RwLock::new(SessionState::default()));
         let result = tool
             .execute(
@@ -603,16 +616,11 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .unwrap();
         let filter = DomainFilter {
             block_private_ips: false,
             ..Default::default()
         };
-        let tool =
-            FetchTool::new(client, 4_096, Duration::from_secs(5)).with_domain_filter(filter, 10);
+        let tool = FetchTool::new(4_096, Duration::from_secs(5)).with_domain_filter(filter, 10);
         let state = Arc::new(RwLock::new(SessionState::default()));
         let result = tool
             .execute(
@@ -632,7 +640,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_does_not_use_redirect_policy_from_supplied_client() {
+    async fn execute_never_follows_redirects_automatically() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/redirect"))
@@ -655,16 +663,11 @@ mod tests {
             .mount(&server)
             .await;
 
-        let redirecting_client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::limited(10))
-            .build()
-            .unwrap();
         let filter = DomainFilter {
             block_private_ips: false,
             ..Default::default()
         };
-        let tool = FetchTool::new(redirecting_client, 4_096, Duration::from_secs(5))
-            .with_domain_filter(filter, 0);
+        let tool = FetchTool::new(4_096, Duration::from_secs(5)).with_domain_filter(filter, 0);
         let state = Arc::new(RwLock::new(SessionState::default()));
         let result = tool
             .execute(
@@ -684,5 +687,85 @@ mod tests {
         let received = server.received_requests().await.unwrap();
         assert_eq!(received.len(), 1);
         assert_eq!(received[0].url.path(), "/redirect");
+    }
+
+    #[tokio::test]
+    async fn execute_sends_configured_user_agent_header() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/article"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r"<!DOCTYPE html>
+                        <html>
+                        <head><title>UA Test</title></head>
+                        <body>
+                            <article>
+                                <p>Content served only when the User-Agent matcher passes.</p>
+                            </article>
+                        </body>
+                        </html>",
+                "text/html; charset=utf-8",
+            ))
+            .mount(&server)
+            .await;
+
+        let tool = FetchTool::new(4_096, Duration::from_secs(5))
+            .with_domain_filter(localhost_filter(), 10)
+            .with_user_agent("SwinkAgent/0.5-test");
+        let state = Arc::new(RwLock::new(SessionState::default()));
+        let result = tool
+            .execute(
+                "call-ua",
+                json!({ "url": format!("{}/article", server.uri()) }),
+                CancellationToken::new(),
+                None,
+                state,
+                None,
+            )
+            .await;
+
+        assert!(!result.is_error, "fetch failed: {:?}", result.content);
+
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 1);
+        let user_agent = received[0]
+            .headers
+            .get("user-agent")
+            .and_then(|value| value.to_str().ok());
+        assert_eq!(user_agent, Some("SwinkAgent/0.5-test"));
+    }
+
+    #[tokio::test]
+    async fn pinned_client_sends_configured_user_agent_header() {
+        // The DNS-pinned per-request client is only built for non-IP-literal
+        // hosts, so exercise `client_for_request` directly with a fabricated
+        // hostname pinned to the loopback mock server.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/ua"))
+            .and(header("user-agent", "SwinkAgent/0.5-test"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let tool =
+            FetchTool::new(4_096, Duration::from_secs(5)).with_user_agent("SwinkAgent/0.5-test");
+        let addr = *server.address();
+        let client = tool
+            .client_for_request(Some(ResolvedHost {
+                host: "pinned.test".to_string(),
+                addr,
+            }))
+            .unwrap();
+
+        let response = client
+            .get(format!("http://pinned.test:{}/ua", addr.port()))
+            .send()
+            .await
+            .unwrap();
+
+        // The mock only matches when the pinned client sent the configured
+        // User-Agent; a missing/incorrect header yields wiremock's 404.
+        assert_eq!(response.status(), 200);
     }
 }

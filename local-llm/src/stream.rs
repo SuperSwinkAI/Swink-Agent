@@ -1501,6 +1501,25 @@ mod tests {
     }
 
     #[test]
+    fn catalog_local_thinking_model_thinks_by_default() {
+        let preset = swink_agent::model_catalog()
+            .preset("local", "gemma4_e2b")
+            .expect("gemma4_e2b must exist in the model catalog");
+        let model = preset.model_spec();
+
+        assert!(
+            thinking_enabled_for_model(&model),
+            "catalog-built thinking-capable local models must think by default"
+        );
+
+        let disabled = model.with_thinking_level(ThinkingLevel::Off);
+        assert!(
+            !thinking_enabled_for_model(&disabled),
+            "explicitly setting ThinkingLevel::Off must disable thinking"
+        );
+    }
+
+    #[test]
     fn context_truncation_keeps_messages_when_prompt_fits() {
         let messages = vec![
             local_message("system", "sys"),

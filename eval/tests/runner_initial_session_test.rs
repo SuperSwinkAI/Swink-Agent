@@ -65,6 +65,42 @@ impl AgentFactory for HooklessRecordingFactory {
     }
 }
 
+/// Factory that pre-seeds session entries in `create_agent`, including a key
+/// that collides with the baseline file (`greeting`).
+struct SeedingFactory {
+    created_sessions: Arc<Mutex<Vec<Arc<RwLock<SessionState>>>>>,
+}
+
+impl SeedingFactory {
+    fn new() -> Self {
+        Self {
+            created_sessions: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+}
+
+impl AgentFactory for SeedingFactory {
+    fn create_agent(&self, case: &EvalCase) -> Result<(Agent, CancellationToken), EvalError> {
+        let options = AgentOptions::new_simple(
+            &case.system_prompt,
+            ModelSpec::new("test", "test-model"),
+            Arc::new(SimpleMockStreamFn::new(vec!["ok".to_string()])),
+        );
+        let agent = Agent::new(options);
+        {
+            let mut state = agent.session_state().write().unwrap();
+            state.set("factory_key", "factory value").unwrap();
+            // Collides with the baseline file's `greeting` — factory must win.
+            state.set("greeting", "factory greeting").unwrap();
+        }
+        self.created_sessions
+            .lock()
+            .unwrap()
+            .push(Arc::clone(agent.session_state()));
+        Ok((agent, CancellationToken::new()))
+    }
+}
+
 fn eval_set() -> EvalSet {
     EvalSet {
         id: "init-suite".into(),
@@ -79,7 +115,10 @@ fn write_initial_session(dir: &TempDir) -> std::path::PathBuf {
     fs::write(
         &path,
         serde_json::to_vec(&serde_json::json!({
-            "data": {"greeting": "hello world"}
+            "data": {
+                "greeting": "hello world",
+                "baseline_only": "from baseline"
+            }
         }))
         .unwrap(),
     )
@@ -133,6 +172,43 @@ async fn initial_session_is_applied_to_each_created_agent() {
         let greeting: Option<String> = state.read().unwrap().get("greeting");
         assert_eq!(greeting.as_deref(), Some("hello world"));
     }
+}
+
+/// FR-039 baseline semantics: the initial session must underlie — not
+/// clobber — state a factory seeded in `create_agent`. Factory entries win on
+/// key collisions; the baseline only fills in absent keys.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn initial_session_underlies_factory_seeded_state() {
+    let dir = TempDir::new().unwrap();
+    let path = write_initial_session(&dir);
+    let factory = SeedingFactory::new();
+    let observed = Arc::clone(&factory.created_sessions);
+
+    let _ = EvalRunner::new(EvaluatorRegistry::new())
+        .with_initial_session_file(path)
+        .run_set(&eval_set(), &factory)
+        .await
+        .unwrap();
+
+    let sessions = observed.lock().unwrap();
+    assert_eq!(sessions.len(), 1);
+    let state = sessions[0].read().unwrap();
+
+    // Factory-seeded key survives baseline application.
+    assert_eq!(
+        state.get::<String>("factory_key").as_deref(),
+        Some("factory value")
+    );
+    // On collision, the factory's value wins over the baseline.
+    assert_eq!(
+        state.get::<String>("greeting").as_deref(),
+        Some("factory greeting")
+    );
+    // Baseline-only key is filled in underneath.
+    assert_eq!(
+        state.get::<String>("baseline_only").as_deref(),
+        Some("from baseline")
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

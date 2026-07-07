@@ -140,7 +140,19 @@ impl SseStreamParser {
                             cursor = bytes.len();
                         }
                         Some(_) => {
-                            return self.protocol_error("SSE stream contained invalid UTF-8 bytes");
+                            // Emit complete lines already decoded from this
+                            // chunk before the corrupt byte (e.g. a final
+                            // message_stop or usage delta), flushing pending
+                            // data as at EOF, then terminate with the
+                            // non-retryable protocol error.
+                            let mut lines = self.drain_lines();
+                            if let Some(data) = self.pending_data.take() {
+                                lines.push(SseLine::Data(data));
+                            }
+                            lines.extend(
+                                self.protocol_error("SSE stream contained invalid UTF-8 bytes"),
+                            );
+                            return lines;
                         }
                     }
                 }
@@ -159,7 +171,15 @@ impl SseStreamParser {
         let mut lines = vec![];
 
         if !self.byte_carry.is_empty() {
-            return self.protocol_error("SSE stream ended with an incomplete UTF-8 sequence");
+            // The buffer holds no complete lines here (feed() drains them),
+            // but pending_data may hold the payload of a complete data line
+            // from an earlier feed. Emit it — as a clean-EOF flush would —
+            // before terminating with the non-retryable protocol error.
+            if let Some(data) = self.pending_data.take() {
+                lines.push(SseLine::Data(data));
+            }
+            lines.extend(self.protocol_error("SSE stream ended with an incomplete UTF-8 sequence"));
+            return lines;
         }
 
         if !self.buffer.trim().is_empty() {
@@ -813,6 +833,30 @@ mod tests {
     }
 
     #[test]
+    fn sse_parser_invalid_utf8_preserves_prior_complete_lines() {
+        // Complete, newline-terminated lines decoded from the same chunk
+        // before the corrupt byte (e.g. a message_stop or final usage delta)
+        // must be emitted ahead of the terminal ProtocolError instead of
+        // being discarded with the poisoned buffer.
+        let mut parser = SseStreamParser::new();
+        let lines =
+            parser.feed(b"event: message_delta\ndata: {\"usage\":1}\n\ndata: stop\n\xFFgarbage");
+        assert_eq!(
+            lines,
+            vec![
+                SseLine::Event("message_delta".to_string()),
+                SseLine::Data("{\"usage\":1}".to_string()),
+                SseLine::Empty,
+                SseLine::Data("stop".to_string()),
+                SseLine::ProtocolError("SSE stream contained invalid UTF-8 bytes".to_string()),
+            ]
+        );
+        // The parser stays poisoned: later feeds and flushes emit nothing.
+        assert!(parser.feed(b"data: later\n\n").is_empty());
+        assert!(parser.flush().is_empty());
+    }
+
+    #[test]
     fn sse_parser_incomplete_utf8_at_eof_emits_protocol_error() {
         let mut parser = SseStreamParser::new();
         assert!(parser.feed(b"data: \xE2").is_empty());
@@ -824,6 +868,28 @@ mod tests {
                 "SSE stream ended with an incomplete UTF-8 sequence".to_string()
             )]
         );
+    }
+
+    #[test]
+    fn sse_parser_incomplete_utf8_at_eof_preserves_pending_data() {
+        // A complete data line from an earlier feed must not be discarded
+        // when the stream later ends mid-UTF-8-sequence; it is emitted just
+        // as a clean-EOF flush would emit it, ahead of the ProtocolError.
+        let mut parser = SseStreamParser::new();
+        assert!(parser.feed(b"data: stop\n").is_empty());
+        assert!(parser.feed(b"\xE2").is_empty());
+
+        let lines = parser.flush();
+        assert_eq!(
+            lines,
+            vec![
+                SseLine::Data("stop".to_string()),
+                SseLine::ProtocolError(
+                    "SSE stream ended with an incomplete UTF-8 sequence".to_string()
+                ),
+            ]
+        );
+        assert!(parser.flush().is_empty());
     }
 
     #[test]

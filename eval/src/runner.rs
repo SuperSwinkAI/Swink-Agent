@@ -513,10 +513,14 @@ async fn invoke_agent_impl(
     agent_invocations.fetch_add(1, Ordering::SeqCst);
     let (mut agent, factory_cancel) = factory.create_agent(case)?;
     if let Some(state) = initial_session {
-        *agent
+        // Baseline semantics (FR-039): the initial session underlies whatever
+        // the factory seeded in `create_agent` — factory entries win, and the
+        // baseline only fills in keys the factory left absent.
+        agent
             .session_state()
             .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = state.clone();
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .apply_baseline(state);
     }
     let _factory_cancel = FactoryCancellationGuard(factory_cancel);
     let messages: Vec<_> = case
