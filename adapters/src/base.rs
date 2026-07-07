@@ -1,5 +1,12 @@
 #![forbid(unsafe_code)]
 
+#[cfg(any(
+    feature = "ollama",
+    feature = "azure",
+    feature = "proxy",
+    feature = "gemini",
+    feature = "bedrock"
+))]
 use std::future::Future;
 use std::time::Duration;
 
@@ -14,6 +21,7 @@ const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(120);
 /// legitimately sit silent for well over [`DEFAULT_READ_TIMEOUT`] before the
 /// first streamed byte arrives (the regression caveat on issue #920). 600s is
 /// generous enough for those cases while still bounding a truly wedged server.
+#[cfg(feature = "ollama")]
 const LOCAL_READ_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Shared base for remote HTTP/SSE stream adapters.
@@ -37,8 +45,8 @@ const LOCAL_READ_TIMEOUT: Duration = Duration::from_secs(600);
 ///   path, Bedrock uses `/model/{id}/converse`.
 /// - **Request body types are unique:** each adapter serializes a
 ///   provider-specific struct (not a shared type).
-/// - **Bedrock is non-streaming** and requires `SigV4` request signing —
-///   fundamentally different from the other adapters.
+/// - **Bedrock uses the `ConverseStream` API** and requires `SigV4` request
+///   signing — fundamentally different from the other adapters.
 /// - **Proxy** doesn't use `AdapterBase` at all.
 ///
 /// A generic helper would need a trait with associated types for the URL
@@ -90,6 +98,7 @@ pub fn cancelled_error(message: impl Into<String>) -> swink_agent::AssistantMess
         error_message: message.into(),
         usage: None,
         error_kind: None,
+        retry_after: None,
     }
 }
 
@@ -108,6 +117,7 @@ pub(crate) fn adapter_http_client() -> reqwest::Client {
 /// Keeps the same connect timeout as [`adapter_http_client`] but uses the far
 /// more generous [`LOCAL_READ_TIMEOUT`] per-read idle timeout, so model
 /// cold-load or long prompt prefill does not trip the hosted-provider default.
+#[cfg(feature = "ollama")]
 #[must_use]
 pub(crate) fn local_adapter_http_client() -> reqwest::Client {
     adapter_http_client_with_timeouts(DEFAULT_CONNECT_TIMEOUT, LOCAL_READ_TIMEOUT)
@@ -128,6 +138,13 @@ pub(crate) fn adapter_http_client_with_timeouts(
 ///
 /// Adapters should use this around the initial HTTP send so cancellation can
 /// short-circuit before any provider bytes arrive.
+#[cfg(any(
+    feature = "ollama",
+    feature = "azure",
+    feature = "proxy",
+    feature = "gemini",
+    feature = "bedrock"
+))]
 pub async fn race_pre_stream_cancellation<T, F>(
     cancellation_token: &CancellationToken,
     cancelled_message: &'static str,

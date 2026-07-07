@@ -131,7 +131,7 @@ An operator enables OpenTelemetry-compliant tracing so that Swink agents emit st
 1. **Given** the `otel` feature is enabled and a `TracerProvider` is configured, **When** the agent runs a prompt, **Then** a root span `agent.run` is created covering the full prompt-to-response lifecycle.
 2. **Given** an active `agent.run` span, **When** a turn begins and ends, **Then** a child span `agent.turn` is created with attributes `agent.turn_index` and `agent.stop_reason`.
 3. **Given** an active `agent.turn` span, **When** the LLM streaming call executes, **Then** a child span `agent.llm_call` is created with attributes `agent.model`, `agent.tokens.input`, `agent.tokens.output`, and `agent.cost.total`.
-4. **Given** an active `agent.turn` span, **When** a tool executes, **Then** a child span `agent.tool.{name}` is created with attributes `agent.tool.name`, the tool duration, and success/error status.
+4. **Given** an active `agent.turn` span, **When** a tool executes, **Then** a child span named `agent.tool` is created with an `agent.tool.name` attribute identifying the tool, plus the tool duration and success/error status. [Corrected 2026-07-06: the span name is the fixed string `agent.tool`, not `agent.tool.{name}` — `tracing` span names must be `'static`, so the tool name is carried as the `agent.tool.name` field instead. See `src/loop_/tool_dispatch/execute.rs`.]
 5. **Given** the `otel` feature is **not** enabled, **When** the crate is compiled, **Then** no OpenTelemetry dependencies are included and there is zero runtime overhead.
 6. **Given** OTel tracing is enabled, **When** a `MetricsCollector` is also configured, **Then** both operate independently — OTel does not suppress or duplicate the `MetricsCollector` callback.
 
@@ -145,7 +145,7 @@ An operator enables OpenTelemetry-compliant tracing so that Swink agents emit st
 - How does stream middleware interact with retry — each retry re-invokes StreamFn, producing a new stream that gets wrapped by middleware again. Retries are also wrapped.
 - What happens when the OTel exporter is unavailable — spans are still created via the `tracing` crate; the exporter failure is handled by the OTel SDK (typically logged and dropped). The agent loop is never blocked or slowed by exporter issues.
 - How does OTel interact with model fallback — when a model fallback occurs, the failed `agent.llm_call` span ends with an error status, and a new `agent.llm_call` span is created for the fallback model. Both appear as children of the same `agent.turn`.
-- What happens with concurrent tool executions — each tool gets its own `agent.tool.{name}` span. Concurrent tools produce overlapping child spans under the same `agent.turn` parent, which is standard OTel behavior.
+- What happens with concurrent tool executions — each tool execution gets its own `agent.tool` span instance (same fixed span name, distinguished by the `agent.tool.name` field). Concurrent tools produce overlapping child spans under the same `agent.turn` parent, which is standard OTel behavior.
 
 ## Requirements *(mandatory)*
 
@@ -161,7 +161,7 @@ An operator enables OpenTelemetry-compliant tracing so that Swink agents emit st
 - **FR-008**: **[Superseded by 031]** System MUST provide async post-turn hooks that execute after each turn and return a `PostTurnAction` (Continue, Stop, or InjectMessages) to influence loop behavior.
 - **FR-009**: **[Superseded by 031]** System MUST provide a budget guard that monitors cost, token, and turn thresholds in real time during stream collection and cancels the agent when any threshold is exceeded.
 - **FR-010**: System MUST provide checkpoint snapshots at turn boundaries with save and restore capability.
-- **FR-011**: System MUST provide opt-in OpenTelemetry integration behind a `feature = "otel"` gate that emits structured spans with a hierarchy of `agent.run` → `agent.turn` → `agent.llm_call` / `agent.tool.{name}`.
+- **FR-011**: System MUST provide opt-in OpenTelemetry integration behind a `feature = "otel"` gate that emits structured spans with a hierarchy of `agent.run` → `agent.turn` → `agent.llm_call` / `agent.tool` (the tool span's name is the fixed string `agent.tool`; the specific tool is identified by its `agent.tool.name` attribute). [2026-07-06]
 - **FR-012**: OTel spans MUST carry semantic attributes: `agent.model`, `agent.turn_index`, `agent.tokens.input`, `agent.tokens.output`, `agent.cost.total`, `agent.tool.name`, `agent.stop_reason`.
 - **FR-013**: OTel integration MUST use the `tracing` crate with `tracing-opentelemetry` as the bridge layer, leveraging the existing `tracing` dependency rather than importing `opentelemetry` APIs directly into the core crate.
 - **FR-014**: OTel integration MUST coexist with the existing `MetricsCollector` trait — enabling OTel MUST NOT disable, replace, or duplicate `MetricsCollector` callbacks.
@@ -192,7 +192,7 @@ An operator enables OpenTelemetry-compliant tracing so that Swink agents emit st
 - **SC-006**: **[Superseded by 031]** Post-turn hooks execute after every turn without affecting loop control flow.
 - **SC-007**: **[Superseded by 031]** Budget guard cancels the agent in real time when any threshold is exceeded.
 - **SC-008**: Checkpoints can be saved and restored, enabling agent resumption from a prior state.
-- **SC-009**: With `otel` feature enabled, a mock OTel exporter captures the correct span hierarchy (`agent.run` → `agent.turn` → `agent.llm_call` / `agent.tool.{name}`).
+- **SC-009**: With `otel` feature enabled, a mock OTel exporter captures the correct span hierarchy (`agent.run` → `agent.turn` → `agent.llm_call` / `agent.tool`, where the tool span is named `agent.tool` and carries the tool name in its `agent.tool.name` attribute). [2026-07-06]
 - **SC-010**: OTel span attributes (`agent.model`, `agent.turn_index`, `agent.tokens.input`, `agent.tokens.output`, `agent.cost.total`, `agent.tool.name`, `agent.stop_reason`) are correctly populated from loop state and `TurnMetrics` data.
 - **SC-011**: With `otel` feature disabled, the crate compiles without `tracing-opentelemetry` or `opentelemetry` in the dependency tree.
 

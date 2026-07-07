@@ -414,6 +414,7 @@ fn parse_ndjson_stream(
                         error_message: "operation cancelled".to_string(),
                         usage: None,
                         error_kind: None,
+                        retry_after: None,
                     });
                     done = true;
                     Some((events, (lines, token, state, done, false)))

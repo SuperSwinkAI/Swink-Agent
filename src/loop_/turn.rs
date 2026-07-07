@@ -17,7 +17,7 @@ use super::stream::{capability_filter_tools, stream_with_retry};
 use super::tool_dispatch::execute_tools_concurrently;
 use super::{
     AgentEvent, AgentLoopConfig, LoopState, StreamResult, ToolCallInfo, ToolExecOutcome,
-    TurnEndReason, TurnOutcome, build_abort_message, emit,
+    TransferRejectionReason, TurnEndReason, TurnOutcome, build_abort_message, emit,
 };
 
 /// Run a single turn of the inner loop: inject pending messages, transform
@@ -1160,13 +1160,54 @@ async fn handle_tool_calls(
                 // Chain check passed — proceed with the transfer.
             }
             Err(chain_err) => {
-                // Chain check failed — convert transfer to an error tool result
-                // so the LLM can retry or take a different action.
+                // Chain check failed — rewrite the transfer tool's false-success
+                // result (already recorded in `tool_results` and mirrored into
+                // `state.context_messages` at step xii, above) into an error
+                // result so the LLM sees the rejection instead of a phantom
+                // "initiated" confirmation.
                 tracing::warn!(
                     target_agent = %signal.target_agent(),
                     error = %chain_err,
                     "transfer chain safety check failed, rejecting transfer"
                 );
+
+                let rejection_reason = match &chain_err {
+                    crate::transfer::TransferError::CircularTransfer { .. } => {
+                        TransferRejectionReason::Circular
+                    }
+                    crate::transfer::TransferError::MaxDepthExceeded { .. } => {
+                        TransferRejectionReason::MaxDepthExceeded
+                    }
+                };
+                let rejection_message = format!("transfer rejected: {chain_err}");
+                let confirmation_text = format!("Transfer to {} initiated.", signal.target_agent());
+
+                for tr in &mut tool_results {
+                    if rewrite_tool_result_as_rejected(tr, &confirmation_text, &rejection_message) {
+                        break;
+                    }
+                }
+                for msg in &mut state.context_messages {
+                    if let AgentMessage::Llm(LlmMessage::ToolResult(tr)) = msg
+                        && rewrite_tool_result_as_rejected(
+                            tr,
+                            &confirmation_text,
+                            &rejection_message,
+                        )
+                    {
+                        break;
+                    }
+                }
+
+                let _ = emit(
+                    tx,
+                    AgentEvent::TransferRejected {
+                        source_agent: config.agent_name.clone().unwrap_or_default(),
+                        target_agent: signal.target_agent().to_string(),
+                        reason: rejection_reason,
+                    },
+                )
+                .await;
 
                 // The transfer is rejected; continue the inner loop instead
                 // of terminating.
@@ -1279,6 +1320,32 @@ async fn handle_tool_calls(
     }
     // Inner loop continues — model must process tool results.
     TurnOutcome::ContinueInner
+}
+
+/// Rewrite a transfer tool's false-success result to an error in place, once
+/// its content matches the transfer confirmation text produced by
+/// `AgentToolResult::transfer` and it is not already an error.
+///
+/// Returns `true` if a rewrite happened, so callers can stop scanning after
+/// the first (and only) matching entry.
+fn rewrite_tool_result_as_rejected(
+    tr: &mut ToolResultMessage,
+    confirmation_text: &str,
+    rejection_message: &str,
+) -> bool {
+    let is_match = !tr.is_error
+        && tr.content.len() == 1
+        && tr.content[0]
+            == ContentBlock::Text {
+                text: confirmation_text.to_string(),
+            };
+    if is_match {
+        tr.is_error = true;
+        tr.content = vec![ContentBlock::Text {
+            text: rejection_message.to_string(),
+        }];
+    }
+    is_match
 }
 
 /// Replace incomplete tool calls (from max-tokens truncation) with error results.

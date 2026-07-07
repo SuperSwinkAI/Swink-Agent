@@ -378,7 +378,7 @@ fn summarize_arguments(args: &Value) -> String {
     }
 }
 
-fn truncate_with_ellipsis(text: &str, max_chars: usize) -> String {
+pub(crate) fn truncate_with_ellipsis(text: &str, max_chars: usize) -> String {
     if text.chars().nth(max_chars).is_none() {
         return text.to_string();
     }

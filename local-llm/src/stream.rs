@@ -1158,6 +1158,7 @@ fn cancelled_event(message: impl Into<String>) -> AssistantMessageEvent {
         error_message: message.into(),
         usage: None,
         error_kind: None,
+        retry_after: None,
     }
 }
 
@@ -1915,6 +1916,7 @@ mod tests {
                 error_message,
                 usage,
                 error_kind,
+                retry_after: _,
             } => {
                 assert_eq!(stop_reason, StopReason::Aborted);
                 assert_eq!(error_message, "local inference cancelled");

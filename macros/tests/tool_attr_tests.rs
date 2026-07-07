@@ -161,6 +161,41 @@ async fn tool_attr_invalid_type_params_return_tool_error() {
     );
 }
 
+// ── All-Option params must not silently default on a type-mismatched field ──
+//
+// Regression test: when every parameter is `Option<T>`, a present field with
+// the wrong JSON type must still be rejected, not silently swapped for an
+// all-`None` default. That would mask a malformed LLM tool call instead of
+// surfacing it.
+
+#[tool(name = "configure", description = "Configure an optional setting")]
+async fn configure(level: Option<u32>) -> swink_agent::AgentToolResult {
+    swink_agent::AgentToolResult::text(format!("{level:?}"))
+}
+
+#[tokio::test]
+async fn tool_attr_all_optional_params_reject_type_mismatch() {
+    let result = ConfigureTool
+        .execute(
+            "call-configure",
+            json!({ "level": "not-a-number" }),
+            CancellationToken::new(),
+            None,
+            Arc::new(RwLock::new(SessionState::new())),
+            None,
+        )
+        .await;
+
+    assert!(
+        result.is_error,
+        "a type-mismatched field must error, not silently default to None"
+    );
+    assert_eq!(
+        first_text(&result),
+        "invalid parameters: invalid type: string \"not-a-number\", expected u32"
+    );
+}
+
 fn first_text(result: &AgentToolResult) -> &str {
     match result.content.first() {
         Some(ContentBlock::Text { text }) => text,

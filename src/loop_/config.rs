@@ -155,6 +155,10 @@ pub struct AgentLoopConfig {
     /// Optional credential resolver for tool authentication.
     pub credential_resolver: Option<Arc<dyn crate::credential::CredentialResolver>>,
 
+    /// Timeout applied around a credential resolver's `resolve()` call.
+    /// Defaults to 30 seconds; see [`AgentOptions::with_credential_timeout`](crate::AgentOptions::with_credential_timeout).
+    pub credential_timeout: std::time::Duration,
+
     /// Optional context caching configuration.
     pub cache_config: Option<crate::context_cache::CacheConfig>,
 
@@ -204,6 +208,7 @@ impl AgentLoopConfig {
             tool_execution_policy: ToolExecutionPolicy::default(),
             session_state: Arc::new(std::sync::RwLock::new(crate::SessionState::new())),
             credential_resolver: None,
+            credential_timeout: std::time::Duration::from_secs(30),
             cache_config: None,
             cache_state: std::sync::Mutex::new(crate::context_cache::CacheState::default()),
             dynamic_system_prompt: None,

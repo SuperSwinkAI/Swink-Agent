@@ -212,7 +212,7 @@ A developer searches persisted conversations for prior decisions, corrections, a
 - **FR-014**: `SessionMeta` MUST include `version: u32` (schema version) and `sequence: u64` (monotonic counter for optimistic concurrency).
 - **FR-015**: The system MUST support session migration via a `SessionMigrator` trait, running migrations transparently on load when the session version is older than the current version.
 - **FR-016**: The system MUST reject saves where the session's `sequence` does not match the stored sequence (optimistic concurrency conflict detection).
-- **FR-017**: The system MUST support persisting and loading interrupt state (pending tool calls, context snapshot, system prompt, model) as a separate file alongside the session.
+- **FR-017**: The system MUST support persisting and loading interrupt state (pending tool calls, context snapshot, system prompt, model) as a separate file alongside the session. (A separate `FileCheckpointStore` also ships in this crate for full conversation checkpoints, distinct from interrupt state — see Key Entities.)
 - **FR-018**: `save_interrupt`, `load_interrupt`, and `clear_interrupt` MUST be added to the `SessionStore` trait.
 - **FR-019**: Session deletion MUST also delete any associated interrupt state file.
 - **FR-020**: The system MUST support filtered session loading via `LoadOptions` with `last_n_entries`, `after_timestamp`, and `entry_types` filter parameters.
@@ -235,6 +235,7 @@ A developer searches persisted conversations for prior decisions, corrections, a
 - **LoadOptions**: Filter parameters for partial session loading.
 - **SessionSearchOptions**: Filter and limit parameters for cross-session search.
 - **SessionHit**: A search result containing matched session metadata, entry, score, and snippet.
+- **FileCheckpointStore**: File-backed implementation of the agent crate's `CheckpointStore` trait (`memory::checkpoint_store::FileCheckpointStore`) — persists one `Checkpoint` (system prompt, model, messages, turn count, usage/cost) per JSON file via atomic writes, with checkpoint IDs validated against path separators, `..`, `:`, and control characters before any file access. Not represented in the FRs above; documented here as a memory-crate scope addition distinct from `InterruptState` persistence.
 
 ## Success Criteria *(mandatory)*
 

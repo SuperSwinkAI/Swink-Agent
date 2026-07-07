@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [../architecture/eval/README.md](../architecture/eval/README.md) — see the "Not yet implemented" section
 
-**Current Focus:** 44 specs total (001–040, 042–045; 041 folded into 022) — 44/44 have plans and tasks, 40/44 complete. Phases 0–10 done, including all provider adapters (Phase 3: 10/10 — Bedrock 019 is complete). The one open core spec is **023 eval-trajectory-matching**, at 94/108 tasks after a 2026-04-21 scope expansion (it was previously marked complete at 40/40 against the original scope). Next work: finish 023, then the Draft specs — 043 (evals advanced features), 044 (self-improvement loop, new `evolve/` crate), 045 (agent RPC service, new `rpc/` crate + `swink-agentd` daemon).
+**Current Focus:** 44 specs total (001–040, 042–045; 041 folded into 022) — 44/44 have plans and tasks, 44/44 complete. Phases 0–11 done, including all provider adapters (Phase 3: 10/10 — Bedrock 019 is complete). **023 eval-trajectory-matching** closed 2026-07-06 at 108/108: the Phase 13 BudgetGuard→BudgetPolicy migration was verified implemented and its remaining checkboxes (T080–T091, T093, T094) confirmed against the workspace-wide clippy/test battery. **045 agent RPC service** closed 2026-07-06 at 35/35 after T035's manual quickstart validation (socket 0600, initialize handshake, streamed prompt events against a live provider, SIGTERM cleanup).
 
 > **Numbering System:** Spec numbers (001–045) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -173,7 +173,7 @@ After **3.1 Shared Infrastructure** completes, all 9 provider adapters (3.2–3.
 **Goal:** Standalone crates for session persistence, on-device inference, and
 evaluation — each depends only on the core library.
 
-**Status:** 4/4 specs planned, 4/4 have tasks, 3/4 complete (023 in progress), 4/4 specs defined
+**Status:** 4/4 specs planned, 4/4 have tasks, 4/4 complete, 4/4 specs defined
 
 ### Implementation Checklist
 
@@ -190,7 +190,7 @@ evaluation — each depends only on the core library.
 - [ ] **4.3** Eval: Trajectory & Matching — TrajectoryCollector, TrajectoryMatcher, EfficiencyEvaluator, ResponseCriteria
   - Spec: `specs/023-eval-trajectory-matching/spec.md`
   - Branch: `023-eval-trajectory-matching`
-  - Status: In Progress (94/108 tasks) — original 40-task scope shipped and merged, but a 2026-04-21 scope expansion added new tasks; this is the one open core spec
+  - Status: Complete (108/108 tasks) — original 40-task scope shipped and merged; the 2026-04-21 scope expansion (Phase 13 BudgetGuard→BudgetPolicy migration) was verified implemented and closed 2026-07-06
   - Depends on: 1.1
 - [x] **4.4** Eval: Runner, Scoring & Governance — EvalRunner, EvaluatorRegistry, FsEvalStore, CI/CD gating, audit trails
   - Spec: `specs/024-eval-runner-governance/spec.md`
@@ -373,24 +373,24 @@ After their respective dependencies are met, 9.1 (Artifact Service), 9.2 (Plugin
 and a headless JSON-RPC agent service — the next wave of work after the core
 library, adapters, and TUI.
 
-**Status:** 3/3 specs planned, 3/3 have tasks, 0/3 complete — all Draft
+**Status:** 3/3 specs planned, 3/3 have tasks, 3/3 complete (043, 044, 045)
 
 ### Implementation Checklist
 
-- [ ] **11.1** Evals: Advanced Features — extends the eval framework beyond spec 023/024
+- [x] **11.1** Evals: Advanced Features — extends the eval framework beyond spec 023/024
   - Spec: `specs/043-evals-adv-features/spec.md`
   - Branch: `043-evals-adv-features`
-  - Status: Draft
+  - Status: Complete (181/181 tasks, merged to integration)
   - Depends on: 4.3, 4.4
-- [ ] **11.2** Eval-Driven Self-Improvement Loop — new `evolve/` crate
+- [x] **11.2** Eval-Driven Self-Improvement Loop — new `evolve/` crate
   - Spec: `specs/044-self-improvement-loop/spec.md`
   - Branch: `044-self-improvement-loop`
-  - Status: Draft
+  - Status: Complete (77/77 tasks, merged to integration)
   - Depends on: 11.1
-- [ ] **11.3** JSON-RPC Agent Service — new `rpc/` crate + `swink-agentd` daemon
+- [x] **11.3** JSON-RPC Agent Service — new `rpc/` crate + `swink-agentd` daemon
   - Spec: `specs/045-agent-rpc-service/spec.md`
   - Branch: `045-agent-rpc-service`
-  - Status: Draft
+  - Status: Complete (35/35 tasks; T035 manual quickstart validation performed 2026-07-06)
   - Depends on: 1.2
 
 ---

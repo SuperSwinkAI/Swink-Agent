@@ -161,10 +161,10 @@ pub use training::{
 pub use trajectory::TrajectoryCollector;
 pub use types::{
     Assertion, AssertionKind, Attachment, AttachmentError, BudgetConstraints, CASE_NAMESPACE,
-    CaseFingerprint, EnvironmentState, EvalCase, EvalCaseResult, EvalMetricResult, EvalSet,
-    EvalSetResult, EvalSummary, ExpectedToolCall, FewShotExample, InteractionExpectation,
-    Invocation, MaterializedAttachment, RecordedToolCall, ResponseCriteria, StateCapture,
-    ToolIntent, TurnRecord, validate_eval_case, validate_eval_set,
+    CacheFingerprint, CaseFingerprint, EnvironmentState, EvalCase, EvalCaseResult,
+    EvalMetricResult, EvalSet, EvalSetResult, EvalSummary, ExpectedToolCall, FewShotExample,
+    InteractionExpectation, Invocation, MaterializedAttachment, RecordedToolCall, ResponseCriteria,
+    StateCapture, ToolIntent, TurnRecord, validate_eval_case, validate_eval_set,
 };
 pub use url_filter::{DefaultUrlFilter, UrlFilter};
 #[cfg(feature = "yaml")]

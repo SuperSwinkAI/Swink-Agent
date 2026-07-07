@@ -71,7 +71,7 @@ impl SessionState {
     /// present keep their current value and are never overridden by the
     /// baseline. Inserted baseline entries do NOT appear in the delta,
     /// mirroring [`Self::with_data`] baseline semantics.
-    pub fn apply_baseline(&mut self, baseline: &SessionState) {
+    pub fn apply_baseline(&mut self, baseline: &Self) {
         for (key, value) in &baseline.data {
             if !self.data.contains_key(key) {
                 self.data.insert(key.clone(), value.clone());

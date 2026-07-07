@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
-use swink_agent::{AgentTool, AgentToolResult, ToolFuture};
+use swink_agent::{AgentTool, AgentToolResult, ContentBlock, ToolFuture};
 use tokio::sync::Mutex;
-use tracing::warn;
+use tracing::{info, warn};
 use url::Url;
 
 use crate::domain::DomainFilter;
@@ -106,6 +106,9 @@ impl AgentTool for ExtractTool {
         &self.schema
     }
 
+    // One linear request flow (validate → render → extract → shape result);
+    // splitting it would scatter the cancellation racing across helpers.
+    #[allow(clippy::too_many_lines)]
     fn execute(
         &self,
         _tool_call_id: &str,
@@ -165,6 +168,11 @@ impl AgentTool for ExtractTool {
                 }
             }
 
+            // FR-016: log every web request. Playwright abstracts away the
+            // underlying HTTP status, so URL, serialized response size, and
+            // latency are the closest equivalents recorded here.
+            let start = Instant::now();
+
             let operation = {
                 let bridge = guard.as_mut().expect("bridge initialized above");
                 await_with_cancellation(
@@ -180,7 +188,7 @@ impl AgentTool for ExtractTool {
                 .await
             };
 
-            match operation {
+            let result = match operation {
                 OperationOutcome::Completed(Ok(extraction)) => build_extract_result(
                     extraction,
                     self.domain_filter.as_ref(),
@@ -204,9 +212,43 @@ impl AgentTool for ExtractTool {
                     *guard = None;
                     AgentToolResult::error(format!("Extraction timed out after {:?}", self.timeout))
                 }
+            };
+
+            let size_bytes = content_size_bytes(&result.content);
+            let latency_ms = start.elapsed().as_millis();
+
+            if result.is_error {
+                warn!(
+                    url = %request.url,
+                    size_bytes,
+                    latency_ms,
+                    "web extract failed"
+                );
+            } else {
+                info!(
+                    url = %request.url,
+                    size_bytes,
+                    latency_ms,
+                    "web extract completed"
+                );
             }
+
+            result
         })
     }
+}
+
+/// Sum of the text bytes across all content blocks in a tool result, used as
+/// the FR-016 "response size" for a request whose transport (Playwright) has
+/// no directly observable payload size.
+fn content_size_bytes(content: &[ContentBlock]) -> usize {
+    content
+        .iter()
+        .map(|block| match block {
+            ContentBlock::Text { text } => text.len(),
+            _ => 0,
+        })
+        .sum()
 }
 
 fn build_extract_result(
@@ -299,5 +341,24 @@ mod tests {
         let localhost = Url::parse("http://127.0.0.1/admin").unwrap();
 
         assert!(filter.is_allowed(&localhost).is_err());
+    }
+
+    #[test]
+    fn content_size_bytes_sums_text_block_lengths() {
+        let content = vec![
+            ContentBlock::Text {
+                text: "hello".to_owned(),
+            },
+            ContentBlock::Text {
+                text: "world!".to_owned(),
+            },
+        ];
+
+        assert_eq!(content_size_bytes(&content), 11);
+    }
+
+    #[test]
+    fn content_size_bytes_of_empty_content_is_zero() {
+        assert_eq!(content_size_bytes(&[]), 0);
     }
 }

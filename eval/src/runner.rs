@@ -40,6 +40,20 @@ impl Drop for FactoryCancellationGuard {
 }
 
 /// Factory that creates a configured [`Agent`] for each eval case.
+///
+/// # Budget enforcement (spec 023 T086)
+///
+/// [`EvalCase::budget`] is only a static [`crate::BudgetConstraints`]
+/// declaration — nothing evaluates it *during* the run unless the agent
+/// itself is wired to enforce it. Implementers that want real-time budget
+/// enforcement (the agent loop stopping mid-run when a cost/token/turn limit
+/// is hit, rather than just being scored after the fact by
+/// [`crate::BudgetEvaluator`]) MUST convert `case.budget` via
+/// [`crate::BudgetConstraints::to_policies`] and attach the resulting
+/// policies to the agent with `AgentOptions::with_pre_turn_policy(...)` in
+/// [`Self::create_agent`]. See `eval/tests/budget.rs`'s `PolicyAwareFactory`
+/// for the canonical pattern; [`crate::BudgetEvaluator`] alone only scores the
+/// completed invocation and does not stop an over-budget run early.
 pub trait AgentFactory: Send + Sync {
     /// Create an agent and cancellation token for the given eval case.
     fn create_agent(&self, case: &EvalCase) -> Result<(Agent, CancellationToken), EvalError>;
@@ -424,7 +438,7 @@ async fn execute_case(
 ) -> Result<EvalCaseResult, EvalError> {
     info!(case_id = %case.id, case_name = %case.name, "running eval case");
 
-    let fingerprint = case.content_fingerprint();
+    let fingerprint = case.cache_fingerprint();
     let fp_ctx = FingerprintContext {
         initial_session: initial_session_json.cloned(),
         tool_set_hash: factory.tool_set_hash(case),
@@ -623,8 +637,15 @@ fn dispatch_evaluators(
         .into_iter()
         .map(|(name, samples)| {
             let scores: Vec<f64> = samples.iter().map(|m| m.score.value).collect();
-            let threshold = samples.first().map_or(0.5, |m| m.score.threshold);
             let sample = RunnerMetricSample::from_samples(name.clone(), scores);
+
+            // FR-022/FR-023: reduce the per-run scores through the
+            // evaluator's own configured aggregator (default `Average`;
+            // e.g. the safety family's `AllPass`) rather than a single
+            // hard-coded mean for every evaluator.
+            let per_run_scores: Vec<Score> = samples.iter().map(|m| m.score).collect();
+            let combined_score = registry.aggregator_for(&name).aggregate(&per_run_scores);
+
             let mut detail_lines = vec![format!(
                 "num_runs={} mean={:.4} std_dev={:.4}",
                 sample.scores.len(),
@@ -637,7 +658,7 @@ fn dispatch_evaluators(
             }
             EvalMetricResult {
                 evaluator_name: name,
-                score: Score::new(sample.mean, threshold),
+                score: combined_score,
                 details: Some(detail_lines.join(" :: ")),
             }
         })

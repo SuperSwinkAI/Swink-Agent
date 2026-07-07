@@ -384,6 +384,7 @@ impl Agent {
         config.tool_execution_policy = self.tool_execution_policy.clone();
         config.session_state = Arc::clone(&self.session_state);
         config.credential_resolver = self.credential_resolver.as_ref().map(Arc::clone);
+        config.credential_timeout = self.credential_timeout;
         config.cache_config.clone_from(&self.cache_config);
         config
             .dynamic_system_prompt
@@ -484,6 +485,7 @@ mod tests {
                     error_message: "no more scripted responses".to_string(),
                     usage: None,
                     error_kind: None,
+                    retry_after: None,
                 }]
             });
             Box::pin(futures::stream::iter(events))

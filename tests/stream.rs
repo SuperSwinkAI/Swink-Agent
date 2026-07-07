@@ -246,6 +246,7 @@ fn accumulate_error_event() {
             stop_reason: StopReason::Error,
             error_message: "connection lost".into(),
             error_kind: None,
+            retry_after: None,
             usage: Some(Usage {
                 input: 50,
                 output: 10,
@@ -342,6 +343,7 @@ fn accumulate_error_event_without_usage() {
             stop_reason: StopReason::Error,
             error_message: "fatal".into(),
             error_kind: None,
+            retry_after: None,
             usage: None,
         },
     ];
@@ -425,6 +427,7 @@ fn error_event_with_usage() {
             stop_reason: StopReason::Error,
             error_message: "overloaded".into(),
             error_kind: None,
+            retry_after: None,
             usage: Some(Usage {
                 input: 42,
                 output: 7,
@@ -551,12 +554,14 @@ fn duplicate_error_rejected() {
             error_message: "first".into(),
             usage: None,
             error_kind: None,
+            retry_after: None,
         },
         AssistantMessageEvent::Error {
             stop_reason: StopReason::Error,
             error_message: "second".into(),
             usage: None,
             error_kind: None,
+            retry_after: None,
         },
     ];
     let result = accumulate_message(events, "p", "m");
@@ -592,6 +597,7 @@ fn content_after_error_rejected() {
             error_message: "oops".into(),
             usage: None,
             error_kind: None,
+            retry_after: None,
         },
         AssistantMessageEvent::TextDelta {
             content_index: 0,
@@ -617,6 +623,7 @@ fn done_then_error_rejected() {
             error_message: "late error".into(),
             usage: None,
             error_kind: None,
+            retry_after: None,
         },
     ];
     let result = accumulate_message(events, "p", "m");
@@ -633,6 +640,7 @@ fn error_then_done_rejected() {
             error_message: "error first".into(),
             usage: None,
             error_kind: None,
+            retry_after: None,
         },
         AssistantMessageEvent::Done {
             stop_reason: StopReason::Stop,
@@ -670,6 +678,7 @@ fn error_then_start_rejected() {
             error_message: "error first".into(),
             usage: None,
             error_kind: None,
+            retry_after: None,
         },
         AssistantMessageEvent::Start,
     ];

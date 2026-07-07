@@ -187,6 +187,7 @@ async fn error_response_allows_retry() {
                 stop_reason: StopReason::Error,
                 error_message: "something broke".to_string(),
                 error_kind: None,
+                retry_after: None,
                 usage: None,
             },
         ],

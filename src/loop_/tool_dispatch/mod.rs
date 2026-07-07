@@ -1440,6 +1440,213 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "artifact-store")]
+    struct ArtifactSavingTool;
+
+    #[cfg(feature = "artifact-store")]
+    impl crate::tool::AgentTool for ArtifactSavingTool {
+        fn name(&self) -> &'static str {
+            "artifact_saving_tool"
+        }
+
+        fn label(&self) -> &'static str {
+            "artifact_saving_tool"
+        }
+
+        fn description(&self) -> &'static str {
+            "Emits an artifact-saved details payload"
+        }
+
+        fn parameters_schema(&self) -> &serde_json::Value {
+            static SCHEMA: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+            SCHEMA.get_or_init(|| {
+                json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": true
+                })
+            })
+        }
+
+        fn execute(
+            &self,
+            _tool_call_id: &str,
+            _params: serde_json::Value,
+            _cancellation_token: CancellationToken,
+            _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+            _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
+            _credential: Option<crate::ResolvedCredential>,
+        ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+            Box::pin(async move {
+                let mut result = AgentToolResult::text("Saved 'report.md' version 3");
+                result.details = json!({
+                    "artifact_saved": {
+                        "session_id": "sess-1",
+                        "name": "report.md",
+                        "version": 3,
+                    }
+                });
+                result
+            })
+        }
+    }
+
+    /// Regression test for #1066-adjacent gap: `SaveArtifactTool` signals a
+    /// successful save via `AgentToolResult::details`, and the dispatch layer
+    /// must translate that into `AgentEvent::ArtifactSaved` (spec 036 FR-014).
+    #[cfg(feature = "artifact-store")]
+    #[tokio::test]
+    async fn artifact_saved_details_emit_artifact_saved_event() {
+        let tool = Arc::new(ArtifactSavingTool);
+        let config = test_loop_config_with_options(
+            vec![],
+            vec![tool as Arc<dyn crate::tool::AgentTool>],
+            None,
+            ApprovalMode::Bypassed,
+            ToolExecutionPolicy::Concurrent,
+        );
+        let tool_calls = vec![ToolCallInfo {
+            id: "call_1".to_string(),
+            name: "artifact_saving_tool".to_string(),
+            arguments: json!({}),
+            is_incomplete: false,
+        }];
+        let cancellation_token = CancellationToken::new();
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
+
+        assert!(matches!(outcome, ToolExecOutcome::Completed { .. }));
+
+        let artifact_events: Vec<_> = drain_events(&mut rx)
+            .into_iter()
+            .filter_map(|event| match event {
+                AgentEvent::ArtifactSaved {
+                    session_id,
+                    name,
+                    version,
+                } => Some((session_id, name, version)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            artifact_events,
+            vec![("sess-1".to_string(), "report.md".to_string(), 3)],
+            "a successful save should emit exactly one ArtifactSaved event with the saved fields"
+        );
+    }
+
+    struct AuthRequiredTool;
+
+    impl crate::tool::AgentTool for AuthRequiredTool {
+        fn name(&self) -> &'static str {
+            "auth_required_tool"
+        }
+
+        fn label(&self) -> &'static str {
+            "auth_required_tool"
+        }
+
+        fn description(&self) -> &'static str {
+            "Requires a resolved credential to execute"
+        }
+
+        fn parameters_schema(&self) -> &serde_json::Value {
+            static SCHEMA: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+            SCHEMA.get_or_init(|| {
+                json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": true
+                })
+            })
+        }
+
+        fn auth_config(&self) -> Option<crate::credential::AuthConfig> {
+            Some(crate::credential::AuthConfig {
+                credential_key: "api_key".to_string(),
+                auth_scheme: crate::credential::AuthScheme::BearerHeader,
+                credential_type: crate::credential::CredentialType::Bearer,
+            })
+        }
+
+        fn execute(
+            &self,
+            _tool_call_id: &str,
+            _params: serde_json::Value,
+            _cancellation_token: CancellationToken,
+            _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+            _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
+            _credential: Option<crate::ResolvedCredential>,
+        ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+            Box::pin(async move { AgentToolResult::text("authenticated") })
+        }
+    }
+
+    /// A [`CredentialResolver`](crate::credential::CredentialResolver) whose
+    /// `resolve()` never completes, so the dispatch-layer timeout is the only
+    /// thing that can unblock a caller.
+    struct NeverResolvingCredentialResolver;
+
+    impl crate::credential::CredentialResolver for NeverResolvingCredentialResolver {
+        fn resolve(
+            &self,
+            _key: &str,
+        ) -> crate::credential::CredentialFuture<'_, crate::ResolvedCredential> {
+            Box::pin(std::future::pending::<
+                Result<crate::ResolvedCredential, crate::credential::CredentialError>,
+            >())
+        }
+    }
+
+    /// Regression test for spec 035 FR-014: the credential-resolution timeout
+    /// must be configurable (previously hardcoded to 30s in `execute.rs`),
+    /// so a short `AgentOptions::with_credential_timeout` must be honored by
+    /// the dispatch layer rather than silently falling back to 30s.
+    #[tokio::test]
+    async fn credential_resolution_honors_configured_timeout() {
+        let tool = Arc::new(AuthRequiredTool);
+        let mut config = AgentLoopConfig::new(
+            default_model(),
+            Arc::new(MockStreamFn::new(vec![])),
+            Box::new(default_convert),
+        );
+        config.retry_strategy = Box::new(DefaultRetryStrategy::default());
+        config.tools = vec![tool as Arc<dyn crate::tool::AgentTool>];
+        config.approval_mode = ApprovalMode::Bypassed;
+        config.credential_resolver = Some(Arc::new(NeverResolvingCredentialResolver));
+        config.credential_timeout = std::time::Duration::from_millis(50);
+        let config = Arc::new(config);
+
+        let tool_calls = vec![ToolCallInfo {
+            id: "call_1".to_string(),
+            name: "auth_required_tool".to_string(),
+            arguments: json!({}),
+            is_incomplete: false,
+        }];
+        let cancellation_token = CancellationToken::new();
+        let (tx, _rx) = mpsc::channel(8);
+
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx),
+        )
+        .await
+        .expect("dispatch must not hang past the configured credential timeout");
+
+        let ToolExecOutcome::Completed { results, .. } = outcome else {
+            panic!("expected completed outcome");
+        };
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_error);
+        assert!(
+            ContentBlock::extract_text(&results[0].content).contains("timed out"),
+            "expected a credential timeout error in: {:?}",
+            results[0].content
+        );
+    }
+
     /// Regression test for #770: per-tool partial-update buffering must be
     /// bounded so a tool that emits updates faster than downstream drains
     /// them cannot grow the queue without limit.
@@ -1763,6 +1970,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::similar_names)]
     async fn cancellation_after_first_approval_does_not_touch_later_tools() {
         let tool_a = Arc::new(MockTool::new("tool_a").with_requires_approval(true));
         let tool_b = Arc::new(MockTool::new("tool_b").with_requires_approval(true));
@@ -1836,6 +2044,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::similar_names)]
     async fn cancellation_between_sequential_groups_skips_later_dispatch() {
         let tool_a = Arc::new(MockTool::new("tool_a"));
         let tool_b = Arc::new(MockTool::new("tool_b"));

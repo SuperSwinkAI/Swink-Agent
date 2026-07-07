@@ -5406,6 +5406,7 @@ dependencies = [
  "aws-smithy-runtime-api",
  "aws-smithy-types",
  "bytes",
+ "chrono",
  "dotenvy",
  "futures",
  "insta",
@@ -5638,6 +5639,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "tracing-subscriber",
  "url",
  "wiremock",
 ]

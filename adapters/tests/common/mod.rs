@@ -38,6 +38,19 @@ pub fn find_error_message(events: &[AssistantMessageEvent]) -> Option<String> {
     })
 }
 
+/// Extract the `retry_after` hint from the first `Error` event, if any.
+///
+/// Returns `None` both when there is no `Error` event and when the `Error`
+/// event carries no retry-after hint — callers that need to distinguish
+/// those cases should use `find_error_message` to confirm an `Error` event
+/// exists first.
+pub fn find_retry_after(events: &[AssistantMessageEvent]) -> Option<std::time::Duration> {
+    events.iter().find_map(|e| match e {
+        AssistantMessageEvent::Error { retry_after, .. } => *retry_after,
+        _ => None,
+    })
+}
+
 /// Extract the stop reason from the first `Done` event, if any.
 pub fn extract_stop_reason(events: &[AssistantMessageEvent]) -> Option<StopReason> {
     events.iter().find_map(|e| match e {

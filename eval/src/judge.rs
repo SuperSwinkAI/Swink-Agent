@@ -43,6 +43,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
+use tracing::debug;
 
 pub use crate::url_filter::{DefaultUrlFilter, UrlFilter};
 
@@ -263,7 +264,10 @@ impl JudgeCache {
     pub fn get(&mut self, key: &CacheKey) -> Option<JudgeVerdict> {
         let verdict = self.entries.get(key).cloned();
         if verdict.is_some() {
+            debug!(cache_key = %key.to_hex(), "judge cache hit");
             self.touch(*key);
+        } else {
+            debug!(cache_key = %key.to_hex(), "judge cache miss");
         }
         verdict
     }
@@ -271,6 +275,7 @@ impl JudgeCache {
     /// Insert or replace a cached verdict.
     pub fn put(&mut self, key: CacheKey, verdict: JudgeVerdict) {
         let replacing = self.entries.insert(key, verdict).is_some();
+        debug!(cache_key = %key.to_hex(), replacing, "judge cache insert");
         self.touch(key);
         self.dirty = true;
 
@@ -599,6 +604,16 @@ pub struct JudgeVerdict {
     pub reason: Option<String>,
     /// Optional category label (e.g., "equivalent", "unrelated").
     pub label: Option<String>,
+    /// Dollar cost of the judge call that produced this verdict, when the
+    /// concrete [`JudgeClient`] implementation can derive it (e.g. from
+    /// provider response usage/pricing). `None` when the implementation
+    /// doesn't compute cost — current provider clients in
+    /// `swink-agent-eval-judges` discard response usage and always leave
+    /// this `None`; it is wired up here so callers (e.g. `swink-agent-evolve`
+    /// budget tracking) have a place to read real cost from once a client
+    /// populates it.
+    #[serde(default)]
+    pub cost: Option<f64>,
 }
 
 /// Error type returned by [`JudgeClient::judge`].
@@ -649,10 +664,19 @@ mod tests {
             pass: true,
             reason: Some("looks right".into()),
             label: Some("equivalent".into()),
+            cost: Some(0.002),
         };
         assert!((v.score - 0.75).abs() < f64::EPSILON);
         assert!(v.pass);
         assert_eq!(v.reason.as_deref(), Some("looks right"));
         assert_eq!(v.label.as_deref(), Some("equivalent"));
+        assert_eq!(v.cost, Some(0.002));
+    }
+
+    #[test]
+    fn verdict_cost_defaults_to_none_when_omitted_from_json() {
+        let json = r#"{"score":1.0,"pass":true,"reason":null,"label":null}"#;
+        let v: JudgeVerdict = serde_json::from_str(json).unwrap();
+        assert_eq!(v.cost, None);
     }
 }

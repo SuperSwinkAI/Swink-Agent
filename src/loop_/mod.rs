@@ -13,7 +13,7 @@ mod turn;
 mod types;
 
 pub use config::AgentLoopConfig;
-pub use event::{AgentEvent, TurnEndReason};
+pub use event::{AgentEvent, TransferRejectionReason, TurnEndReason};
 pub use types::*;
 
 use std::error::Error as _;

@@ -245,7 +245,7 @@ async fn malformed_file_yields_invalid_case_error() {
 #[test]
 fn initial_session_participates_in_cache_key() {
     use swink_agent_eval::{FingerprintContext, TaskResultCacheKey};
-    let fp = common::make_case("c1").content_fingerprint();
+    let fp = common::make_case("c1").cache_fingerprint();
     let a = TaskResultCacheKey::from_fingerprint(&fp, &FingerprintContext::default());
     let b = TaskResultCacheKey::from_fingerprint(
         &fp,

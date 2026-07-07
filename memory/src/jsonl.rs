@@ -291,10 +291,10 @@ fn find_last_meta_commit(
         // The window starts mid-line: bytes before the first newline are a
         // partial line (they may even split a multi-byte character at the
         // window boundary), so only the bytes after it are complete lines.
-        if let Some(pos) = buf.iter().position(|&b| b == b'\n') {
-            if let Some(meta) = last_meta_in_complete_lines(&buf[pos + 1..])? {
-                return Ok(Some(meta));
-            }
+        if let Some(pos) = buf.iter().position(|&b| b == b'\n')
+            && let Some(meta) = last_meta_in_complete_lines(&buf[pos + 1..])?
+        {
+            return Ok(Some(meta));
         }
 
         window = window.saturating_mul(2);
@@ -2251,7 +2251,7 @@ mod tests {
             .unwrap();
 
         // Stale meta (sequence behind the on-disk value) must be rejected.
-        let mut stale = meta.clone();
+        let mut stale = meta;
         stale.sequence = 99;
         let err = store
             .append_entries("append-conflict", &stale, &[user_entry("second", 2)])

@@ -46,8 +46,9 @@ struct OAuth2ErrorBody {
     _error_description: Option<String>,
 }
 
-/// Build a sanitized refresh-failure reason string from the HTTP status and
-/// optional response body.
+/// Build a sanitized token-endpoint failure reason string from the HTTP
+/// status and optional response body, for the given `action` (e.g. `"token
+/// refresh"`, `"authorization code exchange"`).
 ///
 /// The returned string NEVER includes the raw body verbatim. When the body
 /// parses as an RFC 6749 §5.2 OAuth2 error response, only the stable `error`
@@ -55,22 +56,33 @@ struct OAuth2ErrorBody {
 /// in the surfaced reason.
 ///
 /// The caller may emit redacted metadata such as body length via
-/// `tracing::debug!`, but the raw body never reaches
-/// `CredentialError::RefreshFailed.reason` and therefore never propagates into
-/// tool output.
-fn sanitize_refresh_reason(status: reqwest::StatusCode, body: &str) -> String {
+/// `tracing::debug!`, but the raw body never reaches a surfaced
+/// `CredentialError` reason and therefore never propagates into tool output.
+fn sanitize_oauth2_error_reason(action: &str, status: reqwest::StatusCode, body: &str) -> String {
     // Attempt to parse a standard OAuth2 error response. Anything else
     // (HTML error pages, opaque vendor JSON, plain text, empty) degrades to a
     // status-only reason.
     if let Ok(parsed) = serde_json::from_str::<OAuth2ErrorBody>(body) {
         format!(
-            "token refresh failed: HTTP {} ({})",
+            "{action} failed: HTTP {} ({})",
             status.as_u16(),
             parsed.error
         )
     } else {
-        format!("token refresh failed: HTTP {}", status.as_u16())
+        format!("{action} failed: HTTP {}", status.as_u16())
     }
+}
+
+/// Sanitized reason for a failed `refresh_token` call. Thin wrapper over
+/// [`sanitize_oauth2_error_reason`] preserving the historical `"token
+/// refresh failed: ..."` wording.
+fn sanitize_refresh_reason(status: reqwest::StatusCode, body: &str) -> String {
+    sanitize_oauth2_error_reason("token refresh", status, body)
+}
+
+/// Sanitized reason for a failed `exchange_code` call.
+fn sanitize_code_exchange_reason(status: reqwest::StatusCode, body: &str) -> String {
+    sanitize_oauth2_error_reason("authorization code exchange", status, body)
 }
 
 fn sanitize_token_endpoint(token_url: &str) -> String {
@@ -93,20 +105,21 @@ fn sanitize_token_endpoint(token_url: &str) -> String {
     }
 }
 
-fn sanitize_transport_reason(error: &reqwest::Error) -> &'static str {
-    if error.is_timeout() {
-        "token refresh failed: transport timeout"
+fn sanitize_transport_reason(action: &str, error: &reqwest::Error) -> String {
+    let kind = if error.is_timeout() {
+        "timeout"
     } else if error.is_connect() {
-        "token refresh failed: transport connect failure"
+        "connect failure"
     } else if error.is_request() {
-        "token refresh failed: transport request failure"
+        "request failure"
     } else if error.is_body() {
-        "token refresh failed: transport body failure"
+        "body failure"
     } else if error.is_decode() {
-        "token refresh failed: transport decode failure"
+        "decode failure"
     } else {
-        "token refresh failed: transport failure"
-    }
+        "failure"
+    };
+    format!("{action} failed: transport {kind}")
 }
 
 /// Perform an OAuth2 token refresh via the token endpoint.
@@ -147,7 +160,7 @@ pub async fn refresh_token(
         .await
         .map_err(|e| CredentialError::RefreshFailed {
             key: String::new(),
-            reason: sanitize_transport_reason(&e).to_string(),
+            reason: sanitize_transport_reason("token refresh", &e),
         })?;
 
     if !response.status().is_success() {
@@ -177,7 +190,135 @@ pub async fn refresh_token(
         .await
         .map_err(|e| CredentialError::RefreshFailed {
             key: String::new(),
-            reason: sanitize_transport_reason(&e).to_string(),
+            reason: sanitize_transport_reason("token refresh", &e),
+        })
+}
+
+/// `OAuth2` client configuration needed to construct an authorization URL and
+/// exchange the resulting code for tokens, for a credential key that has no
+/// stored credential yet (US4: initial authorization flow).
+///
+/// This is distinct from [`Credential::OAuth2`](swink_agent::Credential::OAuth2)
+/// (which describes an *already-issued* token set): a credential key must be
+/// paired with an `AuthorizationConfig` via
+/// [`with_authorization_config`](crate::DefaultCredentialResolver::with_authorization_config)
+/// before the resolver can build an authorization URL for it. A key with an
+/// authorization handler configured but no matching `AuthorizationConfig`
+/// behaves as if no handler were configured (FR-011: `NotFound`).
+#[derive(Debug, Clone)]
+pub struct AuthorizationConfig {
+    /// The provider's authorization endpoint (where the user is sent to
+    /// grant access), e.g. `https://accounts.google.com/o/oauth2/v2/auth`.
+    pub authorization_endpoint: String,
+    /// The token endpoint used to exchange the authorization code for
+    /// tokens.
+    pub token_url: String,
+    /// `OAuth2` client identifier.
+    pub client_id: String,
+    /// `OAuth2` client secret (optional for public clients).
+    pub client_secret: Option<String>,
+    /// The redirect URI registered with the provider; the authorization
+    /// handler is responsible for listening on this address.
+    pub redirect_uri: String,
+    /// Requested scopes.
+    pub scopes: Vec<String>,
+}
+
+/// Build the authorization URL for the given config and CSRF `state` token.
+///
+/// Appends `response_type=code`, `client_id`, `redirect_uri`, `scope`
+/// (space-joined, omitted if empty), and `state` as properly percent-encoded
+/// query parameters.
+pub fn build_authorization_url(
+    config: &AuthorizationConfig,
+    state: &str,
+) -> Result<String, CredentialError> {
+    let mut url = reqwest::Url::parse(&config.authorization_endpoint).map_err(|_| {
+        CredentialError::AuthorizationFailed {
+            key: String::new(),
+            reason: "invalid authorization endpoint URL".to_string(),
+        }
+    })?;
+    {
+        let mut pairs = url.query_pairs_mut();
+        pairs.append_pair("response_type", "code");
+        pairs.append_pair("client_id", &config.client_id);
+        pairs.append_pair("redirect_uri", &config.redirect_uri);
+        if !config.scopes.is_empty() {
+            pairs.append_pair("scope", &config.scopes.join(" "));
+        }
+        pairs.append_pair("state", state);
+    }
+    Ok(url.to_string())
+}
+
+/// Exchange an `OAuth2` authorization code for tokens.
+///
+/// Sends a POST request with `grant_type=authorization_code` to `token_url`.
+/// Returns the parsed token response on success.
+///
+/// On failure, the returned [`CredentialError::AuthorizationFailed`] contains
+/// only a sanitized reason (mirroring [`refresh_token`]'s hygiene): HTTP
+/// status plus (if the body is a standard OAuth2 error JSON) the stable
+/// `error` code. The raw response body is NEVER included in the surfaced
+/// error.
+pub async fn exchange_code(
+    client: &reqwest::Client,
+    token_url: &str,
+    code: &str,
+    client_id: &str,
+    client_secret: Option<&str>,
+    redirect_uri: &str,
+) -> Result<TokenResponse, CredentialError> {
+    debug!(
+        token_endpoint = %sanitize_token_endpoint(token_url),
+        "exchanging OAuth2 authorization code for tokens"
+    );
+
+    let mut form = vec![
+        ("grant_type", "authorization_code"),
+        ("code", code),
+        ("client_id", client_id),
+        ("redirect_uri", redirect_uri),
+    ];
+    if let Some(secret) = client_secret {
+        form.push(("client_secret", secret));
+    }
+
+    let response = client
+        .post(token_url)
+        .form(&form)
+        .send()
+        .await
+        .map_err(|e| CredentialError::AuthorizationFailed {
+            key: String::new(),
+            reason: sanitize_transport_reason("authorization code exchange", &e),
+        })?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        // Raw body stays in debug tracing only; see refresh_token's comment
+        // on why this second debug! call (after the .await) is needed.
+        debug!(
+            token_endpoint = %sanitize_token_endpoint(token_url),
+            status = %status,
+            body_len = body.len(),
+            "OAuth2 authorization code exchange failed; response body redacted"
+        );
+        let reason = sanitize_code_exchange_reason(status, &body);
+        return Err(CredentialError::AuthorizationFailed {
+            key: String::new(),
+            reason,
+        });
+    }
+
+    response
+        .json::<TokenResponse>()
+        .await
+        .map_err(|e| CredentialError::AuthorizationFailed {
+            key: String::new(),
+            reason: sanitize_transport_reason("authorization code exchange", &e),
         })
 }
 
@@ -434,5 +575,169 @@ mod tests {
             display.contains("transport"),
             "transport error should use a stable sanitized reason: {display}"
         );
+    }
+
+    // T060: authorization code exchange
+
+    #[tokio::test]
+    async fn exchange_code_success_parses_token_response() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "exchanged-access",
+                "refresh_token": "exchanged-refresh",
+                "expires_in": 3600,
+                "token_type": "Bearer"
+            })))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let token_url = format!("{}/token", mock_server.uri());
+        let response = exchange_code(
+            &reqwest::Client::new(),
+            &token_url,
+            "auth-code",
+            "client-id",
+            Some("client-secret"),
+            "https://localhost:8080/callback",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.access_token, "exchanged-access");
+        assert_eq!(response.refresh_token.as_deref(), Some("exchanged-refresh"));
+    }
+
+    #[tokio::test]
+    async fn exchange_code_failure_returns_authorization_failed_without_leaking_body() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "error": "invalid_grant",
+                "error_description": format!("code expired {LEAK_SENTINEL}"),
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let token_url = format!("{}/token", mock_server.uri());
+        let err = exchange_code(
+            &reqwest::Client::new(),
+            &token_url,
+            "auth-code",
+            "client-id",
+            Some("client-secret"),
+            "https://localhost:8080/callback",
+        )
+        .await
+        .unwrap_err();
+
+        match &err {
+            CredentialError::AuthorizationFailed { reason, .. } => {
+                assert!(reason.contains("400"));
+                assert!(reason.contains("invalid_grant"));
+            }
+            other => panic!("expected AuthorizationFailed, got {other:?}"),
+        }
+        let display = format!("{err}");
+        assert!(
+            !display.contains(LEAK_SENTINEL),
+            "error_description leaked into Display: {display}"
+        );
+    }
+
+    #[tokio::test]
+    async fn exchange_code_transport_failure_reason_is_sanitized() {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(200))
+            .build()
+            .unwrap();
+
+        let err = exchange_code(
+            &client,
+            "http://127.0.0.1:1/token?client_secret=LEAK_SENTINEL_ABC123",
+            "auth-code",
+            "client-id",
+            Some("client-secret"),
+            "https://localhost:8080/callback",
+        )
+        .await
+        .unwrap_err();
+        let display = format!("{err}");
+
+        assert!(matches!(err, CredentialError::AuthorizationFailed { .. }));
+        assert!(!display.contains("LEAK_SENTINEL_ABC123"));
+        assert!(display.contains("transport"));
+    }
+
+    // T054 URL-construction check: authorize() must receive a correctly
+    // formed authorization URL.
+    #[test]
+    fn build_authorization_url_includes_expected_query_params() {
+        let config = AuthorizationConfig {
+            authorization_endpoint: "https://auth.example.com/o/authorize".to_string(),
+            token_url: "https://auth.example.com/token".to_string(),
+            client_id: "client with spaces".to_string(),
+            client_secret: Some("shh".to_string()),
+            redirect_uri: "http://localhost:8080/callback".to_string(),
+            scopes: vec!["read".to_string(), "write".to_string()],
+        };
+
+        let url = build_authorization_url(&config, "csrf-state-123").unwrap();
+        let parsed = reqwest::Url::parse(&url).unwrap();
+        let pairs: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
+
+        assert_eq!(pairs.get("response_type").map(String::as_str), Some("code"));
+        assert_eq!(
+            pairs.get("client_id").map(String::as_str),
+            Some("client with spaces")
+        );
+        assert_eq!(
+            pairs.get("redirect_uri").map(String::as_str),
+            Some("http://localhost:8080/callback")
+        );
+        assert_eq!(pairs.get("scope").map(String::as_str), Some("read write"));
+        assert_eq!(
+            pairs.get("state").map(String::as_str),
+            Some("csrf-state-123")
+        );
+        assert!(
+            !url.contains("shh"),
+            "client_secret must never appear in the authorization URL: {url}"
+        );
+    }
+
+    #[test]
+    fn build_authorization_url_omits_scope_when_empty() {
+        let config = AuthorizationConfig {
+            authorization_endpoint: "https://auth.example.com/o/authorize".to_string(),
+            token_url: "https://auth.example.com/token".to_string(),
+            client_id: "client-1".to_string(),
+            client_secret: None,
+            redirect_uri: "http://localhost:8080/callback".to_string(),
+            scopes: vec![],
+        };
+
+        let url = build_authorization_url(&config, "state").unwrap();
+        assert!(!url.contains("scope="));
+    }
+
+    #[test]
+    fn build_authorization_url_rejects_invalid_endpoint() {
+        let config = AuthorizationConfig {
+            authorization_endpoint: "not a url".to_string(),
+            token_url: "https://auth.example.com/token".to_string(),
+            client_id: "client-1".to_string(),
+            client_secret: None,
+            redirect_uri: "http://localhost:8080/callback".to_string(),
+            scopes: vec![],
+        };
+
+        let err = build_authorization_url(&config, "state").unwrap_err();
+        assert!(matches!(err, CredentialError::AuthorizationFailed { .. }));
     }
 }

@@ -5,6 +5,7 @@ use serde::Deserialize;
 use crate::ModelSpec;
 use crate::types::{Cost, ModelCapabilities, ThinkingLevel, Usage};
 
+/// Whether a provider's models run on a remote API or on local hardware.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderKind {
@@ -12,6 +13,7 @@ pub enum ProviderKind {
     Local,
 }
 
+/// How requests to a provider are authenticated.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthMode {
@@ -20,6 +22,7 @@ pub enum AuthMode {
     AwsSigv4,
 }
 
+/// Provider API version selector used when building request URLs.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApiVersion {
@@ -27,6 +30,7 @@ pub enum ApiVersion {
     V1beta,
 }
 
+/// A capability a preset's model supports, as declared in the catalog TOML.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PresetCapability {
@@ -38,6 +42,7 @@ pub enum PresetCapability {
     StructuredOutput,
 }
 
+/// Release maturity of a preset's model at the provider.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PresetStatus {
@@ -45,6 +50,7 @@ pub enum PresetStatus {
     Preview,
 }
 
+/// A single named model preset within a [`ProviderCatalog`], as loaded from the catalog TOML.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct PresetCatalog {
     pub id: String,
@@ -71,6 +77,7 @@ pub struct PresetCatalog {
     pub cost_per_million_cache_write: Option<f64>,
 }
 
+/// A provider entry in the model catalog, holding its auth/connection settings and presets.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ProviderCatalog {
     pub key: String,
@@ -94,6 +101,7 @@ impl ProviderCatalog {
     }
 }
 
+/// The full model catalog: a list of providers, each with its own presets.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ModelCatalog {
     #[serde(default)]
@@ -155,6 +163,8 @@ impl ModelCatalog {
     }
 }
 
+/// A preset flattened together with its parent provider's fields, for standalone use
+/// once resolved via [`ModelCatalog::preset`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct CatalogPreset {
     pub provider_key: String,

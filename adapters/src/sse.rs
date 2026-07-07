@@ -132,28 +132,25 @@ impl SseStreamParser {
                         self.buffer.push_str(s);
                     }
                     cursor += valid;
-                    match e.error_len() {
-                        None => {
-                            // Trailing bytes are an *incomplete* UTF-8
-                            // sequence — carry them to the next feed.
-                            self.byte_carry.extend_from_slice(&bytes[cursor..]);
-                            cursor = bytes.len();
+                    if e.error_len().is_none() {
+                        // Trailing bytes are an *incomplete* UTF-8
+                        // sequence — carry them to the next feed.
+                        self.byte_carry.extend_from_slice(&bytes[cursor..]);
+                        cursor = bytes.len();
+                    } else {
+                        // Emit complete lines already decoded from this
+                        // chunk before the corrupt byte (e.g. a final
+                        // message_stop or usage delta), flushing pending
+                        // data as at EOF, then terminate with the
+                        // non-retryable protocol error.
+                        let mut lines = self.drain_lines();
+                        if let Some(data) = self.pending_data.take() {
+                            lines.push(SseLine::Data(data));
                         }
-                        Some(_) => {
-                            // Emit complete lines already decoded from this
-                            // chunk before the corrupt byte (e.g. a final
-                            // message_stop or usage delta), flushing pending
-                            // data as at EOF, then terminate with the
-                            // non-retryable protocol error.
-                            let mut lines = self.drain_lines();
-                            if let Some(data) = self.pending_data.take() {
-                                lines.push(SseLine::Data(data));
-                            }
-                            lines.extend(
-                                self.protocol_error("SSE stream contained invalid UTF-8 bytes"),
-                            );
-                            return lines;
-                        }
+                        lines.extend(
+                            self.protocol_error("SSE stream contained invalid UTF-8 bytes"),
+                        );
+                        return lines;
                     }
                 }
             }
@@ -521,6 +518,7 @@ where
                 error_message: cancel_message.to_string(),
                 usage: None,
                 error_kind: None,
+                retry_after: None,
             });
             events
         },

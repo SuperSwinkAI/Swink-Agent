@@ -100,10 +100,22 @@ impl AgentTool for SaveArtifactTool {
             };
 
             match self.store.save(&session_id, &parsed.name, data).await {
-                Ok(version) => AgentToolResult::text(format!(
-                    "Saved '{}' version {}",
-                    parsed.name, version.version
-                )),
+                Ok(version) => {
+                    let mut result = AgentToolResult::text(format!(
+                        "Saved '{}' version {}",
+                        parsed.name, version.version
+                    ));
+                    // Read by the dispatch layer to emit `AgentEvent::ArtifactSaved`
+                    // (see `execute.rs`); not sent to the LLM.
+                    result.details = serde_json::json!({
+                        "artifact_saved": {
+                            "session_id": session_id,
+                            "name": parsed.name,
+                            "version": version.version,
+                        }
+                    });
+                    result
+                }
                 Err(e) => AgentToolResult::error(format!("{e}")),
             }
         })

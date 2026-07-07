@@ -1,10 +1,10 @@
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use swink_agent::{AgentTool, AgentToolResult, ToolFuture};
 use tokio_util::sync::CancellationToken;
-use tracing::warn;
+use tracing::{info, warn};
 use url::Url;
 
 use crate::content::{extract_readable_content, is_html_content_type, truncate_content};
@@ -244,6 +244,9 @@ impl AgentTool for FetchTool {
         &self.schema
     }
 
+    // One linear request flow (validate → fetch → redirect checks → cap →
+    // sanitize); splitting it would scatter the security checks across helpers.
+    #[allow(clippy::too_many_lines)]
     fn execute(
         &self,
         _tool_call_id: &str,
@@ -276,16 +279,34 @@ impl AgentTool for FetchTool {
                 }
             }
 
+            // FR-016: every web request must log its target, status, size, and
+            // latency. The timer starts here, right before network I/O begins.
+            let start = Instant::now();
+
             let (mut response, final_url) = match self
                 .send_get_following_checked_redirects(parsed_url, &cancellation_token)
                 .await
             {
                 Ok(result) => result,
-                Err(error) => return AgentToolResult::error(error),
+                Err(error) => {
+                    warn!(
+                        url = %url_str,
+                        latency_ms = start.elapsed().as_millis(),
+                        error = %error,
+                        "web fetch request failed"
+                    );
+                    return AgentToolResult::error(error);
+                }
             };
 
             let status = response.status();
             if !status.is_success() {
+                warn!(
+                    url = %final_url,
+                    status = status.as_u16(),
+                    latency_ms = start.elapsed().as_millis(),
+                    "web fetch returned non-success status"
+                );
                 return AgentToolResult::error(format!(
                     "HTTP {}: {}",
                     status.as_u16(),
@@ -302,6 +323,13 @@ impl AgentTool for FetchTool {
                 .to_string();
 
             if !is_html_content_type(&content_type) {
+                info!(
+                    url = %final_url,
+                    status = status.as_u16(),
+                    content_type = %content_type,
+                    latency_ms = start.elapsed().as_millis(),
+                    "web fetch returned non-HTML content type"
+                );
                 return AgentToolResult::text(format!(
                     "This URL points to a {content_type} resource. \
                      Only HTML pages can be fetched and extracted."
@@ -318,14 +346,31 @@ impl AgentTool for FetchTool {
             .await
             {
                 Ok(body) => body,
-                Err(error) => return AgentToolResult::error(error),
+                Err(error) => {
+                    warn!(
+                        url = %final_url,
+                        status = status.as_u16(),
+                        latency_ms = start.elapsed().as_millis(),
+                        error = %error,
+                        "web fetch body read failed"
+                    );
+                    return AgentToolResult::error(error);
+                }
             };
+            let size_bytes = bytes.len();
 
             // Extract readable content.
             let fetched = match extract_readable_content(&bytes, &final_url) {
                 Ok(f) => f,
                 Err(e) => {
-                    warn!("Content extraction failed for {final_url}: {e}");
+                    warn!(
+                        url = %final_url,
+                        status = status.as_u16(),
+                        size_bytes,
+                        latency_ms = start.elapsed().as_millis(),
+                        error = %e,
+                        "web fetch content extraction failed"
+                    );
                     return AgentToolResult::error(format!("Content extraction failed: {e}"));
                 }
             };
@@ -348,6 +393,15 @@ impl AgentTool for FetchTool {
 
             let output = sanitize_web_tool_text("web_fetch", output, self.sanitizer.as_ref());
 
+            info!(
+                url = %final_url,
+                status = status.as_u16(),
+                size_bytes,
+                truncated,
+                latency_ms = start.elapsed().as_millis(),
+                "web fetch completed"
+            );
+
             AgentToolResult::text(output)
         })
     }
@@ -365,6 +419,7 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use crate::domain::{DomainFilter, ResolvedHost};
+    use crate::tools::log_capture::{SharedLogBuffer, capture};
 
     use super::FetchTool;
 
@@ -733,6 +788,91 @@ mod tests {
             .get("user-agent")
             .and_then(|value| value.to_str().ok());
         assert_eq!(user_agent, Some("SwinkAgent/0.5-test"));
+    }
+
+    #[tokio::test]
+    async fn execute_logs_url_status_size_and_latency_on_success() {
+        // FR-016: web requests must log target URL, HTTP status, response
+        // size, and latency for debugging and auditing.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/article"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r"<!DOCTYPE html>
+                        <html>
+                        <head><title>Log Test</title></head>
+                        <body>
+                            <article><p>Content for the FR-016 logging test.</p></article>
+                        </body>
+                        </html>",
+                "text/html; charset=utf-8",
+            ))
+            .mount(&server)
+            .await;
+
+        let logs = SharedLogBuffer::default();
+        let _guard = capture(logs.clone());
+
+        let tool = FetchTool::new(4_096, Duration::from_secs(5))
+            .with_domain_filter(localhost_filter(), 10);
+        let state = Arc::new(RwLock::new(SessionState::default()));
+        let result = tool
+            .execute(
+                "call-log",
+                json!({ "url": format!("{}/article", server.uri()) }),
+                CancellationToken::new(),
+                None,
+                state,
+                None,
+            )
+            .await;
+
+        assert!(!result.is_error);
+        let log_output = logs.contents();
+        assert!(
+            log_output.contains("web fetch completed"),
+            "missing completion log: {log_output}"
+        );
+        assert!(log_output.contains("status=200"), "{log_output}");
+        assert!(log_output.contains("size_bytes="), "{log_output}");
+        assert!(log_output.contains("latency_ms="), "{log_output}");
+        assert!(log_output.contains(&server.uri()), "{log_output}");
+    }
+
+    #[tokio::test]
+    async fn execute_logs_status_and_latency_on_http_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/missing"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let logs = SharedLogBuffer::default();
+        let _guard = capture(logs.clone());
+
+        let tool = FetchTool::new(4_096, Duration::from_secs(5))
+            .with_domain_filter(localhost_filter(), 10);
+        let state = Arc::new(RwLock::new(SessionState::default()));
+        let result = tool
+            .execute(
+                "call-log-err",
+                json!({ "url": format!("{}/missing", server.uri()) }),
+                CancellationToken::new(),
+                None,
+                state,
+                None,
+            )
+            .await;
+
+        assert!(result.is_error);
+        let log_output = logs.contents();
+        assert!(
+            log_output.contains("web fetch returned non-success status"),
+            "missing error log: {log_output}"
+        );
+        assert!(log_output.contains("status=404"), "{log_output}");
+        assert!(log_output.contains("latency_ms="), "{log_output}");
     }
 
     #[tokio::test]

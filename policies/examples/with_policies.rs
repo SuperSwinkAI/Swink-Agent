@@ -44,6 +44,7 @@ impl StreamFn for MockStreamFn {
                     stop_reason: StopReason::Error,
                     error_message: "no more scripted responses".to_string(),
                     error_kind: None,
+                    retry_after: None,
                     usage: None,
                 }]
             } else {

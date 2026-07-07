@@ -299,56 +299,72 @@ async fn no_events_when_no_handler_configured() {
     assert_eq!(output.final_response, "output");
 }
 
-// T058: PipelineEvent::to_emission() produces valid Emission
+// T058: PipelineEvent::to_emission() produces valid Emission with a
+// populated payload (not just a bare event name).
 #[test]
 fn pipeline_event_to_emission_produces_valid_emission() {
     let id = PipelineId::new("test-id");
 
-    let cases = vec![
-        (
-            PipelineEvent::Started {
-                pipeline_id: id.clone(),
-                pipeline_name: "test".to_owned(),
-            },
-            "pipeline.started",
-        ),
-        (
-            PipelineEvent::StepStarted {
-                pipeline_id: id.clone(),
-                step_index: 0,
-                agent_name: "agent-a".to_owned(),
-            },
-            "pipeline.step_started",
-        ),
-        (
-            PipelineEvent::StepCompleted {
-                pipeline_id: id.clone(),
-                step_index: 0,
-                agent_name: "agent-a".to_owned(),
-                duration: std::time::Duration::from_millis(100),
-                usage: swink_agent::Usage::default(),
-            },
-            "pipeline.step_completed",
-        ),
-        (
-            PipelineEvent::Completed {
-                pipeline_id: id.clone(),
-                total_duration: std::time::Duration::from_secs(1),
-                total_usage: swink_agent::Usage::default(),
-            },
-            "pipeline.completed",
-        ),
-        (
-            PipelineEvent::Failed {
-                pipeline_id: id.clone(),
-                error_message: "boom".to_owned(),
-            },
-            "pipeline.failed",
-        ),
-    ];
-
-    for (event, expected_kind) in cases {
-        let emission = event.to_emission();
-        assert_eq!(emission.name, expected_kind, "wrong name for {event:?}");
+    let started = PipelineEvent::Started {
+        pipeline_id: id.clone(),
+        pipeline_name: "test".to_owned(),
     }
+    .to_emission();
+    assert_eq!(started.name, "pipeline.started");
+    assert_eq!(started.payload["pipeline_id"], "test-id");
+    assert_eq!(started.payload["pipeline_name"], "test");
+
+    let step_started = PipelineEvent::StepStarted {
+        pipeline_id: id.clone(),
+        step_index: 0,
+        agent_name: "agent-a".to_owned(),
+    }
+    .to_emission();
+    assert_eq!(step_started.name, "pipeline.step_started");
+    assert_eq!(step_started.payload["pipeline_id"], "test-id");
+    assert_eq!(step_started.payload["step_index"], 0);
+    assert_eq!(step_started.payload["agent_name"], "agent-a");
+
+    let usage = swink_agent::Usage {
+        input: 12,
+        output: 34,
+        total: 46,
+        ..Default::default()
+    };
+    let step_completed = PipelineEvent::StepCompleted {
+        pipeline_id: id.clone(),
+        step_index: 0,
+        agent_name: "agent-a".to_owned(),
+        duration: std::time::Duration::from_millis(100),
+        usage: usage.clone(),
+    }
+    .to_emission();
+    assert_eq!(step_completed.name, "pipeline.step_completed");
+    assert_eq!(step_completed.payload["pipeline_id"], "test-id");
+    assert_eq!(step_completed.payload["step_index"], 0);
+    assert_eq!(step_completed.payload["agent_name"], "agent-a");
+    assert_eq!(step_completed.payload["duration_ms"], 100);
+    assert_eq!(step_completed.payload["usage"]["input"], 12);
+    assert_eq!(step_completed.payload["usage"]["output"], 34);
+    assert_eq!(step_completed.payload["usage"]["total"], 46);
+
+    let completed = PipelineEvent::Completed {
+        pipeline_id: id.clone(),
+        total_duration: std::time::Duration::from_secs(1),
+        total_usage: usage,
+    }
+    .to_emission();
+    assert_eq!(completed.name, "pipeline.completed");
+    assert_eq!(completed.payload["pipeline_id"], "test-id");
+    assert_eq!(completed.payload["total_duration_ms"], 1000);
+    assert_eq!(completed.payload["total_usage"]["total"], 46);
+
+    let failed = PipelineEvent::Failed {
+        pipeline_id: id,
+        error_message: "boom".to_owned(),
+    }
+    .to_emission();
+    assert_eq!(failed.name, "pipeline.failed");
+    assert_eq!(failed.payload["pipeline_id"], "test-id");
+    assert_eq!(failed.payload["error_message"], "boom");
 }

@@ -41,6 +41,7 @@ fn verdict(score: f64, reason: &str) -> JudgeVerdict {
         pass: (0.5..=1.0).contains(&score),
         reason: Some(reason.to_string()),
         label: None,
+        cost: None,
     }
 }
 

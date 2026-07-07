@@ -88,14 +88,37 @@ pub trait SessionStore: Send + Sync {
     fn delete(&self, id: &str) -> io::Result<()>;
 
     /// Save session state snapshot. Default: no-op.
+    ///
+    /// Logs a one-time `tracing::warn!` the first time this default is invoked:
+    /// a `SessionStore` that does not override this method silently drops all
+    /// session state on save (see spec 034 FR-018 addendum, issue #1066).
     fn save_state(&self, id: &str, state: &serde_json::Value) -> io::Result<()> {
         let _ = (id, state);
+        static WARNED: std::sync::Once = std::sync::Once::new();
+        WARNED.call_once(|| {
+            tracing::warn!(
+                "SessionStore::save_state default no-op implementation invoked; \
+                 this store does not persist session state and it will be silently \
+                 lost (see issue #1066)"
+            );
+        });
         Ok(())
     }
 
     /// Load session state snapshot. Default: `None` (empty state).
+    ///
+    /// Logs a one-time `tracing::warn!` the first time this default is invoked;
+    /// see [`save_state`](Self::save_state) for why this matters.
     fn load_state(&self, id: &str) -> io::Result<Option<serde_json::Value>> {
         let _ = id;
+        static WARNED: std::sync::Once = std::sync::Once::new();
+        WARNED.call_once(|| {
+            tracing::warn!(
+                "SessionStore::load_state default no-op implementation invoked; \
+                 this store does not persist session state and none will be \
+                 restored (see issue #1066)"
+            );
+        });
         Ok(None)
     }
 

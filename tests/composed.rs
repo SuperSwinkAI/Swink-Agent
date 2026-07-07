@@ -399,6 +399,7 @@ async fn context_overflow_triggers_retry_with_tools() {
                 stop_reason: StopReason::Error,
                 error_message: "context window exceeded".to_string(),
                 error_kind: None,
+                retry_after: None,
                 usage: None,
             },
         ],

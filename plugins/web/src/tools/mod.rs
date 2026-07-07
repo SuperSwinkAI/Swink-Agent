@@ -85,6 +85,59 @@ fn reset_bridge_after_ambiguous_playwright_error<T>(
     }
 }
 
+/// Shared tracing-capture support for tests that assert on FR-016 log
+/// fields (URL/query, status, size, latency) emitted by the web tools.
+#[cfg(test)]
+pub(crate) mod log_capture {
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
+
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone, Default)]
+    pub(crate) struct SharedLogBuffer(Arc<Mutex<Vec<u8>>>);
+
+    impl SharedLogBuffer {
+        pub(crate) fn contents(&self) -> String {
+            String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+        }
+    }
+
+    pub(crate) struct SharedLogWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for SharedLogWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for SharedLogBuffer {
+        type Writer = SharedLogWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            SharedLogWriter(Arc::clone(&self.0))
+        }
+    }
+
+    /// Install a capturing subscriber as the default for the current thread.
+    /// Dropping the returned guard restores the previous default.
+    pub(crate) fn capture(buffer: SharedLogBuffer) -> tracing::subscriber::DefaultGuard {
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .without_time()
+            // No ANSI escapes: tests assert on plain `key=value` substrings.
+            .with_ansi(false)
+            .with_writer(buffer)
+            .finish();
+        tracing::subscriber::set_default(subscriber)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::future::pending;

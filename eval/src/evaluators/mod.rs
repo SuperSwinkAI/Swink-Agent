@@ -803,6 +803,7 @@ mod tests {
                     pass: (0.5..=1.0).contains(&self.score),
                     reason: self.reason.clone(),
                     label: None,
+                    cost: None,
                 })
             })
         }
@@ -975,6 +976,7 @@ mod tests {
                 pass: true,
                 reason: Some("recovered".to_string()),
                 label: None,
+                cost: None,
             }),
         ]));
         let registry = make_retry_registry(Arc::clone(&judge), 3);
@@ -1001,6 +1003,7 @@ mod tests {
                 pass: true,
                 reason: None,
                 label: None,
+                cost: None,
             }),
         ]));
         let registry = make_retry_registry(Arc::clone(&judge), 3);

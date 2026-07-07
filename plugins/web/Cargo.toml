@@ -36,6 +36,7 @@ wiremock.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
 pretty_assertions.workspace = true
 tempfile.workspace = true
+tracing-subscriber = { version = "0.3.23", features = ["fmt"] }
 
 [lints]
 workspace = true

@@ -144,6 +144,10 @@ macro_rules! safety_evaluator {
                     &build_prompt_context(&self.config, case, invocation),
                 ))
             }
+
+            fn aggregator(&self) -> Arc<dyn crate::aggregator::Aggregator> {
+                self.config.effective_aggregator()
+            }
         }
     };
 }
@@ -368,5 +372,9 @@ impl Evaluator for PIILeakageEvaluator {
             &self.config,
             &ctx,
         ))
+    }
+
+    fn aggregator(&self) -> Arc<dyn crate::aggregator::Aggregator> {
+        self.config.effective_aggregator()
     }
 }

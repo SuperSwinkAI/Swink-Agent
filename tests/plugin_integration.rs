@@ -6,7 +6,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use swink_agent::{
-    Agent, AgentOptions, Plugin, PolicyContext, PolicyVerdict, PostTurnPolicy, PreTurnPolicy,
+    Agent, AgentOptions, Plugin, PluginRegistry, PolicyContext, PolicyVerdict, PostTurnPolicy,
+    PreTurnPolicy,
 };
 
 mod common;
@@ -369,13 +370,31 @@ fn agent_plugins_returns_all_in_priority_order() {
     );
 
     // Register in low→mid→high order; plugins() should return high→mid→low.
-    let agent = make_agent_with_plugins(vec![p_low, p_mid, p_high]);
+    let agent = make_agent_with_plugins(vec![
+        Arc::clone(&p_low),
+        Arc::clone(&p_mid),
+        Arc::clone(&p_high),
+    ]);
 
     let names: Vec<&str> = agent.plugins().iter().map(|p| p.name()).collect();
     assert_eq!(
         names,
         vec!["high", "mid", "low"],
         "plugins() should return all plugins sorted by priority descending"
+    );
+
+    // `Agent::plugins()` (the `AgentOptions` merge path) and `PluginRegistry::list()`
+    // now share one ordering function (`plugin::priority_desc`). Registering the same
+    // plugins, in the same insertion order, into a `PluginRegistry` must therefore
+    // produce an identical ordering — this is the invariant the refactor guarantees.
+    let mut registry = PluginRegistry::new();
+    registry.register(p_low);
+    registry.register(p_mid);
+    registry.register(p_high);
+    let registry_names: Vec<&str> = registry.list().iter().map(|p| p.name()).collect();
+    assert_eq!(
+        registry_names, names,
+        "PluginRegistry::list() must agree with Agent::plugins() ordering"
     );
 }
 
@@ -579,6 +598,7 @@ async fn panicking_on_init_caught_agent_continues() {
 // ─── T024: Plugin Stop prevents ALL direct policies from evaluating ────
 
 #[tokio::test]
+#[allow(clippy::similar_names)]
 async fn plugin_stop_prevents_all_direct_policies() {
     let direct_a_fired = Arc::new(AtomicBool::new(false));
     let direct_b_fired = Arc::new(AtomicBool::new(false));

@@ -62,7 +62,7 @@ fn manifest_contains_all_fields() {
     );
 
     let persister = CyclePersister::new(tmp.path());
-    let dir = persister.persist(1, &acceptance, &baseline).unwrap();
+    let dir = persister.persist(1, &acceptance, &baseline, &[]).unwrap();
 
     let manifest_content = std::fs::read_to_string(dir.join("manifest.jsonl")).unwrap();
     let entries: Vec<ManifestEntry> = manifest_content
@@ -97,12 +97,12 @@ fn output_directory_versioned() {
     let c1r = make_candidate_result(c1.clone(), 0.6);
     let accept1 = make_acceptance(vec![(c1, c1r)], vec![]);
     let persister = CyclePersister::new(tmp.path());
-    persister.persist(1, &accept1, &baseline).unwrap();
+    persister.persist(1, &accept1, &baseline, &[]).unwrap();
 
     let c2 = make_candidate("v2");
     let c2r = make_candidate_result(c2.clone(), 0.7);
     let accept2 = make_acceptance(vec![(c2, c2r)], vec![]);
-    persister.persist(2, &accept2, &baseline).unwrap();
+    persister.persist(2, &accept2, &baseline, &[]).unwrap();
 
     let dirs: Vec<String> = std::fs::read_dir(tmp.path())
         .unwrap()
@@ -132,7 +132,7 @@ fn no_config_written_when_all_rejected() {
     let acceptance = make_acceptance(vec![], vec![(c, cr, AcceptanceVerdict::NoImprovement)]);
 
     let persister = CyclePersister::new(tmp.path());
-    let dir = persister.persist(1, &acceptance, &baseline).unwrap();
+    let dir = persister.persist(1, &acceptance, &baseline, &[]).unwrap();
 
     // manifest.jsonl exists
     assert!(
@@ -156,7 +156,7 @@ fn manifest_jsonl_roundtrip() {
     let acceptance = make_acceptance(vec![(c, cr)], vec![]);
 
     let persister = CyclePersister::new(tmp.path());
-    let dir = persister.persist(1, &acceptance, &baseline).unwrap();
+    let dir = persister.persist(1, &acceptance, &baseline, &[]).unwrap();
 
     let content = std::fs::read_to_string(dir.join("manifest.jsonl")).unwrap();
     let entries: Vec<ManifestEntry> = content
@@ -172,6 +172,45 @@ fn manifest_jsonl_roundtrip() {
     assert!((entries[0].candidate_score - 0.7).abs() < 1e-10);
 }
 
+#[test]
+fn manifest_records_mutation_errors() {
+    let tmp = tempfile::tempdir().unwrap();
+    let baseline = make_baseline(0.6);
+    let acceptance = make_acceptance(vec![], vec![]);
+    let mutation_errors = vec![
+        (
+            "panicking".to_string(),
+            "Panic: intentional test panic".to_string(),
+        ),
+        (
+            "llm_guided".to_string(),
+            "judge unavailable: timeout".to_string(),
+        ),
+    ];
+
+    let persister = CyclePersister::new(tmp.path());
+    let dir = persister
+        .persist(1, &acceptance, &baseline, &mutation_errors)
+        .unwrap();
+
+    let content = std::fs::read_to_string(dir.join("manifest.jsonl")).unwrap();
+    let entries: Vec<ManifestEntry> = content
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+
+    assert_eq!(entries.len(), 2);
+    for entry in &entries {
+        assert_eq!(entry.verdict, "MutationError");
+        assert!(entry.rejection_reason.is_some());
+    }
+    assert!(entries.iter().any(|e| e.strategy == "panicking"
+        && e.rejection_reason.as_deref() == Some("Panic: intentional test panic")));
+    assert!(entries.iter().any(|e| e.strategy == "llm_guided"
+        && e.rejection_reason.as_deref() == Some("judge unavailable: timeout")));
+}
+
 // ─── US8: history ──────────────────────────────────────────────────────────
 
 #[test]
@@ -185,7 +224,9 @@ fn load_manifests_ordered_by_cycle() {
         let c = make_candidate(&format!("v{cycle}"));
         let cr = make_candidate_result(c.clone(), 0.5 + cycle as f64 * 0.05);
         let acceptance = make_acceptance(vec![(c, cr)], vec![]);
-        persister.persist(cycle, &acceptance, &baseline).unwrap();
+        persister
+            .persist(cycle, &acceptance, &baseline, &[])
+            .unwrap();
     }
 
     let history = CyclePersister::load_history(tmp.path());

@@ -1,4 +1,6 @@
+use std::collections::HashSet;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use futures::Stream;
@@ -6,6 +8,7 @@ use futures::Stream;
 use crate::checkpoint::{Checkpoint, CheckpointStore};
 use crate::error::AgentError;
 use crate::loop_::AgentEvent;
+use crate::types::{AgentMessage, ContentBlock, LlmMessage};
 
 use super::Agent;
 use super::queueing::drain_messages_from_queue;
@@ -75,6 +78,43 @@ impl Agent {
         Ok(checkpoint)
     }
 
+    /// Auto-inject [`NoopTool`](crate::NoopTool) placeholders for any tool
+    /// name referenced by a restored assistant message's tool calls that is
+    /// no longer present in the tool registry (FR-019).
+    ///
+    /// Restoring an older session can reintroduce `ToolCall` content blocks
+    /// for tools that have since been removed or renamed. Without a matching
+    /// entry in `state.tools`, the agent loop cannot dispatch a dangling call
+    /// (e.g. one left unanswered when the session was paused) and the run
+    /// would error instead of resuming. Injecting a `NoopTool` under the same
+    /// name lets dispatch succeed and return a descriptive "no longer
+    /// available" result instead.
+    fn inject_noop_tools_for_missing_references(&mut self) {
+        let known: HashSet<&str> = self.state.tools.iter().map(|t| t.name()).collect();
+        let mut missing = Vec::new();
+        let mut seen = HashSet::new();
+        for msg in &self.state.messages {
+            let AgentMessage::Llm(LlmMessage::Assistant(assistant)) = msg else {
+                continue;
+            };
+            for block in &assistant.content {
+                if let ContentBlock::ToolCall { name, .. } = block
+                    && !known.contains(name.as_str())
+                    && seen.insert(name.clone())
+                {
+                    missing.push(name.clone());
+                }
+            }
+        }
+        for name in missing {
+            tracing::warn!(
+                tool = %name,
+                "session references a tool no longer in the registry; injecting NoopTool"
+            );
+            self.state.tools.push(Arc::new(crate::NoopTool::new(name)));
+        }
+    }
+
     fn ensure_idle_for_checkpoint_restore(&mut self) -> Result<(), std::io::Error> {
         self.check_not_running().map_err(|_| {
             std::io::Error::new(
@@ -108,6 +148,7 @@ impl Agent {
 
         self.clear_transient_runtime_state();
         self.state.messages = restored_messages;
+        self.inject_noop_tools_for_missing_references();
         self.state
             .system_prompt
             .clone_from(&checkpoint.system_prompt);
@@ -251,6 +292,7 @@ impl Agent {
 
         self.clear_transient_runtime_state();
         self.state.messages = restored_messages;
+        self.inject_noop_tools_for_missing_references();
         self.state
             .system_prompt
             .clone_from(&checkpoint.system_prompt);
@@ -300,7 +342,8 @@ mod tests {
     use crate::checkpoint::{CheckpointFuture, CheckpointStore, LoopCheckpoint};
     use crate::testing::SimpleMockStreamFn;
     use crate::types::{
-        AgentMessage, CustomMessage, CustomMessageRegistry, LlmMessage, ModelSpec, UserMessage,
+        AgentMessage, AssistantMessage, ContentBlock, Cost, CustomMessage, CustomMessageRegistry,
+        LlmMessage, ModelSpec, StopReason, Usage, UserMessage,
     };
     use crate::{AgentError, Checkpoint};
 
@@ -356,6 +399,28 @@ mod tests {
             content: vec![crate::types::ContentBlock::Text {
                 text: text.to_string(),
             }],
+            timestamp: 0,
+            cache_hint: None,
+        }))
+    }
+
+    /// An assistant message whose only content is a tool call to `name`,
+    /// mimicking a dangling (unanswered) tool call from a saved session.
+    fn assistant_tool_call_msg(name: &str) -> AgentMessage {
+        AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
+            content: vec![ContentBlock::ToolCall {
+                id: "call-1".to_string(),
+                name: name.to_string(),
+                arguments: serde_json::json!({}),
+                partial_json: None,
+            }],
+            provider: String::new(),
+            model_id: String::new(),
+            usage: Usage::default(),
+            cost: Cost::default(),
+            stop_reason: StopReason::ToolUse,
+            error_message: None,
+            error_kind: None,
             timestamp: 0,
             cache_hint: None,
         }))
@@ -1399,5 +1464,69 @@ mod tests {
             },
             other => panic!("expected user message, got {other:?}"),
         }
+    }
+
+    /// Regression test for FR-019: restoring a checkpoint whose history
+    /// references a tool no longer in the registry must not leave the agent
+    /// unable to dispatch that dangling call. A `NoopTool` should be
+    /// auto-injected under the same name so the loop can resolve it instead
+    /// of erroring on an unknown tool.
+    #[tokio::test]
+    async fn restore_from_checkpoint_injects_noop_tool_for_missing_reference() {
+        let mut source = make_agent(None);
+        source
+            .state
+            .messages
+            .push(assistant_tool_call_msg("retired_tool"));
+        let checkpoint = source.save_checkpoint("cp-noop").await.unwrap();
+
+        let mut agent = make_agent(None);
+        assert!(
+            agent.state.tools.iter().all(|t| t.name() != "retired_tool"),
+            "precondition: tool must not be registered before restore"
+        );
+
+        agent.restore_from_checkpoint(&checkpoint).unwrap();
+
+        let injected = agent
+            .state
+            .tools
+            .iter()
+            .find(|t| t.name() == "retired_tool")
+            .expect("NoopTool should be injected for the dangling tool reference");
+
+        let result = injected
+            .execute(
+                "call-1",
+                serde_json::json!({}),
+                CancellationToken::new(),
+                None,
+                Arc::new(std::sync::RwLock::new(crate::SessionState::new())),
+                None,
+            )
+            .await;
+        assert!(
+            result.is_error,
+            "the injected NoopTool should return an error result"
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_from_loop_checkpoint_injects_noop_tool_for_missing_reference() {
+        let messages = vec![assistant_tool_call_msg("retired_tool")];
+        let cp = LoopCheckpoint::new("system", "mock", "mock-model", &messages);
+
+        let mut agent = make_agent(None);
+        assert!(
+            agent.state.tools.iter().all(|t| t.name() != "retired_tool"),
+            "precondition: tool must not be registered before restore"
+        );
+
+        agent.restore_from_loop_checkpoint(&cp).unwrap();
+
+        assert!(
+            agent.state.tools.iter().any(|t| t.name() == "retired_tool"),
+            "NoopTool should be injected for the dangling tool reference"
+        );
     }
 }

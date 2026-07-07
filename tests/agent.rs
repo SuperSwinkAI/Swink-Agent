@@ -444,6 +444,7 @@ async fn error_sets_state_error() {
             stop_reason: StopReason::Error,
             error_message: "something went wrong".to_string(),
             error_kind: None,
+            retry_after: None,
             usage: None,
         },
     ]]));

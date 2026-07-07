@@ -1,11 +1,16 @@
-//! Tests for OAuth2 refresh (T045, T047-T049, T064).
+//! Tests for OAuth2 refresh (T045, T047-T049, T064) and the interactive
+//! authorization flow (T054, T055, T057, T058).
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use chrono::Utc;
-use swink_agent::{Credential, CredentialResolver, CredentialStore, ResolvedCredential};
-use swink_agent_auth::{DefaultCredentialResolver, InMemoryCredentialStore};
+use swink_agent::{
+    AuthorizationHandler, Credential, CredentialError, CredentialFuture, CredentialResolver,
+    CredentialStore, ResolvedCredential,
+};
+use swink_agent_auth::{AuthorizationConfig, DefaultCredentialResolver, InMemoryCredentialStore};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -436,4 +441,258 @@ async fn pre_provisioned_expired_auto_refreshes() {
         }
         other => panic!("expected OAuth2AccessToken, got {other:?}"),
     }
+}
+
+// ── US4: Interactive OAuth2 authorization flow (T054, T055, T057, T058) ────
+
+fn authorization_config(token_url: &str) -> AuthorizationConfig {
+    AuthorizationConfig {
+        authorization_endpoint: "https://accounts.example.com/o/authorize".to_string(),
+        token_url: token_url.to_string(),
+        client_id: "calendar-client".to_string(),
+        client_secret: Some("calendar-secret".to_string()),
+        redirect_uri: "http://localhost:8080/callback".to_string(),
+        scopes: vec!["calendar.readonly".to_string()],
+    }
+}
+
+/// Records the `auth_url` it was invoked with and returns a fixed code.
+struct RecordingHandler {
+    captured_url: Arc<std::sync::Mutex<Option<String>>>,
+    code: String,
+}
+
+impl AuthorizationHandler for RecordingHandler {
+    fn authorize(&self, auth_url: &str, _state: &str) -> CredentialFuture<'_, String> {
+        *self.captured_url.lock().unwrap() = Some(auth_url.to_string());
+        let code = self.code.clone();
+        Box::pin(async move { Ok(code) })
+    }
+}
+
+/// Always fails, simulating the user denying access in the browser.
+struct DenyingHandler;
+
+impl AuthorizationHandler for DenyingHandler {
+    fn authorize(&self, _auth_url: &str, _state: &str) -> CredentialFuture<'_, String> {
+        Box::pin(async move {
+            Err(CredentialError::AuthorizationFailed {
+                key: "google-calendar".into(),
+                reason: "user denied access".into(),
+            })
+        })
+    }
+}
+
+/// Never completes, simulating a user who never finishes the flow.
+struct HangingHandler;
+
+impl AuthorizationHandler for HangingHandler {
+    fn authorize(&self, _auth_url: &str, _state: &str) -> CredentialFuture<'_, String> {
+        Box::pin(async move {
+            std::future::pending::<()>().await;
+            unreachable!("hanging handler never completes")
+        })
+    }
+}
+
+/// Counts invocations; used to assert single-flight dedup of concurrent
+/// authorization attempts for the same key.
+struct CountingHandler {
+    calls: Arc<AtomicUsize>,
+    code: String,
+}
+
+impl AuthorizationHandler for CountingHandler {
+    fn authorize(&self, _auth_url: &str, _state: &str) -> CredentialFuture<'_, String> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let code = self.code.clone();
+        Box::pin(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            Ok(code)
+        })
+    }
+}
+
+// T054: missing credential + handler configured triggers the handler with a
+// correctly-formed authorization URL.
+#[tokio::test]
+async fn missing_credential_with_handler_triggers_authorize_with_correct_url() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "new-access",
+            "refresh_token": "new-refresh",
+            "expires_in": 3600,
+            "token_type": "Bearer"
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let token_url = format!("{}/token", mock_server.uri());
+    let captured_url = Arc::new(std::sync::Mutex::new(None));
+    let handler = Arc::new(RecordingHandler {
+        captured_url: Arc::clone(&captured_url),
+        code: "auth-code-123".to_string(),
+    });
+
+    let store: Arc<dyn CredentialStore> = Arc::new(InMemoryCredentialStore::empty());
+    let resolver = DefaultCredentialResolver::new(store)
+        .with_authorization_handler(handler)
+        .with_authorization_config("google-calendar", authorization_config(&token_url));
+
+    let result = resolver.resolve("google-calendar").await.unwrap();
+    assert!(matches!(
+        result,
+        ResolvedCredential::OAuth2AccessToken(token) if token == "new-access"
+    ));
+
+    let url = captured_url
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("handler should have been invoked");
+    assert!(url.starts_with("https://accounts.example.com/o/authorize?"));
+    assert!(url.contains("response_type=code"));
+    assert!(url.contains("client_id=calendar-client"));
+    assert!(url.contains("redirect_uri="));
+    assert!(url.contains("scope=calendar.readonly"));
+    assert!(url.contains("state="));
+    assert!(
+        !url.contains("calendar-secret"),
+        "client_secret must never appear in the authorization URL: {url}"
+    );
+}
+
+// T055: authorization handler returns a code, the code is exchanged for
+// tokens, and the tokens are written to the credential store.
+#[tokio::test]
+async fn authorization_code_is_exchanged_and_tokens_are_stored() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "exchanged-access",
+            "refresh_token": "exchanged-refresh",
+            "expires_in": 3600,
+            "token_type": "Bearer"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let token_url = format!("{}/token", mock_server.uri());
+    let handler = Arc::new(RecordingHandler {
+        captured_url: Arc::new(std::sync::Mutex::new(None)),
+        code: "auth-code-456".to_string(),
+    });
+
+    let store = store(InMemoryCredentialStore::empty());
+    let resolver = DefaultCredentialResolver::new(Arc::clone(&store))
+        .with_authorization_handler(handler)
+        .with_authorization_config("google-calendar", authorization_config(&token_url));
+
+    let result = resolver.resolve("google-calendar").await.unwrap();
+    assert!(matches!(
+        result,
+        ResolvedCredential::OAuth2AccessToken(token) if token == "exchanged-access"
+    ));
+
+    let stored = store.get("google-calendar").await.unwrap().unwrap();
+    match stored {
+        Credential::OAuth2 {
+            access_token,
+            refresh_token,
+            client_id,
+            ..
+        } => {
+            assert_eq!(access_token, "exchanged-access");
+            assert_eq!(refresh_token.as_deref(), Some("exchanged-refresh"));
+            assert_eq!(client_id, "calendar-client");
+        }
+        other => panic!("expected OAuth2, got {other:?}"),
+    }
+}
+
+// T057: authorization handler returns an error -> AuthorizationFailed.
+#[tokio::test]
+async fn handler_error_returns_authorization_failed() {
+    let store: Arc<dyn CredentialStore> = Arc::new(InMemoryCredentialStore::empty());
+    let config = authorization_config("https://unused.example.com/token");
+    let resolver = DefaultCredentialResolver::new(store)
+        .with_authorization_handler(Arc::new(DenyingHandler))
+        .with_authorization_config("google-calendar", config);
+
+    let err = resolver.resolve("google-calendar").await.unwrap_err();
+    match err {
+        CredentialError::AuthorizationFailed { key, reason } => {
+            assert_eq!(key, "google-calendar");
+            assert_eq!(reason, "user denied access");
+        }
+        other => panic!("expected AuthorizationFailed, got {other:?}"),
+    }
+}
+
+// T058: authorization flow exceeds the configured timeout -> AuthorizationTimeout.
+#[tokio::test]
+async fn authorization_flow_exceeding_timeout_returns_authorization_timeout() {
+    let store: Arc<dyn CredentialStore> = Arc::new(InMemoryCredentialStore::empty());
+    let config = authorization_config("https://unused.example.com/token");
+    let resolver = DefaultCredentialResolver::new(store)
+        .with_authorization_handler(Arc::new(HangingHandler))
+        .with_authorization_config("google-calendar", config)
+        .with_authorization_timeout(Duration::from_millis(50));
+
+    let err = resolver.resolve("google-calendar").await.unwrap_err();
+    match err {
+        CredentialError::AuthorizationTimeout { key } => assert_eq!(key, "google-calendar"),
+        other => panic!("expected AuthorizationTimeout, got {other:?}"),
+    }
+}
+
+// Concurrent resolves for the same missing key trigger exactly one handler
+// invocation (single-flight dedup, mirroring T048 for refresh).
+#[tokio::test]
+async fn concurrent_resolves_trigger_single_authorization() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "shared-access",
+            "expires_in": 3600,
+            "token_type": "Bearer"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let token_url = format!("{}/token", mock_server.uri());
+    let calls = Arc::new(AtomicUsize::new(0));
+    let handler = Arc::new(CountingHandler {
+        calls: Arc::clone(&calls),
+        code: "shared-code".to_string(),
+    });
+
+    let store: Arc<dyn CredentialStore> = Arc::new(InMemoryCredentialStore::empty());
+    let resolver = Arc::new(
+        DefaultCredentialResolver::new(store)
+            .with_authorization_handler(handler)
+            .with_authorization_config("shared-key", authorization_config(&token_url)),
+    );
+
+    let r1 = Arc::clone(&resolver);
+    let r2 = Arc::clone(&resolver);
+    let (res1, res2) = tokio::join!(
+        tokio::spawn(async move { r1.resolve("shared-key").await }),
+        tokio::spawn(async move { r2.resolve("shared-key").await }),
+    );
+
+    assert!(res1.unwrap().is_ok());
+    assert!(res2.unwrap().is_ok());
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "handler should be invoked exactly once for concurrent resolves"
+    );
 }
