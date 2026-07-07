@@ -1,4 +1,8 @@
-> **Archived** — All phases complete as of 2026-03-14. Kept for historical reference.
+> **Archived — historical record, no longer maintained.** Phases T1–T4 shipped
+> (2026-03-14) and their content below is frozen. The single remaining item,
+> **T5.2 per-hunk approve/reject**, is tracked live in
+> [SPECIFICATION_TRACKER.md](SPECIFICATION_TRACKER.md) under "Known Backlog /
+> Not Yet Implemented" — do not update it here.
 
 ---
 
@@ -11,7 +15,7 @@
 
 **Principle:** Each phase produces a compilable, runnable artifact. Phases build on each other incrementally.
 
-**Status:** Phases T1–T4 complete. Phase T5 tracks planned features not yet implemented. The TUI is wired to real LLM providers (priority: Proxy > OpenAI > Anthropic > Ollama).
+**Status:** Phases T1–T4 complete (historical). The TUI is wired to real LLM providers; the authoritative provider-priority table (Proxy > OpenAI > Anthropic > Local > Ollama) lives in [getting_started.md](../getting_started.md).
 
 ---
 
@@ -229,23 +233,14 @@ UX polish, configuration, command system, inline diffs, external editor, plan mo
 
 ## Phase T5 — Planned Features
 
-**Status:** Partially implemented. Plan mode, tiered approval, and per-tool session trust were implemented in Phase T4 (spec 029) and are no longer part of this phase.
+**Status:** T5.1 (side-by-side diff layout) shipped. **T5.2 (per-hunk approve/reject) remains unshipped and is now tracked live in [SPECIFICATION_TRACKER.md](SPECIFICATION_TRACKER.md) — "Known Backlog / Not Yet Implemented".** Plan mode, tiered approval, and per-tool session trust were implemented in Phase T4 (spec 029) and are no longer part of this phase.
 
-### Scope
-
-Remaining diff interaction features described in PRD §16 that are not yet implemented.
-
-### Planned Deliverables
-
-- **Side-by-side diff layout** — when terminal width exceeds a threshold (160 columns), switch from unified to side-by-side diff rendering
-- **Per-hunk approve/reject** — each changed hunk in the inline diff view becomes an independent decision point. Approved hunks are applied; rejected hunks are reverted and communicated back to the agent as a tool result
-
-### Acceptance Criteria
+### Acceptance Criteria (historical snapshot)
 
 | # | Criterion | Status |
 |---|---|---|
-| T5.1 | Side-by-side diff layout when terminal width exceeds threshold | ✅ |
-| T5.2 | Per-hunk approve/reject in inline diff view | Planned |
+| T5.1 | Side-by-side diff layout when terminal width exceeds threshold (160 columns) | ✅ |
+| T5.2 | Per-hunk approve/reject (y/n/a) in inline diff view — approved hunks applied, rejected hunks reverted and reported to the agent as a tool result | Planned — see tracker |
 
 ---
 
@@ -257,4 +252,4 @@ Remaining diff interaction features described in PRD §16 that are not yet imple
 | T2 — Input + Conversation | Text editor, message display, markdown, scrolling | ✅ Complete |
 | T3 — Streaming + Tools | Agent integration, streaming display, tool panel, syntax highlighting | ✅ Complete |
 | T4 — Polish | Config, commands, diffs, editor, plan mode, approval, collapse, context gauge | ✅ Complete |
-| T5 — Planned | Side-by-side diffs, per-hunk approve/reject | Partially implemented |
+| T5 — Planned | Side-by-side diffs (✅), per-hunk approve/reject (open — see [SPECIFICATION_TRACKER.md](SPECIFICATION_TRACKER.md)) | Partially implemented |

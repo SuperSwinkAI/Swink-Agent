@@ -61,7 +61,7 @@ Keys can also be stored in the OS keychain instead of env vars — the first-run
 |---|---|
 | `ANTHROPIC_API_KEY` | — |
 | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` |
-| `ANTHROPIC_MODEL` | `claude-sonnet-4-6` |
+| `ANTHROPIC_MODEL` | catalog default (resolved at runtime) |
 
 **OpenAI**
 
@@ -69,7 +69,7 @@ Keys can also be stored in the OS keychain instead of env vars — the first-run
 |---|---|
 | `OPENAI_API_KEY` | — |
 | `OPENAI_BASE_URL` | `https://api.openai.com` |
-| `OPENAI_MODEL` | `gpt-4o` |
+| `OPENAI_MODEL` | catalog default (resolved at runtime) |
 
 **Custom SSE Proxy**
 
@@ -77,7 +77,7 @@ Keys can also be stored in the OS keychain instead of env vars — the first-run
 |---|---|
 | `LLM_BASE_URL` | — |
 | `LLM_API_KEY` | — |
-| `LLM_MODEL` | `claude-sonnet-4-6` |
+| `LLM_MODEL` | `claude-sonnet-4-20250514` |
 
 **Ollama**
 

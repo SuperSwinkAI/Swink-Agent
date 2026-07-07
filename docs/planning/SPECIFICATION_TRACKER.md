@@ -5,11 +5,11 @@
 - Architecture: [../architecture/HLD.md](../architecture/HLD.md) — Component diagram, data flow, dependency graph
 - Constitution: [../../.specify/memory/constitution.md](../../.specify/memory/constitution.md)
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
-- Eval Roadmap: [EVAL.md](EVAL.md)
+- Eval Roadmap: [../architecture/eval/README.md](../architecture/eval/README.md) — see the "Not yet implemented" section
 
-**Current Focus:** 42 specs total — 42/42 have plans, 42/42 have tasks, 39/42 complete. Phase 0–8 done (including memory crate 021, Azure/xAI adapters). Phase 3: 9/10 complete (019-bedrock at 56%). Phase 9: 036 and 037 are complete (see below — this line previously said 18%/44%, which was stale relative to `specs/spec-status.md` and both features' `tasks.md`, each showing 100% task completion). Phase 10: 041 folded into spec 022, 042 (web browse plugin) complete. Next: finish bedrock adapter (019).
+**Current Focus:** 44 specs total (001–040, 042–045; 041 folded into 022) — 44/44 have plans and tasks, 40/44 complete. Phases 0–10 done, including all provider adapters (Phase 3: 10/10 — Bedrock 019 is complete). The one open core spec is **023 eval-trajectory-matching**, at 94/108 tasks after a 2026-04-21 scope expansion (it was previously marked complete at 40/40 against the original scope). Next work: finish 023, then the Draft specs — 043 (evals advanced features), 044 (self-improvement loop, new `evolve/` crate), 045 (agent RPC service, new `rpc/` crate + `swink-agentd` daemon).
 
-> **Numbering System:** Spec numbers (001–040) are sequential identifiers that
+> **Numbering System:** Spec numbers (001–045) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
 > as priorities shift.
 
@@ -107,7 +107,7 @@ primitives, and loop governance — capabilities that enhance the core engine.
 **Goal:** LLM provider adapters — shared infrastructure and one adapter per
 provider. Each adapter implements StreamFn for its provider's streaming protocol.
 
-**Status:** 10/10 specs planned, 10/10 have tasks, 9/10 complete, 10/10 specs defined
+**Status:** 10/10 specs planned, 10/10 have tasks, 10/10 complete, 10/10 specs defined
 
 ### Implementation Checklist
 
@@ -151,10 +151,10 @@ provider. Each adapter implements StreamFn for its provider's streaming protocol
   - Branch: `018-adapter-mistral`
   - Status: Complete (42/42 tasks, merged to main)
   - Depends on: 3.1
-- [ ] **3.9** Adapter: AWS Bedrock — BedrockStreamFn, SSE, AWS SigV4 signing (§15.1)
+- [x] **3.9** Adapter: AWS Bedrock — BedrockStreamFn, SSE, AWS SigV4 signing (§15.1)
   - Spec: `specs/019-adapter-bedrock/spec.md`
   - Branch: `019-adapter-bedrock`
-  - Status: In Progress (23/41 tasks, 56%)
+  - Status: Complete (41/41 tasks)
   - Depends on: 3.1
 - [x] **3.10** Adapter: Proxy — ProxyStreamFn, SSE, bearer auth, typed delta events (§7.4, §15.1)
   - Spec: `specs/020-adapter-proxy/spec.md`
@@ -173,7 +173,7 @@ After **3.1 Shared Infrastructure** completes, all 9 provider adapters (3.2–3.
 **Goal:** Standalone crates for session persistence, on-device inference, and
 evaluation — each depends only on the core library.
 
-**Status:** 4/4 specs planned, 4/4 have tasks, 4/4 complete, 4/4 specs defined
+**Status:** 4/4 specs planned, 4/4 have tasks, 3/4 complete (023 in progress), 4/4 specs defined
 
 ### Implementation Checklist
 
@@ -187,10 +187,10 @@ evaluation — each depends only on the core library.
   - Branch: `022-local-llm-crate`
   - Status: Complete (58/58 tasks, merged to main)
   - Depends on: 0.3
-- [x] **4.3** Eval: Trajectory & Matching — TrajectoryCollector, TrajectoryMatcher, EfficiencyEvaluator, ResponseCriteria
+- [ ] **4.3** Eval: Trajectory & Matching — TrajectoryCollector, TrajectoryMatcher, EfficiencyEvaluator, ResponseCriteria
   - Spec: `specs/023-eval-trajectory-matching/spec.md`
   - Branch: `023-eval-trajectory-matching`
-  - Status: Complete (40/40 tasks, merged to main)
+  - Status: In Progress (94/108 tasks) — original 40-task scope shipped and merged, but a 2026-04-21 scope expansion added new tasks; this is the one open core spec
   - Depends on: 1.1
 - [x] **4.4** Eval: Runner, Scoring & Governance — EvalRunner, EvaluatorRegistry, FsEvalStore, CI/CD gating, audit trails
   - Spec: `specs/024-eval-runner-governance/spec.md`
@@ -367,6 +367,48 @@ After their respective dependencies are met, 9.1 (Artifact Service), 9.2 (Plugin
 
 ---
 
+## Phase 11: Evals Advanced & Agent Services (Draft)
+
+**Goal:** Advanced evaluation features, an eval-driven self-improvement loop,
+and a headless JSON-RPC agent service — the next wave of work after the core
+library, adapters, and TUI.
+
+**Status:** 3/3 specs planned, 3/3 have tasks, 0/3 complete — all Draft
+
+### Implementation Checklist
+
+- [ ] **11.1** Evals: Advanced Features — extends the eval framework beyond spec 023/024
+  - Spec: `specs/043-evals-adv-features/spec.md`
+  - Branch: `043-evals-adv-features`
+  - Status: Draft
+  - Depends on: 4.3, 4.4
+- [ ] **11.2** Eval-Driven Self-Improvement Loop — new `evolve/` crate
+  - Spec: `specs/044-self-improvement-loop/spec.md`
+  - Branch: `044-self-improvement-loop`
+  - Status: Draft
+  - Depends on: 11.1
+- [ ] **11.3** JSON-RPC Agent Service — new `rpc/` crate + `swink-agentd` daemon
+  - Spec: `specs/045-agent-rpc-service/spec.md`
+  - Branch: `045-agent-rpc-service`
+  - Status: Draft
+  - Depends on: 1.2
+
+---
+
+## Known Backlog / Not Yet Implemented
+
+Live items that are not covered by an open spec above:
+
+- **TUI per-hunk approve/reject (was TUI_PHASES.md T5.2)** — each changed hunk
+  in the inline diff view becomes an independent y/n/a decision point; approved
+  hunks are applied, rejected hunks are reverted and reported back to the agent
+  as a tool result. (PRD §16; side-by-side diff layout T5.1 already shipped.)
+- **TUI provider selection priority** — Proxy > OpenAI > Anthropic > Local >
+  Ollama; the authoritative priority table lives in
+  [getting_started.md](../getting_started.md) (pointer only, not backlog).
+
+---
+
 ## Dependencies
 
 ```mermaid
@@ -482,10 +524,10 @@ graph TD
     style I fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style J fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style K fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
-    style L fill:#eab308,color:#000,stroke:#ca8a04,stroke-width:2px
+    style L fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style M fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style N fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
-    style O fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
+    style O fill:#eab308,color:#000,stroke:#ca8a04,stroke-width:2px
     style P fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style Q fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style R fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
@@ -498,8 +540,8 @@ graph TD
     style Y fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style Z fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style AA fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
-    style AB fill:#eab308,color:#000,stroke:#ca8a04,stroke-width:2px
-    style AC fill:#eab308,color:#000,stroke:#ca8a04,stroke-width:2px
+    style AB fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
+    style AC fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style AD fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style AE fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style AF fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px

@@ -1,9 +1,28 @@
 # Evaluation Framework
 
-**Source files:** `eval/src/`
-**Related:** [EVAL Planning](../../planning/EVAL.md), [Agent Loop](../agent-loop/README.md) (event protocol), [Tool System](../tool-system/README.md) (tool call format)
+**Source files:** `eval/src/`, `eval-judges/src/`
+**Related:** [Agent Loop](../agent-loop/README.md) (event protocol), [Tool System](../tool-system/README.md) (tool call format)
 
-The evaluation framework provides trajectory tracing, golden path verification, response matching, and cost/latency governance for agent runs. It consumes the existing `AgentEvent` stream to capture execution traces, then scores them via a pluggable evaluator registry.
+The evaluation framework provides trajectory tracing, golden path verification, response matching, LLM-as-judge semantic scoring, and cost/latency governance for agent runs. It consumes the existing `AgentEvent` stream to capture execution traces, then scores them via a pluggable evaluator registry.
+
+The eval-coupled `evolve/` crate (`swink-agent-evolve`) builds an eval-driven self-improvement loop for prompts and tool schemas on top of this framework; see the [HLD](../HLD.md).
+
+## Module Map
+
+Beyond the components detailed below, `eval/src/` exposes these public modules (each carries full rustdoc):
+
+| Module | Purpose |
+|---|---|
+| `judge` | `JudgeClient` trait, `JudgeRegistry`/`JudgeRegistryBuilder`, retry policy, judge response caching |
+| `evaluators` / `aggregator` | Evaluator surface and score-aggregation strategies (`Average`, `AllPass`, `AnyPass`, `Weighted`) |
+| `report` | Reporters/exporters for `EvalSetResult`: console, JSON (versioned schema), Markdown, HTML, LangSmith |
+| `simulation` | Multi-turn actor/tool simulation (`ActorSimulator`, `ToolSimulator`, `run_multiturn_simulation`; `simulation` feature) |
+| `generation` | Experiment generation primitives |
+| `telemetry` | OpenTelemetry span tree for eval runs (`telemetry` feature) |
+| `training` | RL-compatible training-format trace export (`training-export` feature) |
+| `trace` | Trace ingestion providers/mappers (`trace-ingest` feature) |
+| `cache` | Eval runner cache abstractions |
+| `ci` | Bundled, compile-time-validated CI templates |
 
 ---
 
@@ -206,6 +225,27 @@ Scores: composite of two weighted ratios. Returns `None` when the invocation has
 
 Default pass threshold: **0.5**. Customise with `EfficiencyEvaluator::with_threshold(f64)`.
 
+### EnvironmentStateEvaluator
+
+Deterministic evaluator for environment side effects (`eval/src/environment_state.rs`). Compares named environment-state snapshots — captured by the case's `state_capture` function after the run — against `expected_environment_state` declared on the `EvalCase`. Returns `None` when either field is absent. Registered by `with_defaults()`.
+
+---
+
+## L3 — LLM-as-Judge
+
+`eval/src/judge.rs` defines the async `JudgeClient` trait plus `JudgeVerdict` / `JudgeError`, a `RetryPolicy`, a `JudgeCache` (in-memory or disk-backed), and a `JudgeRegistry` (built via `JudgeRegistryBuilder`: retry policy, cancellation, batch size, URL filter).
+
+Two semantic evaluators consume a judge:
+
+- **`SemanticToolSelectionEvaluator`** (`semantic_tool_selection.rs`) — asks the judge whether each actual tool call was appropriate given the user goal; aggregates per-call verdicts into one `Score`. Opt-in via `EvalCase.semantic_tool_selection`.
+- **`SemanticToolParameterEvaluator`** (`semantic_tool_parameter.rs`) — same pattern for tool call arguments.
+
+Registry constructors: `EvaluatorRegistry::with_judge(client)` registers only the semantic evaluators; `with_defaults_and_judge(client)` combines them with the built-in defaults. Each judge call is wrapped in a `tokio::time::timeout` (default 5 min, overridable per evaluator); all judge errors map to `Score::fail()` with context in `details`. In-flight judge calls are cancellable via a scoped thread-local `CancellationToken` (`with_scoped_judge_cancellation` / `scoped_judge_cancellation`, crate-internal), which the runner sets around evaluation.
+
+### Provider judge clients — `eval-judges/`
+
+The companion `swink-agent-eval-judges` crate ships `JudgeClient` implementations for 9 providers — Anthropic, Azure, Bedrock, Gemini, Mistral, Ollama, OpenAI, proxy, and xAI — each in an async and a blocking variant (e.g. `AnthropicJudgeClient` / `BlockingAnthropicJudgeClient`).
+
 ---
 
 ## L3 — Evaluator Registry
@@ -243,7 +283,7 @@ flowchart TB
     class Case,Inv,Results ioStyle
 ```
 
-`EvaluatorRegistry::with_defaults()` pre-loads: `TrajectoryMatcher::in_order()`, `BudgetEvaluator`, `ResponseMatcher`, `EfficiencyEvaluator`.
+`EvaluatorRegistry::with_defaults()` pre-loads: `TrajectoryMatcher::in_order()`, `BudgetEvaluator`, `ResponseMatcher`, `EfficiencyEvaluator`, `EnvironmentStateEvaluator`. `with_defaults_and_judge(client)` adds the two semantic judge evaluators on top.
 
 ---
 
@@ -261,7 +301,7 @@ flowchart TB
         └── {timestamp_2}.json
 ```
 
-The `EvalStore` trait enables alternative backends (in-memory, cloud storage). The `list_results` method returns sorted timestamps, enabling historical comparison and trending for future comparative metrics.
+The `EvalStore` trait enables alternative backends (in-memory, cloud storage). The `list_results` method returns sorted timestamps, enabling historical comparison and trending.
 
 ---
 
@@ -392,16 +432,25 @@ The `yaml` feature gate enables `load_eval_set_yaml(path)`, which deserializes a
 
 ---
 
-## L4 — Future Comparative Metrics
+## L4 — Aggregation, Reporting, and Comparison
 
-The design accommodates A/B model comparison and Pareto frontier analysis without breaking changes:
+Score aggregation and result reporting are implemented:
 
-1. **`EvalSetResult` stores full `Invocation` per case** — a comparison module can load two results (different models/configs) and diff them
-2. **`EvalStore::list_results()` returns timestamped IDs** — load historical results for trending
-3. **`EvalCase.metadata` carries arbitrary JSON** — model-specific config, tags, Pareto dimensions
-4. **New evaluators register via `EvaluatorRegistry`** — a `ComparativeEvaluator` can be added as a new trait without modifying `Evaluator`
+- **`aggregator`** — strategies for combining evaluator outputs: `Average`, `AllPass`, `AnyPass`, `Weighted`
+- **`report`** — always-on reporters for `EvalSetResult`: `ConsoleReporter`, `JsonReporter` (versioned schema), `MarkdownReporter`, `HtmlReporter`, `LangSmithExporter`
+- **`EvalStore::list_results()`** returns timestamped IDs for loading historical results and trending
 
-A future `comparative.rs` module would add:
-- `ComparisonResult` — baseline vs candidate `EvalSetResult` with per-case deltas
-- `CaseComparison` — score, cost, token, and latency deltas per case
-- Pareto frontier computation across the cost-performance plane
+A/B baseline-vs-candidate comparison and Pareto frontier analysis remain unbuilt; the design accommodates them without breaking changes (`EvalSetResult` stores the full `Invocation` per case, `EvalCase.metadata` carries arbitrary JSON, and new evaluators register via `EvaluatorRegistry`).
+
+---
+
+## Not Yet Implemented
+
+Remaining roadmap items, tracked under `specs/043-evals-adv-features` and `specs/044-self-improvement-loop`:
+
+- Step-level replay — re-run a case from an intermediate step to debug the exact failure point
+- Sandboxed/executable verification — judge executes the agent's proposed code or API calls
+- Automated root-cause analysis — grouping failures into patterns (tool hallucination, instruction drift)
+- Dynamic environment simulation — environment state changing asynchronously, independent of the agent (`simulation` covers actor/tool simulation only)
+- OpenInference semantic-convention export and distributed multi-agent trace stitching (`telemetry` emits swink-specific OTel spans today)
+- Human-in-the-loop (HITL) annotation/review queues for uncertain traces

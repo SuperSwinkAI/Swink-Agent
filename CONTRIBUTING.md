@@ -124,7 +124,7 @@ This repo uses a two-branch model:
 
 **All PRs must target `integration`.** PRs against `main` from outside contributors are auto-closed.
 
-Releases are cut by squash-merging `integration` into `main` and pushing a version tag. Release candidates (`v0.8.0-rc.1`) are tagged directly from `integration` for pre-release testing.
+Releases are cut by squash-merging `integration` into `main` and pushing a version tag. Release candidates (`v0.9.0-rc.1`) are tagged directly from `integration` for pre-release testing.
 
 **Hotfixes** (critical bugs in a published release): branch off `main`, fix, squash-merge back to `main` + tag, then cherry-pick to `integration`.
 
@@ -142,22 +142,7 @@ Branch off `integration`. One concern per PR.
 
 ## Workspace Structure
 
-| Crate | Path | Purpose |
-|---|---|---|
-| `swink-agent` | `.` | Core agentic loop, tool system, context management |
-| `swink-agent-adapters` | `adapters/` | Provider adapters (Anthropic, OpenAI, Ollama, …) |
-| `swink-agent-artifacts` | `artifacts/` | Versioned artifact storage |
-| `swink-agent-auth` | `auth/` | Credential management and OAuth2 |
-| `swink-agent-eval` | `eval/` | Trajectory tracing and evaluation framework |
-| `swink-agent-local-llm` | `local-llm/` | On-device inference via llama.cpp |
-| `swink-agent-macros` | `macros/` | `#[derive(ToolSchema)]` and `#[tool]` proc macros |
-| `swink-agent-mcp` | `mcp/` | Model Context Protocol integration |
-| `swink-agent-memory` | `memory/` | Session persistence and compaction |
-| `swink-agent-patterns` | `patterns/` | Multi-agent pipeline patterns |
-| `swink-agent-plugin-web` | `plugins/web/` | Web browsing and search plugin |
-| `swink-agent-policies` | `policies/` | Feature-gated policy implementations |
-| `swink-agent-tui` | `tui/` | Interactive terminal UI |
-| `xtask` | `xtask/` | Developer task runner (`cargo xtask`) |
+See the crate inventory in [README.md](README.md#workspace) for all workspace members and their purposes.
 
 Each crate has an `AGENTS.md` with architecture notes, gotchas, and lessons learned. Read the relevant one before making changes in that crate.
 

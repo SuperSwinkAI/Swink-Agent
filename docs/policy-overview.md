@@ -39,6 +39,7 @@ Each guard can **approve**, **modify**, or **halt** the agent before the next st
 | **PII Redactor** | Post-Turn | Removes personally identifiable information from responses |
 | **Content Filter** | Post-Turn | Blocks responses containing prohibited keywords or patterns |
 | **Audit Logger** | Post-Turn | Records every turn to a persistent log for compliance review |
+| **Memory Nudge** | Post-Turn | Heuristically detects save-worthy content in agent turns and nudges it toward memory |
 
 ---
 

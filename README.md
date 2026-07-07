@@ -13,11 +13,11 @@ A pure-Rust library for building LLM-powered agentic loops. Provider-agnostic co
 | Crate | Type | Purpose |
 |---|---|---|
 | `swink-agent` | lib | Agent loop, tool system, streaming traits, retry, error types |
-| `swink-agent-adapters` | lib | `StreamFn` adapters — Anthropic, OpenAI, Google Gemini, Ollama, Azure, xAI, Mistral, Bedrock |
-| `swink-agent-policies` | lib | 10 feature-gated policy implementations (budget, sandbox, PII, audit, etc.) |
+| `swink-agent-adapters` | lib | `StreamFn` adapters — Anthropic, OpenAI, Google Gemini, Ollama, Azure, xAI, Mistral, Bedrock, Proxy |
+| `swink-agent-policies` | lib | 11 feature-gated policy implementations (budget, sandbox, PII, audit, etc.) |
 | `swink-agent-memory` | lib | Session persistence, summarization compaction |
 | `swink-agent-local-llm` | lib | On-device inference — SmolLM3-3B (default), Gemma 4 (opt-in `gemma4` feature), EmbeddingGemma-300M (embeddings) |
-| `swink-agent-eval` | lib + bin | Evaluation harness — efficiency scoring, budget guards, gate checks, audit trails, plus 24 judge-backed/deterministic evaluators, multi-turn simulation, trace ingestion (OTLP / Langfuse / OpenSearch / CloudWatch), Console/JSON/Markdown/HTML/LangSmith reporters, and the `swink-eval` CLI (`cli` feature) |
+| `swink-agent-eval` | lib + bin | Evaluation harness — efficiency scoring, budget guards, gate checks, audit trails, plus feature-gated judge-backed and deterministic evaluators, multi-turn simulation, trace ingestion (OTLP / Langfuse / OpenSearch / CloudWatch), Console/JSON/Markdown/HTML/LangSmith reporters, and the `swink-eval` CLI (`cli` feature) |
 | `swink-agent-eval-judges` | lib | Per-provider `JudgeClient` implementations (Anthropic, OpenAI, Bedrock, Gemini, Mistral, Azure, xAI, Ollama, Proxy) with `Blocking<Provider>JudgeClient` sync wrappers behind feature flags |
 | `swink-agent-evolve` | lib | Eval-driven self-improvement loop for prompts and tool schemas (Spec 044) |
 | `swink-agent-artifacts` | lib | Versioned artifact storage (filesystem + in-memory backends) |
@@ -35,7 +35,7 @@ A pure-Rust library for building LLM-powered agentic loops. Provider-agnostic co
 | Surface | Default | Opt-in features | Notes |
 |---|---|---|---|
 | `swink-agent` | `builtin-tools`, `transfer` | `artifact-store`, `artifact-tools`, `hot-reload`, `plugins`, `testkit`, `tiktoken`, `otel` | Core loop and tool/runtime surface stay provider-agnostic. |
-| `swink-agent-adapters` | Core remote adapters | Per-provider adapter features | Remote HTTP/SSE adapters are isolated from the core crate. |
+| `swink-agent-adapters` | none (opt in per provider) | Per-provider adapter features | Remote HTTP/SSE adapters are isolated from the core crate. |
 | `swink-agent-policies` | `all` | Individual policy features such as `budget`, `sandbox`, `audit`, `pii` | Reusable loop/app policies stay independently gateable. |
 | `swink-agent-local-llm` | SmolLM3 local runtime | Backend/model features such as `cuda`, `metal`, `vulkan`, `gemma4` | Requires LLVM/libclang because `llama-cpp-sys-2` runs `bindgen`. |
 | `swink-agent-eval` | Spec 023 deterministic evals | `judge-core`, `all-evaluators`, `simulation`, `generation`, `trace-ingest`, `trace-otlp`, `trace-langfuse`, `trace-opensearch`, `trace-cloudwatch`, `telemetry`, `html-report`, `langsmith`, `cli`, `multimodal`, `yaml` | Advanced evals remain mostly opt-in so no-default builds stay slim. |
@@ -62,7 +62,7 @@ cargo test --workspace             # default-feature workspace test baseline
 just validate                      # full local gate: fmt, clippy, tests, feature gates, package preflight
 ```
 
-Workspace-wide `cargo build/test/clippy` commands also compile `swink-agent-local-llm`. That crate currently depends on `llama-cpp-sys-2`, so contributor machines need LLVM/libclang available for `bindgen`; if auto-discovery fails, set `LIBCLANG_PATH` to the LLVM `bin` directory before running workspace checks.
+Workspace-wide builds need LLVM/libclang (for `swink-agent-local-llm`) — see [docs/getting_started.md](docs/getting_started.md#build).
 
 For the advanced evaluation surface, see [`eval/README.md`](eval/README.md) for evaluator/reporter usage and [`eval-judges/README.md`](eval-judges/README.md) for provider feature flags and credential setup.
 
