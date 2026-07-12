@@ -18,13 +18,20 @@ pub(crate) async fn run_loop(
     factory: &Arc<dyn AgentFactory>,
     event_handler: &Option<Arc<dyn Fn(PipelineEvent) + Send + Sync>>,
     id: PipelineId,
-    _name: String,
+    name: String,
     body: String,
     exit_condition: ExitCondition,
     max_iterations: usize,
     input: String,
     cancellation_token: CancellationToken,
 ) -> Result<PipelineOutput, PipelineError> {
+    if let Some(handler) = event_handler {
+        handler(PipelineEvent::Started {
+            pipeline_id: id.clone(),
+            pipeline_name: name,
+        });
+    }
+
     let pipeline_start = Instant::now();
     let mut steps: Vec<StepResult> = Vec::new();
     let mut total_usage = Usage::default();
@@ -207,7 +214,7 @@ fn make_user_message(text: &str) -> AgentMessage {
 #[cfg(all(test, feature = "testkit"))]
 mod tests {
     use super::*;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex, PoisonError};
 
     use swink_agent::AgentOptions;
     use swink_agent::testing::{
@@ -222,18 +229,11 @@ mod tests {
         responses: Vec<Vec<swink_agent::AssistantMessageEvent>>,
     ) -> Arc<SimpleAgentFactory> {
         let name = name.to_string();
-        let responses = Arc::new(std::sync::Mutex::new(responses));
+        let responses = Arc::new(Mutex::new(responses));
         let mut factory = SimpleAgentFactory::new();
         factory.register(name, move || {
             // Pop the first response set for each agent creation.
-            let next = {
-                let mut guard = responses.lock().unwrap();
-                if guard.is_empty() {
-                    vec![]
-                } else {
-                    vec![guard.remove(0)]
-                }
-            };
+            let next = pop_next_response(&responses);
             let options = AgentOptions::new(
                 "loop-body",
                 default_model(),
@@ -245,7 +245,38 @@ mod tests {
         Arc::new(factory)
     }
 
+    fn pop_next_response(
+        responses: &Mutex<Vec<Vec<swink_agent::AssistantMessageEvent>>>,
+    ) -> Vec<Vec<swink_agent::AssistantMessageEvent>> {
+        let mut guard = responses.lock().unwrap_or_else(PoisonError::into_inner);
+        if guard.is_empty() {
+            vec![]
+        } else {
+            vec![guard.remove(0)]
+        }
+    }
+
     use swink_agent::Agent;
+
+    #[test]
+    fn response_queue_recovers_from_poisoned_lock() {
+        let responses = Arc::new(Mutex::new(vec![text_events("after poison")]));
+        let poisoned = responses.clone();
+        let _ = std::panic::catch_unwind(move || {
+            let _guard = poisoned.lock().expect("lock before poison");
+            panic!("poison response queue");
+        });
+
+        let next = pop_next_response(&responses);
+
+        assert_eq!(next.len(), 1);
+        assert!(
+            responses
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_empty()
+        );
+    }
 
     // T038: ToolCalled exit — mock returns tool call on iteration 2
     #[tokio::test]

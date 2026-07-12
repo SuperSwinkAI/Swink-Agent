@@ -11,7 +11,7 @@
 | `Feedback(String)` | Feedback text | Command produced text to display in conversation |
 | `Quit` | — | Request TUI exit |
 | `Clear` | — | Clear conversation display |
-| `SetThinking(String)` | Level string | Change thinking level (off/low/medium/high) |
+| `SetThinking(String)` | Level string | Change thinking level (off/minimal/low/medium/high/extra-high) |
 | `SetSystemPrompt(String)` | Prompt text | Update system prompt |
 | `Reset` | — | Reset conversation and agent state |
 | `CopyToClipboard(ClipboardContent)` | Content selector | Copy specified content to clipboard |
@@ -72,7 +72,7 @@ Not a struct. Editor integration is a pair of stateless functions:
 
 **Behavior**:
 - `resolve_editor` checks sources in priority order, returning the first non-empty value
-- `open_editor` creates a temp file at `{temp_dir}/swink-prompt-{pid}.md`, launches the editor, reads the file on close, and deletes it
+- `open_editor` creates a temp file via `tempfile::NamedTempFile::new()?.into_temp_path()` [corrected 2026-07-06: not a deterministic `swink-prompt-{pid}.md` name — `NamedTempFile` generates a randomized, collision-resistant filename in the system temp directory], launches the editor, reads the file on close, and deletes it
 - Empty/whitespace-only file after editor close = cancellation (`Ok(None)`)
 - Non-zero exit status or missing binary = `Err(io::Error)`
 - Temp file cleaned up in all code paths (success, error, cancellation)
@@ -97,17 +97,19 @@ The app holds session state:
 | `session_id` | `Option<String>` | Current session ID (set on save or load) |
 | `session_store` | `Option<JsonlSessionStore>` | Persistence backend (initialized from config) |
 
-**Session save flow**:
+**Session save flow** [corrected 2026-07-06: the app uses `save_full`, not the simpler `save`, so it can atomically persist a crash-recovery state snapshot alongside the transcript]:
 1. App generates or reuses `session_id`
-2. Calls `store.save(id, model, system_prompt, &messages)`
-3. `JsonlSessionStore` writes line 1 = `SessionMeta` JSON, lines 2+ = one `AgentMessage` JSON per line
-4. Feedback message confirms save
+2. Builds a `SessionMeta` (preserving `created_at`/`sequence` from the prior save when updating) and takes a snapshot of the agent's `SessionState`
+3. Calls `store.save_full(id, &meta, &messages, &state_snapshot)`, which returns the persisted `SessionMeta` (with bumped `sequence`)
+4. `JsonlSessionStore` writes line 1 = `SessionMeta` JSON, line 2 = state snapshot JSON, lines 3+ = one `AgentMessage` JSON per line
+5. Feedback message confirms save
 
-**Session load flow**:
-1. App calls `store.load(id)` which returns `(SessionMeta, Vec<AgentMessage>)`
-2. Messages replayed into conversation view as `DisplayMessage` entries
-3. System prompt and model restored from `SessionMeta`
-4. `session_id` set to loaded ID for subsequent saves
+**Session load flow** [corrected 2026-07-06: the app uses `load_full`, which also returns the crash-recovery snapshot]:
+1. App calls `store.load_full(id, registry)` which returns `(SessionMeta, Vec<AgentMessage>, Option<serde_json::Value>)`
+2. If a state snapshot is present, it is restored via `SessionState::restore_from_snapshot`; otherwise a fresh `SessionState::new()` is used
+3. Messages replayed into conversation view as `DisplayMessage` entries
+4. Session title restored from `SessionMeta`
+5. `session_id` set to loaded ID for subsequent saves
 
 ---
 
@@ -158,8 +160,8 @@ App (app/state.rs)
   │     └── fallback ──► "vi"
   │
   ├── SessionStore (session.rs ──► swink-agent-memory)
-  │     ├── save(id, model, prompt, messages) ──► JSONL file
-  │     ├── load(id) ──► (SessionMeta, Vec<AgentMessage>)
+  │     ├── save_full(id, meta, messages, state_snapshot) ──► persisted SessionMeta + JSONL file
+  │     ├── load_full(id, registry) ──► (SessionMeta, Vec<AgentMessage>, Option<state_snapshot>)
   │     ├── list() ──► Vec<SessionMeta>
   │     └── delete(id)
   │

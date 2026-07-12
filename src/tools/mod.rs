@@ -5,6 +5,8 @@ mod bash;
 #[cfg(feature = "builtin-tools")]
 mod edit_file;
 #[cfg(feature = "builtin-tools")]
+mod path;
+#[cfg(feature = "builtin-tools")]
 mod read_file;
 #[cfg(feature = "builtin-tools")]
 mod write_file;
@@ -64,8 +66,8 @@ pub use save_artifact::SaveArtifactTool;
 
 /// Create all built-in artifact tools (save, load, list) backed by the given store.
 #[cfg(feature = "artifact-tools")]
-pub fn artifact_tools<S: crate::artifact::ArtifactStore + 'static>(
-    store: std::sync::Arc<S>,
+pub fn artifact_tools(
+    store: std::sync::Arc<dyn crate::artifact::ArtifactStore>,
 ) -> Vec<std::sync::Arc<dyn crate::tool::AgentTool>> {
     vec![
         std::sync::Arc::new(SaveArtifactTool::new(store.clone())),

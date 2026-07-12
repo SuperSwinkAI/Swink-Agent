@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -40,6 +40,20 @@ impl Drop for FactoryCancellationGuard {
 }
 
 /// Factory that creates a configured [`Agent`] for each eval case.
+///
+/// # Budget enforcement (spec 023 T086)
+///
+/// [`EvalCase::budget`] is only a static [`crate::BudgetConstraints`]
+/// declaration — nothing evaluates it *during* the run unless the agent
+/// itself is wired to enforce it. Implementers that want real-time budget
+/// enforcement (the agent loop stopping mid-run when a cost/token/turn limit
+/// is hit, rather than just being scored after the fact by
+/// [`crate::BudgetEvaluator`]) MUST convert `case.budget` via
+/// [`crate::BudgetConstraints::to_policies`] and attach the resulting
+/// policies to the agent with `AgentOptions::with_pre_turn_policy(...)` in
+/// [`Self::create_agent`]. See `eval/tests/budget.rs`'s `PolicyAwareFactory`
+/// for the canonical pattern; [`crate::BudgetEvaluator`] alone only scores the
+/// completed invocation and does not stop an over-budget run early.
 pub trait AgentFactory: Send + Sync {
     /// Create an agent and cancellation token for the given eval case.
     fn create_agent(&self, case: &EvalCase) -> Result<(Agent, CancellationToken), EvalError>;
@@ -215,8 +229,14 @@ impl EvalRunner {
         if let Some(state) = &initial_session {
             factory.with_initial_session(state);
         }
-        let invocation =
-            invoke_agent_impl(case, factory, self.cancel.as_ref(), &self.agent_invocations).await?;
+        let invocation = invoke_agent_impl(
+            case,
+            factory,
+            self.cancel.as_ref(),
+            initial_session.as_ref(),
+            &self.agent_invocations,
+        )
+        .await?;
         let metric_results = self.registry.evaluate(case, &invocation);
         Ok(scored_case_result(case, invocation, metric_results))
     }
@@ -263,6 +283,7 @@ impl EvalRunner {
             let registry = &self.registry;
             let num_runs = self.num_runs;
             let cancel = self.cancel.clone();
+            let initial_session_state = initial_session.clone();
             let initial_session_value = initial_session_json.clone();
             let agent_invocations = Arc::clone(&self.agent_invocations);
             let eval_set_id = eval_set_id.clone();
@@ -280,9 +301,8 @@ impl EvalRunner {
                 {
                     return (index, cancelled_case_result(case));
                 }
-                let permit = match sem.acquire_owned().await {
-                    Ok(p) => p,
-                    Err(_) => return (index, cancelled_case_result(case)),
+                let Some(permit) = acquire_case_permit(sem, cancel.as_ref()).await else {
+                    return (index, cancelled_case_result(case));
                 };
                 if let Some(tok) = &cancel
                     && tok.is_cancelled()
@@ -307,6 +327,7 @@ impl EvalRunner {
                     registry,
                     num_runs,
                     cancel.as_ref(),
+                    initial_session_state.as_ref(),
                     initial_session_value.as_ref(),
                     &agent_invocations,
                     #[cfg(feature = "telemetry")]
@@ -409,6 +430,7 @@ async fn execute_case(
     registry: &EvaluatorRegistry,
     num_runs: u32,
     cancel: Option<&CancellationToken>,
+    initial_session: Option<&SessionState>,
     initial_session_json: Option<&serde_json::Value>,
     agent_invocations: &AtomicUsize,
     #[cfg(feature = "telemetry")] telemetry: Option<&EvalsTelemetry>,
@@ -416,7 +438,7 @@ async fn execute_case(
 ) -> Result<EvalCaseResult, EvalError> {
     info!(case_id = %case.id, case_name = %case.name, "running eval case");
 
-    let fingerprint = case.content_fingerprint();
+    let fingerprint = case.cache_fingerprint();
     let fp_ctx = FingerprintContext {
         initial_session: initial_session_json.cloned(),
         tool_set_hash: factory.tool_set_hash(case),
@@ -439,7 +461,8 @@ async fn execute_case(
         debug!(case_id = %case.id, "cache hit");
         inv
     } else {
-        let inv = invoke_agent_impl(case, factory, cancel, agent_invocations).await?;
+        let inv =
+            invoke_agent_impl(case, factory, cancel, initial_session, agent_invocations).await?;
         if let Some(store) = cache
             && let Err(err) = store.put(eval_set_id, &case.id, &cache_key, &inv)
         {
@@ -498,10 +521,21 @@ async fn invoke_agent_impl(
     case: &EvalCase,
     factory: &dyn AgentFactory,
     cancel: Option<&CancellationToken>,
+    initial_session: Option<&SessionState>,
     agent_invocations: &AtomicUsize,
 ) -> Result<Invocation, EvalError> {
     agent_invocations.fetch_add(1, Ordering::SeqCst);
     let (mut agent, factory_cancel) = factory.create_agent(case)?;
+    if let Some(state) = initial_session {
+        // Baseline semantics (FR-039): the initial session underlies whatever
+        // the factory seeded in `create_agent` — factory entries win, and the
+        // baseline only fills in keys the factory left absent.
+        agent
+            .session_state()
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .apply_baseline(state);
+    }
     let _factory_cancel = FactoryCancellationGuard(factory_cancel);
     let messages: Vec<_> = case
         .user_messages
@@ -543,10 +577,19 @@ fn dispatch_evaluators(
 ) -> Vec<EvalMetricResult> {
     debug_assert!(num_runs > 0);
     if num_runs == 1 {
+        if let Some(tok) = cancel
+            && tok.is_cancelled()
+        {
+            return vec![cancelled_metric_result(
+                "runner cancellation observed before evaluator dispatch",
+            )];
+        }
+
         return run_registry_once(
             registry,
             case,
             invocation,
+            cancel,
             #[cfg(feature = "telemetry")]
             telemetry,
             #[cfg(feature = "telemetry")]
@@ -575,6 +618,7 @@ fn dispatch_evaluators(
             registry,
             case,
             invocation,
+            cancel,
             #[cfg(feature = "telemetry")]
             iteration_telemetry,
             #[cfg(feature = "telemetry")]
@@ -593,8 +637,15 @@ fn dispatch_evaluators(
         .into_iter()
         .map(|(name, samples)| {
             let scores: Vec<f64> = samples.iter().map(|m| m.score.value).collect();
-            let threshold = samples.first().map_or(0.5, |m| m.score.threshold);
             let sample = RunnerMetricSample::from_samples(name.clone(), scores);
+
+            // FR-022/FR-023: reduce the per-run scores through the
+            // evaluator's own configured aggregator (default `Average`;
+            // e.g. the safety family's `AllPass`) rather than a single
+            // hard-coded mean for every evaluator.
+            let per_run_scores: Vec<Score> = samples.iter().map(|m| m.score).collect();
+            let combined_score = registry.aggregator_for(&name).aggregate(&per_run_scores);
+
             let mut detail_lines = vec![format!(
                 "num_runs={} mean={:.4} std_dev={:.4}",
                 sample.scores.len(),
@@ -607,7 +658,7 @@ fn dispatch_evaluators(
             }
             EvalMetricResult {
                 evaluator_name: name,
-                score: Score::new(sample.mean, threshold),
+                score: combined_score,
                 details: Some(detail_lines.join(" :: ")),
             }
         })
@@ -629,11 +680,28 @@ fn run_registry_once(
     registry: &EvaluatorRegistry,
     case: &EvalCase,
     invocation: &Invocation,
+    cancel: Option<&CancellationToken>,
     #[cfg(feature = "telemetry")] telemetry: Option<&EvalsTelemetry>,
     #[cfg(feature = "telemetry")] case_span: Option<&CaseSpan>,
 ) -> Vec<EvalMetricResult> {
     #[cfg(feature = "telemetry")]
     if let (Some(t), Some(parent)) = (telemetry, case_span) {
+        #[cfg(feature = "judge-core")]
+        return registry.evaluate_instrumented_with_judge_cancellation(
+            case,
+            invocation,
+            cancel,
+            |name, run| {
+                let span = t.start_evaluator_span(parent, name);
+                let outcome = run();
+                match outcome.as_ref() {
+                    Some(metric) => span.end(metric),
+                    None => span.end_inapplicable(name),
+                }
+                outcome
+            },
+        );
+        #[cfg(not(feature = "judge-core"))]
         return registry.evaluate_instrumented(case, invocation, |name, run| {
             let span = t.start_evaluator_span(parent, name);
             let outcome = run();
@@ -644,7 +712,32 @@ fn run_registry_once(
             outcome
         });
     }
-    registry.evaluate(case, invocation)
+
+    #[cfg(feature = "judge-core")]
+    {
+        registry.evaluate_with_judge_cancellation(case, invocation, cancel)
+    }
+
+    #[cfg(not(feature = "judge-core"))]
+    {
+        let _ = cancel;
+        registry.evaluate(case, invocation)
+    }
+}
+
+async fn acquire_case_permit(
+    semaphore: Arc<Semaphore>,
+    cancel: Option<&CancellationToken>,
+) -> Option<OwnedSemaphorePermit> {
+    if let Some(tok) = cancel {
+        tokio::select! {
+            biased;
+            () = tok.cancelled() => None,
+            permit = semaphore.acquire_owned() => permit.ok(),
+        }
+    } else {
+        semaphore.acquire_owned().await.ok()
+    }
 }
 
 fn cancelled_case_result(case: &EvalCase) -> EvalCaseResult {
@@ -715,5 +808,28 @@ fn error_invocation(error_message: Option<String>) -> Invocation {
         final_response: None,
         stop_reason: StopReason::Error,
         model: ModelSpec::new("unknown", "unknown"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn acquire_case_permit_cancels_while_waiting_for_capacity() {
+        let semaphore = Arc::new(Semaphore::new(0));
+        let token = CancellationToken::new();
+        let waiter_token = token.clone();
+        let waiter_semaphore = Arc::clone(&semaphore);
+        let waiter = tokio::spawn(async move {
+            acquire_case_permit(waiter_semaphore, Some(&waiter_token))
+                .await
+                .is_none()
+        });
+
+        tokio::task::yield_now().await;
+        token.cancel();
+
+        assert!(waiter.await.expect("permit waiter should not panic"));
     }
 }

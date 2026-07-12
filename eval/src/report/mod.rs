@@ -36,7 +36,7 @@ pub mod markdown;
 pub use console::ConsoleReporter;
 #[cfg(feature = "html-report")]
 pub use html::HtmlReporter;
-pub use json::{JsonReporter, SCHEMA_VERSION};
+pub use json::{JsonReporter, SCHEMA_VERSION, decode_result_json};
 #[cfg(feature = "langsmith")]
 pub use langsmith::{LangSmithExportError, LangSmithExporter};
 pub use markdown::MarkdownReporter;

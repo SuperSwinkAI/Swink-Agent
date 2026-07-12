@@ -87,7 +87,7 @@ fn json_artifact_parses_and_validates_against_schema() {
     let validator = jsonschema::validator_for(&schema).expect("schema compiles");
     let errors: Vec<_> = validator
         .iter_errors(&doc)
-        .map(|e| format!("{e} @ {}", e.instance_path))
+        .map(|e| format!("{e} @ {}", e.instance_path()))
         .collect();
     assert!(errors.is_empty(), "schema validation failed: {errors:#?}");
 }

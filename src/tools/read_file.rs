@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use super::{MAX_OUTPUT_BYTES, truncate_utf8_to_boundary};
+use super::{MAX_OUTPUT_BYTES, path::resolve_existing_path, truncate_utf8_to_boundary};
 use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validated_schema_for};
 
 /// Built-in tool that reads a file and returns its contents.
@@ -88,7 +88,11 @@ impl AgentTool for ReadFileTool {
                 return AgentToolResult::error("cancelled");
             }
 
-            let path = resolve_path(&parsed.path, self.execution_root.as_deref());
+            let path =
+                match resolve_existing_path(&parsed.path, self.execution_root.as_deref()).await {
+                    Ok(path) => path,
+                    Err(error) => return AgentToolResult::error(error),
+                };
 
             match read_limited_utf8_file(&path).await {
                 Ok((mut content, truncated)) => {
@@ -102,17 +106,6 @@ impl AgentTool for ReadFileTool {
                 }
             }
         })
-    }
-}
-
-fn resolve_path(path: &str, execution_root: Option<&Path>) -> PathBuf {
-    let path = Path::new(path);
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else if let Some(root) = execution_root {
-        root.join(path)
-    } else {
-        path.to_path_buf()
     }
 }
 
@@ -203,5 +196,34 @@ mod tests {
 
         assert!(!result.is_error);
         assert_eq!(result_text(&result), "rooted");
+    }
+
+    #[tokio::test]
+    async fn read_file_rejects_relative_path_outside_execution_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        tokio::fs::create_dir(&root).await.unwrap();
+        tokio::fs::write(temp.path().join("outside.txt"), "outside")
+            .await
+            .unwrap();
+
+        let result = ReadFileTool::new()
+            .with_execution_root(&root)
+            .execute(
+                "call-1",
+                json!({ "path": "../outside.txt" }),
+                CancellationToken::new(),
+                None,
+                Arc::new(RwLock::new(SessionState::new())),
+                None,
+            )
+            .await;
+
+        assert!(result.is_error);
+        assert!(
+            result_text(&result).contains("escapes execution root"),
+            "unexpected result: {}",
+            result_text(&result)
+        );
     }
 }

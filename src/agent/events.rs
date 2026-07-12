@@ -26,12 +26,14 @@ impl Agent {
     pub(super) fn dispatch_event(&mut self, event: &AgentEvent) {
         self.listeners.dispatch(event);
 
-        for forwarder in &self.event_forwarders {
+        self.event_forwarders.retain(|forwarder| {
             let guarded = std::panic::AssertUnwindSafe(|| forwarder(event.clone()));
             if let Err(error) = std::panic::catch_unwind(guarded) {
                 warn!("event forwarder panicked: {error:?}");
+                return false;
             }
-        }
+            true
+        });
     }
 
     /// Add an event forwarder at runtime.

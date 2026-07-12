@@ -28,6 +28,7 @@ impl JudgeClient for CannedJudge {
                 pass: (0.5..=1.0).contains(&self.score),
                 reason: self.reason.clone(),
                 label: None,
+                cost: None,
             })
         })
     }

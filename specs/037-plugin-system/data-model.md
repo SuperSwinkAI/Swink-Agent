@@ -51,7 +51,7 @@ Transparent wrapper that prefixes a plugin's name onto a tool's name.
 | `plugin_name` | `String` | The owning plugin's name |
 | `inner` | `Arc<dyn AgentTool>` | The original tool |
 
-**Behavior**: Delegates all `AgentTool` methods to `inner` except `name()`, which returns `"{plugin_name}.{inner.name()}"`.
+**Behavior**: Delegates all `AgentTool` methods to `inner` except `name()`, which returns `"{plugin_name}_{inner.name()}"` (separator changed from `.` to `_` in response to issue #608; dots are rejected by Anthropic and Bedrock).
 
 ## Relationships
 
@@ -83,6 +83,6 @@ Agent
 
 ```
 [Directly-registered tools]              ← checked first (take precedence)
-[Plugin A tools (priority 10), namespaced as "pluginA.toolName"]
-[Plugin B tools (priority 5), namespaced as "pluginB.toolName"]
+[Plugin A tools (priority 10), namespaced as "pluginA_toolName"]
+[Plugin B tools (priority 5), namespaced as "pluginB_toolName"]
 ```

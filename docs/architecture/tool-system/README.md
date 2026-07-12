@@ -1,6 +1,6 @@
 # Tool System
 
-**Source files:** `src/tool.rs`, `src/tools/`, `src/fn_tool.rs`, `src/tool_middleware.rs`, `src/policy.rs`, `policies/` (separate workspace crate `swink-agent-policies`), `src/loop_/tool_dispatch.rs`
+**Source files:** `src/tool.rs`, `src/tools/`, `src/fn_tool.rs`, `src/tool_middleware.rs`, `src/policy.rs`, `policies/` (separate workspace crate `swink-agent-policies`), `src/loop_/tool_dispatch/` (directory: `mod.rs`, `preprocess.rs`, `execute.rs`, `collect.rs`, `shared.rs`)
 **Related:** [PRD §4](../../planning/PRD.md#4-tool-system)
 
 The tool system defines how tools are declared, validated, executed, and how their results are returned to the LLM. It also covers the structured output mechanism, which is implemented as a synthetic tool injected by the harness.
@@ -56,7 +56,7 @@ flowchart TB
 
 ## L3 — Built-in Tools
 
-The harness ships three built-in tools in `src/tools/`. They are ordinary `AgentTool` implementations and can be registered alongside caller-provided tools.
+The harness ships four built-in tools in `src/tools/` behind the `builtin-tools` feature: `BashTool`, `EditFileTool`, `ReadFileTool`, and `WriteFileTool` (all returned by `builtin_tools()`). They are ordinary `AgentTool` implementations and can be registered alongside caller-provided tools. A separate `artifact-tools` feature adds `SaveArtifactTool`, `LoadArtifactTool`, and `ListArtifactsTool` (returned by `artifact_tools(store)`), backed by an `ArtifactStore`.
 
 ### Shared constant: `MAX_OUTPUT_BYTES`
 
@@ -64,7 +64,7 @@ Defined in `src/tools/mod.rs` as `100 * 1024` (100 KB). Used by `BashTool` and `
 
 ### BashTool (`src/tools/bash.rs`)
 
-Executes arbitrary shell commands via `sh -c`.
+Executes arbitrary shell commands via the platform shell — `sh -c` on Unix-like targets, `cmd /C` on Windows.
 
 | Field | Value |
 |---|---|
@@ -72,7 +72,18 @@ Executes arbitrary shell commands via `sh -c`.
 | **Parameters** | `command` (string, required), `timeout_ms` (integer, optional — default 30 000 ms) |
 | **Output** | Exit code + stdout + stderr. Combined stdout/stderr truncated at `MAX_OUTPUT_BYTES`, split proportionally with stdout favoured. |
 | **Cancellation** | Checks `cancellation_token.is_cancelled()` before spawning. During execution, `tokio::select!` races the child process against both the cancellation token and the timeout. On cancellation or timeout the child process is killed. |
-| **Security note** | Runs arbitrary commands via `sh -c`. Not suitable for agents exposed to untrusted users. |
+| **Security note** | Runs arbitrary commands via the platform shell. Not suitable for agents exposed to untrusted users. |
+
+### EditFileTool (`src/tools/edit_file.rs`)
+
+Makes surgical find-and-replace edits to a file: multiple edits per call, atomic writes, stale-read detection, whitespace-normalised matching, and line-number disambiguation.
+
+| Field | Value |
+|---|---|
+| **name** | `edit_file` |
+| **Parameters** | `path` (string, required), `edits` (array of `{old_string, new_string, replace_all?, line_hint?}`, required), `expected_hash` (string, optional — SHA-256 of the previously read content; edit rejected if the file changed since) |
+| **Output** | Summary of edits applied, with a diff. |
+| **Cancellation** | Checks `cancellation_token.is_cancelled()` before reading and again before writing. |
 
 ### ReadFileTool (`src/tools/read_file.rs`)
 
@@ -105,9 +116,9 @@ All built-in tools follow the same cancellation contract:
 
 ### `ToolExecutionUpdate` event
 
-The `on_update` callback parameter in `execute()` is designed for tools that produce streaming partial results (e.g., long-running commands emitting incremental output). `ToolExecutionUpdate` events are defined in the event model but **currently reserved for future use** — the agent loop always passes `None` for the callback. Built-in tools accept but ignore the parameter.
+The `on_update` callback parameter in `execute()` lets tools stream partial results (e.g., long-running commands emitting incremental output). The agent loop passes `Some(on_update)`: for each dispatched tool it creates a bounded mpsc channel (`TOOL_UPDATE_CHANNEL_CAPACITY = 128`, `src/loop_/tool_dispatch/shared.rs`) and builds the callback as a closure that `try_send`s each partial into it. Because `on_update` is synchronous, backpressure is handled by **dropping partials when the channel is full** — partial updates are progressive (each payload supersedes the last), so lossy delivery is preferred over stalling the tool or unbounded growth. A spawned `forward_tool_updates` task (`src/loop_/tool_dispatch/execute.rs`) drains the channel and emits each partial as an `AgentEvent::ToolExecutionUpdate` on the event stream. The final `AgentToolResult` is delivered via `ToolExecutionEnd`, independent of this channel.
 
-**Implementation note:** Always guard the callback: `if let Some(f) = on_update { f(...) }`. The agent loop currently always passes `None` for this parameter — code that invokes it unconditionally may cause issues. Custom tools should implement the guard pattern to be forward-compatible when streaming tool results are enabled.
+**Implementation note:** still guard the callback (`if let Some(f) = on_update { f(...) }`) — it remains `Option`al, and tools may be invoked directly outside the loop.
 
 ---
 
@@ -120,12 +131,15 @@ flowchart LR
         Label["label() → &str<br/>human-readable display name"]
         Desc["description() → &str<br/>natural language for LLM prompt"]
         Schema["parameters_schema() → &Value<br/>JSON Schema for validation"]
-        Execute["execute(<br/>  tool_call_id: &str,<br/>  params: Value,<br/>  cancellation_token: CancellationToken,<br/>  on_update: Option&lt;Fn(AgentToolResult)&gt;<br/>) → Future&lt;AgentToolResult&gt;"]
+        Defaults["defaulted methods:<br/>requires_approval() → bool (false)<br/>metadata() → Option&lt;ToolMetadata&gt;<br/>execution_root() → Option&lt;&Path&gt;<br/>approval_context(&Value) → Option&lt;Value&gt;<br/>auth_config() → Option&lt;AuthConfig&gt;"]
+        Execute["execute(<br/>  tool_call_id: &str,<br/>  params: Value,<br/>  cancellation_token: CancellationToken,<br/>  on_update: Option&lt;Box&lt;dyn Fn(AgentToolResult)&gt;&gt;,<br/>  state: Arc&lt;RwLock&lt;SessionState&gt;&gt;,<br/>  credential: Option&lt;ResolvedCredential&gt;<br/>) → ToolFuture&lt;'_&gt;"]
     end
 
     subgraph Result["AgentToolResult"]
         Content["content: Vec&lt;ContentBlock&gt;<br/>(Text | Image — returned to LLM)"]
         Details["details: Value<br/>(structured data for logging,<br/>not sent to LLM)"]
+        IsError["is_error: bool"]
+        Transfer["transfer_signal: Option&lt;TransferSignal&gt;<br/>(AgentToolResult::transfer → handoff<br/>via StopReason::Transfer)"]
     end
 
     Execute --> Result
@@ -133,9 +147,11 @@ flowchart LR
     classDef traitStyle fill:#ff9800,stroke:#e65100,stroke-width:2px,color:#000
     classDef resultStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
 
-    class Name,Label,Desc,Schema,Execute traitStyle
-    class Content,Details resultStyle
+    class Name,Label,Desc,Schema,Defaults,Execute traitStyle
+    class Content,Details,IsError,Transfer resultStyle
 ```
+
+When `auth_config()` returns `Some`, the loop resolves the credential through the configured `CredentialResolver` before dispatch and passes it as the `credential` argument; resolution failure produces an error result without calling `execute()`.
 
 ---
 
@@ -197,61 +213,7 @@ flowchart LR
 
 ## L3 — Concurrent Tool Execution
 
-When an assistant message contains multiple tool calls, the harness spawns them concurrently. Each tool receives its own `CancellationToken` (a child of the loop's token). When steering arrives after a tool completes, all remaining in-flight tools are cancelled via their `CancellationToken`, and for each cancelled tool an error `ToolResultMessage` is injected with content: `"tool call cancelled: user requested steering interrupt"`.
-
-```mermaid
-flowchart TB
-    subgraph AssistantTurn["AssistantMessage"]
-        TC1["ToolCall A"]
-        TC2["ToolCall B"]
-        TC3["ToolCall C"]
-    end
-
-    subgraph Executor["Concurrent Executor"]
-        Spawn1["tokio::spawn → Tool A<br/>(child CancellationToken)"]
-        Spawn2["tokio::spawn → Tool B<br/>(child CancellationToken)"]
-        Spawn3["tokio::spawn → Tool C<br/>(child CancellationToken)"]
-    end
-
-    subgraph Results["Results (as they complete)"]
-        R1["Result A → poll steering"]
-        R2["Result B → poll steering"]
-        R3["Result C → poll steering"]
-    end
-
-    subgraph Steering["Steering Check"]
-        S1{"steering?"}
-        S2{"steering?"}
-        S3{"steering?"}
-    end
-
-    TC1 --> Spawn1
-    TC2 --> Spawn2
-    TC3 --> Spawn3
-    Spawn1 --> R1
-    Spawn2 --> R2
-    Spawn3 --> R3
-    R1 --> S1
-    R2 --> S2
-    R3 --> S3
-    S1 -->|"yes"| CancelBC["cancel B, C via CancellationToken,<br/>inject error ToolResultMessages"]
-    S1 -->|"no"| Continue1["continue"]
-    S2 -->|"yes"| CancelC["cancel C via CancellationToken,<br/>inject error ToolResultMessage"]
-    S2 -->|"no"| Continue2["continue"]
-    S3 -->|"any"| Done["all complete"]
-
-    classDef msgStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
-    classDef execStyle fill:#ff9800,stroke:#e65100,stroke-width:2px,color:#000
-    classDef resultStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
-    classDef steerStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
-    classDef skipStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
-
-    class TC1,TC2,TC3 msgStyle
-    class Spawn1,Spawn2,Spawn3 execStyle
-    class R1,R2,R3 resultStyle
-    class S1,S2,S3 steerStyle
-    class CancelBC,CancelC,Continue1,Continue2,Done skipStyle
-```
+When an assistant message contains multiple tool calls, the harness spawns them concurrently (`execute_tools_concurrently`, `src/loop_/tool_dispatch/mod.rs`). Each tool receives its own `CancellationToken` (a child of the loop's token). Steering is polled as each result completes: when steering arrives after a tool completes, all remaining in-flight tools are cancelled via their `CancellationToken`, and for each cancelled tool an error `ToolResultMessage` is injected with content: `"tool call cancelled: user requested steering interrupt"`. (Stage ordering per call is shown in the [Tool Dispatch Pipeline](#l2--tool-dispatch-pipeline) diagram below.)
 
 ---
 
@@ -275,6 +237,7 @@ flowchart TB
 | `.with_execute_simple(closure)` | Simplified: `(params, cancel) -> Future<AgentToolResult>`. Ignores tool call ID and update callback. |
 | `.with_execute_async(closure)` | Explicit untyped async alias for `.with_execute_simple(closure)`. |
 | `.with_execute_typed::<T>(closure)` | Derive the schema from `T` and deserialize params into `T` before execution. Returns `invalid parameters` on serde decode failure. |
+| `.with_approval_context(f)` | Set a `Fn(&Value) -> Option<Value>` that produces rich approval-UI context (diff preview, cost estimate) for the tool's `approval_context()`. |
 
 ### Example
 
@@ -339,32 +302,15 @@ For tools that need the full call context, use `.with_execute()` instead of `.wi
 Use a struct when the tool needs internal state such as a connection pool, configuration, or cached resources:
 
 ```rust
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio_util::sync::CancellationToken;
-use swink_agent::{AgentTool, AgentToolResult};
+use swink_agent::{AgentTool, AgentToolResult, ResolvedCredential, SessionState, ToolFuture};
 
 struct DatabaseQueryTool {
     pool: Arc<DatabasePool>,  // your connection pool type
-    schema: Value,
-}
-
-impl DatabaseQueryTool {
-    fn new(pool: Arc<DatabasePool>) -> Self {
-        Self {
-            pool,
-            schema: json!({
-                "type": "object",
-                "properties": {
-                    "query": { "type": "string", "description": "SQL query to execute" }
-                },
-                "required": ["query"]
-            }),
-        }
-    }
+    schema: Value,            // JSON Schema, built once in a constructor
 }
 
 impl AgentTool for DatabaseQueryTool {
@@ -384,7 +330,9 @@ impl AgentTool for DatabaseQueryTool {
         params: Value,
         cancellation_token: CancellationToken,
         _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
-    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+        _state: Arc<RwLock<SessionState>>,
+        _credential: Option<ResolvedCredential>,
+    ) -> ToolFuture<'_> {
         Box::pin(async move {
             if cancellation_token.is_cancelled() {
                 return AgentToolResult::error("cancelled");
@@ -401,7 +349,7 @@ impl AgentTool for DatabaseQueryTool {
 
 Key points for struct-based tools:
 
-- The `execute` return type is `Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>>` — the lifetime `'_` ties the future to `&self`, allowing it to borrow struct fields.
+- The `execute` return type is `ToolFuture<'_>` (alias for `Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>>`, `src/tool.rs`) — the lifetime `'_` ties the future to `&self`, allowing it to borrow struct fields.
 - Always check `cancellation_token.is_cancelled()` before starting expensive work.
 - Use `AgentToolResult::text()` for success and `AgentToolResult::error()` for failures.
 - Set `requires_approval()` to `true` for tools with side effects.
@@ -481,7 +429,7 @@ pub trait PreDispatchPolicy: Send + Sync {
 | Policy | Behavior |
 |---|---|
 | `SandboxPolicy` | Checks configured field names (default: `path`, `file_path`, `file`) against allowed directories. Skips with error if path escapes sandbox. |
-| `DenyListPolicy` | Rejects tool calls by name or argument pattern. Skips with descriptive error. |
+| `ToolDenyListPolicy` | Rejects tool calls by name or argument pattern. Skips with descriptive error. |
 
 ### Configuration
 
@@ -551,7 +499,7 @@ The `validate_schema` function (`src/tool.rs`) validates that a JSON value is a 
 
 ## L2 — Tool Dispatch Pipeline
 
-**Source file:** `src/loop_/tool_dispatch.rs`
+**Source files:** `src/loop_/tool_dispatch/` — `mod.rs` (`execute_tools_concurrently`), `preprocess.rs` (policies + approval), `execute.rs` (per-call dispatch), `collect.rs` (result collection), `shared.rs` (update forwarding, shared helpers)
 
 The complete dispatch pipeline for each tool call, showing the exact order enforced by `execute_tools_concurrently`. Each stage can short-circuit the pipeline by producing an error result.
 

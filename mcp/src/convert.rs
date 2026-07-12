@@ -1,34 +1,37 @@
 //! Conversion functions between `rmcp` types and `swink-agent` types.
 
-use rmcp::model::{CallToolResult, Content, RawContent, ResourceContents};
+use rmcp::model::{CallToolResult, ContentBlock as McpContentBlock, ResourceContents};
 use serde_json::Value;
 use swink_agent::{AgentToolResult, ContentBlock};
 
-/// Convert an `rmcp` `Content` item to a `swink-agent` `ContentBlock`.
-pub fn content_to_block(content: &Content) -> ContentBlock {
+/// Convert an `rmcp` content block to a `swink-agent` `ContentBlock`.
+pub fn content_to_block(content: &McpContentBlock) -> ContentBlock {
     #[allow(unreachable_patterns)]
-    match &content.raw {
-        RawContent::Text(text) => ContentBlock::Text {
+    match content {
+        McpContentBlock::Text(text) => ContentBlock::Text {
             text: text.text.clone(),
         },
-        RawContent::Image(image) => ContentBlock::Image {
+        McpContentBlock::Image(image) => ContentBlock::Image {
             source: swink_agent::ImageSource::Base64 {
                 data: image.data.clone(),
                 media_type: image.mime_type.clone(),
             },
         },
-        RawContent::Resource(resource) => match &resource.resource {
+        McpContentBlock::Resource(resource) => match &resource.resource {
             ResourceContents::TextResourceContents { uri, text, .. } => ContentBlock::Text {
                 text: format!("[MCP Resource: {uri}] {text}"),
             },
             ResourceContents::BlobResourceContents { uri, .. } => ContentBlock::Text {
                 text: format!("[MCP Resource: {uri}] <binary content>"),
             },
+            _ => ContentBlock::Text {
+                text: "[MCP Resource: unsupported content]".to_string(),
+            },
         },
-        RawContent::Audio(audio) => ContentBlock::Text {
+        McpContentBlock::Audio(audio) => ContentBlock::Text {
             text: format!("[MCP Audio: {}]", audio.mime_type),
         },
-        RawContent::ResourceLink(link) => ContentBlock::Text {
+        McpContentBlock::ResourceLink(link) => ContentBlock::Text {
             text: format!("[MCP ResourceLink: {}]", link.uri),
         },
         _ => ContentBlock::Text {

@@ -69,7 +69,7 @@
 - [x] T023 [US1] Implement `EvalRunner` with `new()`, `with_defaults()`, `run_case()` in `eval/src/runner.rs`
 - [x] T024 [US1] Implement `EvalRunner::run_set()` with sequential case execution and aggregate summary in `eval/src/runner.rs`
 - [x] T025 [US1] Fix `run_set()` to catch per-case agent errors, record as failed results, and continue with remaining cases (FR-003 compliance) in `eval/src/runner.rs`
-- [x] T026 [P] [US1] Implement `BudgetGuard` with `from_case()`, `with_max_cost()`, `with_max_tokens()`, `with_max_turns()` for real-time budget enforcement via CancellationToken in `eval/src/trajectory.rs`
+- [x] T026 [P] [US1] Implement `BudgetGuard` with `from_case()`, `with_max_cost()`, `with_max_tokens()`, `with_max_turns()` for real-time budget enforcement via CancellationToken in `eval/src/trajectory.rs` [superseded by 023 Phase 13: BudgetGuard removed; real-time enforcement now via BudgetPolicy/MaxTurnsPolicy attached by the AgentFactory]
 - [x] T027 [P] [US1] Write tests for `TrajectoryMatcher` all three modes with edge cases in `eval/tests/match_.rs`
 - [x] T028 [P] [US1] Write tests for `ResponseMatcher` all four criteria including custom function panic handling in `eval/tests/response.rs`
 

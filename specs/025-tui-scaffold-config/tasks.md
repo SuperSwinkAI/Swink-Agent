@@ -41,7 +41,7 @@
 - [x] T011 [P] Verify `OperatingMode` enum with `Execute` and `Plan` variants in tui/src/app/state.rs
 - [x] T012 [P] Verify `DisplayMessage` struct has all fields from data-model.md in tui/src/app/state.rs
 - [x] T013 [P] Verify `MessageRole` enum with `User`, `Assistant`, `ToolResult`, `Error`, `System` variants in tui/src/app/state.rs
-- [x] T014 [P] Verify `ProviderInfo` struct with `name`, `key_name`, `env_var`, `description`, `requires_key` fields and five provider entries in tui/src/credentials.rs
+- [x] T014 [P] Verify `ProviderInfo` struct with `name`, `key_name`, `env_var`, `description`, `requires_key` fields and four provider entries in tui/src/credentials.rs [corrected: `providers()` returns 4 entries (Ollama, OpenAI, Anthropic, Custom Proxy), confirmed by `providers_returns_four_entries`; local-LLM is handled separately behind its own feature flag, not a 5th `ProviderInfo` entry]
 
 **Checkpoint**: Foundation ready — user story implementation can now begin in parallel
 
@@ -61,7 +61,7 @@
 - [x] T018 [US1] Verify panic hook in `main()` calls `restore_terminal()` before the original hook in tui/src/main.rs
 - [x] T019 [US1] Verify `Ctrl+Q` sets `should_quit = true` and the event loop exits cleanly in tui/src/app/event_loop.rs
 - [x] T020 [US1] Verify file-based logging is configured with `tracing-appender` rolling daily to `dirs::config_dir()/swink-agent/logs/swink-agent.log` in tui/src/main.rs
-- [x] T021 [US1] Add unit test for TTY detection: verify non-TTY stdout produces an error message (test the detection logic, not the actual terminal) in tui/src/app/tests.rs
+- [x] T021 [US1] Add unit test for TTY detection: verify non-TTY stdout produces an error message (test the detection logic, not the actual terminal) in tui/src/app/tests/input_ui.rs [corrected path: tui/src/app/tests/ is a module directory, not a single tests.rs file]
 
 **Checkpoint**: TUI launches, exits cleanly, handles panics, and rejects non-TTY environments
 
@@ -80,7 +80,7 @@
 - [x] T024 [US2] Verify tick interval uses `self.config.tick_rate_ms` for the interval duration in tui/src/app/event_loop.rs
 - [x] T025 [US2] Verify agent event handler updates `DisplayMessage` and sets `dirty = true` on streaming content in tui/src/app/agent_bridge.rs
 - [x] T026 [US2] Verify `Ctrl+C` aborts running agent (sets `AgentStatus::Aborted`) without quitting the TUI in tui/src/app/event_loop.rs
-- [x] T027 [US2] Add unit test: construct App, simulate tick, verify `dirty` flag behavior and `blink_on` toggling in tui/src/app/tests.rs
+- [x] T027 [US2] Add unit test: construct App, simulate tick, verify `dirty` flag behavior and `blink_on` toggling in tui/src/app/tests/input_ui.rs [corrected path: tui/src/app/tests/ is a module directory, not a single tests.rs file]
 
 **Checkpoint**: Event loop processes keyboard and agent events concurrently without blocking
 
@@ -117,7 +117,7 @@
 - [x] T035 [US3] Verify Tab key handler cycles `Focus::Input → Focus::Conversation → Focus::Input` in tui/src/app/event_loop.rs
 - [x] T036 [US3] Verify focused component gets distinct visual border (e.g., `Color::White` for focused, `Color::DarkGray` for unfocused) in tui/src/ui/conversation.rs and tui/src/ui/input.rs
 - [x] T037 [US3] Verify component-specific shortcuts only fire when that component has focus — check that conversation scroll keys (PageUp/PageDown/j/k) are gated on `Focus::Conversation` in tui/src/app/event_loop.rs
-- [x] T038 [US3] Add unit test: construct App, simulate Tab keypress, verify focus changes from Input to Conversation and back in tui/src/app/tests.rs
+- [x] T038 [US3] Add unit test: construct App, simulate Tab keypress, verify focus changes from Input to Conversation and back in tui/src/app/tests/input_ui.rs [corrected path: tui/src/app/tests/ is a module directory, not a single tests.rs file]
 
 **Checkpoint**: Focus cycling works, visual distinction is clear, component-specific shortcuts are gated
 
@@ -156,7 +156,7 @@
 - [x] T048 [US6] Implement minimum terminal size check in `ui::render()` — if terminal dimensions are below 120×30, render a centered warning overlay showing current size and minimum required (120×30), skip normal UI rendering, in tui/src/ui/mod.rs
 - [x] T049 [US6] Add constants `MIN_TERMINAL_WIDTH = 120` and `MIN_TERMINAL_HEIGHT = 30` at module level in tui/src/ui/mod.rs
 - [x] T050 [US6] Verify normal UI rendering resumes immediately when terminal is resized above threshold (no restart needed) in tui/src/ui/mod.rs
-- [x] T051 [US6] Add unit test: verify minimum size check returns true/false for various dimensions in tui/src/app/tests.rs
+- [x] T051 [US6] Add unit test: verify minimum size check returns true/false for various dimensions in tui/src/app/tests/input_ui.rs [corrected path: tui/src/app/tests/ is a module directory, not a single tests.rs file]
 
 **Checkpoint**: Resize handling works, minimum size warning is clear and non-blocking
 
@@ -184,8 +184,8 @@
 
 - [X] T057 [US7] Create `tui/src/transport.rs` with `TuiTransport` trait: `async fn send(&self, input: UserInput) -> Result<(), TransportError>` and `async fn recv(&mut self) -> Option<AgentEvent>`, plus `UserInput` and `TransportError` types
 - [X] T058 [US7] Implement `InProcessTransport` struct in `tui/src/transport.rs` that wraps `mpsc::Sender<AgentEvent>` for receiving events (bridged from existing agent channels) and holds a reference to the agent send path
-- [X] T059 [US7] Add `SocketTransport` stub in `tui/src/transport.rs` behind `#[cfg(feature = "remote")]` feature gate (can use `unimplemented!()` or return `TransportError::Unavailable` for now)
-- [X] T060 [US7] Add `[features] remote = []` to `tui/Cargo.toml`
+- [X] T059 [US7] Add `SocketTransport` stub in `tui/src/transport.rs` behind `#[cfg(feature = "remote")]` feature gate (can use `unimplemented!()` or return `TransportError::Unavailable` for now) [superseded by spec 045 T026-T029: SocketTransport removed from TUI; remote access lives in the rpc crate]
+- [X] T060 [US7] Add `[features] remote = []` to `tui/Cargo.toml` [superseded by spec 045 T026-T029: SocketTransport removed from TUI; remote access lives in the rpc crate]
 - [X] T061 [US7] Register `transport` module in `tui/src/lib.rs` and re-export `TuiTransport`, `InProcessTransport`, `TransportError`, `UserInput` types
 - [X] T062 [US7] Add unit test: `InProcessTransport` send produces an agent event via mock agent
 - [X] T063 [US7] Add unit test: mock `TuiTransport` implementation verifies trait object usage
@@ -241,7 +241,7 @@ Task T018: "Verify panic hook in tui/src/main.rs"
 
 # Then sequentially:
 Task T015: "Add TTY detection in tui/src/main.rs"
-Task T021: "Add TTY detection test in tui/src/app/tests.rs"
+Task T021: "Add TTY detection test in tui/src/app/tests/input_ui.rs"
 ```
 
 ---

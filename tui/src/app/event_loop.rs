@@ -17,7 +17,7 @@ use crate::theme;
 use crate::ui;
 
 use super::render_helpers::extract_code_blocks;
-use super::state::{AgentStatus, App, DisplayMessage, Focus, MessageRole, OperatingMode};
+use super::state::{AgentStatus, App, DisplayMessage, Focus, MessageRole};
 use super::{AppResult, MOUSE_SCROLL_STEP};
 
 impl App {
@@ -552,24 +552,7 @@ impl App {
                 return;
             }
             CommandResult::Reset => {
-                if let Some(agent) = &mut self.agent {
-                    agent.reset();
-                }
-                self.messages.clear();
-                self.conversation = crate::ui::conversation::ConversationView::new();
-                self.total_input_tokens = 0;
-                self.total_output_tokens = 0;
-                self.total_cost = 0.0;
-                self.context_tokens_used = 0;
-                self.session_trusted_tools.clear();
-                self.trust_follow_up = None;
-                self.operating_mode = OperatingMode::Execute;
-                self.pending_plan_approval = false;
-                self.model_index = 0;
-                self.pending_model = None;
-                self.saved_tools = None;
-                self.saved_system_prompt = None;
-                self.push_system_message("Agent state reset.".to_string());
+                self.reset_session_state();
                 return;
             }
             CommandResult::CopyToClipboard(content) => {
@@ -609,7 +592,7 @@ impl App {
                     ApprovalModeArg::On => "enabled",
                     ApprovalModeArg::Off => "disabled (auto-approve)",
                     ApprovalModeArg::Smart => {
-                        "smart (auto-approve trusted tools, prompt for untrusted tools)"
+                        "smart (auto-approve read-only and trusted tools, prompt for writes)"
                     }
                 };
                 self.push_system_message(format!("Tool approval: {label}"));
@@ -638,7 +621,7 @@ impl App {
                     ApprovalMode::Enabled => "enabled",
                     ApprovalMode::Bypassed => "disabled (auto-approve)",
                     ApprovalMode::Smart => {
-                        "smart (auto-approve trusted tools, prompt for untrusted tools)"
+                        "smart (auto-approve read-only and trusted tools, prompt for writes)"
                     }
                     _ => "unknown",
                 };

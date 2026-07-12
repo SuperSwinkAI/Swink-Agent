@@ -27,6 +27,7 @@ impl JudgeClient for FixedVerdict {
                 pass: self.pass,
                 reason: self.reason.clone(),
                 label: None,
+                cost: None,
             })
         })
     }

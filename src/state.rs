@@ -64,6 +64,21 @@ impl SessionState {
         }
     }
 
+    /// Layer baseline entries underneath the existing data.
+    ///
+    /// For each key in `baseline` that is absent from this state, the
+    /// baseline value is inserted. Existing entries win: keys already
+    /// present keep their current value and are never overridden by the
+    /// baseline. Inserted baseline entries do NOT appear in the delta,
+    /// mirroring [`Self::with_data`] baseline semantics.
+    pub fn apply_baseline(&mut self, baseline: &Self) {
+        for (key, value) in &baseline.data {
+            if !self.data.contains_key(key) {
+                self.data.insert(key.clone(), value.clone());
+            }
+        }
+    }
+
     /// Get a typed value by key. Returns `None` if key is missing or
     /// deserialization fails.
     pub fn get<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
@@ -313,6 +328,46 @@ mod tests {
         let data: HashMap<String, Value> = std::iter::once(("x".into(), json!(42))).collect();
         let s = SessionState::with_data(data);
         assert_eq!(s.get::<i64>("x"), Some(42));
+        assert!(s.delta().is_empty());
+    }
+
+    // ── apply_baseline (baseline underlies, existing wins) ──
+
+    #[test]
+    fn apply_baseline_inserts_missing_keys_without_delta() {
+        let mut s = SessionState::new();
+        s.set("mine", "kept").unwrap();
+        s.flush_delta(); // reset so only apply_baseline effects are observed
+
+        let baseline = SessionState::with_data(
+            [
+                ("mine".to_string(), json!("overridden?")),
+                ("extra".to_string(), json!("from baseline")),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        s.apply_baseline(&baseline);
+
+        // Missing key filled in from the baseline.
+        assert_eq!(s.get::<String>("extra"), Some("from baseline".to_string()));
+        // Existing entry wins over the baseline.
+        assert_eq!(s.get::<String>("mine"), Some("kept".to_string()));
+        // Baseline inserts are NOT recorded in the delta.
+        assert!(s.delta().is_empty());
+    }
+
+    #[test]
+    fn apply_baseline_into_empty_state_copies_all_keys() {
+        let baseline = SessionState::with_data(
+            [("a".to_string(), json!(1)), ("b".to_string(), json!("two"))]
+                .into_iter()
+                .collect(),
+        );
+        let mut s = SessionState::new();
+        s.apply_baseline(&baseline);
+        assert_eq!(s.get::<i64>("a"), Some(1));
+        assert_eq!(s.get::<String>("b"), Some("two".to_string()));
         assert!(s.delta().is_empty());
     }
 

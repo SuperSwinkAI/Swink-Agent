@@ -14,6 +14,7 @@ fn verdict_json(body: &str) -> JudgeVerdict {
         pass: true,
         reason: Some(body.to_string()),
         label: None,
+        cost: None,
     }
 }
 

@@ -94,5 +94,5 @@ Enable the `plugins` feature in your `Cargo.toml`:
 
 ```toml
 [dependencies]
-swink-agent = { version = "0.4", features = ["plugins"] }
+swink-agent = { version = "0.9", features = ["plugins"] }
 ```

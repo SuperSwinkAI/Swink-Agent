@@ -1,6 +1,8 @@
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
-use swink_agent::sliding_window;
-use swink_agent::{AgentMessage, ContentBlock, LlmMessage, UserMessage};
+use swink_agent::{
+    AgentMessage, ContentBlock, ContextTransformer, LlmMessage, SlidingWindowTransformer,
+    UserMessage,
+};
 
 fn make_messages(n: usize, text: &str) -> Vec<AgentMessage> {
     (0..n)
@@ -18,12 +20,14 @@ fn make_messages(n: usize, text: &str) -> Vec<AgentMessage> {
 
 fn bench_compact_no_op(c: &mut Criterion) {
     // Budget large enough that no messages are ever dropped.
-    let compactor = sliding_window(1_000_000, 1_000_000, 10);
+    let compactor = SlidingWindowTransformer::new(1_000_000, 1_000_000, 10);
 
     c.bench_function("compact_sliding_window/no_op_100_msgs", |b| {
         b.iter_batched(
             || make_messages(100, "message number with some realistic content"),
-            |mut msgs| compactor(&mut msgs, false),
+            |mut msgs| {
+                compactor.transform(&mut msgs, false);
+            },
             BatchSize::SmallInput,
         );
     });
@@ -31,7 +35,7 @@ fn bench_compact_no_op(c: &mut Criterion) {
 
 fn bench_compact_heavy(c: &mut Criterion) {
     // Budget small enough to force compaction on every call.
-    let compactor = sliding_window(500, 500, 10);
+    let compactor = SlidingWindowTransformer::new(500, 500, 10);
 
     c.bench_function("compact_sliding_window/heavy_500_msgs", |b| {
         b.iter_batched(
@@ -41,7 +45,9 @@ fn bench_compact_heavy(c: &mut Criterion) {
                     "message number with some realistic content that is long enough to matter",
                 )
             },
-            |mut msgs| compactor(&mut msgs, false),
+            |mut msgs| {
+                compactor.transform(&mut msgs, false);
+            },
             BatchSize::SmallInput,
         );
     });

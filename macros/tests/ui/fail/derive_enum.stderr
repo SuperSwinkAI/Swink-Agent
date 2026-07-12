@@ -1,0 +1,5 @@
+error: ToolSchema can only be derived for structs
+ --> tests/ui/fail/derive_enum.rs:5:6
+  |
+5 | enum Params {
+  |      ^^^^^^

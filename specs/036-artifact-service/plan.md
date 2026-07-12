@@ -141,10 +141,14 @@ Three tools behind `artifact-tools` feature gate:
 
 ### Phase 6: Integration & Agent Configuration (P1 — FR-012, FR-015)
 
-- Add optional `artifact_store: Option<Arc<dyn ArtifactStore>>` to `AgentOptions` (behind feature gate)
-- Agent passes artifact store reference to event emission on artifact saves
-- No changes to `AgentLoopConfig` or `StreamFn` — artifact store is orthogonal
-- Verify agent operates normally when no artifact store configured
+- Shipped design (T076): no `artifact_store` field was added to `AgentOptions`/`AgentLoopConfig`.
+  Instead, `artifact_tools(store: Arc<dyn ArtifactStore>) -> Vec<Arc<dyn AgentTool>>` builds the
+  three built-in tools (each capturing the store at construction) and callers wire them in via
+  the existing `AgentOptions::with_tools()`.
+- The dispatch layer emits `AgentEvent::ArtifactSaved` (behind the `artifact-store` feature) by
+  reading a well-known `artifact_saved` payload out of `AgentToolResult::details` after a
+  successful `SaveArtifactTool` execution — no changes to `AgentLoopConfig` or `StreamFn`.
+- Verify agent operates normally when no artifact tools are configured.
 
 ## Complexity Tracking
 

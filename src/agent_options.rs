@@ -136,6 +136,13 @@ pub struct AgentOptions {
     /// When set, tools that return `Some` from [`auth_config()`](crate::AgentTool::auth_config)
     /// will have their credentials resolved before execution.
     pub credential_resolver: Option<Arc<dyn crate::credential::CredentialResolver>>,
+    /// Timeout applied by the dispatch layer around a credential resolver's
+    /// [`resolve()`](crate::credential::CredentialResolver::resolve) call.
+    ///
+    /// Defaults to 30 seconds. This is independent of any internal timeout a
+    /// [`CredentialResolver`](crate::credential::CredentialResolver)
+    /// implementation applies on its own network calls.
+    pub credential_timeout: std::time::Duration,
     /// Optional context caching configuration.
     ///
     /// When set, the turn pipeline annotates cacheable prefix messages with
@@ -205,6 +212,7 @@ impl AgentOptions {
             plan_mode_addendum: None,
             session_state: None,
             credential_resolver: None,
+            credential_timeout: std::time::Duration::from_secs(30),
             cache_config: None,
             #[cfg(feature = "plugins")]
             plugins: Vec::new(),
@@ -554,6 +562,12 @@ impl AgentOptions {
     }
 
     /// Add a single key-value pair to initial state.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `value` fails to serialize to JSON (e.g. a `serde::Serialize`
+    /// impl that errors, such as a map with non-string keys or a `NaN`/`Inf`
+    /// float). Prefer serializable, well-formed values for pre-seeded state.
     #[must_use]
     pub fn with_state_entry(
         mut self,
@@ -581,6 +595,18 @@ impl AgentOptions {
         resolver: Arc<dyn crate::credential::CredentialResolver>,
     ) -> Self {
         self.credential_resolver = Some(resolver);
+        self
+    }
+
+    /// Set the timeout applied around credential resolution (default: 30 seconds).
+    ///
+    /// The dispatch layer wraps every [`CredentialResolver::resolve()`](crate::credential::CredentialResolver::resolve)
+    /// call in this timeout; a resolver that does not complete in time surfaces
+    /// [`CredentialError::Timeout`](crate::credential::CredentialError::Timeout)
+    /// to the tool instead of executing.
+    #[must_use]
+    pub const fn with_credential_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.credential_timeout = timeout;
         self
     }
 
@@ -621,13 +647,7 @@ impl AgentOptions {
     #[cfg(feature = "plugins")]
     #[must_use]
     pub fn with_plugin(mut self, plugin: Arc<dyn crate::plugin::Plugin>) -> Self {
-        let name = plugin.name();
-        if let Some(pos) = self.plugins.iter().position(|p| p.name() == name) {
-            tracing::warn!(plugin = %name, "replacing duplicate plugin in AgentOptions");
-            self.plugins[pos] = plugin;
-        } else {
-            self.plugins.push(plugin);
-        }
+        crate::plugin::dedup_insert_plugin(&mut self.plugins, plugin);
         self
     }
 
@@ -736,5 +756,35 @@ mod tests {
         assert_eq!(opts.plugins.len(), 2);
         let alpha = opts.plugins.iter().find(|p| p.name() == "alpha").unwrap();
         assert_eq!(alpha.priority(), 7);
+    }
+}
+
+#[cfg(test)]
+mod credential_timeout_tests {
+    use super::*;
+    use crate::testing::SimpleMockStreamFn;
+    use crate::types::ModelSpec;
+
+    fn test_options() -> AgentOptions {
+        AgentOptions::new_simple(
+            "test",
+            ModelSpec::new("test-model", "test-model"),
+            Arc::new(SimpleMockStreamFn::from_text("hello")),
+        )
+    }
+
+    #[test]
+    fn credential_timeout_defaults_to_30_seconds() {
+        let opts = test_options();
+        assert_eq!(opts.credential_timeout, std::time::Duration::from_secs(30));
+    }
+
+    #[test]
+    fn with_credential_timeout_overrides_default() {
+        let opts = test_options().with_credential_timeout(std::time::Duration::from_millis(250));
+        assert_eq!(
+            opts.credential_timeout,
+            std::time::Duration::from_millis(250)
+        );
     }
 }

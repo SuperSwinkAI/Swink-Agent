@@ -56,7 +56,7 @@ src/
 ├── agent_subscriptions.rs # ListenerRegistry, SubscriptionId, panic-isolated dispatch
 ├── handle.rs              # AgentHandle for spawned background tasks
 ├── error.rs               # AgentError variants (AlreadyRunning, NoMessages, InvalidContinue, etc.)
-├── loop_/                 # Inner agent loop (owned by spec 003)
+├── loop_/                 # Inner agent loop (owned by spec 004)
 ├── stream.rs              # StreamFn trait and accumulation
 ├── tool.rs                # AgentTool trait, AgentToolResult
 ├── types.rs               # AgentMessage, AgentResult, ModelSpec, Usage, Cost, StopReason
@@ -75,6 +75,8 @@ tests/
 ```
 
 **Structure Decision**: Single library crate (`swink-agent`) with the Agent struct as the primary API surface. All public types re-exported through `lib.rs`. Test files mirror the source module structure.
+
+**Current layout note [2026-07-06]**: `src/agent.rs` has since grown a companion `src/agent/` submodule directory (verified via `ls src/agent/`), holding the bulk of the Agent implementation across 8 files (~3,000 lines total): `checkpointing.rs` (~1,400 lines — checkpoint save/restore), `control.rs`, `events.rs`, `invoke.rs` (streaming/async/sync invocation), `mutation.rs` (state setters incl. `set_model`), `queueing.rs` (steering/follow-up queues), `state_updates.rs`, and `structured_output.rs`. `src/agent.rs` itself now mainly defines the `Agent` struct and re-exports these submodules.
 
 ## Complexity Tracking
 

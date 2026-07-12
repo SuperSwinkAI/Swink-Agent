@@ -14,7 +14,8 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent_eval::judge::{JudgeClient, JudgeError, JudgeVerdict, RetryPolicy};
 
-use crate::client::{BlockingExt, is_retryable, parse_verdict_text, retry_with_cancel};
+use crate::client::{block_on_judge, is_retryable, parse_verdict_text, retry_with_cancel};
+use crate::util::truncate_http_body;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 const DEFAULT_TEMPERATURE: f32 = 0.0;
@@ -170,11 +171,11 @@ impl BlockingOllamaJudgeClient {
         Self { inner }
     }
 
-    /// Run a single judge call synchronously on the current Tokio runtime.
+    /// Run a single judge call synchronously.
     pub fn judge(&self, prompt: &str) -> Result<JudgeVerdict, JudgeError> {
         let client = self.inner.clone();
         let prompt = prompt.to_string();
-        async move { client.judge(&prompt).await }.block_on()
+        block_on_judge(async move { client.judge(&prompt).await })
     }
 
     /// Borrow the underlying async client for mixed sync/async call sites.
@@ -212,23 +213,14 @@ fn classify_http_error(status: StatusCode, body: &str) -> JudgeError {
         JudgeError::Transport(format!(
             "ollama http {}: {}",
             status.as_u16(),
-            truncate(body)
+            truncate_http_body(body)
         ))
     } else {
         JudgeError::Other(format!(
             "ollama http {}: {}",
             status.as_u16(),
-            truncate(body)
+            truncate_http_body(body)
         ))
-    }
-}
-
-fn truncate(body: &str) -> String {
-    const LIMIT: usize = 512;
-    if body.len() <= LIMIT {
-        body.to_string()
-    } else {
-        format!("{}…", &body[..LIMIT])
     }
 }
 
