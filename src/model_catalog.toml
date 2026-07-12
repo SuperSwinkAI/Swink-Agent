@@ -1,3 +1,7 @@
+# Date the pricing columns below were last verified against provider price pages.
+# Compared against SWINK_PRICING_STALENESS_DAYS (default 180) at agent construction.
+pricing_as_of = "2026-03-31"
+
 [[providers]]
 key = "anthropic"
 display_name = "Anthropic"

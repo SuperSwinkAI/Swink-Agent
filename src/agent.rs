@@ -288,6 +288,9 @@ impl Agent {
     /// Create a new agent from the given options.
     #[must_use]
     pub fn new(options: AgentOptions) -> Self {
+        // Warn (once per process) if the compiled-in pricing table is stale.
+        crate::model_catalog::warn_if_pricing_stale();
+
         // Merge plugin contributions (policies, tools, event observers) into options.
         #[cfg(feature = "plugins")]
         let options = merge_plugin_contributions(options);

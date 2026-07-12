@@ -98,6 +98,15 @@ pub enum AgentError {
     #[error("content filtered by provider safety policy")]
     ContentFiltered,
 
+    /// The provider has retired/decommissioned the requested model.
+    ///
+    /// Non-retryable with the same model — the operator should switch to a
+    /// replacement. The model catalog's deprecation metadata
+    /// ([`PresetStatus::Deprecated`](crate::PresetStatus)) may name a
+    /// successor model.
+    #[error("model retired by provider: {message}")]
+    ModelRetired { message: String },
+
     /// A synchronous API (`prompt_sync`, `continue_sync`, etc.) was called
     /// from within an active Tokio runtime.
     ///
