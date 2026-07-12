@@ -146,14 +146,57 @@ fn open_session_file(path: &Path, id: &str) -> io::Result<std::fs::File> {
 
 fn read_meta_and_message_lines(path: &Path, id: &str) -> io::Result<(SessionMeta, Vec<String>)> {
     let file = open_session_file(path, id)?;
-    let reader = io::BufReader::new(file);
-    let mut lines = reader.lines();
+    let mut reader = io::BufReader::new(file);
 
-    let meta_line = lines.next().ok_or_else(empty_file)??;
+    let meta_bytes = read_raw_line(&mut reader)?.ok_or_else(empty_file)?;
+    let meta_line = String::from_utf8(meta_bytes).map_err(invalid_meta)?;
     let meta = serde_json::from_str(&meta_line).map_err(invalid_meta)?;
-    let remaining_lines = lines.collect::<io::Result<Vec<_>>>()?;
+
+    // Read message lines as raw bytes and validate UTF-8 per line. A crash
+    // mid-append can truncate the final line inside a multi-byte UTF-8
+    // sequence; `BufRead::lines()` would surface that as an `io::Error` and
+    // abort the whole load before any per-line JSON classification runs.
+    // Instead, skip the corrupt line with a warning so the rest of the
+    // session is recovered (spec 021 FR-004: partial recovery over total
+    // failure, same as bad-JSON lines in `classify_and_migrate`).
+    let mut remaining_lines = Vec::new();
+    let mut line_num = 1_usize;
+    while let Some(raw) = read_raw_line(&mut reader)? {
+        line_num += 1;
+        match String::from_utf8(raw) {
+            Ok(line) => remaining_lines.push(line),
+            Err(error) => {
+                tracing::warn!(
+                    line = line_num,
+                    error = %error,
+                    "skipping invalid-UTF-8 line in session {id} \
+                     (likely truncated by a crash mid-write)"
+                );
+            }
+        }
+    }
 
     Ok((meta, remaining_lines))
+}
+
+/// Read one `\n`-terminated line as raw bytes, without requiring valid UTF-8.
+///
+/// Returns `Ok(None)` at EOF. A trailing `\n` (and preceding `\r`, if any) is
+/// stripped, matching [`BufRead::lines`] semantics. The final line is
+/// returned even when it lacks a terminating newline (e.g. a write cut short
+/// by a crash).
+fn read_raw_line(reader: &mut impl BufRead) -> io::Result<Option<Vec<u8>>> {
+    let mut buf = Vec::new();
+    if reader.read_until(b'\n', &mut buf)? == 0 {
+        return Ok(None);
+    }
+    if buf.last() == Some(&b'\n') {
+        buf.pop();
+        if buf.last() == Some(&b'\r') {
+            buf.pop();
+        }
+    }
+    Ok(Some(buf))
 }
 
 fn extract_state_from_lines(lines: &[String], id: &str) -> io::Result<Option<serde_json::Value>> {

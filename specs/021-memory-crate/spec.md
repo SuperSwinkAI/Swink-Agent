@@ -285,3 +285,9 @@ A developer searches persisted conversations for prior decisions, corrections, a
 - Session version starts at 1 for the original format. The current schema version is a constant in the crate.
 - The `sequence` field is incremented on every write (save or append). Optimistic concurrency is always checked by comparing `meta.sequence` against the stored sequence — callers use the loaded sequence, which matches unless another writer intervened. New sessions skip the check.
 - `LoadOptions` filtering is best-effort for JSONL — `last_n_entries` may require reading from the end of the file. Implementations may read the entire file and filter in memory if tail-reading is impractical.
+
+## Addendum — FR-004 Extension (Issue #1067, 2026-07-12)
+
+**FR-004a**: The tolerance FR-004 mandates for corrupted lines MUST extend to lines containing invalid UTF-8 — in particular a multi-byte UTF-8 sequence truncated at the tail of the file by a process crash mid-append. On load, an invalid-UTF-8 line is skipped with a warning (same partial-recovery behavior as a malformed-JSON line); the remaining lines are still classified and recovered. A load MUST NOT fail wholesale because line reading surfaced a UTF-8 decoding `io::Error`.
+
+Rationale: the append-in-place write path writes directly to the file without an fsync-before-rename barrier, so a crash mid-write is most likely to leave a genuinely truncated (byte-level, not just JSON-level) tail line. The metadata line (line 1) remains strict: if it is unreadable, the session is unrecoverable and the load fails with `InvalidData`.
