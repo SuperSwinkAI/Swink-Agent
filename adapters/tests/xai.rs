@@ -11,7 +11,7 @@ use swink_agent_adapters::XAiStreamFn;
 
 mod common;
 
-use common::find_error_message;
+use common::{find_error_kind, find_error_message};
 
 fn test_model() -> ModelSpec {
     ModelSpec::new("xai", "grok-4-1-fast-non-reasoning")
@@ -87,6 +87,34 @@ async fn xai_http_errors_use_xai_provider_label() {
     assert!(
         !error.contains("OpenAI"),
         "xAI errors should not mention OpenAI: {error}"
+    );
+}
+
+#[tokio::test]
+async fn xai_http_400_prompt_length_exceeded_sets_context_overflow_kind() {
+    // xAI reports errors as {"code": "...", "error": "message"} with the
+    // documented "maximum prompt length" wording for context overflow.
+    let error_body = r#"{"code":"Client specified an invalid argument","error":"This model's maximum prompt length is 131072 but the request contains 200000 tokens."}"#;
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(error_body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = XAiStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&stream_fn).await;
+
+    assert_eq!(
+        find_error_kind(&events),
+        Some(Some(swink_agent::StreamErrorKind::ContextWindowExceeded)),
+        "expected structured ContextWindowExceeded, got: {events:?}"
+    );
+    let error = find_error_message(&events).expect("expected error event");
+    assert!(
+        error.contains("maximum prompt length"),
+        "expected provider message preserved, got: {error}"
     );
 }
 

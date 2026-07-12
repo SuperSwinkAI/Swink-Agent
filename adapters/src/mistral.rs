@@ -29,7 +29,7 @@ use swink_agent::{
 };
 
 use crate::convert;
-use crate::oai_transport::{OaiAdapterShell, oai_send_and_parse};
+use crate::oai_transport::{OaiAdapterShell, classify_oai_error_body, oai_send_and_parse};
 use crate::openai_compat::{OaiConverter, OaiMessage, build_oai_tools};
 
 /// Charset for generating Mistral-compatible 9-char tool call IDs.
@@ -211,7 +211,7 @@ fn mistral_stream<'a>(
             mistral.shell.provider(),
             cancellation_token,
             options.on_raw_payload.clone(),
-            |_, _| None,
+            |status, body| classify_oai_error_body(status, body, mistral.shell.provider()),
         );
         normalize_response_stream(raw_stream, id_map)
     })

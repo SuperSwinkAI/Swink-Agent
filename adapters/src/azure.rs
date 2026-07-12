@@ -16,7 +16,9 @@ use swink_agent::{AgentContext, AssistantMessageEvent, ModelSpec, StreamFn, Stre
 use swink_agent_auth::{ExpiringValue, SingleFlightTokenSource};
 
 use crate::classify::{HttpErrorKind, classify_with_overrides};
-use crate::oai_transport::{OaiAdapterShell, oai_send_and_parse, prepare_oai_request};
+use crate::oai_transport::{
+    OaiAdapterShell, classify_oai_error_body, oai_send_and_parse, prepare_oai_request,
+};
 
 /// Authentication method for Azure `OpenAI` deployments.
 #[derive(Clone)]
@@ -297,7 +299,7 @@ fn azure_stream<'a>(
                         "Azure content filter blocked request (HTTP {status})"
                     )))
                 } else {
-                    None
+                    classify_oai_error_body(status, body, azure.shell.provider())
                 }
             },
         )
@@ -308,13 +310,14 @@ fn azure_stream<'a>(
 
 /// Check if an HTTP error body contains an Azure content filter violation.
 ///
-/// Azure returns `error.code: "ContentFilterBlocked"` when the request
-/// or response triggers content safety filters.
+/// Azure returns `error.code: "ContentFilterBlocked"` (Azure AI services) or
+/// `error.code: "content_filter"` (Azure `OpenAI`) when the request or
+/// response triggers content safety filters.
 fn is_content_filter_error(body: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(body)
         .ok()
         .and_then(|v| v.get("error")?.get("code")?.as_str().map(String::from))
-        .is_some_and(|code| code == "ContentFilterBlocked")
+        .is_some_and(|code| code == "ContentFilterBlocked" || code == "content_filter")
 }
 
 const _: () = {

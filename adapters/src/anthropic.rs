@@ -224,6 +224,12 @@ fn anthropic_stream<'a>(
                 }
             };
             warn!(status = code, "Anthropic HTTP error");
+            // Anthropic-specific: context overflow arrives as HTTP 400
+            // `invalid_request_error` with a documented message — classify it
+            // structurally before falling back to status-based mapping.
+            if let Some(event) = classify_anthropic_error_body(&body) {
+                return stream::iter(Vec::from(crate::base::pre_stream_error(event))).left_stream();
+            }
             // Anthropic-specific: 529 (overloaded) and 504 (gateway timeout)
             // are retryable network errors.
             let event = crate::classify::error_event_from_status_with_overrides(
@@ -242,6 +248,29 @@ fn anthropic_stream<'a>(
             .right_stream()
     })
     .flatten()
+}
+
+/// Classify an Anthropic HTTP error body by its structured `error.type`.
+///
+/// Anthropic reports context-window overflow as HTTP 400
+/// `invalid_request_error` with a message like
+/// `"prompt is too long: 210510 tokens > 200000 maximum"` — there is no
+/// dedicated error type, so the adapter matches the documented wording
+/// (scoped to `invalid_request_error`) and attaches the structured
+/// `StreamErrorKind::ContextWindowExceeded`.
+///
+/// Returns `None` when the body doesn't identify a more specific condition,
+/// so the caller falls through to HTTP-status classification.
+fn classify_anthropic_error_body(body: &str) -> Option<AssistantMessageEvent> {
+    let value: Value = serde_json::from_str(body).ok()?;
+    let error_type = value.pointer("/error/type").and_then(Value::as_str)?;
+    let message = value.pointer("/error/message").and_then(Value::as_str)?;
+    (error_type == "invalid_request_error" && crate::classify::is_context_overflow_message(message))
+        .then(|| {
+            AssistantMessageEvent::error_context_overflow(format!(
+                "Anthropic context window exceeded: {message}"
+            ))
+        })
 }
 
 /// Send the HTTP POST request to the Anthropic Messages API.
@@ -808,6 +837,16 @@ fn process_sse_event(
                     AssistantMessageEvent::error_auth(&msg)
                 }
                 Some("rate_limit_error") => AssistantMessageEvent::error_throttled(&msg),
+                Some("invalid_request_error") => {
+                    if crate::classify::is_context_overflow_message(&msg) {
+                        // "prompt is too long: X tokens > Y maximum"
+                        AssistantMessageEvent::error_context_overflow(&msg)
+                    } else {
+                        // Deterministic client error — not a retryable
+                        // network fault.
+                        AssistantMessageEvent::error(&msg)
+                    }
+                }
                 Some("overloaded_error" | "api_error") => {
                     AssistantMessageEvent::error_network(&msg)
                 }

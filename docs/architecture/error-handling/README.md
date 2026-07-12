@@ -45,7 +45,17 @@ flowchart TB
 
 ## L3 — Error Classification from Stream Events
 
-When the stream produces an `AssistantMessageEvent::Error`, the loop classifies the `error_message` string into a `AgentError` variant via pattern matching in `classify_stream_error` (`src/loop_.rs`):
+When the stream produces an `AssistantMessageEvent::Error`, the loop classifies it into a `AgentError` variant in `classify_stream_error` (`src/loop_.rs`). Classification is **structural first**: every built-in adapter attaches a `StreamErrorKind` to the error event, constructed at the adapter edge from provider-specific error codes/types (e.g. Anthropic `invalid_request_error` with the documented "prompt is too long" wording, OpenAI/Azure `code: "context_length_exceeded"`, Bedrock `validationException`, Google `INVALID_ARGUMENT`). A built-in adapter that leaves a classifiable error to the substring fallback is a bug in that adapter.
+
+| `error_kind` (`StreamErrorKind`) | AgentError variant |
+|---|---|
+| `Throttled` | `ModelThrottled` |
+| `ContextWindowExceeded` | `ContextWindowOverflow` |
+| `Auth` | `StreamError` |
+| `Network` | `NetworkError` |
+| `ContentFiltered` | `ContentFiltered` |
+
+Only when `error_kind` is absent — i.e. for third-party/custom `StreamFn` implementations, or provider errors with no more specific meaning — does the loop fall back to substring matching on the `error_message` string:
 
 | Pattern in `error_message` (case-insensitive) | AgentError variant |
 |---|---|

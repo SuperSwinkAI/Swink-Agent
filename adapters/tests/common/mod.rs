@@ -35,6 +35,21 @@ pub fn find_error_message(events: &[AssistantMessageEvent]) -> Option<String> {
     })
 }
 
+/// Extract the structured `error_kind` from the first `Error` event.
+///
+/// Returns `None` when no `Error` event is present, `Some(None)` when the
+/// first `Error` event carries no structured kind, and `Some(Some(kind))`
+/// when the adapter attached a `StreamErrorKind`.
+#[allow(clippy::option_option)] // outer Option = event presence, inner = structured kind
+pub fn find_error_kind(
+    events: &[AssistantMessageEvent],
+) -> Option<Option<swink_agent::StreamErrorKind>> {
+    events.iter().find_map(|e| match e {
+        AssistantMessageEvent::Error { error_kind, .. } => Some(*error_kind),
+        _ => None,
+    })
+}
+
 /// Extract the stop reason from the first `Done` event, if any.
 pub fn extract_stop_reason(events: &[AssistantMessageEvent]) -> Option<StopReason> {
     events.iter().find_map(|e| match e {

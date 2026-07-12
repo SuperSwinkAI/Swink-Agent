@@ -16,7 +16,7 @@ use swink_agent::{
 };
 use swink_agent_adapters::{AzureAuth, AzureStreamFn};
 
-use common::{event_name, sse_response, test_context};
+use common::{event_name, find_error_kind, sse_response, test_context};
 
 fn test_model() -> ModelSpec {
     ModelSpec::new("azure", "gpt-5.4")
@@ -914,6 +914,68 @@ async fn sse_content_filter_finish_reason() {
     assert_eq!(
         terminal_count, 1,
         "exactly one terminal event expected, got {terminal_count}"
+    );
+}
+
+// ── HTTP 400 context_length_exceeded → ContextWindowExceeded ───────────────
+
+#[tokio::test]
+async fn http_400_context_length_exceeded_sets_context_overflow_kind() {
+    let error_body = serde_json::json!({
+        "error": {
+            "code": "context_length_exceeded",
+            "type": "invalid_request_error",
+            "param": "messages",
+            "message": "This model's maximum context length is 128000 tokens. However, your messages resulted in 131000 tokens."
+        }
+    })
+    .to_string();
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(&error_body))
+        .mount(&server)
+        .await;
+
+    let auth = AzureAuth::ApiKey("test-key".into());
+    let stream_fn = AzureStreamFn::new(server.uri(), auth);
+    let events = collect_events(&stream_fn).await;
+
+    assert_eq!(
+        find_error_kind(&events),
+        Some(Some(StreamErrorKind::ContextWindowExceeded)),
+        "expected structured ContextWindowExceeded, got: {events:?}"
+    );
+}
+
+// ── HTTP 400 content_filter (Azure OpenAI code) → ContentFiltered ──────────
+
+#[tokio::test]
+async fn http_400_content_filter_code_sets_content_filtered_kind() {
+    let error_body = serde_json::json!({
+        "error": {
+            "code": "content_filter",
+            "message": "The response was filtered due to the prompt triggering Azure content management policy."
+        }
+    })
+    .to_string();
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(&error_body))
+        .mount(&server)
+        .await;
+
+    let auth = AzureAuth::ApiKey("test-key".into());
+    let stream_fn = AzureStreamFn::new(server.uri(), auth);
+    let events = collect_events(&stream_fn).await;
+
+    assert_eq!(
+        find_error_kind(&events),
+        Some(Some(StreamErrorKind::ContentFiltered)),
+        "expected structured ContentFiltered, got: {events:?}"
     );
 }
 
