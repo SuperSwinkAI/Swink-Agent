@@ -30,6 +30,9 @@ flowchart TB
         PreDispatchPolicies["pre_dispatch_policies: Vec&lt;Arc&lt;dyn PreDispatchPolicy&gt;&gt;"]
         PostTurnPolicies["post_turn_policies: Vec&lt;Arc&lt;dyn PostTurnPolicy&gt;&gt;"]
         PostLoopPolicies["post_loop_policies: Vec&lt;Arc&lt;dyn PostLoopPolicy&gt;&gt;"]
+        SessionStateField["session_state: Arc&lt;RwLock&lt;SessionState&gt;&gt;<br/>(shared with tools + policies,<br/>delta flushed per turn)"]
+        ToolExecPolicyField["tool_execution_policy: ToolExecutionPolicy<br/>(concurrent / sequential / priority grouping)"]
+        AgentName["agent_name: Option&lt;String&gt;<br/>transfer_chain: Option&lt;TransferChain&gt;<br/>(transfer-loop safety enforcement)"]
     end
 
     subgraph Core["🔄 run_loop"]
@@ -55,7 +58,7 @@ flowchart TB
     classDef eventStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
 
     class AgentLoop,AgentLoopContinue entryStyle
-    class Model,StreamOpts,Retry,StreamFnField,ConvertFn,AsyncTransformFn,TransformFn,ApiKey,MsgProvider,PreTurnPolicies,PreDispatchPolicies,PostTurnPolicies,PostLoopPolicies configStyle
+    class Model,StreamOpts,Retry,StreamFnField,ConvertFn,AsyncTransformFn,TransformFn,ApiKey,MsgProvider,PreTurnPolicies,PreDispatchPolicies,PostTurnPolicies,PostLoopPolicies,SessionStateField,ToolExecPolicyField,AgentName configStyle
     class OuterLoop,InnerLoop,TurnExec,ToolExec coreStyle
     class AgentEvents eventStyle
 ```
@@ -212,6 +215,14 @@ sequenceDiagram
     RunLoop->>RunLoop: inject steering message into context
     Note over RunLoop: continues with next assistant turn
 ```
+
+**Bounded cancellation grace.** Cancellation is cooperative, so a blocking tool may not observe the token promptly. After cancelling the batch token, the dispatcher waits up to `INTERRUPT_ABORT_GRACE` (50 ms, `src/loop_/tool_dispatch/collect.rs`) for in-flight tool tasks to finish; any task still running after the grace window is force-aborted via its `AbortHandle` (spec 004 §145). Results that complete within the grace window are kept.
+
+---
+
+## L4 — Transfer Handling
+
+Agent-to-agent transfer ends the loop the same way steering interrupts a tool batch: when a tool signals a transfer, remaining in-flight tools in the batch are cancelled (same 50 ms grace) and their results are replaced with `"tool call cancelled: transfer initiated"`. The turn ends with `StopReason::Transfer`, and the `AgentResult` carries `transfer_signal: Option<TransferSignal>` for the caller to act on. `AgentLoopConfig.agent_name` and `AgentLoopConfig.transfer_chain` provide transfer-chain safety enforcement (loop/cycle detection across named agents).
 
 ---
 

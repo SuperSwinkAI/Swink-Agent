@@ -12,7 +12,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::{Notify, RwLock, RwLockWriteGuard};
 use tracing::{error, info};
 
 use crate::error::LocalModelError;
@@ -92,6 +92,60 @@ struct LazyLoaderInner<B: LoaderBackend> {
     ready_notify: Notify,
     config: B::Config,
     progress_cb: Option<ProgressCallbackFn>,
+}
+
+struct LoadAttemptGuard<'a, R> {
+    state: RwLockWriteGuard<'a, LoaderState<R>>,
+    ready_notify: &'a Notify,
+    label: &'static str,
+    finished: bool,
+}
+
+impl<'a, R> LoadAttemptGuard<'a, R> {
+    fn new(
+        state: RwLockWriteGuard<'a, LoaderState<R>>,
+        ready_notify: &'a Notify,
+        label: &'static str,
+    ) -> Self {
+        Self {
+            state,
+            ready_notify,
+            label,
+            finished: false,
+        }
+    }
+
+    fn set_downloading(&mut self) {
+        *self.state = LoaderState::Downloading;
+    }
+
+    fn set_loading(&mut self) {
+        *self.state = LoaderState::Loading;
+    }
+
+    fn fail(&mut self, error: String) {
+        *self.state = LoaderState::Failed { error };
+        self.finished = true;
+        self.ready_notify.notify_waiters();
+    }
+
+    fn ready(mut self, runner: R) {
+        *self.state = LoaderState::Ready { runner };
+        self.finished = true;
+    }
+}
+
+impl<R> Drop for LoadAttemptGuard<'_, R> {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+
+        *self.state = LoaderState::Failed {
+            error: format!("{} load attempt cancelled", self.label),
+        };
+        self.ready_notify.notify_waiters();
+    }
 }
 
 impl<B: LoaderBackend> Clone for LazyLoader<B> {
@@ -180,7 +234,7 @@ impl<B: LoaderBackend> LazyLoader<B> {
                 }
             }
 
-            let mut state = self.inner.state.write().await;
+            let state = self.inner.state.write().await;
 
             match classify(&state) {
                 StateClass::Ready => return Ok(()),
@@ -192,8 +246,10 @@ impl<B: LoaderBackend> LazyLoader<B> {
                 StateClass::Failed | StateClass::Unloaded => {}
             }
 
+            let mut attempt = LoadAttemptGuard::new(state, &self.inner.ready_notify, B::label());
+
             // ── Phase 1: Download ──────────────────────────────────────────
-            *state = LoaderState::Downloading;
+            attempt.set_downloading();
             self.notify_progress(ProgressEvent::DownloadProgress {
                 bytes_downloaded: 0,
                 total_bytes: None,
@@ -204,10 +260,7 @@ impl<B: LoaderBackend> LazyLoader<B> {
                     Ok(a) => a,
                     Err(e) => {
                         error!(error = %e, "{} download failed", B::label());
-                        *state = LoaderState::Failed {
-                            error: e.to_string(),
-                        };
-                        self.inner.ready_notify.notify_waiters();
+                        attempt.fail(e.to_string());
                         return Err(e);
                     }
                 };
@@ -215,7 +268,7 @@ impl<B: LoaderBackend> LazyLoader<B> {
             self.notify_progress(ProgressEvent::DownloadComplete);
 
             // ── Phase 2: Build ─────────────────────────────────────────────
-            *state = LoaderState::Loading;
+            attempt.set_loading();
             self.notify_progress(ProgressEvent::LoadingProgress {
                 message: format!("loading {}", B::label()),
             });
@@ -230,17 +283,13 @@ impl<B: LoaderBackend> LazyLoader<B> {
                 Ok(r) => r,
                 Err(e) => {
                     error!(error = %e, "{} loading failed", B::label());
-                    *state = LoaderState::Failed {
-                        error: e.to_string(),
-                    };
-                    self.inner.ready_notify.notify_waiters();
+                    attempt.fail(e.to_string());
                     return Err(e);
                 }
             };
 
             info!("{} ready", B::label());
-            *state = LoaderState::Ready { runner };
-            drop(state);
+            attempt.ready(runner);
             self.notify_progress(ProgressEvent::LoadingComplete);
             self.inner.ready_notify.notify_waiters();
 
@@ -317,7 +366,7 @@ fn classify<R>(state: &LoaderState<R>) -> StateClass {
 #[cfg(test)]
 mod tests {
     use std::io;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::time::Duration;
 
     use tokio::time::timeout;
@@ -403,6 +452,76 @@ mod tests {
 
         fn label() -> &'static str {
             "flaky test backend"
+        }
+    }
+
+    #[derive(Debug)]
+    struct BlockingConfig {
+        download_attempts: Arc<AtomicUsize>,
+        build_attempts: Arc<AtomicUsize>,
+        block_download_once: Arc<AtomicBool>,
+        block_build_once: Arc<AtomicBool>,
+        download_started: Arc<Notify>,
+        build_started: Arc<Notify>,
+        release_download: Arc<Notify>,
+        release_build: Arc<Notify>,
+    }
+
+    impl BlockingConfig {
+        fn new() -> Self {
+            Self {
+                download_attempts: Arc::new(AtomicUsize::new(0)),
+                build_attempts: Arc::new(AtomicUsize::new(0)),
+                block_download_once: Arc::new(AtomicBool::new(false)),
+                block_build_once: Arc::new(AtomicBool::new(false)),
+                download_started: Arc::new(Notify::new()),
+                build_started: Arc::new(Notify::new()),
+                release_download: Arc::new(Notify::new()),
+                release_build: Arc::new(Notify::new()),
+            }
+        }
+    }
+
+    struct BlockingBackend;
+
+    impl LoaderBackend for BlockingBackend {
+        type Config = BlockingConfig;
+        type Artifact = ();
+        type Runner = ();
+
+        fn download(
+            config: &Self::Config,
+            _progress_cb: Option<ProgressCallbackFn>,
+        ) -> Pin<Box<dyn Future<Output = Result<Self::Artifact, LocalModelError>> + Send + '_>>
+        {
+            config.download_attempts.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                if config.block_download_once.swap(false, Ordering::SeqCst) {
+                    config.download_started.notify_waiters();
+                    config.release_download.notified().await;
+                }
+                Ok(())
+            })
+        }
+
+        fn build(
+            config: &Self::Config,
+            _artifact: Self::Artifact,
+            _progress_cb: Option<ProgressCallbackFn>,
+        ) -> Pin<Box<dyn Future<Output = Result<Self::Runner, LocalModelError>> + Send + '_>>
+        {
+            config.build_attempts.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                if config.block_build_once.swap(false, Ordering::SeqCst) {
+                    config.build_started.notify_waiters();
+                    config.release_build.notified().await;
+                }
+                Ok(())
+            })
+        }
+
+        fn label() -> &'static str {
+            "blocking test backend"
         }
     }
 
@@ -565,5 +684,93 @@ mod tests {
             &*loader.inner.state.read().await,
             LoaderState::Ready { .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn cancelling_download_wakes_waiters_and_allows_retry() {
+        let config = BlockingConfig::new();
+        config.block_download_once.store(true, Ordering::SeqCst);
+        let download_started = Arc::clone(&config.download_started);
+        let attempts = Arc::clone(&config.download_attempts);
+        let loader = LazyLoader::<BlockingBackend>::new(config);
+
+        let waiting_loader = loader.clone();
+        let waiter = tokio::spawn(async move {
+            timeout(Duration::from_secs(1), waiting_loader.wait_until_ready()).await
+        });
+
+        let loading_loader = loader.clone();
+        let load = tokio::spawn(async move { loading_loader.ensure_ready().await });
+        timeout(Duration::from_secs(1), download_started.notified())
+            .await
+            .expect("download phase should start");
+
+        load.abort();
+        assert!(
+            load.await
+                .expect_err("load task should be aborted")
+                .is_cancelled()
+        );
+
+        let result = waiter.await.expect("wait task should join");
+        assert!(
+            result.is_ok(),
+            "cancelled download must notify readiness waiters"
+        );
+        assert!(matches!(
+            &*loader.inner.state.read().await,
+            LoaderState::Failed { error } if error.contains("cancelled")
+        ));
+
+        loader
+            .ensure_ready()
+            .await
+            .expect("cancelled download state should allow retry");
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(loader.public_state().await, PublicLoaderState::Ready);
+    }
+
+    #[tokio::test]
+    async fn cancelling_build_wakes_waiters_and_allows_retry() {
+        let config = BlockingConfig::new();
+        config.block_build_once.store(true, Ordering::SeqCst);
+        let build_started = Arc::clone(&config.build_started);
+        let builds = Arc::clone(&config.build_attempts);
+        let loader = LazyLoader::<BlockingBackend>::new(config);
+
+        let waiting_loader = loader.clone();
+        let waiter = tokio::spawn(async move {
+            timeout(Duration::from_secs(1), waiting_loader.wait_until_ready()).await
+        });
+
+        let loading_loader = loader.clone();
+        let load = tokio::spawn(async move { loading_loader.ensure_ready().await });
+        timeout(Duration::from_secs(1), build_started.notified())
+            .await
+            .expect("build phase should start");
+
+        load.abort();
+        assert!(
+            load.await
+                .expect_err("load task should be aborted")
+                .is_cancelled()
+        );
+
+        let result = waiter.await.expect("wait task should join");
+        assert!(
+            result.is_ok(),
+            "cancelled build must notify readiness waiters"
+        );
+        assert!(matches!(
+            &*loader.inner.state.read().await,
+            LoaderState::Failed { error } if error.contains("cancelled")
+        ));
+
+        loader
+            .ensure_ready()
+            .await
+            .expect("cancelled build state should allow retry");
+        assert_eq!(builds.load(Ordering::SeqCst), 2);
+        assert_eq!(loader.public_state().await, PublicLoaderState::Ready);
     }
 }

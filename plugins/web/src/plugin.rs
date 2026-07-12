@@ -47,7 +47,6 @@ pub enum WebPluginError {
 /// safety policies for domain filtering, rate limiting, and content sanitization.
 pub struct WebPlugin {
     config: WebPluginConfig,
-    http_client: reqwest::Client,
     search_provider: Arc<dyn SearchProvider>,
     playwright_bridge: Arc<tokio::sync::Mutex<Option<PlaywrightBridge>>>,
     rate_state: Arc<Mutex<VecDeque<Instant>>>,
@@ -85,7 +84,6 @@ impl WebPlugin {
 
         Ok(Self {
             config,
-            http_client,
             search_provider,
             playwright_bridge: Arc::new(tokio::sync::Mutex::new(None)),
             rate_state: Arc::new(Mutex::new(VecDeque::new())),
@@ -157,18 +155,15 @@ impl Plugin for WebPlugin {
 
         vec![
             Arc::new(
-                FetchTool::new(
-                    self.http_client.clone(),
-                    self.config.max_content_length,
-                    self.config.request_timeout,
-                )
-                .with_domain_filter(domain_filter.clone(), self.config.max_redirects)
-                .with_sanitizer_enabled(self.config.sanitizer_enabled),
+                FetchTool::new(self.config.max_content_length, self.config.request_timeout)
+                    .with_user_agent(self.config.user_agent.clone())
+                    .with_domain_filter(domain_filter.clone(), self.config.max_redirects)
+                    .with_sanitizer_enabled(self.config.sanitizer_enabled),
             ),
-            Arc::new(SearchTool::new(
-                self.search_provider.clone(),
-                self.config.max_search_results,
-            )),
+            Arc::new(
+                SearchTool::new(self.search_provider.clone(), self.config.max_search_results)
+                    .with_sanitizer_enabled(self.config.sanitizer_enabled),
+            ),
             Arc::new(
                 ScreenshotTool::new(
                     self.playwright_bridge.clone(),

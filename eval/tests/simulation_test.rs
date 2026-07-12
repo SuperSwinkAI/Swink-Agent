@@ -16,6 +16,7 @@ fn verdict(reason: &str, label: Option<&str>) -> JudgeVerdict {
         pass: true,
         reason: Some(reason.into()),
         label: label.map(str::to_string),
+        cost: None,
     }
 }
 

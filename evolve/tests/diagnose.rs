@@ -59,12 +59,45 @@ fn build_baseline(results: Vec<EvalCaseResult>) -> BaselineSnapshot {
     }
 }
 
+/// `semantic_tool_selection` / `semantic_tool_parameter` never carry the
+/// failing tool's name in `evaluator_name` (it's always the evaluator's own
+/// static name) — the real signal is the `details` string, formatted by both
+/// evaluators as `"{tool}: {pass|fail} (...)"` segments joined by `"; "`.
+fn tool_selection_details(tool_name: &str, failed: bool) -> Option<String> {
+    let status = if failed { "fail" } else { "pass" };
+    Some(format!("{tool_name}: {status} (reason)"))
+}
+
 #[test]
 fn diagnose_identifies_tool_failure() {
     let cases = vec![
-        build_case_result("c1", vec![failing_metric("tool:my_tool", 0.2, 0.5, None)]),
-        build_case_result("c2", vec![failing_metric("tool:my_tool", 0.1, 0.5, None)]),
-        build_case_result("c3", vec![failing_metric("tool:my_tool", 0.3, 0.5, None)]),
+        build_case_result(
+            "c1",
+            vec![failing_metric(
+                "semantic_tool_selection",
+                0.2,
+                0.5,
+                tool_selection_details("my_tool", true),
+            )],
+        ),
+        build_case_result(
+            "c2",
+            vec![failing_metric(
+                "semantic_tool_selection",
+                0.1,
+                0.5,
+                tool_selection_details("my_tool", true),
+            )],
+        ),
+        build_case_result(
+            "c3",
+            vec![failing_metric(
+                "semantic_tool_selection",
+                0.3,
+                0.5,
+                tool_selection_details("my_tool", true),
+            )],
+        ),
     ];
     let baseline = build_baseline(cases);
     let diagnoser = Diagnoser::new(5);
@@ -78,6 +111,29 @@ fn diagnose_identifies_tool_failure() {
         }
     );
     assert_eq!(weak_points[0].affected_cases.len(), 3);
+}
+
+/// When `semantic_tool_selection` fails but its `details` don't parse into a
+/// tool name (e.g. a judge-error/timeout path with a differently-shaped
+/// message), diagnosis must fall back to `FullPrompt` rather than fabricate a
+/// `tool_name` that matches nothing.
+#[test]
+fn diagnose_falls_back_to_full_prompt_when_tool_name_unparseable() {
+    let cases = vec![build_case_result(
+        "c1",
+        vec![failing_metric(
+            "semantic_tool_selection",
+            0.0,
+            0.5,
+            Some("judge unavailable".to_string()),
+        )],
+    )];
+    let baseline = build_baseline(cases);
+    let diagnoser = Diagnoser::new(5);
+    let target = OptimizationTarget::new("sys", vec![]);
+    let weak_points = diagnoser.diagnose(&baseline, &target);
+    assert_eq!(weak_points.len(), 1);
+    assert_eq!(weak_points[0].component, TargetComponent::FullPrompt);
 }
 
 #[test]
@@ -130,7 +186,12 @@ fn diagnose_ranks_by_severity() {
         build_case_result("c3", vec![failing_metric("response", 0.1, 0.5, None)]),
         build_case_result(
             "c4",
-            vec![failing_metric("tool:other_tool", 0.0, 0.9, None)],
+            vec![failing_metric(
+                "semantic_tool_selection",
+                0.0,
+                0.9,
+                tool_selection_details("other_tool", true),
+            )],
         ),
     ];
     let baseline = build_baseline(cases);

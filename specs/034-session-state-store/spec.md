@@ -174,3 +174,10 @@ A library consumer wants to pre-seed the agent with application-specific state b
 - There is no key-level access control or namespacing. All tools and policies see the same flat key-value namespace. Consumers can adopt naming conventions (e.g., `tool_name.key`) but the system does not enforce them.
 - State size is not bounded by this specification. Consumers are responsible for managing state growth. Future specifications may add eviction or size-limit policies.
 - The persistence strategy is full-snapshot-on-flush (not delta replay). This is simpler to implement, faster to load, and avoids the complexity of ordered delta application. The trade-off is that each flush writes the full state, which is acceptable given that state is expected to be small relative to conversation messages.
+
+## Addendum: FR-018 Default Method Runtime Warning (2026-07-06)
+
+FR-018's no-op default implementations of `save_state`/`load_state` on `SessionStore` (`memory/src/store.rs`) are intentional for backward compatibility with pre-034 custom store implementations (per SC-006), but they are also silent: a custom `SessionStore` that doesn't override these two methods loses all session state with no error and no log line. Tracked in [#1066](https://github.com/SuperSwinkAI/Swink-Agent/issues/1066).
+
+- Short term: the default `save_state`/`load_state` implementations should emit a `tracing::warn!` (rate-limited to avoid per-call log spam) noting that the store hasn't implemented state persistence and session state will be lost.
+- Longer term: `save_state`/`load_state` should become required (non-defaulted) methods on `SessionStore` in the next major version, so a custom implementation must make an explicit choice rather than silently inheriting data loss.

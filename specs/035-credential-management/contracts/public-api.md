@@ -197,10 +197,15 @@ pub trait AgentTool: Send + Sync {
         params: Value,
         cancellation_token: CancellationToken,
         on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
-        credential: Option<ResolvedCredential>,  // NEW parameter
+        state: Arc<std::sync::RwLock<SessionState>>,  // added by spec 034
+        credential: Option<ResolvedCredential>,  // NEW parameter (this spec)
     ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>>;
 }
 ```
+
+Note: the `state` parameter (session key-value state, spec 034) was added between
+`on_update` and `credential` — the real signature in `src/tool.rs` has six
+parameters, not five. This doc previously omitted `state` entirely.
 
 ## AgentOptions Extension (swink-agent crate)
 
@@ -208,6 +213,15 @@ pub trait AgentTool: Send + Sync {
 impl AgentOptions {
     /// Configure a credential resolver for tool authentication.
     pub fn with_credential_resolver(self, resolver: Arc<dyn CredentialResolver>) -> Self;
+
+    /// Set the timeout applied around credential resolution (default: 30 seconds).
+    ///
+    /// This satisfies FR-014 ("configurable timeout"). It wraps every dispatch-layer
+    /// call to `CredentialResolver::resolve()` in `tokio::time::timeout`, independent
+    /// of any internal timeout a resolver implementation applies on its own network
+    /// calls. A resolve that does not complete in time surfaces
+    /// `CredentialError::Timeout` instead of executing the tool.
+    pub const fn with_credential_timeout(self, timeout: Duration) -> Self;
 }
 ```
 
@@ -217,6 +231,7 @@ impl AgentOptions {
 pub struct AgentLoopConfig {
     // ... existing fields ...
     pub credential_resolver: Option<Arc<dyn CredentialResolver>>,  // NEW field
+    pub credential_timeout: Duration,  // NEW field, defaults to 30 seconds
 }
 ```
 
@@ -259,14 +274,88 @@ impl DefaultCredentialResolver {
     /// Set the authorization handler for interactive flows.
     pub fn with_authorization_handler(self, handler: Arc<dyn AuthorizationHandler>) -> Self;
 
+    /// Register the OAuth2 client configuration (authorization endpoint, token
+    /// endpoint, client id/secret, redirect URI, scopes) needed to build an
+    /// authorization URL for `key` when it has no stored credential.
+    ///
+    /// IMPLEMENTATION NOTE (added 2026-07-06, deviates from the original
+    /// contract draft): the original US4 flow diagram ("None → handler
+    /// configured → authorize() → store.set()") did not specify where the
+    /// OAuth2 client id, token endpoint, redirect URI, and scopes come from
+    /// for a key that has *no* stored credential yet — `Credential::OAuth2`
+    /// only exists once a credential has been issued. `AuthorizationConfig`
+    /// (in `swink-agent-auth`, re-exported at the crate root) fills that gap:
+    /// a key must have both a handler and a registered `AuthorizationConfig`
+    /// for the interactive flow to trigger. A handler configured without a
+    /// matching `AuthorizationConfig` for `key` behaves exactly as if no
+    /// handler were configured (FR-011: `NotFound`).
+    pub fn with_authorization_config(self, key: impl Into<String>, config: AuthorizationConfig) -> Self;
+
     /// Set the expiry buffer (default: 60 seconds).
     pub fn with_expiry_buffer(self, buffer: Duration) -> Self;
 
-    /// Set the resolution timeout (default: 30 seconds).
-    pub fn with_timeout(self, timeout: Duration) -> Self;
+    /// Set the resolution timeout (default: 30 seconds, FR-014).
+    ///
+    /// IMPLEMENTED 2026-07-06 in `auth/src/resolver.rs`. Bounds the
+    /// non-interactive resolution path (store lookups and OAuth2 refresh),
+    /// independent of the dispatch-layer `AgentOptions::with_credential_timeout`
+    /// (see above), which wraps every `resolve()` call from outside the
+    /// resolver regardless of implementation. This resolver-level timeout
+    /// additionally bounds the resolver's own internal work (e.g. the OAuth2
+    /// refresh HTTP call).
+    ///
+    /// Deviation from the original contract draft: this timeout does NOT
+    /// bound the interactive authorization flow — see
+    /// `with_authorization_timeout` below. A 30-second default is far too
+    /// short for a human to complete a browser-based authorization, so the
+    /// two are intentionally separate knobs.
+    pub const fn with_timeout(self, timeout: Duration) -> Self;
+
+    /// Set the authorization timeout (default: 5 minutes, FR-020).
+    ///
+    /// NEW in this pass (not in the original contract draft, added to make
+    /// FR-020 configurable as required). Bounds how long the interactive
+    /// authorization flow (handler invocation plus code-for-token exchange)
+    /// may take before resolution fails with
+    /// `CredentialError::AuthorizationTimeout`.
+    pub const fn with_authorization_timeout(self, timeout: Duration) -> Self;
 }
 
 impl CredentialResolver for DefaultCredentialResolver { /* ... */ }
+```
+
+### AuthorizationConfig (auth crate)
+
+```rust
+/// OAuth2 client configuration needed to construct an authorization URL and
+/// exchange the resulting code for tokens, for a credential key that has no
+/// stored credential yet (US4: initial authorization flow).
+///
+/// NEW in this pass — see the IMPLEMENTATION NOTE under
+/// `DefaultCredentialResolver::with_authorization_config` above for why this
+/// type exists.
+#[derive(Debug, Clone)]
+pub struct AuthorizationConfig {
+    pub authorization_endpoint: String,
+    pub token_url: String,
+    pub client_id: String,
+    pub client_secret: Option<String>,
+    pub redirect_uri: String,
+    pub scopes: Vec<String>,
+}
+
+/// Build the authorization URL for the given config and CSRF `state` token.
+pub fn build_authorization_url(config: &AuthorizationConfig, state: &str) -> Result<String, CredentialError>;
+
+/// Exchange an OAuth2 authorization code for tokens (T060).
+pub async fn exchange_code(
+    client: &reqwest::Client,
+    token_url: &str,
+    code: &str,
+    client_id: &str,
+    client_secret: Option<&str>,
+    redirect_uri: &str,
+) -> Result<TokenResponse, CredentialError>;
 ```
 
 ## Re-exports (swink-agent crate lib.rs)

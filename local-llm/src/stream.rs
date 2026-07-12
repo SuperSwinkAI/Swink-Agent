@@ -16,7 +16,7 @@ use uuid::Uuid;
 use swink_agent::stream_assembly::{BlockAccumulator, finalize_blocks};
 use swink_agent::{
     AgentContext, AssistantMessageEvent, Cost, ModelSpec, StopReason, StreamFn, StreamOptions,
-    Usage,
+    ThinkingLevel, Usage,
 };
 
 use crate::error::LocalModelError;
@@ -643,6 +643,12 @@ mod default_tool_call {
         pub args: String,
     }
 
+    #[derive(Debug, PartialEq, Eq)]
+    pub(super) enum ToolCallFinish {
+        Text(String),
+        PartialToolCall { name: String, args: String },
+    }
+
     #[derive(Debug)]
     pub(super) struct ToolCallParser {
         state: State,
@@ -789,10 +795,22 @@ mod default_tool_call {
             (calls, text_out)
         }
 
-        pub fn finish(&mut self) -> Option<String> {
+        pub fn finish(&mut self, preserve_partial_tool_call: bool) -> Option<ToolCallFinish> {
             if self.buffer.is_empty() && self.name_buf.is_empty() && self.args_buf.is_empty() {
                 self.state = State::Normal;
                 return None;
+            }
+
+            if preserve_partial_tool_call
+                && matches!(self.state, State::InArgs)
+                && !self.name_buf.trim().is_empty()
+            {
+                let result = ToolCallFinish::PartialToolCall {
+                    name: self.name_buf.trim().to_string(),
+                    args: self.args_buf.clone(),
+                };
+                self.reset();
+                return Some(result);
             }
 
             let mut text = String::new();
@@ -811,13 +829,16 @@ mod default_tool_call {
                 }
             }
 
+            self.reset();
+            (!text.is_empty()).then_some(ToolCallFinish::Text(text))
+        }
+
+        fn reset(&mut self) {
             self.buffer.clear();
             self.name_buf.clear();
             self.args_buf.clear();
             self.reset_json_state();
             self.state = State::Normal;
-
-            (!text.is_empty()).then_some(text)
         }
 
         fn consume_args_buffer(&mut self) -> Option<usize> {
@@ -999,9 +1020,6 @@ impl StreamState {
     }
 
     fn flush_pending_parsers(&mut self, preserve_partial_tool_call: bool) {
-        #[cfg(not(feature = "gemma4"))]
-        let _ = preserve_partial_tool_call;
-
         #[cfg(feature = "gemma4")]
         if let Some(parser) = self.channel_parser.as_mut() {
             let (thinking_part, text_part) = parser.finish();
@@ -1027,8 +1045,7 @@ impl StreamState {
             self.emit_text(final_text);
         }
 
-        let pending_tool_text = self.default_tool_call_parser.finish();
-        self.emit_text(pending_tool_text);
+        self.flush_pending_default_tool_call(preserve_partial_tool_call);
     }
 
     fn emit_thinking(&mut self, thinking_part: Option<String>) {
@@ -1059,6 +1076,20 @@ impl StreamState {
             match finished {
                 tool_call::ToolCallFinish::Text(text) => self.emit_text(Some(text)),
                 tool_call::ToolCallFinish::PartialToolCall { name, args } => {
+                    self.emit_tool_call(name, args);
+                }
+            }
+        }
+    }
+
+    fn flush_pending_default_tool_call(&mut self, preserve_partial_tool_call: bool) {
+        if let Some(finished) = self
+            .default_tool_call_parser
+            .finish(preserve_partial_tool_call)
+        {
+            match finished {
+                default_tool_call::ToolCallFinish::Text(text) => self.emit_text(Some(text)),
+                default_tool_call::ToolCallFinish::PartialToolCall { name, args } => {
                     self.emit_tool_call(name, args);
                 }
             }
@@ -1127,6 +1158,7 @@ fn cancelled_event(message: impl Into<String>) -> AssistantMessageEvent {
         error_message: message.into(),
         usage: None,
         error_kind: None,
+        retry_after: None,
     }
 }
 
@@ -1145,6 +1177,14 @@ where
         () = cancellation_token.cancelled() => Err(cancelled_event("local inference cancelled")),
         result = operation => result,
     }
+}
+
+fn thinking_enabled_for_model(model: &ModelSpec) -> bool {
+    model.thinking_level != ThinkingLevel::Off
+        && model
+            .capabilities
+            .as_ref()
+            .is_some_and(|capabilities| capabilities.supports_thinking)
 }
 
 // ─── Stream implementation ──────────────────────────────────────────────────
@@ -1174,10 +1214,7 @@ fn local_stream<'a>(
         #[cfg(not(feature = "gemma4"))]
         let is_gemma4 = false;
 
-        let thinking_enabled = model
-            .capabilities
-            .as_ref()
-            .is_some_and(|c| c.supports_thinking);
+        let thinking_enabled = thinking_enabled_for_model(model);
 
         let local_messages = crate::convert::convert_context_messages(
             context,
@@ -1427,6 +1464,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn content_token_count(
         messages: &[crate::convert::LocalMessage],
     ) -> Result<usize, std::convert::Infallible> {
@@ -1441,6 +1479,45 @@ mod tests {
         assert_eq!(prompt_token_budget(0), 0);
         assert_eq!(prompt_token_budget(1), 1);
         assert_eq!(prompt_token_budget(4), 3);
+    }
+
+    #[test]
+    fn thinking_enabled_requires_capability_and_non_off_level() {
+        let mut model = ModelSpec::new("local", "gemma-4-E2B-it");
+        model.capabilities = Some(swink_agent::ModelCapabilities {
+            supports_thinking: true,
+            ..Default::default()
+        });
+
+        assert!(!thinking_enabled_for_model(&model));
+
+        model.thinking_level = ThinkingLevel::Low;
+        assert!(thinking_enabled_for_model(&model));
+
+        model.capabilities = Some(swink_agent::ModelCapabilities {
+            supports_thinking: false,
+            ..Default::default()
+        });
+        assert!(!thinking_enabled_for_model(&model));
+    }
+
+    #[test]
+    fn catalog_local_thinking_model_thinks_by_default() {
+        let preset = swink_agent::model_catalog()
+            .preset("local", "gemma4_e2b")
+            .expect("gemma4_e2b must exist in the model catalog");
+        let model = preset.model_spec();
+
+        assert!(
+            thinking_enabled_for_model(&model),
+            "catalog-built thinking-capable local models must think by default"
+        );
+
+        let disabled = model.with_thinking_level(ThinkingLevel::Off);
+        assert!(
+            !thinking_enabled_for_model(&disabled),
+            "explicitly setting ThinkingLevel::Off must disable thinking"
+        );
     }
 
     #[test]
@@ -1502,18 +1579,21 @@ mod tests {
     async fn token_stream_cancellation_wins_while_waiting_for_runner_event() {
         let (_tx, rx) = tokio::sync::mpsc::channel(1);
         let token = CancellationToken::new();
-        let cancel_token = token.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            cancel_token.cancel();
-        });
+        let stream = drain_token_stream(rx, &token, false);
+        tokio::pin!(stream);
 
-        let events = tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            drain_token_stream(rx, &token, false),
-        )
-        .await
-        .expect("cancellation should interrupt a quiet runner channel");
+        std::future::poll_fn(|cx| match stream.as_mut().poll(cx) {
+            std::task::Poll::Pending => std::task::Poll::Ready(()),
+            std::task::Poll::Ready(events) => {
+                panic!("quiet runner channel resolved before cancellation: {events:?}")
+            }
+        })
+        .await;
+        token.cancel();
+
+        let events = tokio::time::timeout(std::time::Duration::from_secs(1), stream)
+            .await
+            .expect("cancellation should interrupt a quiet runner channel");
 
         assert!(matches!(
             events.last(),
@@ -1637,7 +1717,7 @@ mod tests {
         assert_eq!(calls[0].name, "read_file");
         assert_eq!(calls[0].args, r#"{"path":"foo.rs"}"#);
         assert!(text.is_none());
-        assert!(parser.finish().is_none());
+        assert!(parser.finish(false).is_none());
     }
 
     #[test]
@@ -1673,7 +1753,7 @@ mod tests {
 
         assert!(calls.is_empty());
         assert_eq!(text.as_deref(), Some("please call: read_file next"));
-        assert!(parser.finish().is_none());
+        assert!(parser.finish(false).is_none());
     }
 
     #[test]
@@ -1696,6 +1776,69 @@ mod tests {
                 .iter()
                 .any(|event| matches!(event, AssistantMessageEvent::ToolCallStart { .. }))
         );
+    }
+
+    #[test]
+    fn default_tool_call_finish_preserves_length_truncated_call() {
+        let mut parser = default_tool_call::ToolCallParser::new();
+        let (calls, text) = parser.process(r#"call:read_file{"path""#);
+        assert!(calls.is_empty());
+        assert!(text.is_none());
+
+        match parser.finish(true) {
+            Some(default_tool_call::ToolCallFinish::PartialToolCall { name, args }) => {
+                assert_eq!(name, "read_file");
+                assert_eq!(args, r#"{"path""#);
+            }
+            other => panic!("expected partial tool call, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn default_tool_call_finish_flushes_incomplete_call_as_text_by_default() {
+        let mut parser = default_tool_call::ToolCallParser::new();
+        let (calls, text) = parser.process(r#"call:read_file{"path""#);
+        assert!(calls.is_empty());
+        assert!(text.is_none());
+
+        match parser.finish(false) {
+            Some(default_tool_call::ToolCallFinish::Text(text)) => {
+                assert_eq!(text, r#"call:read_file{"path""#);
+            }
+            other => panic!("expected text flush, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn default_finalize_preserves_length_truncated_tool_call() {
+        let mut state = StreamState::new(false);
+        state.finish_reason = FinishReason::Length;
+        state.process_token(r#"call:read_file{"path""#);
+
+        let events = state.finalize();
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AssistantMessageEvent::ToolCallStart { name, .. } if name == "read_file"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AssistantMessageEvent::ToolCallDelta { delta, .. } if delta == r#"{"path""#
+        )));
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                AssistantMessageEvent::TextDelta { delta, .. } if delta == r#"call:read_file{"path""#
+            )),
+            "truncated tool call should not be emitted as assistant text: {events:?}"
+        );
+        assert!(matches!(
+            events.last(),
+            Some(AssistantMessageEvent::Done {
+                stop_reason: StopReason::Length,
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -1773,6 +1916,7 @@ mod tests {
                 error_message,
                 usage,
                 error_kind,
+                retry_after: _,
             } => {
                 assert_eq!(stop_reason, StopReason::Aborted);
                 assert_eq!(error_message, "local inference cancelled");
@@ -1804,17 +1948,19 @@ mod tests {
     #[tokio::test]
     async fn race_pre_stream_cancellation_aborts_in_flight_readiness() {
         let token = CancellationToken::new();
+        let readiness_started = Arc::new(tokio::sync::Notify::new());
         let cancel_token = token.clone();
+        let cancel_on_readiness = Arc::clone(&readiness_started);
         tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            cancel_on_readiness.notified().await;
             cancel_token.cancel();
         });
 
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(1),
             race_pre_stream_cancellation(&token, async {
-                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-                Ok::<_, AssistantMessageEvent>("ready")
+                readiness_started.notify_one();
+                std::future::pending::<Result<&str, AssistantMessageEvent>>().await
             }),
         )
         .await

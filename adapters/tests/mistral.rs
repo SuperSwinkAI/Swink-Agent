@@ -16,12 +16,15 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use swink_agent::{
     AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessage,
-    AssistantMessageEvent, ContentBlock, LlmMessage, ModelSpec, StopReason, StreamErrorKind,
-    StreamFn, StreamOptions, ToolResultMessage, UserMessage,
+    AssistantMessageEvent, ContentBlock, LlmMessage, ModelSpec, StopReason, StreamFn,
+    StreamOptions, ToolResultMessage, UserMessage,
 };
 use swink_agent_adapters::MistralStreamFn;
 
-use common::{event_name, extract_stop_reason, find_error_message, sse_response, test_context};
+use common::{
+    event_name, extract_stop_reason, find_error_message, notify_on_request, sse_response,
+    test_context,
+};
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -259,7 +262,8 @@ async fn stream_cancellation() {
     ]
     .join("\n");
 
-    let slow_response = sse_response(&body).set_delay(std::time::Duration::from_secs(30));
+    let (slow_response, request_seen) =
+        notify_on_request(sse_response(&body).set_delay(std::time::Duration::from_secs(30)));
 
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -275,12 +279,15 @@ async fn stream_cancellation() {
     let token = CancellationToken::new();
 
     let cancel_token = token.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        cancel_token.cancel();
+    let events_handle = tokio::spawn(async move {
+        sf.stream(&model, &context, &options, token)
+            .collect::<Vec<_>>()
+            .await
     });
 
-    let events: Vec<_> = sf.stream(&model, &context, &options, token).collect().await;
+    request_seen.notified().await;
+    cancel_token.cancel();
+    let events = events_handle.await.expect("stream task should complete");
 
     let has_aborted = events.iter().any(|e| {
         matches!(
@@ -763,7 +770,7 @@ async fn finish_reason_error() {
         message.contains("finish_reason=error"),
         "expected finish_reason in message, got: {message}"
     );
-    assert_eq!(error_kind, Some(StreamErrorKind::Network));
+    assert_eq!(error_kind, None);
 
     let usage = usage.expect("expected usage on terminal error");
     assert_eq!(usage.input, 5);

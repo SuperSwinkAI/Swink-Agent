@@ -5,6 +5,8 @@
 **Status**: Complete
 **Input**: Foundational workspace structure for a 7-crate Rust workspace providing the scaffolding for an LLM-powered agent library.
 
+> **Growth note [2026-07-06]**: The workspace has since grown well beyond the original 7 crates. `Cargo.toml`'s `[workspace].members` now lists 16 members plus the root package (17 total: `.`, `adapters`, `artifacts`, `auth`, `eval`, `eval-judges`, `evolve`, `local-llm`, `macros`, `mcp`, `memory`, `patterns`, `plugins/web`, `policies`, `rpc`, `tui`, `xtask`). The "seven crates" figure below and throughout this spec/data-model reflects the original scaffold, not current state.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Library Consumer Adds Dependency (Priority: P1)
@@ -121,7 +123,7 @@ A contributor working on a different machine checks out the repository and gets 
 
 ### Session 2026-03-20
 
-- Q: What should the xtask crate contain in this scaffold? → A: Empty `main()` with no subcommands — purely structural.
+- Q: What should the xtask crate contain in this scaffold? → A: Empty `main()` with no subcommands — purely structural. [Stale as of 2026-07-06: `xtask/src/main.rs` is now a ~200-line `clap`-based CLI including a `VerifyCatalog` subcommand; no longer empty.]
 - Q: How should the workspace handle pre-MSRV Rust versions? → A: Rely on Cargo's built-in `rust-version` field — no custom check needed.
 - Q: Should all library crates forbid unsafe code, or only core? → A: All library crates forbid unsafe code via `#[forbid(unsafe_code)]`.
 

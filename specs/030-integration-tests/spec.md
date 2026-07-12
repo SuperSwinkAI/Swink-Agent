@@ -144,7 +144,7 @@ A library consumer needs confidence that TUI behavior stays wired correctly as t
 - **FR-013**: Tests MUST verify steering callbacks can modify messages between turns.
 - **FR-014**: Tests MUST verify the abort mechanism stops a running turn.
 - **FR-015**: Tests MUST verify structured output schema enforcement.
-- **FR-016**: Tests MUST verify proxy stream event reconstruction.
+- **FR-016**: Tests MUST verify proxy stream event reconstruction. **Corrected 2026-07-06**: `tests/ac_structured.rs::proxy_stream_reconstruction` satisfies this only partially — it calls `accumulate_message()` directly on a hand-built event vector and never constructs a `ProxyStreamFn`. The adapter's actual HTTP/SSE reconstruction is covered separately by `adapters/tests/proxy_http.rs` (`successful_stream_reconstructs_message`, `text_and_tool_call_reconstruct_correctly`).
 - **FR-017**: Automated tests MUST verify the public TUI message-role surface remains compatible with role-based styling.
 - **FR-018**: Automated tests MUST verify public diff-carrying state remains compatible with inline diff rendering.
 - **FR-019**: Automated tests MUST verify the context gauge threshold math.

@@ -1,12 +1,13 @@
 //! JSON-RPC 2.0 peer — reads and writes NDJSON messages over an async I/O pair.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::io;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 
@@ -35,9 +36,14 @@ pub enum IncomingMessage {
 
 // ─── PeerInner ────────────────────────────────────────────────────────────────
 
+type PendingRequests =
+    Arc<Mutex<HashMap<RequestId, oneshot::Sender<Result<serde_json::Value, RpcError>>>>>;
+type DisconnectedFlag = Arc<AtomicBool>;
+
 struct PeerInner {
     outbound_tx: mpsc::Sender<RawMessage>,
-    pending: Mutex<HashMap<RequestId, oneshot::Sender<Result<serde_json::Value, RpcError>>>>,
+    pending: PendingRequests,
+    disconnected: DisconnectedFlag,
     next_id: AtomicU64,
 }
 
@@ -76,15 +82,21 @@ impl PeerSender {
     ) -> Result<R, RpcError> {
         let id = RequestId::Number(self.inner.next_id.fetch_add(1, Ordering::Relaxed));
         let params = serde_json::to_value(params).map_err(|e| RpcError::internal(e.to_string()))?;
+        self.ensure_connected()?;
 
         let (tx, rx) = oneshot::channel();
         {
             let mut guard = self.inner.pending.lock().unwrap_or_else(|e| e.into_inner());
             guard.insert(id.clone(), tx);
         }
+        if self.inner.disconnected.load(Ordering::Acquire) {
+            self.remove_pending(&id);
+            return Err(RpcError::disconnected());
+        }
 
-        let msg = RawMessage::request(id, method, params);
+        let msg = RawMessage::request(id.clone(), method, params);
         if self.inner.outbound_tx.send(msg).await.is_err() {
+            self.remove_pending(&id);
             return Err(RpcError::disconnected());
         }
 
@@ -111,6 +123,18 @@ impl PeerSender {
             .try_send(msg)
             .map_err(|_| RpcError::disconnected())
     }
+
+    fn ensure_connected(&self) -> Result<(), RpcError> {
+        if self.inner.disconnected.load(Ordering::Acquire) {
+            return Err(RpcError::disconnected());
+        }
+        Ok(())
+    }
+
+    fn remove_pending(&self, id: &RequestId) {
+        let mut guard = self.inner.pending.lock().unwrap_or_else(|e| e.into_inner());
+        guard.remove(id);
+    }
 }
 
 // ─── JsonRpcPeer ──────────────────────────────────────────────────────────────
@@ -136,14 +160,22 @@ impl JsonRpcPeer {
         let (outbound_tx, outbound_rx) = mpsc::channel::<RawMessage>(64);
         let (incoming_tx, incoming_rx) = mpsc::channel::<IncomingMessage>(64);
 
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+        let disconnected = Arc::new(AtomicBool::new(false));
         let inner = Arc::new(PeerInner {
             outbound_tx,
-            pending: Mutex::new(HashMap::new()),
+            pending: Arc::clone(&pending),
+            disconnected: Arc::clone(&disconnected),
             next_id: AtomicU64::new(1),
         });
 
-        tokio::spawn(writer_task(write, outbound_rx));
-        tokio::spawn(reader_task(read, Arc::clone(&inner), incoming_tx));
+        tokio::spawn(writer_task(
+            write,
+            outbound_rx,
+            Arc::clone(&pending),
+            Arc::clone(&disconnected),
+        ));
+        tokio::spawn(reader_task(read, pending, disconnected, incoming_tx));
 
         Self {
             sender: PeerSender { inner },
@@ -163,6 +195,14 @@ impl JsonRpcPeer {
     pub async fn recv_incoming(&mut self) -> Option<IncomingMessage> {
         self.incoming_rx.recv().await
     }
+
+    /// Return the next already-buffered incoming message without waiting.
+    ///
+    /// Returns `None` when no message is currently buffered or the peer has
+    /// disconnected.
+    pub fn try_recv_incoming(&mut self) -> Option<IncomingMessage> {
+        self.incoming_rx.try_recv().ok()
+    }
 }
 
 // ─── Tasks ────────────────────────────────────────────────────────────────────
@@ -170,14 +210,18 @@ impl JsonRpcPeer {
 async fn writer_task<W: tokio::io::AsyncWrite + Unpin>(
     mut write: W,
     mut rx: mpsc::Receiver<RawMessage>,
+    pending: PendingRequests,
+    disconnected: DisconnectedFlag,
 ) {
     while let Some(msg) = rx.recv().await {
         match serde_json::to_string(&msg) {
             Ok(line) => {
                 if write.write_all(line.as_bytes()).await.is_err() {
+                    mark_disconnected(&pending, &disconnected);
                     break;
                 }
                 if write.write_all(b"\n").await.is_err() {
+                    mark_disconnected(&pending, &disconnected);
                     break;
                 }
             }
@@ -190,19 +234,15 @@ async fn writer_task<W: tokio::io::AsyncWrite + Unpin>(
 
 async fn reader_task<R: tokio::io::AsyncRead + Unpin>(
     read: R,
-    inner: Arc<PeerInner>,
+    pending: PendingRequests,
+    disconnected: DisconnectedFlag,
     incoming_tx: mpsc::Sender<IncomingMessage>,
 ) {
-    let buf = BufReader::new(read);
-    let mut lines = buf.lines();
+    let mut buf = BufReader::new(read);
     loop {
-        match lines.next_line().await {
+        match read_bounded_line(&mut buf).await {
             Ok(Some(line)) => {
-                if line.len() > MAX_LINE_BYTES {
-                    warn!("JSON-RPC line exceeds {MAX_LINE_BYTES} bytes; closing");
-                    break;
-                }
-                dispatch_line(&line, &inner, &incoming_tx).await;
+                dispatch_line(&line, &pending, &incoming_tx).await;
             }
             Ok(None) => break, // EOF
             Err(e) => {
@@ -211,16 +251,70 @@ async fn reader_task<R: tokio::io::AsyncRead + Unpin>(
             }
         }
     }
-    // Drain pending requests with a disconnection error.
-    let mut guard = inner.pending.lock().unwrap_or_else(|e| e.into_inner());
+    mark_disconnected(&pending, &disconnected);
+}
+
+fn mark_disconnected(pending: &PendingRequests, disconnected: &DisconnectedFlag) {
+    if disconnected.swap(true, Ordering::AcqRel) {
+        return;
+    }
+
+    let mut guard = pending.lock().unwrap_or_else(|e| e.into_inner());
     for (_, tx) in guard.drain() {
         let _ = tx.send(Err(RpcError::disconnected()));
     }
 }
 
+async fn read_bounded_line<R: AsyncBufRead + Unpin>(reader: &mut R) -> io::Result<Option<String>> {
+    let mut line = Vec::new();
+
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            if line.is_empty() {
+                return Ok(None);
+            }
+            return decode_line(line);
+        }
+
+        if let Some(newline_index) = available.iter().position(|byte| *byte == b'\n') {
+            if line.len() + newline_index > MAX_LINE_BYTES {
+                return Err(line_too_long());
+            }
+            line.extend_from_slice(&available[..newline_index]);
+            reader.consume(newline_index + 1);
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            return decode_line(line);
+        }
+
+        if line.len() + available.len() > MAX_LINE_BYTES {
+            return Err(line_too_long());
+        }
+
+        line.extend_from_slice(available);
+        let consumed = available.len();
+        reader.consume(consumed);
+    }
+}
+
+fn decode_line(line: Vec<u8>) -> io::Result<Option<String>> {
+    String::from_utf8(line)
+        .map(Some)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
+fn line_too_long() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("JSON-RPC line exceeds {MAX_LINE_BYTES} bytes"),
+    )
+}
+
 async fn dispatch_line(
     line: &str,
-    inner: &Arc<PeerInner>,
+    pending: &PendingRequests,
     incoming_tx: &mpsc::Sender<IncomingMessage>,
 ) {
     let raw: RawMessage = match serde_json::from_str(line) {
@@ -252,7 +346,7 @@ async fn dispatch_line(
     match (id, method) {
         (Some(id), None) => {
             // Response.
-            let mut guard = inner.pending.lock().unwrap_or_else(|e| e.into_inner());
+            let mut guard = pending.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(tx) = guard.remove(&id) {
                 let res = if let Some(err) = error {
                     Err(err)

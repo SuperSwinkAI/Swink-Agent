@@ -357,6 +357,57 @@ async fn streaming_load_returns_invalid_data_for_orphaned_explicit_version_file(
 }
 
 #[tokio::test]
+async fn streaming_load_explicit_version_rejects_unrelated_missing_metadata_content() {
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let store = FileArtifactStore::new(tmpdir.path());
+
+    store
+        .save("sess-stream-missing", "report.md", text_data("v1"))
+        .await
+        .expect("initial save should succeed");
+    store
+        .save("sess-stream-missing", "report.md", text_data("v2"))
+        .await
+        .expect("second save should succeed");
+
+    let artifact_dir = tmpdir.path().join("sess-stream-missing").join("report.md");
+    tokio::fs::remove_file(artifact_dir.join("v1.bin"))
+        .await
+        .expect("content file should be removable");
+
+    let err = store
+        .load_stream("sess-stream-missing", "report.md", Some(2))
+        .await
+        .err()
+        .expect("streaming reads should validate the full metadata/content set");
+    assert_invalid_data_storage_error(err, "metadata references missing content");
+}
+
+#[tokio::test]
+async fn streaming_load_latest_returns_invalid_data_for_orphaned_version_file_without_meta() {
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let store = FileArtifactStore::new(tmpdir.path());
+
+    let artifact_dir = tmpdir
+        .path()
+        .join("sess-stream-orphan-latest")
+        .join("report.md");
+    tokio::fs::create_dir_all(&artifact_dir)
+        .await
+        .expect("artifact directory should be creatable");
+    tokio::fs::write(artifact_dir.join("v1.bin"), b"orphan")
+        .await
+        .expect("orphaned content file should be creatable");
+
+    let err = store
+        .load_stream("sess-stream-orphan-latest", "report.md", None)
+        .await
+        .err()
+        .expect("orphaned latest content should be surfaced as corruption");
+    assert_invalid_data_storage_error(err, "without metadata membership");
+}
+
+#[tokio::test]
 async fn streaming_save_refuses_to_overwrite_orphaned_next_version_file() {
     let tmpdir = tempfile::TempDir::new().unwrap();
     let store = FileArtifactStore::new(tmpdir.path());

@@ -1,7 +1,7 @@
 //! US2 / T101: `EvalRunner::with_initial_session_file` loader tests.
 
 use std::fs;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
@@ -37,6 +37,70 @@ impl AgentFactory for RecordingFactory {
     }
 }
 
+struct HooklessRecordingFactory {
+    created_sessions: Arc<Mutex<Vec<Arc<RwLock<SessionState>>>>>,
+}
+
+impl HooklessRecordingFactory {
+    fn new() -> Self {
+        Self {
+            created_sessions: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+}
+
+impl AgentFactory for HooklessRecordingFactory {
+    fn create_agent(&self, case: &EvalCase) -> Result<(Agent, CancellationToken), EvalError> {
+        let options = AgentOptions::new_simple(
+            &case.system_prompt,
+            ModelSpec::new("test", "test-model"),
+            Arc::new(SimpleMockStreamFn::new(vec!["ok".to_string()])),
+        );
+        let agent = Agent::new(options);
+        self.created_sessions
+            .lock()
+            .unwrap()
+            .push(Arc::clone(agent.session_state()));
+        Ok((agent, CancellationToken::new()))
+    }
+}
+
+/// Factory that pre-seeds session entries in `create_agent`, including a key
+/// that collides with the baseline file (`greeting`).
+struct SeedingFactory {
+    created_sessions: Arc<Mutex<Vec<Arc<RwLock<SessionState>>>>>,
+}
+
+impl SeedingFactory {
+    fn new() -> Self {
+        Self {
+            created_sessions: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+}
+
+impl AgentFactory for SeedingFactory {
+    fn create_agent(&self, case: &EvalCase) -> Result<(Agent, CancellationToken), EvalError> {
+        let options = AgentOptions::new_simple(
+            &case.system_prompt,
+            ModelSpec::new("test", "test-model"),
+            Arc::new(SimpleMockStreamFn::new(vec!["ok".to_string()])),
+        );
+        let agent = Agent::new(options);
+        {
+            let mut state = agent.session_state().write().unwrap();
+            state.set("factory_key", "factory value").unwrap();
+            // Collides with the baseline file's `greeting` — factory must win.
+            state.set("greeting", "factory greeting").unwrap();
+        }
+        self.created_sessions
+            .lock()
+            .unwrap()
+            .push(Arc::clone(agent.session_state()));
+        Ok((agent, CancellationToken::new()))
+    }
+}
+
 fn eval_set() -> EvalSet {
     EvalSet {
         id: "init-suite".into(),
@@ -46,18 +110,26 @@ fn eval_set() -> EvalSet {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn valid_session_file_is_surfaced_to_factory() {
-    let dir = TempDir::new().unwrap();
+fn write_initial_session(dir: &TempDir) -> std::path::PathBuf {
     let path = dir.path().join("initial_session.json");
     fs::write(
         &path,
         serde_json::to_vec(&serde_json::json!({
-            "data": {"greeting": "hello world"}
+            "data": {
+                "greeting": "hello world",
+                "baseline_only": "from baseline"
+            }
         }))
         .unwrap(),
     )
     .unwrap();
+    path
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn valid_session_file_is_surfaced_to_factory() {
+    let dir = TempDir::new().unwrap();
+    let path = write_initial_session(&dir);
 
     let factory = RecordingFactory::new();
     let observed = Arc::clone(&factory.latest_session);
@@ -74,6 +146,69 @@ async fn valid_session_file_is_surfaced_to_factory() {
         .expect("factory should see initial session");
     let greeting: Option<String> = seen.get("greeting");
     assert_eq!(greeting.as_deref(), Some("hello world"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn initial_session_is_applied_to_each_created_agent() {
+    let dir = TempDir::new().unwrap();
+    let path = write_initial_session(&dir);
+    let factory = HooklessRecordingFactory::new();
+    let observed = Arc::clone(&factory.created_sessions);
+    let set = EvalSet {
+        cases: vec![common::make_case("c1"), common::make_case("c2")],
+        ..eval_set()
+    };
+
+    let _ = EvalRunner::new(EvaluatorRegistry::new())
+        .with_parallelism(2)
+        .with_initial_session_file(path)
+        .run_set(&set, &factory)
+        .await
+        .unwrap();
+
+    let sessions = observed.lock().unwrap();
+    assert_eq!(sessions.len(), 2);
+    for state in sessions.iter() {
+        let greeting: Option<String> = state.read().unwrap().get("greeting");
+        assert_eq!(greeting.as_deref(), Some("hello world"));
+    }
+}
+
+/// FR-039 baseline semantics: the initial session must underlie — not
+/// clobber — state a factory seeded in `create_agent`. Factory entries win on
+/// key collisions; the baseline only fills in absent keys.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn initial_session_underlies_factory_seeded_state() {
+    let dir = TempDir::new().unwrap();
+    let path = write_initial_session(&dir);
+    let factory = SeedingFactory::new();
+    let observed = Arc::clone(&factory.created_sessions);
+
+    let _ = EvalRunner::new(EvaluatorRegistry::new())
+        .with_initial_session_file(path)
+        .run_set(&eval_set(), &factory)
+        .await
+        .unwrap();
+
+    let sessions = observed.lock().unwrap();
+    assert_eq!(sessions.len(), 1);
+    let state = sessions[0].read().unwrap();
+
+    // Factory-seeded key survives baseline application.
+    assert_eq!(
+        state.get::<String>("factory_key").as_deref(),
+        Some("factory value")
+    );
+    // On collision, the factory's value wins over the baseline.
+    assert_eq!(
+        state.get::<String>("greeting").as_deref(),
+        Some("factory greeting")
+    );
+    // Baseline-only key is filled in underneath.
+    assert_eq!(
+        state.get::<String>("baseline_only").as_deref(),
+        Some("from baseline")
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -110,7 +245,7 @@ async fn malformed_file_yields_invalid_case_error() {
 #[test]
 fn initial_session_participates_in_cache_key() {
     use swink_agent_eval::{FingerprintContext, TaskResultCacheKey};
-    let fp = common::make_case("c1").content_fingerprint();
+    let fp = common::make_case("c1").cache_fingerprint();
     let a = TaskResultCacheKey::from_fingerprint(&fp, &FingerprintContext::default());
     let b = TaskResultCacheKey::from_fingerprint(
         &fp,

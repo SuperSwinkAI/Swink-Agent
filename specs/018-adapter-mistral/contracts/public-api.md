@@ -62,23 +62,28 @@ Consumer import: `use swink_agent_adapters::MistralStreamFn;`
 
 ## Preset Keys
 
+Mistral presets are not exposed as named constants. They are looked up
+dynamically from the model catalog via `RemotePresetKey::new`:
+
 ```rust
 // In remote_presets module
-pub mod mistral {
-    pub const MISTRAL_LARGE: RemotePresetKey;
-    pub const MISTRAL_MEDIUM: RemotePresetKey;
-    pub const MISTRAL_SMALL: RemotePresetKey;
-    pub const CODESTRAL: RemotePresetKey;
-    pub const DEVSTRAL: RemotePresetKey;
-    pub const PIXTRAL_LARGE: RemotePresetKey;
-    pub const PIXTRAL_12B: RemotePresetKey;
-    pub const MINISTRAL_3B: RemotePresetKey;
-    pub const MINISTRAL_8B: RemotePresetKey;
-    pub const MINISTRAL_14B: RemotePresetKey;
-    pub const MAGISTRAL_MEDIUM: RemotePresetKey;
-    pub const MAGISTRAL_SMALL: RemotePresetKey;
-}
+RemotePresetKey::new("mistral", "mistral_large")
+RemotePresetKey::new("mistral", "mistral_medium")
+RemotePresetKey::new("mistral", "mistral_small")
+RemotePresetKey::new("mistral", "codestral")
+RemotePresetKey::new("mistral", "devstral")
+RemotePresetKey::new("mistral", "pixtral_large")
+RemotePresetKey::new("mistral", "pixtral_12b")
+RemotePresetKey::new("mistral", "ministral_3b")
+RemotePresetKey::new("mistral", "ministral_8b")
+RemotePresetKey::new("mistral", "ministral_14b")
+RemotePresetKey::new("mistral", "magistral_medium")
+RemotePresetKey::new("mistral", "magistral_small")
 ```
+
+Pass the resulting key to `build_remote_connection()`, or look up a preset by
+`model_id` directly via `preset("mistral-large-latest")`. The catalog is the
+source of truth for the current set of preset IDs (`src/model_catalog.toml`).
 
 ## Wire Protocol
 
@@ -95,6 +100,6 @@ pub mod mistral {
 
 1. Events emitted follow the `AssistantMessageEvent` sequence: `Start` → (`TextStart`/`TextDelta`/`TextEnd` | `ToolCallStart`/`ToolCallDelta`/`ToolCallEnd`)* → `Done`/`Error`
 2. Tool call IDs in emitted events use harness format (`call_*`), never Mistral's 9-char format
-3. `finish_reason: "model_length"` transparently maps to `StopReason::MaxTokens`
+3. `finish_reason: "model_length"` transparently maps to `StopReason::Length`
 4. Usage is extracted from the final SSE chunk (no `stream_options` sent)
 5. Stream cancellation via `CancellationToken` closes open blocks via shared finalization

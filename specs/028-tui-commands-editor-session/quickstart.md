@@ -101,27 +101,46 @@ match open_editor(&editor) {
 
 ### Session Persistence
 
+<!-- [Corrected 2026-07-06: previous example called an instance method `new_session_id`,
+     used a `save`/`load` signature that doesn't match the trait, and referenced
+     non-existent `SessionMeta` fields (`model`, `message_count`). The real app
+     (tui/src/app/persistence.rs) uses `save_full`/`load_full`, which additionally
+     persist a crash-recovery agent-state snapshot. -->
+
 ```rust
 use swink_agent_tui::session::{JsonlSessionStore, SessionMeta, SessionStore};
+use swink_agent_memory::now_utc;
 use std::path::PathBuf;
 
 // Create a session store
 let store = JsonlSessionStore::new(PathBuf::from("/tmp/sessions")).unwrap();
 
-// Generate a session ID
-let id = store.new_session_id();
+// Generate a session ID (an associated function, not an instance method)
+let id = JsonlSessionStore::new_session_id();
 
-// Save a session (messages come from the agent)
-store.save(&id, "claude-sonnet-4-20250514", "You are helpful.", &messages).unwrap();
+// Build metadata and save the session (messages come from the agent), along
+// with a crash-recovery state snapshot capturing in-progress agent state.
+let now = now_utc();
+let meta = SessionMeta {
+    id: id.clone(),
+    title: "claude-sonnet-4-20250514".to_string(),
+    created_at: now,
+    updated_at: now,
+    version: 1,
+    sequence: 0,
+};
+let state_snapshot = serde_json::Value::Null; // e.g. agent.session_state().read().snapshot()
+let persisted_meta = store.save_full(&id, &meta, &messages, &state_snapshot).unwrap();
 
 // List saved sessions
 let sessions = store.list().unwrap();
 for meta in &sessions {
-    println!("{}: {} ({} messages)", meta.id, meta.model, meta.message_count);
+    println!("{}: {}", meta.id, meta.title);
 }
 
-// Load a session
-let (meta, messages) = store.load(&id).unwrap();
+// Load a session. Pass a `CustomMessageRegistry` (or `None`) so
+// `AgentMessage::Custom` messages can be reconstructed.
+let (meta, messages, saved_state) = store.load_full(&id, None).unwrap();
 println!("Loaded session {} with {} messages", meta.id, messages.len());
 ```
 
@@ -150,7 +169,7 @@ println!("Loaded session {} with {} messages", meta.id, messages.len());
 | Command | Action |
 |---------|--------|
 | `/quit` or `/q` | Exit the TUI |
-| `/thinking <level>` | Set thinking level (off/low/medium/high) |
+| `/thinking <level>` | Set thinking level (off/minimal/low/medium/high/extra-high) |
 | `/system <prompt>` | Set system prompt |
 | `/reset` | Reset conversation and agent state |
 | `/editor` | Open external editor for prompt composition |

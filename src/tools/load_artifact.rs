@@ -11,15 +11,15 @@ use crate::artifact::ArtifactStore;
 use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validated_schema_for};
 
 /// Built-in tool that loads a previously saved artifact.
-pub struct LoadArtifactTool<S: ArtifactStore + 'static> {
-    store: Arc<S>,
+pub struct LoadArtifactTool {
+    store: Arc<dyn ArtifactStore>,
     schema: Value,
 }
 
-impl<S: ArtifactStore + 'static> LoadArtifactTool<S> {
+impl LoadArtifactTool {
     /// Create a new `LoadArtifactTool` backed by the given store.
     #[must_use]
-    pub fn new(store: Arc<S>) -> Self {
+    pub fn new(store: Arc<dyn ArtifactStore>) -> Self {
         Self {
             store,
             schema: validated_schema_for::<Params>(),
@@ -36,8 +36,7 @@ struct Params {
     version: Option<u32>,
 }
 
-#[allow(clippy::unnecessary_literal_bound)]
-impl<S: ArtifactStore + 'static> AgentTool for LoadArtifactTool<S> {
+impl AgentTool for LoadArtifactTool {
     fn name(&self) -> &str {
         "load_artifact"
     }

@@ -478,6 +478,39 @@ pub struct CaseFingerprint {
     pub semantic_tool_selection: bool,
 }
 
+/// Narrow, cache-key-only projection of an [`EvalCase`] (spec 043 FR-038).
+///
+/// Unlike [`CaseFingerprint`] — which feeds [`EvalCase::default_session_id`]
+/// and deliberately captures every case field so distinct cases never share a
+/// session ID — this type hashes only the case-derived fields FR-038 lists as
+/// part of the agent-invocation cache key: `case_id`, `system_prompt`, and
+/// `user_messages`. The remaining three fields FR-038 names
+/// (`initial_session`, tool-set hash, agent model) live on
+/// [`crate::cache::FingerprintContext`], which the caller combines with this
+/// type via [`crate::cache::CacheKey::from_fingerprint`].
+///
+/// Fields outside this set (expected criteria, budget, evaluators, metadata,
+/// attachments, etc.) affect *scoring*, not what the agent actually sees, so
+/// they intentionally do NOT invalidate the agent-invocation cache — the same
+/// cached invocation remains valid for a case whose only change is, say, an
+/// added assertion or a new evaluator filter.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CacheFingerprint {
+    pub case_id: String,
+    pub system_prompt: String,
+    pub user_messages: Vec<String>,
+}
+
+impl From<&EvalCase> for CacheFingerprint {
+    fn from(case: &EvalCase) -> Self {
+        Self {
+            case_id: case.id.clone(),
+            system_prompt: case.system_prompt.clone(),
+            user_messages: case.user_messages.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ExpectedToolCallFingerprint {
     pub tool_name: String,
@@ -829,6 +862,14 @@ impl EvalCase {
     #[must_use]
     pub fn content_fingerprint(&self) -> CaseFingerprint {
         CaseFingerprint::from(self)
+    }
+
+    /// Narrow cache-key projection used by the runner's invocation cache
+    /// (FR-038). See [`CacheFingerprint`] for why this is deliberately
+    /// smaller than [`Self::content_fingerprint`].
+    #[must_use]
+    pub fn cache_fingerprint(&self) -> CacheFingerprint {
+        CacheFingerprint::from(self)
     }
 
     /// Deterministically derive the default session ID for this case.

@@ -6,7 +6,7 @@
 //! Concurrent writes to the same session may corrupt the file.
 //! Callers are expected to enforce single-writer access.
 
-use std::io::{self, BufRead, Seek, SeekFrom, Write};
+use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use swink_agent::atomic_fs::{atomic_write, atomic_write_unlocked, with_target_lock};
@@ -28,6 +28,8 @@ const META_LINE_PADDING: usize = 64;
 enum SessionRecord {
     Llm(Box<LlmMessage>),
     Custom(serde_json::Value),
+    AppendBegin,
+    Meta(Box<SessionMeta>),
     State(serde_json::Value),
 }
 
@@ -37,7 +39,7 @@ impl SessionRecord {
         match Self::parse(&line).ok()? {
             Self::Llm(llm) => Some(Self::Llm(llm)),
             Self::Custom(envelope) => Some(Self::Custom(envelope)),
-            Self::State(_) => None,
+            Self::AppendBegin | Self::Meta(_) | Self::State(_) => None,
         }
     }
 
@@ -49,6 +51,16 @@ impl SessionRecord {
         match self {
             Self::Llm(message) => serde_json::to_string(message).map_err(io::Error::other),
             Self::Custom(envelope) => serde_json::to_string(envelope).map_err(io::Error::other),
+            Self::AppendBegin => serde_json::to_string(&serde_json::json!({
+                "_append": true,
+                "phase": "begin"
+            }))
+            .map_err(io::Error::other),
+            Self::Meta(meta) => serde_json::to_string(&serde_json::json!({
+                "_meta": true,
+                "data": meta
+            }))
+            .map_err(io::Error::other),
             Self::State(state) => serde_json::to_string(&serde_json::json!({
                 "_state": true,
                 "data": state
@@ -66,6 +78,20 @@ impl SessionRecord {
                     .cloned()
                     .unwrap_or(serde_json::Value::Null),
             ));
+        }
+        if value.get("_append").and_then(serde_json::Value::as_bool) == Some(true) {
+            return Ok(Self::AppendBegin);
+        }
+        if value.get("_meta").and_then(serde_json::Value::as_bool) == Some(true) {
+            return serde_json::from_value::<SessionMeta>(
+                value
+                    .get("data")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+            )
+            .map(Box::new)
+            .map(Self::Meta)
+            .map_err(io::Error::other);
         }
         if value.get("_custom").and_then(serde_json::Value::as_bool) == Some(true) {
             return Ok(Self::Custom(value));
@@ -150,21 +176,23 @@ fn read_meta_and_message_lines(path: &Path, id: &str) -> io::Result<(SessionMeta
 
     let meta_bytes = read_raw_line(&mut reader)?.ok_or_else(empty_file)?;
     let meta_line = String::from_utf8(meta_bytes).map_err(invalid_meta)?;
-    let meta = serde_json::from_str(&meta_line).map_err(invalid_meta)?;
+    let mut meta =
+        canonical_meta_for_id(serde_json::from_str(&meta_line).map_err(invalid_meta)?, id);
 
     // Read message lines as raw bytes and validate UTF-8 per line. A crash
     // mid-append can truncate the final line inside a multi-byte UTF-8
     // sequence; `BufRead::lines()` would surface that as an `io::Error` and
-    // abort the whole load before any per-line JSON classification runs.
+    // abort the whole load before any per-line record classification runs.
     // Instead, skip the corrupt line with a warning so the rest of the
     // session is recovered (spec 021 FR-004: partial recovery over total
     // failure, same as bad-JSON lines in `classify_and_migrate`).
     let mut remaining_lines = Vec::new();
+    let mut pending_append_lines: Option<Vec<String>> = None;
     let mut line_num = 1_usize;
     while let Some(raw) = read_raw_line(&mut reader)? {
         line_num += 1;
-        match String::from_utf8(raw) {
-            Ok(line) => remaining_lines.push(line),
+        let line = match String::from_utf8(raw) {
+            Ok(line) => line,
             Err(error) => {
                 tracing::warn!(
                     line = line_num,
@@ -172,8 +200,34 @@ fn read_meta_and_message_lines(path: &Path, id: &str) -> io::Result<(SessionMeta
                     "skipping invalid-UTF-8 line in session {id} \
                      (likely truncated by a crash mid-write)"
                 );
+                continue;
+            }
+        };
+        match SessionRecord::parse(&line) {
+            Ok(SessionRecord::AppendBegin) => {
+                if pending_append_lines.is_some() {
+                    tracing::warn!("discarding uncommitted nested append records in session {id}");
+                }
+                pending_append_lines = Some(Vec::new());
+            }
+            Ok(SessionRecord::Meta(meta_update)) => {
+                if let Some(mut lines) = pending_append_lines.take() {
+                    remaining_lines.append(&mut lines);
+                }
+                meta = canonical_meta_for_id(*meta_update, id);
+            }
+            Ok(SessionRecord::Llm(_) | SessionRecord::Custom(_) | SessionRecord::State(_))
+            | Err(_) => {
+                if let Some(lines) = pending_append_lines.as_mut() {
+                    lines.push(line);
+                } else {
+                    remaining_lines.push(line);
+                }
             }
         }
+    }
+    if pending_append_lines.is_some() {
+        tracing::warn!("discarding uncommitted append records in session {id}");
     }
 
     Ok((meta, remaining_lines))
@@ -209,6 +263,15 @@ fn extract_state_from_lines(lines: &[String], id: &str) -> io::Result<Option<ser
     Ok(None)
 }
 
+/// Reads the authoritative [`SessionMeta`] and the byte length of the padded
+/// first line (used for in-place metadata patches).
+///
+/// The append-in-place protocol commits metadata by appending a
+/// [`SessionRecord::Meta`] record at the tail and only afterwards patches the
+/// padded first line, so after a crash the first line may be stale: the LAST
+/// Meta record in the file wins, falling back to the first line when no Meta
+/// record exists. Meta records fully replace each other (no merging), and
+/// lines that fail to parse (e.g. a torn tail line) are skipped.
 fn read_meta_with_line_len(path: &Path, id: &str) -> io::Result<(SessionMeta, usize)> {
     let mut first_line = String::new();
     let file = open_session_file(path, id)?;
@@ -220,8 +283,117 @@ fn read_meta_with_line_len(path: &Path, id: &str) -> io::Result<(SessionMeta, us
     }
 
     let line_len = first_line.len();
-    let meta = serde_json::from_str(first_line.trim_end()).map_err(invalid_meta)?;
-    Ok((meta, line_len))
+    let meta = canonical_meta_for_id(
+        serde_json::from_str(first_line.trim_end()).map_err(invalid_meta)?,
+        id,
+    );
+    let mut file = reader.into_inner();
+    match find_last_meta_commit(&mut file, line_len as u64)? {
+        Some(meta_update) => Ok((canonical_meta_for_id(meta_update, id), line_len)),
+        None => Ok((meta, line_len)),
+    }
+}
+
+/// Initial tail-window size for [`find_last_meta_commit`]'s backward scan.
+const META_TAIL_WINDOW: u64 = 64 * 1024;
+
+/// Finds the most recent committed [`SessionRecord::Meta`] record after the
+/// first line, or `None` if the file contains no parseable Meta record.
+///
+/// Because every committed append ends with a Meta commit record, the record
+/// we want is almost always within the last few bytes of the file. Rather
+/// than forward-parsing every line (O(file size), which made
+/// `SessionStore::list` a full-corpus scan), this reads geometrically growing
+/// tail windows (starting at [`META_TAIL_WINDOW`]) and scans their complete
+/// lines in reverse; when a window grows to cover the whole body it falls
+/// back to the historical forward line-by-line scan, so the result — last
+/// parseable Meta wins, unparseable lines skipped — is identical.
+///
+/// An invalid-UTF-8 line (e.g. a multi-byte character torn by a crash
+/// mid-write) is skipped with a warning like any other unparseable line,
+/// matching the tolerant forward scan (spec 021 FR-004 addendum / issue
+/// #1067). Invalid UTF-8 that lies before the tail window of a large file
+/// goes unnoticed when a later Meta commit is found, favoring recovery of
+/// the committed metadata.
+fn find_last_meta_commit(
+    file: &mut std::fs::File,
+    body_start: u64,
+) -> io::Result<Option<SessionMeta>> {
+    let file_len = file.metadata()?.len();
+    let body_len = file_len.saturating_sub(body_start);
+
+    let mut window = META_TAIL_WINDOW;
+    while window < body_len {
+        // `window < body_len` guarantees `start > body_start`.
+        let start = file_len - window;
+        file.seek(SeekFrom::Start(start))?;
+        let mut buf = vec![0u8; usize::try_from(window).map_err(io::Error::other)?];
+        file.read_exact(&mut buf)?;
+
+        // The window starts mid-line: bytes before the first newline are a
+        // partial line (they may even split a multi-byte character at the
+        // window boundary), so only the bytes after it are complete lines.
+        if let Some(pos) = buf.iter().position(|&b| b == b'\n')
+            && let Some(meta) = last_meta_in_complete_lines(&buf[pos + 1..])
+        {
+            return Ok(Some(meta));
+        }
+
+        window = window.saturating_mul(2);
+    }
+
+    // Terminal case: the remaining window covers the whole body. Stream
+    // forward line-by-line exactly like the historical implementation so
+    // memory stays bounded, tolerating invalid-UTF-8 lines the same way
+    // the full-load forward scan does.
+    file.seek(SeekFrom::Start(body_start))?;
+    let mut meta = None;
+    let mut reader = io::BufReader::new(file);
+    while let Some(raw) = read_raw_line(&mut reader)? {
+        let Ok(line) = String::from_utf8(raw) else {
+            tracing::warn!(
+                "skipping invalid-UTF-8 line in session meta scan \
+                 (likely truncated by a crash mid-write)"
+            );
+            continue;
+        };
+        if let Ok(SessionRecord::Meta(meta_update)) = SessionRecord::parse(&line) {
+            meta = Some(*meta_update);
+        }
+    }
+    Ok(meta)
+}
+
+/// Scans complete lines in reverse for the last parseable Meta record.
+///
+/// `bytes` must start at a real line boundary and extend to end of file.
+fn last_meta_in_complete_lines(bytes: &[u8]) -> Option<SessionMeta> {
+    // Validate UTF-8 per line: an invalid-UTF-8 line (e.g. a torn tail line
+    // that truncates a multi-byte character) is skipped like any other
+    // unparseable line, matching the tolerant forward scan (spec 021 FR-004
+    // addendum / issue #1067).
+    for line in bytes.split(|&b| b == b'\n').rev() {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(text) = std::str::from_utf8(line) else {
+            tracing::warn!(
+                "skipping invalid-UTF-8 line in session meta scan \
+                 (likely truncated by a crash mid-write)"
+            );
+            continue;
+        };
+        if let Ok(SessionRecord::Meta(meta_update)) = SessionRecord::parse(text) {
+            return Some(*meta_update);
+        }
+    }
+    None
+}
+
+fn canonical_meta_for_id(mut meta: SessionMeta, id: &str) -> SessionMeta {
+    meta.id = id.to_string();
+    meta
 }
 
 fn rewrite_session_file_locked(
@@ -260,7 +432,12 @@ fn preserve_existing_lines(
 fn preserve_for_message_save(line: &str) -> bool {
     match SessionRecord::parse(line) {
         Ok(SessionRecord::State(_)) => true,
-        Ok(SessionRecord::Llm(_) | SessionRecord::Custom(_)) => false,
+        Ok(
+            SessionRecord::AppendBegin
+            | SessionRecord::Llm(_)
+            | SessionRecord::Custom(_)
+            | SessionRecord::Meta(_),
+        ) => false,
         Err(_) => matches!(
             SessionEntry::parse(line),
             Ok(entry) if !matches!(entry, SessionEntry::Message(_))
@@ -292,6 +469,7 @@ where
         after_validation()?;
 
         let mut write_meta = meta.clone();
+        write_meta.id = id.to_string();
         write_meta.sequence += 1;
         write_op(path, &write_meta, messages, id)
     })
@@ -379,7 +557,25 @@ fn append_records_in_place_with_hook(
     meta: &SessionMeta,
     meta_line_len: usize,
     record_lines: &[String],
-    after_meta_patch: impl FnOnce(&mut std::fs::File) -> io::Result<()>,
+    after_commit_append: impl FnOnce(&mut std::fs::File) -> io::Result<()>,
+) -> io::Result<bool> {
+    append_records_in_place_with_hooks(
+        path,
+        meta,
+        meta_line_len,
+        record_lines,
+        |_| Ok(()),
+        after_commit_append,
+    )
+}
+
+fn append_records_in_place_with_hooks(
+    path: &Path,
+    meta: &SessionMeta,
+    meta_line_len: usize,
+    record_lines: &[String],
+    after_records_append: impl FnOnce(&mut std::fs::File) -> io::Result<()>,
+    after_commit_append: impl FnOnce(&mut std::fs::File) -> io::Result<()>,
 ) -> io::Result<bool> {
     let meta_line = serde_json::to_string(meta).map_err(io::Error::other)?;
     if meta_line.len() + 1 > meta_line_len {
@@ -390,16 +586,25 @@ fn append_records_in_place_with_hook(
         .read(true)
         .write(true)
         .open(path)?;
-    write_meta_line_in_place(&mut file, &meta_line, meta_line_len)?;
-    file.flush()?;
-    after_meta_patch(&mut file)?;
 
     file.seek(SeekFrom::End(0))?;
+    writeln!(file, "{}", SessionRecord::AppendBegin.to_json_line()?)?;
     for line in record_lines {
         if !line.is_empty() {
             writeln!(file, "{line}")?;
         }
     }
+    file.flush()?;
+    after_records_append(&mut file)?;
+    writeln!(
+        file,
+        "{}",
+        SessionRecord::Meta(Box::new(meta.clone())).to_json_line()?
+    )?;
+    file.flush()?;
+    after_commit_append(&mut file)?;
+
+    write_meta_line_in_place(&mut file, &meta_line, meta_line_len)?;
     file.flush()?;
     Ok(true)
 }
@@ -632,6 +837,42 @@ impl JsonlSessionStore {
         f(&index_clone)
     }
 
+    #[cfg(feature = "search")]
+    fn active_tantivy_index(&self) -> Option<crate::search::index::TantivyIndex> {
+        self.tantivy_index
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    #[cfg(feature = "search")]
+    fn refresh_active_search_index(&self, id: &str, operation: &str) {
+        let Some(index) = self.active_tantivy_index() else {
+            return;
+        };
+
+        match self.load_entries(id) {
+            Ok((meta, entries)) => {
+                if let Err(err) = index.index_session(&meta, &entries) {
+                    tracing::warn!(
+                        session_id = %id,
+                        error = %err,
+                        operation,
+                        "failed to update search index after session mutation"
+                    );
+                }
+            }
+            Err(err) => {
+                tracing::warn!(
+                    session_id = %id,
+                    error = %err,
+                    operation,
+                    "failed to load session for search index refresh"
+                );
+            }
+        }
+    }
+
     /// Register session migrators for automatic schema upgrades on load.
     #[must_use]
     pub fn with_migrators(
@@ -659,7 +900,10 @@ impl SessionStore for JsonlSessionStore {
     fn save(&self, id: &str, meta: &SessionMeta, messages: &[AgentMessage]) -> io::Result<()> {
         validate_session_id(id)?;
         let path = session_path(&self.sessions_dir, id);
-        save_messages_with_hooks(&path, id, meta, messages, || Ok(()), write_messages_locked)
+        save_messages_with_hooks(&path, id, meta, messages, || Ok(()), write_messages_locked)?;
+        #[cfg(feature = "search")]
+        self.refresh_active_search_index(id, "save");
+        Ok(())
     }
 
     fn save_full(
@@ -672,10 +916,11 @@ impl SessionStore for JsonlSessionStore {
         validate_session_id(id)?;
 
         let path = session_path(&self.sessions_dir, id);
-        with_target_lock(&path, || {
+        let persisted_meta = with_target_lock(&path, || {
             check_sequence_path(&path, id, meta.sequence)?;
 
             let mut write_meta = meta.clone();
+            write_meta.id = id.to_string();
             write_meta.sequence += 1;
 
             let mut preserved_lines =
@@ -690,7 +935,12 @@ impl SessionStore for JsonlSessionStore {
             )?;
 
             Ok(write_meta)
-        })
+        })?;
+
+        #[cfg(feature = "search")]
+        self.refresh_active_search_index(id, "save_full");
+
+        Ok(persisted_meta)
     }
 
     fn append(&self, id: &str, messages: &[AgentMessage]) -> io::Result<()> {
@@ -703,7 +953,10 @@ impl SessionStore for JsonlSessionStore {
             messages
                 .iter()
                 .filter_map(|msg| SessionRecord::from_message(msg, id)),
-        )
+        )?;
+        #[cfg(feature = "search")]
+        self.refresh_active_search_index(id, "append");
+        Ok(())
     }
 
     fn load(
@@ -750,25 +1003,18 @@ impl SessionStore for JsonlSessionStore {
             }
 
             let read_meta = with_target_lock(&path, || {
-                let file = std::fs::File::open(&path)?;
-                let reader = io::BufReader::new(file);
-                let Some(first_line) = reader.lines().next() else {
+                let Some(file_id) = path.file_stem().and_then(|stem| stem.to_str()) else {
                     return Ok(None);
                 };
-                first_line.map(Some)
+                validate_session_id(file_id)?;
+                read_meta_with_line_len(&path, file_id)
+                    .map(|(meta, _)| Some((file_id.to_string(), meta)))
             });
 
             match read_meta {
-                Ok(Some(first_line)) => match serde_json::from_str::<SessionMeta>(&first_line) {
-                    Ok(meta) => sessions.push(meta),
-                    Err(e) => {
-                        tracing::warn!(
-                            path = %path.display(),
-                            error = %e,
-                            "skipping session file with invalid metadata"
-                        );
-                    }
-                },
+                Ok(Some((file_id, meta))) => {
+                    sessions.push(canonical_meta_for_id(meta, &file_id));
+                }
                 Ok(None) => {}
                 Err(error) => {
                     tracing::warn!(
@@ -859,21 +1105,19 @@ impl SessionStore for JsonlSessionStore {
 
     fn load_interrupt(&self, id: &str) -> io::Result<Option<InterruptState>> {
         validate_session_id(id)?;
-        if !session_path(&self.sessions_dir, id).exists() {
-            return Ok(None);
-        }
-        let path = interrupt_path(&self.sessions_dir, id);
-        if !path.exists() {
-            return Ok(None);
-        }
-        let contents = std::fs::read_to_string(&path)?;
-        let state: InterruptState = serde_json::from_str(&contents).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("corrupted interrupt file for session {id}: {e}"),
-            )
-        })?;
-        Ok(Some(state))
+        with_session_lock(&self.sessions_dir, id, |session, path| {
+            if !session.exists() || !path.exists() {
+                return Ok(None);
+            }
+            let contents = std::fs::read_to_string(path)?;
+            let state: InterruptState = serde_json::from_str(&contents).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("corrupted interrupt file for session {id}: {e}"),
+                )
+            })?;
+            Ok(Some(state))
+        })
     }
 
     fn clear_interrupt(&self, id: &str) -> io::Result<()> {
@@ -1039,6 +1283,7 @@ impl JsonlSessionStore {
 
             // Increment sequence for the write
             let mut write_meta = meta.clone();
+            write_meta.id = id.to_string();
             write_meta.sequence += 1;
             let preserved_lines = preserve_existing_lines(&path, id, preserve_for_entry_save)?;
 
@@ -1080,6 +1325,69 @@ impl JsonlSessionStore {
         }
 
         Ok(())
+    }
+
+    /// Append entries to an existing session without rewriting the whole file.
+    ///
+    /// This is the append-only counterpart to [`Self::save_entries`]. Instead of
+    /// rewriting every record on each turn, it appends only the new `entries`
+    /// and patches the metadata line in place (reusing the same on-disk
+    /// machinery and locking guarantees as the internal append path).
+    ///
+    /// The caller's `meta.sequence` must match the on-disk sequence
+    /// (optimistic concurrency, identical to [`Self::save_entries`]); a mismatch
+    /// returns an error. Every other `meta` field is written as provided —
+    /// only `id` and `sequence` are set by the store. The returned
+    /// [`SessionMeta`] carries the incremented sequence so callers stay in
+    /// sync without re-reading the file.
+    ///
+    /// If the metadata line can no longer be patched in place — its serialized
+    /// form would outgrow the slot reserved on disk — this transparently falls
+    /// back to a full rewrite that preserves all existing lines.
+    ///
+    /// Errors if the session file does not exist; use [`Self::save_entries`] to
+    /// create a new session.
+    ///
+    /// When the `search` feature is enabled, the tantivy index is refreshed
+    /// from the full on-disk session afterwards (best-effort — index errors
+    /// are logged but do not fail the append).
+    pub fn append_entries(
+        &self,
+        id: &str,
+        meta: &SessionMeta,
+        entries: &[SessionEntry],
+    ) -> io::Result<SessionMeta> {
+        validate_session_id(id)?;
+        let path = session_path(&self.sessions_dir, id);
+
+        let write_meta = with_target_lock(&path, || {
+            check_sequence_path(&path, id, meta.sequence)?;
+            let (_, meta_line_len) = read_meta_with_line_len(&path, id)?;
+
+            let mut write_meta = meta.clone();
+            write_meta.id = id.to_string();
+            write_meta.sequence += 1;
+
+            let record_lines = entries
+                .iter()
+                .map(|entry| serde_json::to_string(entry).map_err(io::Error::other))
+                .collect::<io::Result<Vec<_>>>()?;
+
+            if !append_records_in_place(&path, &write_meta, meta_line_len, &record_lines)? {
+                // The patched metadata line would outgrow its on-disk slot —
+                // fall back to a full rewrite that keeps every existing line.
+                let (_, mut existing_lines) = read_meta_and_message_lines(&path, id)?;
+                existing_lines.extend(record_lines);
+                rewrite_session_file_locked(&path, &write_meta, &existing_lines)?;
+            }
+
+            Ok(write_meta)
+        })?;
+
+        #[cfg(feature = "search")]
+        self.refresh_active_search_index(id, "append_entries");
+
+        Ok(write_meta)
     }
 
     /// Load a session with rich entry types.
@@ -1929,6 +2237,93 @@ mod tests {
     }
 
     #[test]
+    fn append_entries_appends_without_rewriting_existing_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("append-entries");
+        store
+            .save_entries("append-entries", &meta, &[user_entry("first", 1)])
+            .unwrap();
+        let (created_meta, _) = store.load_entries("append-entries").unwrap();
+
+        // Capture the byte length of the existing records so we can prove the
+        // append did not rewrite them.
+        let path = session_path(dir.path(), "append-entries");
+        let before = std::fs::read_to_string(&path).unwrap();
+
+        let returned = store
+            .append_entries(
+                "append-entries",
+                &created_meta,
+                &[user_entry("second", 2), user_entry("third", 3)],
+            )
+            .unwrap();
+
+        // Sequence bumped and returned without a re-read.
+        assert_eq!(returned.sequence, created_meta.sequence + 1);
+
+        // All entries are present and ordered.
+        let (loaded_meta, entries) = store.load_entries("append-entries").unwrap();
+        assert_eq!(loaded_meta.sequence, returned.sequence);
+        let texts: Vec<&str> = entries
+            .iter()
+            .filter_map(|e| match e {
+                SessionEntry::Message(LlmMessage::User(u)) => match &u.content[0] {
+                    swink_agent::ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["first", "second", "third"]);
+
+        // The original records remain verbatim at the head of the file —
+        // i.e. the append did not rewrite them.
+        let after = std::fs::read_to_string(&path).unwrap();
+        let first_record_line = before.lines().nth(1).unwrap();
+        assert!(
+            after.contains(first_record_line),
+            "first record should be preserved byte-for-byte by an in-place append"
+        );
+        assert!(
+            after.len() > before.len(),
+            "appended records should grow the file"
+        );
+    }
+
+    #[test]
+    fn append_entries_rejects_sequence_conflict() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("append-conflict");
+        store
+            .save_entries("append-conflict", &meta, &[user_entry("first", 1)])
+            .unwrap();
+
+        // Stale meta (sequence behind the on-disk value) must be rejected.
+        let mut stale = meta;
+        stale.sequence = 99;
+        let err = store
+            .append_entries("append-conflict", &stale, &[user_entry("second", 2)])
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+    }
+
+    #[test]
+    fn append_entries_errors_on_missing_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("nope");
+        let err = store
+            .append_entries("nope", &meta, &[user_entry("x", 1)])
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
     fn search_scans_across_saved_sessions() {
         let dir = tempfile::tempdir().unwrap();
         let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
@@ -1965,6 +2360,78 @@ mod tests {
         assert_eq!(hits[0].session_title, "Auth notes");
         assert!(hits[0].snippet.contains("auth middleware"));
         assert!(matches!(hits[0].entry, SessionEntry::Message(_)));
+    }
+
+    #[test]
+    fn save_canonicalizes_mismatched_metadata_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        store
+            .save(
+                "canonical-save",
+                &fresh_meta("wrong-save"),
+                &[user_msg("canonical metadata", 10)],
+            )
+            .unwrap();
+
+        let session_file = dir.path().join("canonical-save.jsonl");
+        let first_line = std::fs::read_to_string(session_file)
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap()
+            .to_string();
+        let raw_meta: SessionMeta = serde_json::from_str(&first_line).unwrap();
+        assert_eq!(raw_meta.id, "canonical-save");
+
+        let (loaded_meta, _) = store.load("canonical-save", None).unwrap();
+        assert_eq!(loaded_meta.id, "canonical-save");
+
+        let listed = store.list().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "canonical-save");
+    }
+
+    #[test]
+    fn save_full_canonicalizes_returned_and_persisted_metadata_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let returned = store
+            .save_full(
+                "canonical-full",
+                &fresh_meta("wrong-full"),
+                &[user_msg("full canonical metadata", 10)],
+                &serde_json::json!({"persisted": true}),
+            )
+            .unwrap();
+
+        assert_eq!(returned.id, "canonical-full");
+        let (loaded_meta, _, loaded_state) = store.load_full("canonical-full", None).unwrap();
+        assert_eq!(loaded_meta.id, "canonical-full");
+        assert_eq!(loaded_state, Some(serde_json::json!({"persisted": true})));
+    }
+
+    #[test]
+    fn search_uses_canonical_session_id_for_mismatched_saved_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        store
+            .save_entries(
+                "canonical-search",
+                &fresh_meta("wrong-search"),
+                &[user_entry("canonical search metadata", 10)],
+            )
+            .unwrap();
+
+        let hits = store
+            .search("canonical metadata", &SessionSearchOptions::default())
+            .unwrap();
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].session_id, "canonical-search");
     }
 
     #[test]
@@ -2092,7 +2559,11 @@ mod tests {
             after_lines[1], before_message_line,
             "append must leave existing record bytes untouched"
         );
-        assert_eq!(after_lines.len(), 3);
+        assert_eq!(
+            after_lines.len(),
+            5,
+            "append should add begin, record, and internal metadata commit lines"
+        );
 
         let (loaded_meta, loaded_messages) = store.load("append-in-place", None).unwrap();
         assert_eq!(loaded_meta.sequence, 2);
@@ -2100,56 +2571,411 @@ mod tests {
     }
 
     #[test]
-    fn append_failure_after_metadata_patch_rejects_stale_save_without_new_records() {
+    fn append_failure_before_metadata_commit_discards_uncommitted_records() {
         let dir = tempfile::tempdir().unwrap();
         let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
 
-        let meta = fresh_meta("append-meta-first");
+        let meta = fresh_meta("append-before-commit");
         store
-            .save("append-meta-first", &meta, &[user_msg("first", 1)])
+            .save("append-before-commit", &meta, &[user_msg("first", 1)])
             .unwrap();
 
-        let path = session_path(dir.path(), "append-meta-first");
+        let path = session_path(dir.path(), "append-before-commit");
         let (mut append_meta, meta_line_len) =
-            read_meta_with_line_len(&path, "append-meta-first").unwrap();
+            read_meta_with_line_len(&path, "append-before-commit").unwrap();
         append_meta.updated_at = now_utc();
         append_meta.sequence += 1;
-        let second_line = SessionRecord::from_message(&user_msg("second", 2), "append-meta-first")
-            .unwrap()
-            .to_json_line()
+        let second_line =
+            SessionRecord::from_message(&user_msg("second", 2), "append-before-commit")
+                .unwrap()
+                .to_json_line()
+                .unwrap();
+
+        let err = append_records_in_place_with_hooks(
+            &path,
+            &append_meta,
+            meta_line_len,
+            &[second_line],
+            |_| Err(io::Error::other("simulated commit write failure")),
+            |_| Ok(()),
+        )
+        .unwrap_err();
+        assert_eq!(err.to_string(), "simulated commit write failure");
+
+        let (loaded_meta, loaded_messages) = store.load("append-before-commit", None).unwrap();
+        assert_eq!(
+            loaded_meta.sequence, 1,
+            "metadata must remain at the prior committed sequence"
+        );
+        assert_eq!(
+            loaded_messages.len(),
+            1,
+            "record lines after an unclosed append-begin marker are uncommitted"
+        );
+    }
+
+    #[test]
+    fn append_failure_before_metadata_cache_patch_recovers_committed_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("append-commit-first");
+        store
+            .save("append-commit-first", &meta, &[user_msg("first", 1)])
             .unwrap();
+
+        let path = session_path(dir.path(), "append-commit-first");
+        let (mut append_meta, meta_line_len) =
+            read_meta_with_line_len(&path, "append-commit-first").unwrap();
+        append_meta.updated_at = now_utc();
+        append_meta.sequence += 1;
+        let second_line =
+            SessionRecord::from_message(&user_msg("second", 2), "append-commit-first")
+                .unwrap()
+                .to_json_line()
+                .unwrap();
 
         let err = append_records_in_place_with_hook(
             &path,
             &append_meta,
             meta_line_len,
             &[second_line],
-            |_| Err(io::Error::other("simulated record write failure")),
+            |_| Err(io::Error::other("simulated cache patch failure")),
         )
         .unwrap_err();
-        assert_eq!(err.to_string(), "simulated record write failure");
+        assert_eq!(err.to_string(), "simulated cache patch failure");
 
-        let (loaded_meta, loaded_messages) = store.load("append-meta-first", None).unwrap();
+        let first_line_meta: SessionMeta = serde_json::from_str(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            first_line_meta.sequence, 1,
+            "line 1 remains the old cache if the metadata patch is interrupted"
+        );
+
+        let (loaded_meta, loaded_messages) = store.load("append-commit-first", None).unwrap();
         assert_eq!(
             loaded_meta.sequence, 2,
-            "metadata sequence must be visible before any appended records"
+            "load must recover the committed metadata record after an interrupted cache patch"
+        );
+        let listed = store.list().unwrap();
+        assert_eq!(
+            listed[0].sequence, 2,
+            "list must recover the committed metadata record after an interrupted cache patch"
         );
         assert_eq!(
             loaded_messages.len(),
-            1,
-            "failed append must not expose uncommitted record lines"
+            2,
+            "committed append records must remain recoverable after cache patch failure"
         );
 
         let mut stale = meta;
         stale.sequence = 1;
         let err = store
-            .save("append-meta-first", &stale, &[user_msg("stale", 3)])
+            .save("append-commit-first", &stale, &[user_msg("stale", 3)])
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
     }
 
+    fn meta_commit_line(meta: &SessionMeta) -> String {
+        SessionRecord::Meta(Box::new(meta.clone()))
+            .to_json_line()
+            .unwrap()
+    }
+
+    fn message_line(text: &str, ts: u64, id: &str) -> String {
+        SessionRecord::from_message(&user_msg(text, ts), id)
+            .unwrap()
+            .to_json_line()
+            .unwrap()
+    }
+
+    /// Writes a session file with a padded first metadata line followed by
+    /// `body` verbatim (the caller controls trailing newlines / torn tails).
+    fn write_raw_session_file(path: &Path, first_meta: &SessionMeta, body: &[u8]) {
+        let mut file = std::fs::File::create(path).unwrap();
+        write_meta_line(&mut file, first_meta, META_LINE_PADDING).unwrap();
+        file.write_all(body).unwrap();
+    }
+
+    /// A ~1 KiB record line that is not a Meta commit.
+    fn pad_line() -> String {
+        format!("{{\"pad\":\"{}\"}}", "x".repeat(1024))
+    }
+
+    /// Asserts `read_meta_with_line_len` returns exactly what the forward
+    /// line-by-line scan (`read_meta_and_message_lines`) computes, then
+    /// returns the meta for further assertions.
+    fn read_meta_checked_against_forward_scan(path: &Path, id: &str) -> SessionMeta {
+        let (meta, _) = read_meta_with_line_len(path, id).unwrap();
+        let (oracle, _) = read_meta_and_message_lines(path, id).unwrap();
+        assert_eq!(
+            meta, oracle,
+            "tail scan must return exactly what the forward scan returns"
+        );
+        meta
+    }
+
     #[test]
-    fn load_waits_for_in_flight_append_metadata_patch() {
+    fn read_meta_falls_back_to_first_line_without_meta_commits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("no-commits.jsonl");
+        let first = fresh_meta("no-commits");
+        let body = format!(
+            "{}\n{}\n",
+            message_line("first", 1, "no-commits"),
+            message_line("second", 2, "no-commits"),
+        );
+        write_raw_session_file(&path, &first, body.as_bytes());
+
+        let meta = read_meta_checked_against_forward_scan(&path, "no-commits");
+        assert_eq!(meta, first);
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let (_, line_len) = read_meta_with_line_len(&path, "no-commits").unwrap();
+        assert_eq!(
+            line_len,
+            raw.find('\n').unwrap() + 1,
+            "line_len must be the padded first line including its newline"
+        );
+    }
+
+    #[test]
+    fn read_meta_returns_last_meta_commit_like_the_forward_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("multi-meta.jsonl");
+        let mut first = fresh_meta("multi-meta");
+        first.title = "stale".to_string();
+
+        let mut second = first.clone();
+        second.title = "second".to_string();
+        second.sequence = 2;
+        // Commit records deliberately carry a different id: the reader must
+        // canonicalize to the file id exactly like the forward scan did.
+        second.id = "not-the-file-id".to_string();
+        let mut third = second.clone();
+        third.title = "third".to_string();
+        third.sequence = 3;
+
+        let body = format!(
+            "{}\n{}\n{}\n{}\n",
+            message_line("m1", 1, "multi-meta"),
+            meta_commit_line(&second),
+            message_line("m2", 2, "multi-meta"),
+            meta_commit_line(&third),
+        );
+        write_raw_session_file(&path, &first, body.as_bytes());
+
+        let meta = read_meta_checked_against_forward_scan(&path, "multi-meta");
+        assert_eq!(meta.title, "third", "the LAST Meta commit record wins");
+        assert_eq!(meta.sequence, 3);
+        assert_eq!(
+            meta.id, "multi-meta",
+            "meta id must be canonicalized to the file id"
+        );
+    }
+
+    #[test]
+    fn read_meta_skips_trailing_partial_line_after_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("torn-tail.jsonl");
+        let first = fresh_meta("torn-tail");
+        let mut committed = first.clone();
+        committed.title = "committed".to_string();
+        committed.sequence = 2;
+
+        let mut body = format!(
+            "{}\n{}\n",
+            message_line("m1", 1, "torn-tail"),
+            meta_commit_line(&committed),
+        );
+        // Crash-torn tail: a truncated record with no trailing newline. It is
+        // valid UTF-8 but unparseable JSON, so it must be skipped.
+        body.push_str("{\"_meta\":true,\"data\":{\"id\":\"torn");
+        write_raw_session_file(&path, &first, body.as_bytes());
+
+        let meta = read_meta_checked_against_forward_scan(&path, "torn-tail");
+        assert_eq!(meta.title, "committed");
+        assert_eq!(meta.sequence, 2);
+    }
+
+    #[test]
+    fn read_meta_errors_on_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.jsonl");
+        std::fs::File::create(&path).unwrap();
+
+        let err = read_meta_with_line_len(&path, "empty").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("empty session file"));
+    }
+
+    #[test]
+    fn read_meta_finds_last_commit_within_tail_window_of_large_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("large-tail-commit.jsonl");
+        let first = fresh_meta("large-tail-commit");
+        let mut committed = first.clone();
+        committed.title = "committed".to_string();
+        committed.sequence = 2;
+
+        let mut body = String::new();
+        for _ in 0..80 {
+            body.push_str(&pad_line());
+            body.push('\n');
+        }
+        body.push_str(&meta_commit_line(&committed));
+        body.push('\n');
+        assert!(
+            body.len() as u64 > META_TAIL_WINDOW,
+            "body must exceed the initial tail window to exercise the windowed scan"
+        );
+        write_raw_session_file(&path, &first, body.as_bytes());
+
+        let meta = read_meta_checked_against_forward_scan(&path, "large-tail-commit");
+        assert_eq!(meta.title, "committed");
+        assert_eq!(meta.sequence, 2);
+    }
+
+    #[test]
+    fn read_meta_recovers_commit_buried_before_large_uncommitted_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("buried-commit.jsonl");
+        let first = fresh_meta("buried-commit");
+        let mut committed = first.clone();
+        committed.title = "committed".to_string();
+        committed.sequence = 2;
+
+        // The only Meta commit sits before a crashed (uncommitted) append
+        // whose records span several tail windows, forcing the scan to widen
+        // and ultimately fall back to the full forward pass.
+        let mut body = format!(
+            "{}\n{}\n{}\n",
+            message_line("m1", 1, "buried-commit"),
+            meta_commit_line(&committed),
+            SessionRecord::AppendBegin.to_json_line().unwrap(),
+        );
+        for _ in 0..200 {
+            body.push_str(&pad_line());
+            body.push('\n');
+        }
+        assert!(body.len() as u64 > 2 * META_TAIL_WINDOW);
+        write_raw_session_file(&path, &first, body.as_bytes());
+
+        let meta = read_meta_checked_against_forward_scan(&path, "buried-commit");
+        assert_eq!(meta.title, "committed");
+        assert_eq!(meta.sequence, 2);
+    }
+
+    #[test]
+    fn read_meta_first_line_wins_in_large_file_without_commits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("large-no-commits.jsonl");
+        let first = fresh_meta("large-no-commits");
+
+        let mut body = String::new();
+        for _ in 0..200 {
+            body.push_str(&pad_line());
+            body.push('\n');
+        }
+        assert!(body.len() as u64 > 2 * META_TAIL_WINDOW);
+        write_raw_session_file(&path, &first, body.as_bytes());
+
+        let meta = read_meta_checked_against_forward_scan(&path, "large-no-commits");
+        assert_eq!(meta, first);
+    }
+
+    #[test]
+    fn read_meta_tolerates_torn_multibyte_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("torn-utf8.jsonl");
+        let first = fresh_meta("torn-utf8");
+        let mut committed = first.clone();
+        committed.title = "committed".to_string();
+        committed.sequence = 2;
+
+        // A crash mid-write can truncate a multi-byte UTF-8 character in the
+        // tail line. Semantics per spec 021 FR-004 addendum (#1067): the torn
+        // line is skipped and the last committed meta is still recovered,
+        // in both the tail scan and the forward scan.
+        let mut body = format!("{}\n", meta_commit_line(&committed)).into_bytes();
+        body.extend_from_slice(b"{\"_meta\":true,\xE2\x82");
+        write_raw_session_file(&path, &first, &body);
+
+        let meta = read_meta_checked_against_forward_scan(&path, "torn-utf8");
+        assert_eq!(meta, committed);
+    }
+
+    #[test]
+    fn read_meta_tolerates_torn_multibyte_tail_in_large_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("large-torn-utf8.jsonl");
+        let first = fresh_meta("large-torn-utf8");
+        let mut committed = first.clone();
+        committed.title = "committed".to_string();
+        committed.sequence = 2;
+
+        let mut body = String::new();
+        for _ in 0..80 {
+            body.push_str(&pad_line());
+            body.push('\n');
+        }
+        body.push_str(&meta_commit_line(&committed));
+        body.push('\n');
+        assert!(body.len() as u64 > META_TAIL_WINDOW);
+        let mut body = body.into_bytes();
+        body.extend_from_slice(b"{\"_meta\":true,\xE2\x82");
+        write_raw_session_file(&path, &first, &body);
+
+        let meta = read_meta_checked_against_forward_scan(&path, "large-torn-utf8");
+        assert_eq!(
+            meta, committed,
+            "windowed tail scan must skip invalid UTF-8 like the forward scan"
+        );
+    }
+
+    #[test]
+    fn list_reports_last_committed_meta_despite_trailing_garbage() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let mut first = fresh_meta("listed-session");
+        first.title = "stale".to_string();
+        let mut second = first.clone();
+        second.title = "second".to_string();
+        second.sequence = 2;
+        let mut third = first.clone();
+        third.title = "third".to_string();
+        third.sequence = 3;
+
+        let mut body = format!(
+            "{}\n{}\n{}\n{}\n",
+            message_line("m1", 1, "listed-session"),
+            meta_commit_line(&second),
+            message_line("m2", 2, "listed-session"),
+            meta_commit_line(&third),
+        );
+        body.push_str("{\"_meta\":true,\"data\":{\"id\":\"torn");
+        let path = session_path(dir.path(), "listed-session");
+        write_raw_session_file(&path, &first, body.as_bytes());
+
+        let listed = store.list().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "listed-session");
+        assert_eq!(
+            listed[0].title, "third",
+            "list must surface the last committed Meta record"
+        );
+        assert_eq!(listed[0].sequence, 3);
+    }
+
+    #[test]
+    fn load_waits_for_in_flight_append_commit_before_metadata_cache_patch() {
         use std::sync::mpsc;
         use std::thread;
         use std::time::Duration;
@@ -2205,7 +3031,7 @@ mod tests {
 
         assert!(
             loaded_rx.recv_timeout(Duration::from_millis(100)).is_err(),
-            "load must wait for an append that has patched metadata but not records"
+            "load must wait for an append that has committed records but not patched line 1"
         );
 
         resume_tx.send(()).unwrap();
@@ -2220,7 +3046,7 @@ mod tests {
         assert_eq!(
             loaded_messages.len(),
             2,
-            "load must not expose bumped metadata without appended records"
+            "load must expose committed records and metadata together"
         );
     }
 
@@ -2383,6 +3209,47 @@ mod tests {
         assert_eq!(
             store.load_state("save-full").unwrap(),
             Some(serde_json::json!({ "cursor": 9, "draft": "synced" }))
+        );
+    }
+
+    #[cfg(feature = "search")]
+    #[test]
+    fn save_full_updates_warm_search_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("save-full-search");
+        store.open_search_index().unwrap();
+        store
+            .save(
+                "save-full-search",
+                &meta,
+                &[user_msg("stale auth decision", 1)],
+            )
+            .unwrap();
+
+        let (loaded_meta, _) = store.load("save-full-search", None).unwrap();
+        store
+            .save_full(
+                "save-full-search",
+                &loaded_meta,
+                &[user_msg("fresh billing decision", 2)],
+                &serde_json::json!({ "cursor": 2 }),
+            )
+            .unwrap();
+
+        let fresh_hits = store
+            .search("fresh billing", &SessionSearchOptions::default())
+            .unwrap();
+        assert_eq!(fresh_hits.len(), 1);
+        assert_eq!(fresh_hits[0].session_id, "save-full-search");
+
+        let stale_hits = store
+            .search("stale auth", &SessionSearchOptions::default())
+            .unwrap();
+        assert!(
+            stale_hits.is_empty(),
+            "save_full should replace stale search documents"
         );
     }
 

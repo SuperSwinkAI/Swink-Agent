@@ -7,7 +7,9 @@ mod persistence;
 mod render_helpers;
 mod state;
 
-pub use state::{AgentStatus, App, DisplayMessage, Focus, MessageRole, OperatingMode, Selection};
+pub use state::{
+    AgentStatus, App, DisplayMessage, Focus, MessageRole, OperatingMode, Selection, TrustFollowUp,
+};
 
 type AppResult<T> = Result<T, Box<dyn std::error::Error>>;
 

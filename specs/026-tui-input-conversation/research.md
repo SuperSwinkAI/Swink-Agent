@@ -32,7 +32,7 @@
 
 **Decision**: Use `syntect` with `OnceLock`-cached `SyntaxSet` and `ThemeSet`. Language lookup via `find_syntax_by_token`. Fallback to plain dimmed monospace when the language is unrecognized or in monochrome mode.
 
-**Rationale**: `syntect` is the de-facto Rust crate for syntax highlighting. It bundles Sublime Text grammars covering all common programming languages. `OnceLock` ensures grammars are loaded once (first code block render) and reused for the lifetime of the process. The theme selection (`base16-ocean.dark` for dark, `InspiredGitHub` for light) provides good contrast in terminal environments. Monochrome mode skips syntect entirely, rendering plain `DIM` text — this keeps the monochrome path allocation-free after initial buffer construction.
+**Rationale**: `syntect` is the de-facto Rust crate for syntax highlighting. It bundles Sublime Text grammars covering all common programming languages. `OnceLock` ensures grammars are loaded once (first code block render) and reused for the lifetime of the process. The theme selection (`base16-ocean.dark` for dark, `InspiredGitHub` for light) provides good contrast in terminal environments. [Not implemented / descoped — only the `base16-ocean.dark` theme shipped; `tui/src/ui/syntax.rs` hard-codes `ts.themes["base16-ocean.dark"]` for all highlighted output, and there is no light-theme selection path.] Monochrome mode skips syntect entirely, rendering plain `DIM` text — this keeps the monochrome path allocation-free after initial buffer construction.
 
 **Alternatives rejected**:
 - *tree-sitter*: More accurate parsing but requires per-language grammar binaries, increasing binary size. syntect's regex-based grammars are sufficient for display-only highlighting.

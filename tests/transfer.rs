@@ -605,6 +605,10 @@ async fn transfer_chain_blocks_self_transfer() {
     ]));
 
     let mut agent = make_named_transfer_agent("support", stream_fn, registry);
+
+    let collector = EventCollector::new();
+    agent.subscribe(collector.subscriber());
+
     let result = agent
         .prompt_async(vec![user_msg("transfer me to support")])
         .await
@@ -619,6 +623,39 @@ async fn transfer_chain_blocks_self_transfer() {
     assert!(
         result.transfer_signal.is_none(),
         "transfer_signal should be None when self-transfer is blocked"
+    );
+
+    // The rejected transfer's tool result must be rewritten to an error —
+    // it must NOT still read as the false-success "initiated" confirmation.
+    let transfer_result = result
+        .messages
+        .iter()
+        .find_map(|msg| match msg {
+            AgentMessage::Llm(LlmMessage::ToolResult(tr)) if tr.tool_call_id == "tc_transfer" => {
+                Some(tr)
+            }
+            _ => None,
+        })
+        .expect("transfer tool result should be present in history");
+    assert!(
+        transfer_result.is_error,
+        "rejected transfer's tool result must be marked is_error"
+    );
+    let text = ContentBlock::extract_text(&transfer_result.content);
+    assert!(
+        !text.contains("initiated"),
+        "rejected transfer result must not read as a success, got: {text}"
+    );
+    assert!(
+        text.to_lowercase().contains("reject"),
+        "rejected transfer result should explain the rejection, got: {text}"
+    );
+
+    // A dedicated TransferRejected event should fire for the circular rejection.
+    let events = collector.events();
+    assert!(
+        events.contains(&"TransferRejected".to_string()),
+        "should emit TransferRejected event, got: {events:?}"
     );
 }
 

@@ -106,20 +106,20 @@ mod tests {
     use super::*;
     use crate::types::{Cost, StopReason, Usage};
 
-    fn ok_result() -> Result<AgentResult, AgentError> {
-        Ok(AgentResult {
+    fn ok_result() -> AgentResult {
+        AgentResult {
             messages: Vec::new(),
             stop_reason: StopReason::Stop,
             usage: Usage::default(),
             cost: Cost::default(),
             error: None,
             transfer_signal: None,
-        })
+        }
     }
 
     #[test]
     fn resolve_status_completed() {
-        assert_eq!(resolve_status(&ok_result()), AgentStatus::Completed);
+        assert_eq!(resolve_status(&Ok(ok_result())), AgentStatus::Completed);
     }
 
     #[test]
@@ -145,7 +145,7 @@ mod tests {
         let status_clone = Arc::clone(&status);
 
         let handle = tokio::spawn(async move {
-            let result = ok_result();
+            let result = Ok(ok_result());
             *status_clone.lock().unwrap() = resolve_status(&result);
             result
         });
@@ -181,17 +181,18 @@ mod tests {
         let token = CancellationToken::new();
         let status = Arc::new(Mutex::new(AgentStatus::Running));
         let status_clone = Arc::clone(&status);
+        let (completed_tx, completed_rx) = tokio::sync::oneshot::channel();
 
         let handle = tokio::spawn(async move {
-            let result = ok_result();
+            let result = Ok(ok_result());
             *status_clone.lock().unwrap() = resolve_status(&result);
+            let _ = completed_tx.send(());
             result
         });
 
         let mut core = TaskCore::new(handle, token, status);
 
-        // Wait for the spawned task to complete.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        completed_rx.await.expect("spawned task should complete");
 
         let result = core.try_result();
         assert!(result.is_some());

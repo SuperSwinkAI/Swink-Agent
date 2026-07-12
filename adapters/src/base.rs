@@ -1,10 +1,28 @@
 #![forbid(unsafe_code)]
 
+#[cfg(any(
+    feature = "ollama",
+    feature = "azure",
+    feature = "proxy",
+    feature = "gemini",
+    feature = "bedrock"
+))]
 use std::future::Future;
+use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
 const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
+const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(120);
+/// Per-read idle timeout for local-inference servers (e.g. Ollama).
+///
+/// Cold-loading a large model into VRAM — or prefilling a huge prompt — can
+/// legitimately sit silent for well over [`DEFAULT_READ_TIMEOUT`] before the
+/// first streamed byte arrives (the regression caveat on issue #920). 600s is
+/// generous enough for those cases while still bounding a truly wedged server.
+#[cfg(feature = "ollama")]
+const LOCAL_READ_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Shared base for remote HTTP/SSE stream adapters.
 ///
@@ -27,8 +45,8 @@ const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
 ///   path, Bedrock uses `/model/{id}/converse`.
 /// - **Request body types are unique:** each adapter serializes a
 ///   provider-specific struct (not a shared type).
-/// - **Bedrock is non-streaming** and requires `SigV4` request signing —
-///   fundamentally different from the other adapters.
+/// - **Bedrock uses the `ConverseStream` API** and requires `SigV4` request
+///   signing — fundamentally different from the other adapters.
 /// - **Proxy** doesn't use `AdapterBase` at all.
 ///
 /// A generic helper would need a trait with associated types for the URL
@@ -49,7 +67,7 @@ impl AdapterBase {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             api_key: api_key.into(),
-            client: reqwest::Client::new(),
+            client: adapter_http_client(),
         }
     }
 }
@@ -80,13 +98,53 @@ pub fn cancelled_error(message: impl Into<String>) -> swink_agent::AssistantMess
         error_message: message.into(),
         usage: None,
         error_kind: None,
+        retry_after: None,
     }
+}
+
+/// Build the default HTTP client used by remote adapters.
+///
+/// Streaming endpoints should not use an overall request deadline, because a
+/// valid response can run for minutes. Connect and per-read timeouts still keep
+/// dead sockets from pinning a turn forever.
+#[must_use]
+pub(crate) fn adapter_http_client() -> reqwest::Client {
+    adapter_http_client_with_timeouts(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT)
+}
+
+/// Build the HTTP client used by local-inference adapters (e.g. Ollama).
+///
+/// Keeps the same connect timeout as [`adapter_http_client`] but uses the far
+/// more generous [`LOCAL_READ_TIMEOUT`] per-read idle timeout, so model
+/// cold-load or long prompt prefill does not trip the hosted-provider default.
+#[cfg(feature = "ollama")]
+#[must_use]
+pub(crate) fn local_adapter_http_client() -> reqwest::Client {
+    adapter_http_client_with_timeouts(DEFAULT_CONNECT_TIMEOUT, LOCAL_READ_TIMEOUT)
+}
+
+pub(crate) fn adapter_http_client_with_timeouts(
+    connect_timeout: Duration,
+    read_timeout: Duration,
+) -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(connect_timeout)
+        .read_timeout(read_timeout)
+        .build()
+        .expect("adapter HTTP client builder should be valid")
 }
 
 /// Race a pre-stream async operation against cancellation.
 ///
 /// Adapters should use this around the initial HTTP send so cancellation can
 /// short-circuit before any provider bytes arrive.
+#[cfg(any(
+    feature = "ollama",
+    feature = "azure",
+    feature = "proxy",
+    feature = "gemini",
+    feature = "bedrock"
+))]
 pub async fn race_pre_stream_cancellation<T, F>(
     cancellation_token: &CancellationToken,
     cancelled_message: &'static str,
@@ -156,6 +214,7 @@ mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use tokio::net::TcpListener;
+    use tokio::sync::oneshot;
 
     #[test]
     fn trailing_slash_stripped() {
@@ -220,6 +279,8 @@ mod tests {
     async fn read_error_body_returns_aborted_when_cancelled_mid_body() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
+        let (write_body_tx, write_body_rx) = oneshot::channel::<()>();
+        let (body_written_tx, body_written_rx) = oneshot::channel::<()>();
 
         tokio::spawn(async move {
             if let Ok((mut socket, _)) = listener.accept().await {
@@ -228,10 +289,12 @@ mod tests {
                 let response = concat!(
                     "HTTP/1.1 500 Internal Server Error\r\n",
                     "Content-Length: 128\r\n\r\n",
-                    "partial",
                 );
                 let _ = socket.write_all(response.as_bytes()).await;
-                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                let _ = write_body_rx.await;
+                let _ = socket.write_all(b"partial").await;
+                let _ = body_written_tx.send(());
+                std::future::pending::<()>().await;
             }
         });
 
@@ -242,12 +305,14 @@ mod tests {
             .unwrap();
         let token = CancellationToken::new();
         let cancel = token.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-            cancel.cancel();
-        });
 
-        let result = read_error_body_or_cancelled(response, &token, "cancelled").await;
+        let read_task = tokio::spawn(async move {
+            read_error_body_or_cancelled(response, &token, "cancelled").await
+        });
+        write_body_tx.send(()).unwrap();
+        body_written_rx.await.unwrap();
+        cancel.cancel();
+        let result = read_task.await.unwrap();
 
         assert!(matches!(
             result,
@@ -290,5 +355,53 @@ mod tests {
 
         assert_eq!(body.len(), MAX_ERROR_BODY_BYTES + "...[truncated]".len());
         assert!(body.ends_with("...[truncated]"));
+    }
+
+    #[tokio::test]
+    async fn adapter_http_client_times_out_between_body_reads() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut request = [0u8; 1024];
+                let _ = socket.read(&mut request).await;
+                let response = concat!(
+                    "HTTP/1.1 200 OK\r\n",
+                    "Content-Length: 128\r\n\r\n",
+                    "partial",
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+                std::future::pending::<()>().await;
+            }
+        });
+
+        let client =
+            adapter_http_client_with_timeouts(Duration::from_secs(1), Duration::from_millis(50));
+        let response = client
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .expect("connect");
+
+        let err = tokio::time::timeout(Duration::from_secs(2), response.bytes())
+            .await
+            .expect("body read should complete with a reqwest timeout")
+            .expect_err("body read should time out");
+
+        assert!(err.is_timeout(), "expected reqwest timeout, got: {err}");
+    }
+
+    #[test]
+    fn local_read_timeout_exceeds_hosted_default() {
+        // The local-inference client exists specifically to outlast the hosted
+        // default during model cold-load (issue #920 regression caveat); if
+        // these constants ever converge the override is pointless.
+        assert!(LOCAL_READ_TIMEOUT > DEFAULT_READ_TIMEOUT);
+    }
+
+    #[test]
+    fn local_adapter_http_client_builds() {
+        let _client = local_adapter_http_client();
     }
 }

@@ -123,7 +123,7 @@ Nested modules (`anthropic`, `openai`, `google`, `azure`, `xai`, `mistral`, `bed
 
 **Derives**: `Debug, Clone, Default` (default = `None`)
 
-**Flow**: `AgentOptions` → `StreamOptions.cache_strategy` → adapter's `apply_cache_strategy()`
+**Flow**: `AgentOptions` → `StreamOptions.cache_strategy` → inline `cache_control` injection in the adapter's request builder (e.g. `adapters/src/anthropic.rs`'s `send_request`, which injects `cache_control` on the system block and last tool def when `CacheStrategy::Auto | CacheStrategy::Anthropic`)
 
 ---
 
@@ -177,7 +177,7 @@ swink-agent (core)
         ├── StreamOptions.cache_strategy: CacheStrategy
         └── StreamOptions.on_raw_payload: Option<OnRawPayload>
 
-CacheStrategy ──► flows via StreamOptions ──► adapter apply_cache_strategy()
+CacheStrategy ──► flows via StreamOptions ──► inline cache_control injection in adapter request builder
 OnRawPayload  ──► called in sse_data_lines() or adapter stream loop before event parsing
 ProxyStreamFn ──► uses AdapterBase for HTTP ──► returns raw Bytes stream
 ```

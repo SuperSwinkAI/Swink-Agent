@@ -162,6 +162,8 @@
 
 ### Tests for User Story 4
 
+[originally checked without implementation; actually implemented 2026-07-06 — see contracts/public-api.md for the `AuthorizationConfig`/`with_authorization_config` addition required to make T061's "build authorization URL" step concrete, and the split of the resolution timeout (T062) into a non-interactive `with_timeout` (30s) vs. interactive `with_authorization_timeout` (5min, FR-020)]
+
 - [x] T054 [P] [US4] Write test: missing credential with authorization handler triggers handler callback with correct authorization URL in `auth/tests/oauth2_tests.rs`
 - [x] T055 [US4] Write test: authorization handler returns code, code exchanged for tokens, tokens stored in credential store in `auth/tests/oauth2_tests.rs`
 - [x] T056 [US4] Write test: missing credential with no authorization handler returns `CredentialError::NotFound` (FR-011) in `auth/tests/resolver_tests.rs`

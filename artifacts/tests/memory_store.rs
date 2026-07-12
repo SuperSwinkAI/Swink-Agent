@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use swink_agent::{ArtifactData, ArtifactError, ArtifactMeta, ArtifactStore};
 use swink_agent_artifacts::InMemoryArtifactStore;
@@ -9,6 +10,21 @@ fn text_data(content: &str) -> ArtifactData {
         content_type: "text/plain".to_string(),
         metadata: HashMap::new(),
     }
+}
+
+#[tokio::test]
+async fn dyn_artifact_store_round_trips_in_memory_artifacts() {
+    let store: Arc<dyn ArtifactStore> = Arc::new(InMemoryArtifactStore::new());
+
+    store
+        .save("s1", "report.md", text_data("hello"))
+        .await
+        .unwrap();
+    let (data, version) = store.load("s1", "report.md").await.unwrap().unwrap();
+
+    assert_eq!(data.content, b"hello");
+    assert_eq!(version.name, "report.md");
+    assert_eq!(version.version, 1);
 }
 
 // T016: save_creates_version_one

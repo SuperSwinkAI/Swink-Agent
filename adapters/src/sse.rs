@@ -50,12 +50,19 @@ pub enum SseLine {
     /// can classify them as retryable instead of misreporting them as a
     /// clean EOF.
     TransportError(String),
+    /// A protocol-level error produced by malformed SSE bytes. Adapters
+    /// should surface this as non-retryable stream corruption.
+    ProtocolError(String),
 }
 
 /// Synthetic event type that [`sse_paired_events`] emits when the upstream
 /// byte stream reports a transport error. Adapters consuming `SseEvent`
 /// should treat this as a terminal network error.
 pub const SSE_TRANSPORT_ERROR_EVENT: &str = "__swink_transport_error__";
+
+/// Synthetic event type that [`sse_paired_events`] emits when the shared
+/// parser detects malformed SSE bytes.
+pub const SSE_PROTOCOL_ERROR_EVENT: &str = "__swink_protocol_error__";
 
 /// Streaming SSE parser that buffers bytes and yields parsed lines.
 ///
@@ -70,6 +77,9 @@ pub struct SseStreamParser {
     byte_carry: Vec<u8>,
     /// Accumulates successive `data:` lines for multi-line concatenation.
     pending_data: Option<String>,
+    /// Set after a terminal protocol error so later feed/flush calls cannot
+    /// emit data from a desynchronized parser.
+    poisoned: bool,
 }
 
 impl SseStreamParser {
@@ -80,6 +90,7 @@ impl SseStreamParser {
             buffer: String::new(),
             byte_carry: Vec::new(),
             pending_data: None,
+            poisoned: false,
         }
     }
 
@@ -89,6 +100,10 @@ impl SseStreamParser {
     /// in an internal carry buffer until the continuation bytes arrive,
     /// so split characters are decoded losslessly rather than replaced.
     pub fn feed(&mut self, chunk: &[u8]) -> Vec<SseLine> {
+        if self.poisoned {
+            return Vec::new();
+        }
+
         // Combine any carried trailing bytes from the previous feed with
         // the new chunk before attempting UTF-8 decoding.
         let combined: Vec<u8> = if self.byte_carry.is_empty() {
@@ -117,19 +132,25 @@ impl SseStreamParser {
                         self.buffer.push_str(s);
                     }
                     cursor += valid;
-                    match e.error_len() {
-                        None => {
-                            // Trailing bytes are an *incomplete* UTF-8
-                            // sequence — carry them to the next feed.
-                            self.byte_carry.extend_from_slice(&bytes[cursor..]);
-                            cursor = bytes.len();
+                    if e.error_len().is_none() {
+                        // Trailing bytes are an *incomplete* UTF-8
+                        // sequence — carry them to the next feed.
+                        self.byte_carry.extend_from_slice(&bytes[cursor..]);
+                        cursor = bytes.len();
+                    } else {
+                        // Emit complete lines already decoded from this
+                        // chunk before the corrupt byte (e.g. a final
+                        // message_stop or usage delta), flushing pending
+                        // data as at EOF, then terminate with the
+                        // non-retryable protocol error.
+                        let mut lines = self.drain_lines();
+                        if let Some(data) = self.pending_data.take() {
+                            lines.push(SseLine::Data(data));
                         }
-                        Some(n) => {
-                            // Genuinely invalid byte(s) — substitute the
-                            // Unicode replacement char and skip past them.
-                            self.buffer.push('\u{FFFD}');
-                            cursor += n;
-                        }
+                        lines.extend(
+                            self.protocol_error("SSE stream contained invalid UTF-8 bytes"),
+                        );
+                        return lines;
                     }
                 }
             }
@@ -140,13 +161,22 @@ impl SseStreamParser {
 
     /// Flush remaining buffer at stream end.
     pub fn flush(&mut self) -> Vec<SseLine> {
+        if self.poisoned {
+            return Vec::new();
+        }
+
         let mut lines = vec![];
 
-        // Any leftover incomplete UTF-8 bytes at end-of-stream are no
-        // longer recoverable — emit them lossily so callers still see them.
         if !self.byte_carry.is_empty() {
-            let carry = std::mem::take(&mut self.byte_carry);
-            self.buffer.push_str(&String::from_utf8_lossy(&carry));
+            // The buffer holds no complete lines here (feed() drains them),
+            // but pending_data may hold the payload of a complete data line
+            // from an earlier feed. Emit it — as a clean-EOF flush would —
+            // before terminating with the non-retryable protocol error.
+            if let Some(data) = self.pending_data.take() {
+                lines.push(SseLine::Data(data));
+            }
+            lines.extend(self.protocol_error("SSE stream ended with an incomplete UTF-8 sequence"));
+            return lines;
         }
 
         if !self.buffer.trim().is_empty() {
@@ -163,6 +193,14 @@ impl SseStreamParser {
         }
 
         lines
+    }
+
+    fn protocol_error(&mut self, message: &'static str) -> Vec<SseLine> {
+        self.buffer.clear();
+        self.byte_carry.clear();
+        self.pending_data = None;
+        self.poisoned = true;
+        vec![SseLine::ProtocolError(message.to_string())]
     }
 
     fn drain_lines(&mut self) -> Vec<SseLine> {
@@ -317,7 +355,10 @@ pub fn sse_data_lines_with_callback(
                 if let Some(line) = stream.next().await {
                     if !matches!(
                         line,
-                        SseLine::Data(_) | SseLine::Done | SseLine::TransportError(_)
+                        SseLine::Data(_)
+                            | SseLine::Done
+                            | SseLine::TransportError(_)
+                            | SseLine::ProtocolError(_)
                     ) {
                         continue;
                     }
@@ -391,6 +432,15 @@ pub fn sse_paired_events_with_callback(
                             (stream, current_event, callback),
                         ));
                     }
+                    Some(SseLine::ProtocolError(message)) => {
+                        return Some((
+                            SseEvent {
+                                event_type: SSE_PROTOCOL_ERROR_EVENT.to_string(),
+                                data: message,
+                            },
+                            (stream, current_event, callback),
+                        ));
+                    }
                     Some(SseLine::Event(event_type)) => {
                         current_event = Some(event_type);
                     }
@@ -456,10 +506,62 @@ where
     L: Send + 'static,
     F: FnMut(Option<L>, &mut S) -> SseAction + Send + 'static,
 {
+    sse_adapter_stream_with_cancel_finalizer(
+        line_stream,
+        cancellation_token,
+        state,
+        on_item,
+        move |state| {
+            let mut events = crate::finalize::finalize_blocks(state);
+            events.push(AssistantMessageEvent::Error {
+                stop_reason: StopReason::Aborted,
+                error_message: cancel_message.to_string(),
+                usage: None,
+                error_kind: None,
+                retry_after: None,
+            });
+            events
+        },
+    )
+}
+
+/// Like [`sse_adapter_stream`] with adapter-specific cancellation finalization.
+///
+/// Use this when an adapter must flush provider-specific buffered state before
+/// the shared block finalizer drains open blocks.
+pub fn sse_adapter_stream_with_cancel_finalizer<S, L, F, C>(
+    line_stream: Pin<Box<dyn Stream<Item = L> + Send>>,
+    cancellation_token: CancellationToken,
+    state: S,
+    on_item: F,
+    on_cancel: C,
+) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send>>
+where
+    S: StreamFinalize + Send + 'static,
+    L: Send + 'static,
+    F: FnMut(Option<L>, &mut S) -> SseAction + Send + 'static,
+    C: FnMut(&mut S) -> Vec<AssistantMessageEvent> + Send + 'static,
+{
     Box::pin(
         stream::unfold(
-            (line_stream, cancellation_token, state, false, true, on_item),
-            move |(mut lines, token, mut state, mut done, first, mut on_item)| async move {
+            (
+                line_stream,
+                cancellation_token,
+                state,
+                false,
+                true,
+                on_item,
+                on_cancel,
+            ),
+            move |(
+                mut lines,
+                token,
+                mut state,
+                mut done,
+                first,
+                mut on_item,
+                mut on_cancel,
+            )| async move {
                 if done {
                     return None;
                 }
@@ -467,35 +569,29 @@ where
                 if first {
                     return Some((
                         vec![AssistantMessageEvent::Start],
-                        (lines, token, state, done, false, on_item),
+                        (lines, token, state, done, false, on_item, on_cancel),
                     ));
                 }
 
                 tokio::select! {
                     biased;
                     () = token.cancelled() => {
-                        let mut events = crate::finalize::finalize_blocks(&mut state);
-                        events.push(AssistantMessageEvent::Error {
-                            stop_reason: StopReason::Aborted,
-                            error_message: cancel_message.to_string(),
-                            usage: None,
-                            error_kind: None,
-                        });
+                        let events = on_cancel(&mut state);
                         done = true;
-                        Some((events, (lines, token, state, done, false, on_item)))
+                        Some((events, (lines, token, state, done, false, on_item, on_cancel)))
                     }
                     item = lines.next() => {
                         let action = on_item(item, &mut state);
                         match action {
                             SseAction::Continue(events) => {
-                                Some((events, (lines, token, state, done, false, on_item)))
+                                Some((events, (lines, token, state, done, false, on_item, on_cancel)))
                             }
                             SseAction::Done(events) => {
                                 done = true;
-                                Some((events, (lines, token, state, done, false, on_item)))
+                                Some((events, (lines, token, state, done, false, on_item, on_cancel)))
                             }
                             SseAction::Skip => {
-                                Some((vec![], (lines, token, state, done, false, on_item)))
+                                Some((vec![], (lines, token, state, done, false, on_item, on_cancel)))
                             }
                         }
                     }
@@ -719,16 +815,79 @@ mod tests {
     }
 
     #[test]
-    fn sse_parser_truly_invalid_byte_uses_replacement_char() {
+    fn sse_parser_invalid_utf8_emits_protocol_error() {
         // A lone 0xFF is not the start of any valid UTF-8 sequence and is
-        // not the continuation of a partial sequence — it should be replaced
-        // with U+FFFD, not held in the carry buffer forever.
+        // not the continuation of a partial sequence. It should terminate the
+        // parser instead of being lossy-decoded into provider-visible data.
         let mut parser = SseStreamParser::new();
         let lines = parser.feed(b"data: a\xFFb\n\n");
         assert_eq!(
             lines,
-            vec![SseLine::Data("a\u{FFFD}b".to_string()), SseLine::Empty,]
+            vec![SseLine::ProtocolError(
+                "SSE stream contained invalid UTF-8 bytes".to_string()
+            )]
         );
+        assert!(parser.feed(b"data: later\n\n").is_empty());
+    }
+
+    #[test]
+    fn sse_parser_invalid_utf8_preserves_prior_complete_lines() {
+        // Complete, newline-terminated lines decoded from the same chunk
+        // before the corrupt byte (e.g. a message_stop or final usage delta)
+        // must be emitted ahead of the terminal ProtocolError instead of
+        // being discarded with the poisoned buffer.
+        let mut parser = SseStreamParser::new();
+        let lines =
+            parser.feed(b"event: message_delta\ndata: {\"usage\":1}\n\ndata: stop\n\xFFgarbage");
+        assert_eq!(
+            lines,
+            vec![
+                SseLine::Event("message_delta".to_string()),
+                SseLine::Data("{\"usage\":1}".to_string()),
+                SseLine::Empty,
+                SseLine::Data("stop".to_string()),
+                SseLine::ProtocolError("SSE stream contained invalid UTF-8 bytes".to_string()),
+            ]
+        );
+        // The parser stays poisoned: later feeds and flushes emit nothing.
+        assert!(parser.feed(b"data: later\n\n").is_empty());
+        assert!(parser.flush().is_empty());
+    }
+
+    #[test]
+    fn sse_parser_incomplete_utf8_at_eof_emits_protocol_error() {
+        let mut parser = SseStreamParser::new();
+        assert!(parser.feed(b"data: \xE2").is_empty());
+
+        let lines = parser.flush();
+        assert_eq!(
+            lines,
+            vec![SseLine::ProtocolError(
+                "SSE stream ended with an incomplete UTF-8 sequence".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn sse_parser_incomplete_utf8_at_eof_preserves_pending_data() {
+        // A complete data line from an earlier feed must not be discarded
+        // when the stream later ends mid-UTF-8-sequence; it is emitted just
+        // as a clean-EOF flush would emit it, ahead of the ProtocolError.
+        let mut parser = SseStreamParser::new();
+        assert!(parser.feed(b"data: stop\n").is_empty());
+        assert!(parser.feed(b"\xE2").is_empty());
+
+        let lines = parser.flush();
+        assert_eq!(
+            lines,
+            vec![
+                SseLine::Data("stop".to_string()),
+                SseLine::ProtocolError(
+                    "SSE stream ended with an incomplete UTF-8 sequence".to_string()
+                ),
+            ]
+        );
+        assert!(parser.flush().is_empty());
     }
 
     #[test]
@@ -780,6 +939,21 @@ mod tests {
         assert_eq!(first, Some(SseLine::Data("hello".to_string())));
         let done = data_stream.next().await;
         assert!(done.is_none());
+    }
+
+    #[tokio::test]
+    async fn sse_data_lines_surfaces_invalid_utf8_as_protocol_error() {
+        let chunks = vec![Ok(bytes::Bytes::from_static(b"data: \xFF\n\n"))];
+        let byte_stream = futures::stream::iter(chunks);
+        let mut data_stream = sse_data_lines(byte_stream);
+
+        assert_eq!(
+            data_stream.next().await,
+            Some(SseLine::ProtocolError(
+                "SSE stream contained invalid UTF-8 bytes".to_string()
+            ))
+        );
+        assert_eq!(data_stream.next().await, None);
     }
 
     #[tokio::test]
@@ -845,6 +1019,17 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, "unknown");
         assert_eq!(events[0].data, "orphan");
+    }
+
+    #[tokio::test]
+    async fn paired_events_maps_invalid_utf8_to_protocol_error_event() {
+        let chunks = vec![Ok(bytes::Bytes::from_static(b"event: one\ndata: \xFF\n\n"))];
+        let byte_stream = futures::stream::iter(chunks);
+        let events: Vec<_> = super::sse_paired_events(byte_stream).collect().await;
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, SSE_PROTOCOL_ERROR_EVENT);
+        assert_eq!(events[0].data, "SSE stream contained invalid UTF-8 bytes");
     }
 
     #[tokio::test]

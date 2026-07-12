@@ -143,12 +143,12 @@ A fetched web page contains prompt injection attempts embedded in its content (e
 - **FR-008**: The plugin MUST support Tavily as an alternative search provider when an API key is configured.
 - **FR-009**: The plugin MUST include a PreDispatch domain filtering policy that blocks requests to private/internal IP ranges (SSRF protection) by default, with configurable allowlist and denylist.
 - **FR-010**: The plugin MUST include a PreDispatch rate limiting policy with a configurable requests-per-minute threshold and a sensible default. The rate limiter MUST be shared across all web tools (fetch, search, screenshot, extract) using interior mutability (`Arc<Mutex<>>`) for concurrent safety.
-- **FR-011**: The plugin MUST include a PostTurn content sanitization policy that strips known prompt injection patterns from fetched web content.
+- **FR-011**: Sanitization of fetched web content MUST be enforced at the tool layer — each web tool (`web.fetch`, `web.search`, `web.extract`) strips known prompt injection patterns from its result text before returning it, via `sanitize_web_tool_text()`. The plugin MUST also register a PostTurn policy (`ContentSanitizerPolicy`) as a detection/telemetry backstop: it re-scans `web.*` tool results already committed to context and logs a warning if unsanitized injection markers are found, but it does not mutate content (always returns `Continue`).
 - **FR-012**: The plugin MUST use Playwright as an external Node.js subprocess for headless browser operations (screenshot and extract), communicating via JSON over stdin/stdout. The subprocess MUST be long-lived (lazily started on first use, shut down on plugin drop) to amortize startup cost. The plugin MUST NOT link a browser engine into the Rust binary.
 - **FR-013**: The plugin MUST provide a builder-style configuration API for setting search provider, domain filters, rate limits, content length limits, and Playwright path.
-- **FR-014**: The plugin MUST extract readable content from HTML using the `readability` crate (arc90 Readability port) to strip navigation, ads, scripts, and boilerplate while preserving meaningful content structure.
+- **FR-014**: The plugin MUST extract readable content from HTML using a hand-rolled extractor built on the `scraper` crate (CSS-selector-based DOM traversal) to strip navigation, ads, scripts, and boilerplate while preserving meaningful content structure. The `readability` crate is deliberately not used, since it pulls in a duplicate `reqwest` dependency tree alongside the workspace's existing `reqwest` usage.
 - **FR-015**: The plugin MUST truncate fetched content that exceeds the configured maximum length (default: 50,000 characters / ~12,500 tokens), preserving content from the beginning and end with a truncation notice. The limit is configurable via the builder.
-- **FR-016**: The plugin MUST log every web request (URL, status, content size, latency) via the event observer for debugging and auditing.
+- **FR-016**: The plugin MUST log every web request (URL/query, status, content size, latency) for debugging and auditing. Logging is implemented at the tool layer (inside each tool's execute path), not via the plugin's `on_event` observer, since `AgentEvent` carries no duration and the observer only sees the tool name on start/error.
 - **FR-017**: The plugin MUST detect non-HTML content types and return an appropriate message rather than dumping binary data into the agent's context.
 - **FR-018**: The plugin MUST gracefully handle Playwright not being installed, returning a clear error with installation guidance rather than an opaque failure. This applies to both `web.screenshot` and `web.extract`, which both require Playwright.
 - **FR-019**: The search provider MUST be abstracted behind a trait so that additional providers can be added without modifying existing code.
@@ -185,6 +185,8 @@ A fetched web page contains prompt injection attempts embedded in its content (e
 - The `web.screenshot` tool returns image data that the LLM can interpret (multi-modal models) or stores it as an artifact for the user.
 - Content sanitization targets known prompt injection patterns; it is a defense-in-depth measure, not a guarantee against all injection techniques.
 - Default rate limit is conservative (e.g., 30 requests per minute) to prevent accidental abuse while still being useful for normal agent operation.
+- `robots.txt` compliance is out of scope for this spec revision; the plugin does not check or honor `robots.txt` directives. Tracked as possible future work.
+- `WebPlugin` is a standalone library crate (`swink-agent-plugin-web`) — no in-repo consumer registers it yet. Consuming applications add it themselves via `AgentOptions::with_plugin`.
 
 ## Success Criteria *(mandatory)*
 

@@ -122,6 +122,7 @@ async fn intent_satisfied_by_non_literal_arguments() {
         pass: true,
         reason: Some("arguments satisfy the intent".into()),
         label: Some("equivalent".into()),
+        cost: None,
     };
     let judge: Arc<dyn JudgeClient> = Arc::new(MockJudge::with_verdicts(vec![verdict]));
     let evaluator = SemanticToolParameterEvaluator::new(Arc::clone(&judge));
@@ -241,6 +242,7 @@ async fn filter_with_partial_match_judges_only_target() {
         pass: true,
         reason: Some("path matches project-alpha".into()),
         label: Some("equivalent".into()),
+        cost: None,
     };
     let judge_inner = Arc::new(MockJudge::with_verdicts(vec![verdict]));
     let judge: Arc<dyn JudgeClient> = Arc::clone(&judge_inner) as _;
@@ -296,6 +298,7 @@ fn evaluates_from_plain_sync_context_without_panic() {
         pass: true,
         reason: Some("intent satisfied".into()),
         label: None,
+        cost: None,
     };
     let judge: Arc<dyn JudgeClient> = Arc::new(MockJudge::with_verdicts(vec![verdict]));
     let evaluator = SemanticToolParameterEvaluator::new(judge);
