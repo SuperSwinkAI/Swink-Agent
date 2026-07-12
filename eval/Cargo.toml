@@ -37,7 +37,7 @@ backon = { workspace = true, optional = true }
 strsim = { workspace = true, optional = true }
 jsonschema = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
-url = "2"
+url = "2.5.8"
 tempfile.workspace = true
 opentelemetry = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true }
@@ -81,7 +81,7 @@ trace-cloudwatch = ["trace-ingest"]
 telemetry = ["dep:opentelemetry", "dep:opentelemetry_sdk"]
 html-report = ["dep:askama"]
 langsmith = ["dep:reqwest"]
-cli = ["dep:clap", "swink-agent/testkit"]
+cli = ["dep:clap"]
 training-export = []
 
 [dev-dependencies]

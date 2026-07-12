@@ -9,20 +9,37 @@
 ///
 /// Manages a text buffer as a vector of lines, cursor position, dynamic
 /// height, and per-session input history with draft preservation.
+///
+/// [Updated to match implementation: `tui/src/ui/input.rs` makes every
+/// field private (enforced by a regression test, `fields_are_private`, that
+/// fails to compile if a field becomes directly accessible). The public
+/// surface is accessor-based, not field-based, as shown below.]
 pub struct InputEditor {
-    pub lines: Vec<String>,
-    pub cursor_row: usize,
-    pub cursor_col: usize,
-    pub scroll_offset: usize,
-    pub history: Vec<Vec<String>>,
-    pub history_index: Option<usize>,
-    // saved_input: Option<Vec<String>> (private)
+    lines: Vec<String>,               // private
+    cursor_row: usize,                // private
+    cursor_col: usize,                // private
+    scroll_offset: usize,             // private
+    history: Vec<Vec<String>>,        // private
+    history_index: Option<usize>,     // private
+    saved_input: Option<Vec<String>>, // private
 }
 
 impl InputEditor {
     /// Create a new empty editor with a single blank line.
     #[must_use]
     pub fn new() -> Self;
+
+    /// Current cursor row (0-indexed).
+    #[must_use]
+    pub const fn cursor_row(&self) -> usize;
+
+    /// Number of lines currently in the editor.
+    #[must_use]
+    pub const fn line_count(&self) -> usize;
+
+    /// Read-only access to the lines of text in the editor.
+    #[must_use]
+    pub fn lines(&self) -> &[String];
 
     /// Dynamic height for the input area, clamped to 3..=10.
     /// Includes 2 lines for borders.
@@ -64,6 +81,12 @@ impl InputEditor {
     /// Clears the editor and resets cursor/history state.
     pub fn submit(&mut self) -> Option<String>;
 
+    /// Submit the current input WITHOUT pushing it to history (used for
+    /// secret-bearing commands such as `#key <provider> <api-key>`, so the
+    /// value cannot later be recalled via Up-arrow history navigation).
+    /// Returns `None` if the input is empty or whitespace-only.
+    pub fn submit_without_history(&mut self) -> Option<String>;
+
     /// Navigate to previous history entry.
     /// On first call, saves the current draft. No-op if history is empty
     /// or already at the oldest entry.
@@ -103,6 +126,7 @@ impl InputEditor {
 ### Submission
 - `submit()` joins lines with `\n`, trims the result, and returns `None` if empty.
 - On successful submission: text is pushed to `history`, editor resets to a single empty line, `history_index` and `saved_input` are cleared.
+- `submit_without_history()` performs the same reset but deliberately skips the history push — see the `InputHistory` entity in `data-model.md` for the secret-redaction rationale.
 
 ### History Navigation
 - `history_prev()`: first call saves current `lines` as `saved_input`, sets `history_index` to `history.len() - 1`, and loads that entry. Subsequent calls decrement the index.
@@ -148,18 +172,27 @@ impl ConversationView {
 
     /// Render the conversation view.
     ///
+    /// [Updated to match implementation: `render()` gained `show_thinking`
+    /// and `selection` parameters after this contract was first written.]
+    ///
     /// - `messages`: the full message list to render.
+    /// - `show_thinking`: whether to render the `thinking` section of assistant messages.
     /// - `focused`: whether the conversation view has keyboard focus.
     /// - `blink_on`: whether the streaming cursor blink is in the "on" phase.
     /// - `selected_tool_block`: index of the currently selected tool block (for F2 inspect).
+    /// - `selection`: the active in-app click-drag selection, if any; used to render
+    ///   the reversed-video highlight and to capture visible cells for clipboard copy.
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         frame: &mut Frame,
         area: Rect,
         messages: &[DisplayMessage],
+        show_thinking: bool,
         focused: bool,
         blink_on: bool,
         selected_tool_block: Option<usize>,
+        selection: Option<&Selection>,
     );
 }
 ```

@@ -1,6 +1,6 @@
 # Streaming Interface
 
-**Source files:** `src/stream.rs`, `adapters/src/proxy.rs`, `adapters/src/ollama.rs`, `adapters/src/anthropic.rs`, `adapters/src/openai.rs`, `adapters/src/convert.rs`
+**Source files:** `src/stream.rs` (trait + event protocol), `src/loop_/stream.rs` (retry/fallback wrapper), `adapters/src/` (`proxy.rs`, `ollama.rs`, `anthropic.rs`, `openai.rs` + `openai_compat.rs`, `convert.rs`, `sse.rs`, `base.rs`)
 **Related:** [PRD §7](../../planning/PRD.md#7-streaming-interface)
 
 The streaming interface is the single boundary between the harness and LLM providers. The harness never holds provider credentials or SDK clients. All inference flows through a `StreamFn` implementation. Nine remote implementations ship in the adapters crate, plus `LocalStreamFn` in the local-llm crate:
@@ -18,111 +18,62 @@ The streaming interface is the single boundary between the harness and LLM provi
 | `XAiStreamFn` | `swink-agent-adapters` | **SSE** | xAI API |
 | `LocalStreamFn` | `swink-agent-local-llm` | Local inference | On-device (SmolLM3-3B) |
 
-All implementations produce the same `Stream<AssistantMessageEvent>` output. The transport difference is internal: `ProxyStreamFn` parses SSE frames with named event types, `OllamaStreamFn` splits raw newline-delimited JSON lines and maps Ollama's response schema into harness events, `AnthropicStreamFn` connects directly to the Anthropic Messages API, and `OpenAiStreamFn` connects to any OpenAI-compatible endpoint. Callers can also supply a fully custom `StreamFn` for any other provider.
+All implementations produce the same `Stream<AssistantMessageEvent>` output; transport differences are internal. Callers can also supply a fully custom `StreamFn` for any other provider. All adapters use the `tracing` crate for structured logging (`debug!`, `warn!`, `error!`).
 
-All adapters use the `tracing` crate for structured logging (`debug!`, `warn!`, `error!`), providing consistent observability across providers.
+### Where retry sits
+
+Raw adapters do **not** retry. The agent loop calls adapters through `src/loop_/stream.rs`:
+
+- `stream_with_retry` — wraps the `StreamFn` call with `RetryStrategy` backoff and, when the primary model exhausts its retry budget on a retryable error, tries each `ModelFallback` model in order (each with a fresh retry budget).
+- `handle_stream_error` — classifies stream errors into `AgentError` variants to decide retry vs. surface.
+- `prepare_cache_miss_retry` — rebuilds the request context after a prompt-cache miss before retrying.
 
 ---
 
 ## L2 — Components
 
+All remote adapters share the same shape: convert harness messages to the provider's request format, POST, parse the byte stream (SSE or NDJSON) into provider chunks, and map chunks onto the common `AssistantMessageEvent` protocol.
+
 ```mermaid
 flowchart TB
-    subgraph CallerLayer["👤 Caller"]
-        CallerStreamFn["Custom StreamFn<br/>(direct provider SDK)"]
+    subgraph CallerLayer["👤 Caller / Agent Loop"]
+        RetryWrap["stream_with_retry<br/>(src/loop_/stream.rs — retry,<br/>model fallback, cache-miss retry)"]
     end
 
     subgraph StreamLayer["📡 Streaming Interface (core)"]
         StreamFnTrait["StreamFn (trait)<br/>stream(model, context, options)<br/>→ Stream&lt;AssistantMessageEvent&gt;"]
-        StreamOptions["StreamOptions<br/>temperature · max_tokens<br/>session_id · transport"]
         EventTypes["AssistantMessageEvent<br/>(start/delta/end protocol)"]
-        Delta["AssistantMessageDelta<br/>TextDelta · ThinkingDelta · ToolCallDelta"]
     end
 
-    subgraph ProxyLayer["🔀 Proxy StreamFn (adapters crate)"]
-        ProxyStreamFn["ProxyStreamFn"]
-        SSEParser["SSE Parser<br/>(eventsource-stream)"]
-        Reconstructor["Message Reconstructor<br/>(delta → partial AssistantMessage)"]
-    end
-
-    subgraph OllamaLayer["🔌 Ollama Adapter (adapters crate)"]
-        OllamaStreamFn["OllamaStreamFn"]
-        NDJSONParser["NDJSON Parser<br/>(newline-delimited JSON)"]
-        OllamaMapper["Event Mapper<br/>(Ollama chunks → AssistantMessageEvent)"]
-    end
-
-    subgraph AnthropicLayer["🔌 Anthropic Adapter (adapters crate)"]
-        AnthropicStreamFn["AnthropicStreamFn"]
-        AnthropicSSEParser["SSE Parser<br/>(Anthropic event types)"]
-        AnthropicMapper["Event Mapper<br/>(Anthropic → AssistantMessageEvent)"]
-    end
-
-    subgraph OpenAiLayer["🔌 OpenAI Adapter (adapters crate)"]
-        OpenAiStreamFn["OpenAiStreamFn"]
-        OpenAiSSEParser["SSE Parser<br/>(OpenAI event types)"]
-        OpenAiMapper["Event Mapper<br/>(OpenAI → AssistantMessageEvent)"]
-    end
-
-    subgraph SharedLayer["🔧 Shared Adapter Infrastructure"]
-        MessageConverter["MessageConverter (trait)<br/>convert harness messages<br/>to provider-specific format"]
-        TracingInfra["tracing crate<br/>(debug / warn / error logging)"]
+    subgraph AdapterLayer["🔌 Any Adapter (adapters crate)"]
+        Convert["MessageConverter<br/>(harness → provider request)"]
+        HTTPPost["HTTP POST<br/>(reqwest client, connect +<br/>read timeouts from base.rs)"]
+        Parser["Transport parser<br/>(shared SSE parser sse.rs,<br/>or NDJSON line splitter)"]
+        Mapper["Event mapper<br/>(provider chunks →<br/>AssistantMessageEvent)"]
     end
 
     subgraph ExternalLayer["🌐 External"]
-        DirectProvider["LLM Provider API<br/>(direct)"]
-        ProxyServer["LLM Proxy Server<br/>(HTTP/SSE)"]
-        BackendProvider["LLM Provider API<br/>(via proxy)"]
-        OllamaServer["Ollama Server<br/>(HTTP/NDJSON)"]
-        AnthropicAPI["Anthropic Messages API<br/>(HTTP/SSE)"]
-        OpenAiAPI["OpenAI-compatible API<br/>(HTTP/SSE)"]
+        Provider["LLM Provider API<br/>(direct, proxy, or local)"]
     end
 
-    CallerStreamFn -->|"implements"| StreamFnTrait
-    ProxyStreamFn -->|"implements"| StreamFnTrait
-    OllamaStreamFn -->|"implements"| StreamFnTrait
-    AnthropicStreamFn -->|"implements"| StreamFnTrait
-    OpenAiStreamFn -->|"implements"| StreamFnTrait
-    StreamFnTrait --> StreamOptions
-    StreamFnTrait --> EventTypes
-    EventTypes --> Delta
-    ProxyStreamFn --> SSEParser
-    SSEParser --> Reconstructor
-    Reconstructor --> EventTypes
-    OllamaStreamFn --> NDJSONParser
-    NDJSONParser --> OllamaMapper
-    OllamaMapper --> EventTypes
-    AnthropicStreamFn --> AnthropicSSEParser
-    AnthropicSSEParser --> AnthropicMapper
-    AnthropicMapper --> EventTypes
-    OpenAiStreamFn --> OpenAiSSEParser
-    OpenAiSSEParser --> OpenAiMapper
-    OpenAiMapper --> EventTypes
-    AnthropicStreamFn -->|"uses"| MessageConverter
-    OpenAiStreamFn -->|"uses"| MessageConverter
-    OllamaStreamFn -->|"uses"| MessageConverter
-    CallerStreamFn -->|"direct calls"| DirectProvider
-    ProxyStreamFn -->|"POST /v1/stream<br/>Bearer token (SSE)"| ProxyServer
-    ProxyServer -->|"proxied request"| BackendProvider
-    OllamaStreamFn -->|"POST /api/chat<br/>(NDJSON stream)"| OllamaServer
-    AnthropicStreamFn -->|"POST /v1/messages<br/>x-api-key header (SSE)"| AnthropicAPI
-    OpenAiStreamFn -->|"POST /v1/chat/completions<br/>Bearer token (SSE)"| OpenAiAPI
+    RetryWrap --> StreamFnTrait
+    StreamFnTrait --> Convert
+    Convert --> HTTPPost
+    HTTPPost --> Provider
+    Provider --> Parser
+    Parser --> Mapper
+    Mapper --> EventTypes
+    EventTypes --> RetryWrap
 
     classDef callerStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
     classDef streamStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
-    classDef proxyStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
     classDef adapterStyle fill:#c8e6c9,stroke:#388e3c,stroke-width:2px,color:#000
     classDef externalStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
 
-    classDef sharedStyle fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#000
-
-    class CallerStreamFn callerStyle
-    class StreamFnTrait,StreamOptions,EventTypes,Delta streamStyle
-    class ProxyStreamFn,SSEParser,Reconstructor proxyStyle
-    class OllamaStreamFn,NDJSONParser,OllamaMapper adapterStyle
-    class AnthropicStreamFn,AnthropicSSEParser,AnthropicMapper adapterStyle
-    class OpenAiStreamFn,OpenAiSSEParser,OpenAiMapper adapterStyle
-    class MessageConverter,TracingInfra sharedStyle
-    class DirectProvider,ProxyServer,BackendProvider,OllamaServer,AnthropicAPI,OpenAiAPI externalStyle
+    class RetryWrap callerStyle
+    class StreamFnTrait,EventTypes streamStyle
+    class Convert,HTTPPost,Parser,Mapper adapterStyle
+    class Provider externalStyle
 ```
 
 ---
@@ -200,257 +151,49 @@ Adapters can attach a `StreamErrorKind` to an `Error` event so the agent loop ca
 
 ---
 
-## L3 — ProxyStreamFn Architecture
+## L3 — Shared Adapter Infrastructure
 
-The proxy strips the full partial message from delta events to reduce bandwidth. The client reconstructs it locally by accumulating deltas into a `partial: AssistantMessage`.
+### MessageConverter (`adapters/src/convert.rs`)
 
-```mermaid
-flowchart TB
-    subgraph ProxyServer["🖥️ Proxy Server (external)"]
-        ServerRecv["Receive POST /v1/stream"]
-        ServerAuth["Verify Bearer token"]
-        ServerForward["Forward to LLM Provider"]
-        ServerSSE["Stream SSE response<br/>(partial field stripped)"]
-    end
+The `MessageConverter` trait converts harness messages into provider-specific formats. Each direct-API adapter implements it to handle differences in how providers expect messages, tool definitions, and tool results to be structured. Adding a new provider only requires implementing `MessageConverter` and `StreamFn`; `ProxyStreamFn` passes harness messages through unconverted.
 
-    subgraph ProxyClient["🔀 ProxyStreamFn (harness)"]
-        HTTPPost["POST /v1/stream<br/>(model + context + options)"]
-        SSERead["Read SSE stream<br/>(eventsource-stream)"]
-        ParseEvent["Parse SseEventData JSON"]
-        Accumulate["Accumulate into<br/>partial: AssistantMessage"]
-        EmitEvent["Emit AssistantMessageEvent<br/>(with partial attached)"]
-    end
+### Shared SSE parser (`adapters/src/sse.rs`)
 
-    subgraph Output["📤 Output"]
-        HarnessStream["Stream&lt;AssistantMessageEvent&gt;<br/>consumed by run_loop"]
-    end
+The SSE adapters share `SseStreamParser`, which buffers bytes, carries incomplete multi-byte UTF-8 sequences across chunk boundaries, and concatenates successive `data:` fields per the SSE spec. It is **strictly UTF-8 with drain-before-poison**: on genuinely invalid bytes it first drains complete already-buffered lines (and any pending `data:` payload — e.g. a final `message_stop` or usage delta), then sets an internal `poisoned` flag and emits a non-retryable protocol error (`"SSE stream contained invalid UTF-8 bytes"`). A poisoned parser ignores all further `feed()`/`flush()` calls, so a desynchronized stream can never emit garbage data.
 
-    HTTPPost --> ServerRecv
-    ServerRecv --> ServerAuth
-    ServerAuth --> ServerForward
-    ServerForward --> ServerSSE
-    ServerSSE --> SSERead
-    SSERead --> ParseEvent
-    ParseEvent --> Accumulate
-    Accumulate --> EmitEvent
-    EmitEvent --> HarnessStream
+### HTTP client timeouts (`adapters/src/base.rs`)
 
-    classDef serverStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
-    classDef clientStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
-    classDef outputStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
+Streaming responses can legitimately run for minutes, so adapter HTTP clients set no overall request deadline — only connect and per-read timeouts:
 
-    class ServerRecv,ServerAuth,ServerForward,ServerSSE serverStyle
-    class HTTPPost,SSERead,ParseEvent,Accumulate,EmitEvent clientStyle
-    class HarnessStream outputStyle
-```
-
----
-
-## L3 — OllamaStreamFn Architecture
-
-The Ollama adapter connects to Ollama's `/api/chat` endpoint, which streams newline-delimited JSON (NDJSON) rather than SSE. Each line is a self-contained JSON object with a `message` field and a `done` boolean. The adapter maintains a state machine that tracks open content blocks (thinking, text, tool calls) and emits the same `AssistantMessageEvent` protocol that `ProxyStreamFn` produces.
-
-```mermaid
-flowchart TB
-    subgraph OllamaServer["🖥️ Ollama Server"]
-        ServerRecv["Receive POST /api/chat"]
-        ServerInfer["Run model inference"]
-        ServerNDJSON["Stream NDJSON response<br/>(one JSON object per line)"]
-    end
-
-    subgraph OllamaClient["🔌 OllamaStreamFn (adapters crate)"]
-        HTTPPost["POST /api/chat<br/>(model + messages + tools)"]
-        NDJSONRead["Read NDJSON stream<br/>(chunked HTTP body)"]
-        ParseChunk["Parse OllamaChatChunk"]
-        StateMachine["State Machine<br/>(track open blocks:<br/>thinking, text, tool calls)"]
-        EmitEvent["Emit AssistantMessageEvent<br/>(start/delta/end)"]
-    end
-
-    subgraph Output["📤 Output"]
-        HarnessStream["Stream&lt;AssistantMessageEvent&gt;<br/>consumed by run_loop"]
-    end
-
-    HTTPPost --> ServerRecv
-    ServerRecv --> ServerInfer
-    ServerInfer --> ServerNDJSON
-    ServerNDJSON --> NDJSONRead
-    NDJSONRead --> ParseChunk
-    ParseChunk --> StateMachine
-    StateMachine --> EmitEvent
-    EmitEvent --> HarnessStream
-
-    classDef serverStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
-    classDef clientStyle fill:#c8e6c9,stroke:#388e3c,stroke-width:2px,color:#000
-    classDef outputStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
-
-    class ServerRecv,ServerInfer,ServerNDJSON serverStyle
-    class HTTPPost,NDJSONRead,ParseChunk,StateMachine,EmitEvent clientStyle
-    class HarnessStream outputStyle
-```
-
-**Key differences from `ProxyStreamFn`:**
-
-| Aspect | `ProxyStreamFn` (SSE) | `OllamaStreamFn` (NDJSON) |
+| Constant | Value | Applies to |
 |---|---|---|
-| Transport | SSE with named event types | Newline-delimited JSON |
-| Parsing library | `eventsource-stream` | Custom `ndjson_lines` splitter |
-| Message reconstruction | Accumulates deltas into a `partial: AssistantMessage` | State machine tracks open blocks, emits events directly |
-| Tool call delivery | Streamed as incremental JSON fragments | Delivered as complete objects in a single chunk |
-| Authentication | Bearer token header | None (local server) |
-| Cost tracking | Provider-dependent | Always zero (local inference) |
-| Thinking support | Depends on upstream proxy | Streaming thinking blocks supported |
+| `DEFAULT_CONNECT_TIMEOUT` | 30 s | All adapters (TCP connect). |
+| `DEFAULT_READ_TIMEOUT` | 120 s | Remote adapters — a **read** timeout (`reqwest::ClientBuilder::read_timeout`), reset on each received chunk. |
+| `LOCAL_READ_TIMEOUT` | 600 s | Local-inference adapters (Ollama) — cold model load or long prompt prefill can sit silent well past 120 s. |
 
 ---
 
-## L3 — AnthropicStreamFn Architecture
+## L3 — Adapter Specifics
 
-**Source file:** `adapters/src/anthropic.rs` (~795 lines)
+Per-adapter behaviour beyond the generic pipeline above:
 
-The Anthropic adapter connects directly to the Anthropic Messages API at `POST /v1/messages`. It handles the full Anthropic SSE event protocol, including thinking blocks with budget management and signature extraction.
-
-**Key features:**
-
-- **Authentication:** Uses `x-api-key` header (not Bearer token) per Anthropic API convention.
-- **Thinking blocks:** Supports extended thinking with budget management. When thinking is enabled, temperature is forced to `1` as required by the Anthropic API.
-- **Signature extraction:** Extracts thinking block signatures from `ThinkingEnd` events for downstream verification.
-- **Message conversion:** Uses the `MessageConverter` trait (from `adapters/src/convert.rs`) to transform harness messages into Anthropic's expected format.
-- **Tracing:** Uses `tracing` crate for structured debug, warn, and error logging throughout the streaming lifecycle.
-
-```mermaid
-flowchart TB
-    subgraph AnthropicServer["🖥️ Anthropic Messages API"]
-        ServerRecv["Receive POST /v1/messages"]
-        ServerAuth["Verify x-api-key header"]
-        ServerInfer["Run model inference"]
-        ServerSSE["Stream SSE response<br/>(Anthropic event types)"]
-    end
-
-    subgraph AnthropicClient["🔌 AnthropicStreamFn (adapters crate)"]
-        HTTPPost["POST /v1/messages<br/>(model + messages + tools)"]
-        SSERead["Read SSE stream"]
-        ParseEvent["Parse Anthropic SSE events<br/>(message_start, content_block_start,<br/>content_block_delta, message_delta)"]
-        ThinkingMgmt["Thinking Budget Management<br/>(force temperature=1,<br/>extract signatures)"]
-        EmitEvent["Emit AssistantMessageEvent<br/>(start/delta/end)"]
-    end
-
-    subgraph Output["📤 Output"]
-        HarnessStream["Stream&lt;AssistantMessageEvent&gt;<br/>consumed by run_loop"]
-    end
-
-    HTTPPost --> ServerRecv
-    ServerRecv --> ServerAuth
-    ServerAuth --> ServerInfer
-    ServerInfer --> ServerSSE
-    ServerSSE --> SSERead
-    SSERead --> ParseEvent
-    ParseEvent --> ThinkingMgmt
-    ThinkingMgmt --> EmitEvent
-    EmitEvent --> HarnessStream
-
-    classDef serverStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
-    classDef clientStyle fill:#c8e6c9,stroke:#388e3c,stroke-width:2px,color:#000
-    classDef outputStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
-
-    class ServerRecv,ServerAuth,ServerInfer,ServerSSE serverStyle
-    class HTTPPost,SSERead,ParseEvent,ThinkingMgmt,EmitEvent clientStyle
-    class HarnessStream outputStyle
-```
-
----
-
-## L3 — OpenAiStreamFn Architecture
-
-**Source file:** `adapters/src/openai.rs` (~735 lines)
-
-The OpenAI adapter connects to any OpenAI-compatible API at `POST /v1/chat/completions`. It supports multiple providers that implement the OpenAI chat completions protocol.
-
-**Key features:**
-
-- **Authentication:** Uses standard Bearer token authentication (`Authorization: Bearer <key>`).
-- **Multi-provider support:** Works with any OpenAI-compatible endpoint including vLLM, LM Studio, Groq, and Together AI. The base URL is configurable.
-- **Tool call streaming:** Accumulates tool call state across multiple SSE chunks. Tool calls arrive as incremental fragments (function name, argument JSON pieces) that are assembled into complete tool calls.
-- **Message conversion:** Uses the `MessageConverter` trait (from `adapters/src/convert.rs`) to transform harness messages into OpenAI's chat completions format.
-- **Tracing:** Uses `tracing` crate for structured debug, warn, and error logging throughout the streaming lifecycle.
-
-```mermaid
-flowchart TB
-    subgraph OpenAiServer["🖥️ OpenAI-Compatible API"]
-        ServerRecv["Receive POST /v1/chat/completions"]
-        ServerAuth["Verify Bearer token"]
-        ServerInfer["Run model inference"]
-        ServerSSE["Stream SSE response<br/>(data: [JSON] lines)"]
-    end
-
-    subgraph OpenAiClient["🔌 OpenAiStreamFn (adapters crate)"]
-        HTTPPost["POST /v1/chat/completions<br/>(model + messages + tools)"]
-        SSERead["Read SSE stream"]
-        ParseEvent["Parse OpenAI SSE chunks<br/>(choices[].delta with<br/>content, tool_calls)"]
-        ToolAccum["Tool Call State Accumulation<br/>(assemble fragments into<br/>complete tool calls)"]
-        EmitEvent["Emit AssistantMessageEvent<br/>(start/delta/end)"]
-    end
-
-    subgraph Output["📤 Output"]
-        HarnessStream["Stream&lt;AssistantMessageEvent&gt;<br/>consumed by run_loop"]
-    end
-
-    subgraph Providers["🌐 Compatible Providers"]
-        OpenAI["OpenAI"]
-        vLLM["vLLM"]
-        LMStudio["LM Studio"]
-        Groq["Groq"]
-        Together["Together AI"]
-    end
-
-    HTTPPost --> ServerRecv
-    ServerRecv --> ServerAuth
-    ServerAuth --> ServerInfer
-    ServerInfer --> ServerSSE
-    ServerSSE --> SSERead
-    SSERead --> ParseEvent
-    ParseEvent --> ToolAccum
-    ToolAccum --> EmitEvent
-    EmitEvent --> HarnessStream
-    OpenAI --> ServerRecv
-    vLLM --> ServerRecv
-    LMStudio --> ServerRecv
-    Groq --> ServerRecv
-    Together --> ServerRecv
-
-    classDef serverStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
-    classDef clientStyle fill:#c8e6c9,stroke:#388e3c,stroke-width:2px,color:#000
-    classDef outputStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
-    classDef providerStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
-
-    class ServerRecv,ServerAuth,ServerInfer,ServerSSE serverStyle
-    class HTTPPost,SSERead,ParseEvent,ToolAccum,EmitEvent clientStyle
-    class HarnessStream outputStyle
-    class OpenAI,vLLM,LMStudio,Groq,Together providerStyle
-```
-
----
-
-## L3 — MessageConverter Trait and Shared Infrastructure
-
-**Source file:** `adapters/src/convert.rs`
-
-The `MessageConverter` trait provides the shared infrastructure for converting harness messages into provider-specific formats. Each adapter (`AnthropicStreamFn`, `OpenAiStreamFn`, `OllamaStreamFn`) implements this trait to handle the differences in how each provider expects messages, tool definitions, and tool results to be structured.
-
-This keeps provider-specific serialization logic isolated from the streaming machinery, so adding a new provider only requires implementing `MessageConverter` and the `StreamFn` trait.
-
----
-
-## L3 — Adapter Comparison
+- **`ProxyStreamFn`** (`adapters/src/proxy.rs`) — the proxy strips the full partial message from delta events to reduce bandwidth; the client reconstructs it locally by accumulating deltas into a `partial: AssistantMessage` attached to emitted events. Bearer-token auth to the caller-managed proxy.
+- **`OllamaStreamFn`** (`adapters/src/ollama.rs`) — NDJSON, not SSE: each line is a self-contained JSON object (`OllamaChatChunk`) with a `message` field and a `done` boolean, split by a custom `ndjson_lines` splitter. A state machine tracks open content blocks (thinking, text, tool calls) and emits the common start/delta/end protocol. Tool calls arrive as complete objects in a single chunk. No auth (local server); cost is always zero.
+- **`AnthropicStreamFn`** (`adapters/src/anthropic.rs`) — direct Anthropic Messages API with `x-api-key` auth (not Bearer). Parses Anthropic's named SSE events (`message_start`, `content_block_start`, `content_block_delta`, `message_delta`). Supports extended thinking with budget management — when thinking is enabled, temperature is forced to `1` as the API requires — and extracts thinking-block signatures into `ThinkingEnd` events.
+- **`OpenAiStreamFn`** (`adapters/src/openai.rs`, shared logic in `openai_compat.rs`) — works against any OpenAI-compatible chat completions endpoint (OpenAI, vLLM, LM Studio, Groq, Together AI); base URL configurable, Bearer-token auth. Tool calls arrive as incremental fragments (function name, argument JSON pieces) spread across SSE chunks; the adapter accumulates this state and assembles complete tool calls.
 
 | Aspect | `ProxyStreamFn` | `OllamaStreamFn` | `AnthropicStreamFn` | `OpenAiStreamFn` |
 |---|---|---|---|---|
 | Transport | SSE | NDJSON | SSE | SSE |
 | Endpoint | `POST /v1/stream` | `POST /api/chat` | `POST /v1/messages` | `POST /v1/chat/completions` |
+| Parsing | `eventsource-stream` | Custom `ndjson_lines` splitter | SSE (Anthropic event types) | SSE (`data:` JSON chunks) |
 | Authentication | Bearer token | None (local) | `x-api-key` header | Bearer token |
-| Thinking support | Depends on proxy | Streaming thinking blocks | Thinking blocks with budget mgmt, forced temp=1, signature extraction | N/A |
-| Tool calls | Streamed fragments | Complete objects | Streamed fragments | Streamed fragments with state accumulation |
 | Message conversion | N/A (passthrough) | `MessageConverter` | `MessageConverter` | `MessageConverter` |
-| Tracing | N/A | `tracing` crate | `tracing` crate | `tracing` crate |
+| Message reconstruction | Accumulates deltas into `partial: AssistantMessage` | State machine over open blocks | Event mapping | Event mapping + tool-fragment accumulation |
+| Thinking support | Depends on upstream proxy | Streaming thinking blocks | Budget mgmt, forced temp=1, signature extraction | N/A |
+| Tool calls | Streamed fragments | Complete objects | Streamed fragments | Streamed fragments with state accumulation |
 | Multi-provider | No (single proxy) | No (Ollama only) | No (Anthropic only) | Yes (vLLM, LM Studio, Groq, Together) |
+| Cost tracking | Provider-dependent (proxy supplies) | Always zero (local) | `Cost::default()` — adapter does not price | `Cost::default()` — adapter does not price |
 
 ---
 
@@ -498,34 +241,3 @@ Proxy failures are classified into `AgentError` variants based on the nature of 
 | **Proxy timeout** (proxy returns 504 or similar gateway timeout) | `AgentError::NetworkError` | Yes | Retryable via `RetryStrategy`. |
 | **Malformed SSE event** (unparseable JSON in event data) | `AgentError::StreamError` | No | Not retryable — indicates a proxy bug. |
 | **Rate limiting from proxy** (429 response from the proxy itself) | `AgentError::ModelThrottled` | Yes | Retryable via `RetryStrategy`. |
-
-```mermaid
-flowchart TB
-    subgraph Failures["🔴 Proxy Failure Modes"]
-        ConnFail["Connection Failure<br/>(unreachable, DNS, TCP timeout)"]
-        AuthFail["Auth Failure<br/>(401 / 403)"]
-        StreamDrop["SSE Stream Drop<br/>(mid-stream disconnect)"]
-        ProxyTimeout["Proxy Timeout<br/>(504 gateway timeout)"]
-        Malformed["Malformed Event<br/>(unparseable JSON)"]
-        RateLimit["Rate Limited<br/>(429 from proxy)"]
-    end
-
-    subgraph ErrorTypes["⚠️ AgentError Mapping"]
-        NetErr["NetworkError<br/>(retryable)"]
-        StreamErr["StreamError<br/>(not retryable)"]
-        Throttled["ModelThrottled<br/>(retryable)"]
-    end
-
-    ConnFail --> NetErr
-    StreamDrop --> NetErr
-    ProxyTimeout --> NetErr
-    AuthFail --> StreamErr
-    Malformed --> StreamErr
-    RateLimit --> Throttled
-
-    classDef failStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
-    classDef errStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
-
-    class ConnFail,AuthFail,StreamDrop,ProxyTimeout,Malformed,RateLimit failStyle
-    class NetErr,StreamErr,Throttled errStyle
-```

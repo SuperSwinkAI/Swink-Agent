@@ -77,7 +77,7 @@ A developer encounters various error conditions when communicating with the xAI 
 - When xAI returns response fields that differ from standard OpenAI format, they are handled via lenient parsing (tolerant deserialization, unknown fields ignored) — no dedicated normalizer layer.
 - xAI rate limiting (HTTP 429) is handled by the shared error classifier + core retry backoff strategy; no `Retry-After` header extraction (consistent with other adapters).
 - What happens when the xAI API returns an error format different from OpenAI's error schema?
-- xAI-specific model names (Grok variants) are handled via comprehensive model catalog presets covering all currently available models (Grok-2, Grok-2-mini, Grok-3, vision variants).
+- xAI-specific model names (Grok variants) are handled via comprehensive model catalog presets covering the current Grok models in the catalog (`src/model_catalog.toml`), e.g. Grok 4.1 Fast (reasoning/non-reasoning) and Grok 4.20 (reasoning/non-reasoning/multi-agent).
 - **Tool-call start timing**: The adapter buffers tool call data until both a `content_index` and a tool name are known before emitting `ToolCallStart`. A `ToolCallStart` event is never emitted with an empty or unknown tool name.
 - **`content_filter` finish reason is terminal**: When the provider returns `finish_reason: "content_filter"`, the adapter treats this as a terminal error condition and emits `AssistantMessageEvent::error_content_filtered()`. It does not fall through to the normal `StopReason::Stop` mapping.
 - **Shared transport layer**: This adapter is implemented atop a shared `openai_compat` module that handles SSE parsing, tool call accumulation, and finish-reason classification. The adapter provides provider-specific configuration (endpoint, auth, model mapping) to this shared shell.
@@ -113,7 +113,7 @@ A developer encounters various error conditions when communicating with the xAI 
 ### Session 2026-04-02
 
 - Q: What quirk-handling strategy should the xAI adapter use? → A: Lenient parsing only (like OpenAI adapter) — no normalizer layer; handle minor quirks via tolerant deserialization.
-- Q: How many xAI models should be added to the model catalog? → A: Comprehensive — all currently available Grok models (Grok-2, Grok-2-mini, Grok-3, vision variants).
+- Q: How many xAI models should be added to the model catalog? → A: Comprehensive — all currently available Grok models per the catalog (`src/model_catalog.toml`), kept in sync as xAI ships new models.
 - Q: Should the xAI adapter request usage tracking in streaming responses? → A: Yes, request usage via `stream_options: { include_usage: true }` — enables token/cost tracking; ignored via lenient parsing if unsupported.
 - Q: Should the adapter extract `Retry-After` from xAI 429 responses? → A: No — rely on shared error classifier + core retry backoff, consistent with other adapters.
 

@@ -21,7 +21,8 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent_eval::judge::{JudgeClient, JudgeError, JudgeVerdict, RetryPolicy};
 
-use crate::client::{is_retryable, parse_verdict_text, retry_with_cancel};
+use crate::client::{block_on_judge, is_retryable, parse_verdict_text, retry_with_cancel};
+use crate::util::truncate_http_body;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 const DEFAULT_TEMPERATURE: f32 = 0.0;
@@ -147,7 +148,12 @@ impl GeminiJudgeClient {
             .json(&body)
             .send()
             .await
-            .map_err(|error| JudgeError::Transport(format!("gemini request failed: {error}")))?;
+            .map_err(|error| {
+                JudgeError::Transport(format!(
+                    "gemini request failed: {}",
+                    format_reqwest_error(error)
+                ))
+            })?;
 
         let status = response.status();
         if !status.is_success() {
@@ -156,7 +162,10 @@ impl GeminiJudgeClient {
         }
 
         let parsed: GeminiResponse = response.json().await.map_err(|error| {
-            JudgeError::MalformedResponse(format!("gemini body parse failed: {error}"))
+            JudgeError::MalformedResponse(format!(
+                "gemini body parse failed: {}",
+                format_reqwest_error(error)
+            ))
         })?;
 
         extract_verdict(&parsed)
@@ -191,11 +200,11 @@ impl BlockingGeminiJudgeClient {
         Self { inner }
     }
 
-    /// Run a single judge call synchronously on the current Tokio runtime.
+    /// Run a single judge call synchronously.
     pub fn judge(&self, prompt: &str) -> Result<JudgeVerdict, JudgeError> {
         let client = self.inner.clone();
         let prompt = prompt.to_string();
-        tokio::runtime::Handle::current().block_on(async move { client.judge(&prompt).await })
+        block_on_judge(async move { client.judge(&prompt).await })
     }
 
     /// Borrow the underlying async client for mixed sync/async call sites.
@@ -259,24 +268,19 @@ fn classify_http_error(status: StatusCode, body: &str) -> JudgeError {
         JudgeError::Transport(format!(
             "gemini http {}: {}",
             status.as_u16(),
-            truncate(body)
+            truncate_http_body(body)
         ))
     } else {
         JudgeError::Other(format!(
             "gemini http {}: {}",
             status.as_u16(),
-            truncate(body)
+            truncate_http_body(body)
         ))
     }
 }
 
-fn truncate(body: &str) -> String {
-    const LIMIT: usize = 512;
-    if body.len() <= LIMIT {
-        body.to_string()
-    } else {
-        format!("{}…", &body[..LIMIT])
-    }
+fn format_reqwest_error(error: reqwest::Error) -> String {
+    error.without_url().to_string()
 }
 
 /// Minimal percent-encoder for the `?key=` query value. Gemini API keys
@@ -316,6 +320,8 @@ fn extract_verdict(response: &GeminiResponse) -> Result<JudgeVerdict, JudgeError
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn classify_429_is_transport() {
@@ -333,5 +339,52 @@ mod tests {
     fn classify_401_is_terminal() {
         let error = classify_http_error(StatusCode::UNAUTHORIZED, "bad key");
         assert!(matches!(error, JudgeError::Other(_)));
+    }
+
+    #[tokio::test]
+    async fn transport_errors_do_not_expose_api_key() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let base_url = format!("http://{}", listener.local_addr().expect("local addr"));
+        drop(listener);
+
+        let api_key = "secret-key-from-issue-983";
+        let client = GeminiJudgeClient::new(base_url, api_key, "gemini-1.5-flash")
+            .with_retry_policy(RetryPolicy::new(1, Duration::from_millis(1), false));
+
+        let error = client.judge("grade this").await.expect_err("request fails");
+        assert!(matches!(error, JudgeError::Transport(_)));
+
+        let display = error.to_string();
+        let debug = format!("{error:?}");
+        assert!(!display.contains(api_key), "{display}");
+        assert!(!debug.contains(api_key), "{debug}");
+    }
+
+    #[tokio::test]
+    async fn body_parse_errors_do_not_expose_api_key() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1beta/models/gemini-1.5-flash:generateContent"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api_key = "secret-json-key-from-issue-983";
+        let client = GeminiJudgeClient::new(server.uri(), api_key, "gemini-1.5-flash")
+            .with_retry_policy(RetryPolicy::new(1, Duration::from_millis(1), false));
+
+        let error = client
+            .judge("grade this")
+            .await
+            .expect_err("body parse fails");
+        assert!(matches!(error, JudgeError::MalformedResponse(_)));
+
+        let display = error.to_string();
+        let debug = format!("{error:?}");
+        assert!(!display.contains(api_key), "{display}");
+        assert!(!debug.contains(api_key), "{debug}");
     }
 }

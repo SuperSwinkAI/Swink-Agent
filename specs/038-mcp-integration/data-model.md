@@ -12,7 +12,16 @@ Describes how to connect to an MCP server.
 | Variant | Fields | Description |
 |---------|--------|-------------|
 | Stdio | `command: String`, `args: Vec<String>`, `env: HashMap<String, String>` | Subprocess spawned with stdin/stdout communication. The child starts from an empty environment; only entries from `env` are passed through. |
-| Sse | `url: String`, `bearer_token: Option<String>`, `headers: HashMap<String, String>` | HTTP connection using Server-Sent Events. Optional bearer token for `Authorization` plus additional custom headers on every request. |
+| Sse | `url: String`, `bearer_token: Option<String>`, `bearer_auth: Option<SseBearerAuth>`, `headers: HashMap<String, String>` | HTTP connection using Server-Sent Events. `bearer_token` is a static token; `bearer_auth` instead resolves the bearer secret from the credential store at connect time (see `SseBearerAuth` below). Plus additional custom headers on every request. |
+
+### SseBearerAuth
+
+Resolver-backed bearer auth for SSE MCP transports — the credential is looked up from the credential store rather than embedded in config.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| credential_key | String | Credential store key resolved before establishing the connection. |
+| credential_type | CredentialType | Expected resolved credential type for this bearer header. |
 
 ### McpServerConfig
 
@@ -25,6 +34,8 @@ Configuration for a single MCP server connection.
 | tool_prefix | Option\<String\> | No | If set, all tool names from this server are prefixed with `{prefix}_`. |
 | tool_filter | Option\<ToolFilter\> | No | Controls which discovered tools are exposed to the agent. |
 | requires_approval | bool | No (default: true) | Whether tools from this server require user approval before execution. |
+| connect_timeout_ms | Option\<u64\> | No | Optional timeout (in milliseconds) for the initial transport handshake. |
+| discovery_timeout_ms | Option\<u64\> | No | Optional timeout (in milliseconds) for the initial tool discovery request. |
 
 **Identity**: Unique by `name`. No two configs may share the same name.
 
@@ -45,10 +56,10 @@ Runtime state for an active MCP server connection.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| config | McpServerConfig | The configuration that produced this connection. |
-| session | RunningService (rmcp) | The active client session (internal, not exposed). |
-| tools | Vec\<McpTool\> | Tools discovered from this server after filtering. |
-| status | McpConnectionStatus | Current connection health. |
+| config | McpServerConfig | The configuration that produced this connection (public field). |
+| discovered_tools | Vec\<rmcp::model::Tool\> | Raw tool definitions discovered from the server, before namespacing/filtering (public field). |
+| state | Arc\<Mutex\<...\>\> | Shared connection status and peer handle (private; read via `status()`). |
+| event_tx | Option\<UnboundedSender\<AgentEvent\>\> | Optional channel for emitting MCP lifecycle events (private). |
 
 **Lifecycle**:
 - Created → Connected (tools discovered) → Active (tool calls in progress) → Disconnected (error or shutdown)
@@ -59,7 +70,7 @@ Runtime state for an active MCP server connection.
 | Variant | Description |
 |---------|-------------|
 | Connected | Server is reachable and tools are available. |
-| Disconnected { reason: String } | Server is unreachable. Tools from this server are unavailable. |
+| Disconnected | Server is unreachable; tool calls fail immediately. Unit variant — no `reason` payload; disconnect reasons are logged separately, not carried on the enum. |
 
 ### McpTool
 

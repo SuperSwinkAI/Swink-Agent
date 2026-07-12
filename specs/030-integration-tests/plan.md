@@ -63,10 +63,12 @@ tests/
 ├── ac_context.rs           # AC 13–16: Context management and overflow
 ├── ac_resilience.rs        # AC 17–22: Retry, steering, abort
 ├── ac_structured.rs        # AC 23–25: Structured output, proxy reconstruction
-└── ac_tui.rs               # AC 26–30: TUI rendering and interaction
+└── (ac_tui.rs lives at `tui/tests/ac_tui.rs`, not here — see correction below)
 ```
 
 **Structure Decision**: Tests are organized by PRD acceptance criteria groups, matching the spec's six user stories. Each file focuses on a cohesive set of related behaviors. All files share the `tests/common/mod.rs` module. This mirrors the existing `tests/integration.rs` pattern already established in the codebase.
+
+**Corrected 2026-07-06**: `ac_tui.rs` (AC 26–30: TUI rendering and interaction) was placed above as if it lived at the workspace-root `tests/` directory alongside the other AC files. It actually lives at `tui/tests/ac_tui.rs`, inside the `swink-agent-tui` crate — it cannot share `tests/common/mod.rs` from the root crate and does not follow the "all files share the shared helpers module" structure decision above. See `data-model.md`'s AC 26–30 row corrections for what that file's tests actually cover.
 
 ## Complexity Tracking
 

@@ -142,7 +142,7 @@ async fn cached_invocation_serves_all_num_runs_iterations() {
 
 #[test]
 fn cache_key_is_deterministic_64_hex() {
-    let fp = common::make_case("c1").content_fingerprint();
+    let fp = common::make_case("c1").cache_fingerprint();
     let ctx = FingerprintContext::default();
     let k = TaskResultCacheKey::from_fingerprint(&fp, &ctx);
     assert_eq!(k.as_hex().len(), 64);
@@ -153,7 +153,7 @@ fn cache_key_is_deterministic_64_hex() {
 fn local_file_store_writes_expected_layout() {
     let dir = TempDir::new().unwrap();
     let store = LocalFileTaskResultStore::new(dir.path().to_path_buf());
-    let fp = common::make_case("c1").content_fingerprint();
+    let fp = common::make_case("c1").cache_fingerprint();
     let key = TaskResultCacheKey::from_fingerprint(&fp, &FingerprintContext::default());
     let invocation = common::mock_invocation(&[], Some("hi"), 0.0, 0);
     store.put("set-a", "c1", &key, &invocation).unwrap();

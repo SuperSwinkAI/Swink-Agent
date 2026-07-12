@@ -142,6 +142,10 @@ macro_rules! agent_evaluator {
                     &build_prompt_context(&self.config, case, invocation),
                 ))
             }
+
+            fn aggregator(&self) -> std::sync::Arc<dyn crate::aggregator::Aggregator> {
+                self.config.effective_aggregator()
+            }
         }
     };
 }

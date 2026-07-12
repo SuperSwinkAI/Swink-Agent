@@ -17,7 +17,7 @@ use super::stream::{capability_filter_tools, stream_with_retry};
 use super::tool_dispatch::execute_tools_concurrently;
 use super::{
     AgentEvent, AgentLoopConfig, LoopState, StreamResult, ToolCallInfo, ToolExecOutcome,
-    TurnEndReason, TurnOutcome, build_abort_message, emit,
+    TransferRejectionReason, TurnEndReason, TurnOutcome, build_abort_message, emit,
 };
 
 /// Run a single turn of the inner loop: inject pending messages, transform
@@ -41,8 +41,10 @@ pub async fn run_single_turn(
     state.overflow_recovery_attempted = false;
 
     // i. Inject any pending messages into context.
-    // Track where new messages start so PreTurn policies only see the fresh batch.
-    let new_messages_start = if state.turn_index == 0 {
+    // Snapshot fresh input before transformation so PreTurn policies inspect the
+    // actual pending batch even if transformers prepend, remove, or reorder
+    // context messages.
+    let fresh_messages_start = if state.turn_index == 0 {
         state
             .context_messages
             .len()
@@ -53,6 +55,8 @@ pub async fn run_single_turn(
     if !state.pending_messages.is_empty() {
         state.context_messages.append(&mut state.pending_messages);
     }
+    let fresh_messages =
+        clone_messages_for_policy_snapshot(&state.context_messages[fresh_messages_start..]);
     state.initial_new_messages_len = 0;
     clear_pending_message_snapshot(config);
     // Sync the full context (including newly consumed pending messages) to the
@@ -114,14 +118,13 @@ pub async fn run_single_turn(
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             guard.clone()
         };
-        let new_messages_start = new_messages_start.min(state.context_messages.len());
         let policy_ctx = PolicyContext {
             turn_index: state.turn_index,
             accumulated_usage: &state.accumulated_usage,
             accumulated_cost: &state.accumulated_cost,
             message_count: state.context_messages.len(),
             overflow_signal: state.overflow_signal,
-            new_messages: &state.context_messages[new_messages_start..],
+            new_messages: &fresh_messages,
             state: &state_snapshot,
         };
         match run_policies(&config.pre_turn_policies, &policy_ctx) {
@@ -139,8 +142,8 @@ pub async fn run_single_turn(
                 return TurnOutcome::Return;
             }
             PolicyVerdict::Inject(msgs) => {
-                state.pending_messages.extend(msgs);
-                sync_pending_message_snapshot(config, state);
+                state.context_messages.extend(msgs);
+                sync_loop_context_snapshot(config, state);
             }
         }
     }
@@ -413,6 +416,25 @@ pub(super) fn build_llm_messages(
     llm_messages
 }
 
+fn clone_messages_for_policy_snapshot(messages: &[AgentMessage]) -> Vec<AgentMessage> {
+    messages
+        .iter()
+        .filter_map(|message| match message {
+            AgentMessage::Llm(llm) => Some(AgentMessage::Llm(llm.clone())),
+            AgentMessage::Custom(custom) => custom.clone_box().map_or_else(
+                || {
+                    tracing::warn!(
+                        "CustomMessage {:?} does not support clone_box; dropped from pre-turn policy fresh-message snapshot",
+                        custom
+                    );
+                    None
+                },
+                |cloned| Some(AgentMessage::Custom(cloned)),
+            ),
+        })
+        .collect()
+}
+
 // ─── Context transformer runner ─────────────────────────────────────────
 
 /// Run async and sync context transformers in sequence, emitting
@@ -445,13 +467,13 @@ pub(super) async fn run_context_transformers(
 }
 
 fn clear_pending_message_snapshot(config: &AgentLoopConfig) {
-    config.pending_message_snapshot.clear();
+    config.runtime_state.clear_pending_messages();
 }
 
 fn sync_pending_message_snapshot(config: &AgentLoopConfig, state: &LoopState) {
     config
-        .pending_message_snapshot
-        .replace(&state.pending_messages);
+        .runtime_state
+        .replace_pending_messages(&state.pending_messages);
 }
 
 fn mark_assistant_message_aborted(message: &AssistantMessage) -> AssistantMessage {
@@ -468,8 +490,8 @@ fn mark_assistant_message_aborted(message: &AssistantMessage) -> AssistantMessag
 /// queue but not yet reflected in `in_flight_messages`.
 fn sync_loop_context_snapshot(config: &AgentLoopConfig, state: &LoopState) {
     config
-        .loop_context_snapshot
-        .replace(&state.context_messages);
+        .runtime_state
+        .replace_loop_context(&state.context_messages);
 }
 
 // ─── Shared helpers ──────────────────────────────────────────────────────
@@ -1138,13 +1160,54 @@ async fn handle_tool_calls(
                 // Chain check passed — proceed with the transfer.
             }
             Err(chain_err) => {
-                // Chain check failed — convert transfer to an error tool result
-                // so the LLM can retry or take a different action.
+                // Chain check failed — rewrite the transfer tool's false-success
+                // result (already recorded in `tool_results` and mirrored into
+                // `state.context_messages` at step xii, above) into an error
+                // result so the LLM sees the rejection instead of a phantom
+                // "initiated" confirmation.
                 tracing::warn!(
                     target_agent = %signal.target_agent(),
                     error = %chain_err,
                     "transfer chain safety check failed, rejecting transfer"
                 );
+
+                let rejection_reason = match &chain_err {
+                    crate::transfer::TransferError::CircularTransfer { .. } => {
+                        TransferRejectionReason::Circular
+                    }
+                    crate::transfer::TransferError::MaxDepthExceeded { .. } => {
+                        TransferRejectionReason::MaxDepthExceeded
+                    }
+                };
+                let rejection_message = format!("transfer rejected: {chain_err}");
+                let confirmation_text = format!("Transfer to {} initiated.", signal.target_agent());
+
+                for tr in &mut tool_results {
+                    if rewrite_tool_result_as_rejected(tr, &confirmation_text, &rejection_message) {
+                        break;
+                    }
+                }
+                for msg in &mut state.context_messages {
+                    if let AgentMessage::Llm(LlmMessage::ToolResult(tr)) = msg
+                        && rewrite_tool_result_as_rejected(
+                            tr,
+                            &confirmation_text,
+                            &rejection_message,
+                        )
+                    {
+                        break;
+                    }
+                }
+
+                let _ = emit(
+                    tx,
+                    AgentEvent::TransferRejected {
+                        source_agent: config.agent_name.clone().unwrap_or_default(),
+                        target_agent: signal.target_agent().to_string(),
+                        reason: rejection_reason,
+                    },
+                )
+                .await;
 
                 // The transfer is rejected; continue the inner loop instead
                 // of terminating.
@@ -1257,6 +1320,32 @@ async fn handle_tool_calls(
     }
     // Inner loop continues — model must process tool results.
     TurnOutcome::ContinueInner
+}
+
+/// Rewrite a transfer tool's false-success result to an error in place, once
+/// its content matches the transfer confirmation text produced by
+/// `AgentToolResult::transfer` and it is not already an error.
+///
+/// Returns `true` if a rewrite happened, so callers can stop scanning after
+/// the first (and only) matching entry.
+fn rewrite_tool_result_as_rejected(
+    tr: &mut ToolResultMessage,
+    confirmation_text: &str,
+    rejection_message: &str,
+) -> bool {
+    let is_match = !tr.is_error
+        && tr.content.len() == 1
+        && tr.content[0]
+            == ContentBlock::Text {
+                text: confirmation_text.to_string(),
+            };
+    if is_match {
+        tr.is_error = true;
+        tr.content = vec![ContentBlock::Text {
+            text: rejection_message.to_string(),
+        }];
+    }
+    is_match
 }
 
 /// Replace incomplete tool calls (from max-tokens truncation) with error results.

@@ -65,7 +65,15 @@ tui/
 │   │   ├── lifecycle.rs     # App::new(), helper methods
 │   │   ├── event_loop.rs    # run() — tokio::select! loop (terminal, agent, approval, tick)
 │   │   ├── agent_bridge.rs  # send_to_agent(), handle_agent_event()
-│   │   └── tests.rs         # App unit tests
+│   │   └── tests/           # App unit tests (split module, not a single file)
+│   │       ├── mod.rs
+│   │       ├── approval.rs
+│   │       ├── helpers.rs
+│   │       ├── input_ui.rs       # TTY detection, tick/blink, focus cycling, min-size tests
+│   │       ├── persistence.rs
+│   │       ├── plan_mode.rs
+│   │       ├── tool_blocks.rs
+│   │       └── agent_bridge.rs
 │   ├── ui/
 │   │   ├── mod.rs           # Main render() function, layout calculation, size check overlay
 │   │   ├── conversation.rs  # Scrollable conversation view (placeholder for 026)

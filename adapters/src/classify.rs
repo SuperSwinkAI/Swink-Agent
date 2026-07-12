@@ -13,6 +13,8 @@
 //! on `swink_agent` (core) types. Breaking changes to this module's API
 //! may occur without a major version bump.
 
+use std::time::Duration;
+
 use swink_agent::AssistantMessageEvent;
 
 /// Classification of HTTP error status codes for LLM providers.
@@ -26,7 +28,7 @@ pub enum HttpErrorKind {
     Auth,
     /// Rate limit / throttle (429).
     Throttled,
-    /// Server or network error (5xx).
+    /// Server, timeout, or network-like error (408, 5xx).
     Network,
 }
 
@@ -40,7 +42,7 @@ pub const fn classify_http_status(code: u16) -> Option<HttpErrorKind> {
     match code {
         401 | 403 => Some(HttpErrorKind::Auth),
         429 => Some(HttpErrorKind::Throttled),
-        500..=599 => Some(HttpErrorKind::Network),
+        408 | 500..=599 => Some(HttpErrorKind::Network),
         _ => None,
     }
 }
@@ -99,6 +101,7 @@ pub fn is_model_retired_response(status: u16, body: &str) -> bool {
 ///
 /// Returns a classified error event:
 /// - 401/403 → `error_auth`
+/// - 408     → `error_network`
 /// - 429     → `error_throttled`
 /// - 5xx     → `error_network`
 /// - 400/404/410 matching [`is_model_retired_response`] → `error_model_retired`
@@ -158,6 +161,69 @@ pub fn error_event_from_status_with_overrides(
     }
 }
 
+/// Attach a retry-after hint to an already-classified error event.
+///
+/// Adapters typically read the `Retry-After` header (via
+/// [`parse_retry_after`]) before consuming the response body, then classify
+/// the status via [`error_event_from_status_with_overrides`] afterward. This
+/// merges the two without needing an extra parameter on every classification
+/// call. A no-op for any non-`Error` event.
+#[must_use]
+pub fn with_retry_after(
+    event: AssistantMessageEvent,
+    retry_after: Option<Duration>,
+) -> AssistantMessageEvent {
+    match event {
+        AssistantMessageEvent::Error {
+            stop_reason,
+            error_message,
+            usage,
+            error_kind,
+            ..
+        } => AssistantMessageEvent::Error {
+            stop_reason,
+            error_message,
+            usage,
+            error_kind,
+            retry_after,
+        },
+        other => other,
+    }
+}
+
+/// Parse a `Retry-After` response header into a [`Duration`].
+///
+/// Supports both forms defined by RFC 9110 §10.2.3:
+/// - **delay-seconds** — a non-negative integer number of seconds
+///   (e.g. `"30"`).
+/// - **HTTP-date** — an absolute timestamp (e.g.
+///   `"Wed, 21 Oct 2026 07:28:00 GMT"`); the duration is computed as the
+///   difference between that timestamp and now, clamped to zero if the
+///   timestamp is already in the past.
+///
+/// Returns `None` if the header is absent, not valid UTF-8, or matches
+/// neither form.
+#[must_use]
+pub fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    let value = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?;
+    parse_retry_after_value(value)
+}
+
+/// Parse a raw `Retry-After` header value.
+///
+/// Split out from [`parse_retry_after`] so the parsing logic can be unit
+/// tested without constructing a `HeaderMap`.
+#[must_use]
+pub fn parse_retry_after_value(value: &str) -> Option<Duration> {
+    let value = value.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(Duration::from_secs(seconds));
+    }
+    let target = chrono::DateTime::parse_from_rfc2822(value).ok()?;
+    let delta = target.with_timezone(&chrono::Utc) - chrono::Utc::now();
+    Some(delta.to_std().unwrap_or(Duration::ZERO))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,6 +241,11 @@ mod tests {
     #[test]
     fn classify_429_is_throttled() {
         assert_eq!(classify_http_status(429), Some(HttpErrorKind::Throttled));
+    }
+
+    #[test]
+    fn classify_408_is_network() {
+        assert_eq!(classify_http_status(408), Some(HttpErrorKind::Network));
     }
 
     #[test]
@@ -254,6 +325,22 @@ mod tests {
     }
 
     #[test]
+    fn error_event_408_is_network() {
+        let event = error_event_from_status(408, "timeout", "TestProvider");
+        match event {
+            AssistantMessageEvent::Error {
+                error_kind,
+                error_message,
+                ..
+            } => {
+                assert!(error_message.contains("408"));
+                assert_eq!(error_kind, Some(swink_agent::StreamErrorKind::Network));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn error_event_400_is_generic_client_error() {
         let event = error_event_from_status(400, "bad request", "TestProvider");
         match event {
@@ -268,6 +355,85 @@ mod tests {
             }
             other => panic!("expected Error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parse_retry_after_value_seconds_form() {
+        assert_eq!(parse_retry_after_value("30"), Some(Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn parse_retry_after_value_zero_seconds() {
+        assert_eq!(parse_retry_after_value("0"), Some(Duration::ZERO));
+    }
+
+    #[test]
+    fn parse_retry_after_value_ignores_surrounding_whitespace() {
+        assert_eq!(
+            parse_retry_after_value("  30  "),
+            Some(Duration::from_secs(30))
+        );
+    }
+
+    #[test]
+    fn parse_retry_after_value_http_date_in_future() {
+        let future = chrono::Utc::now() + chrono::Duration::seconds(120);
+        let header = future.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+        let parsed = parse_retry_after_value(&header).expect("should parse HTTP-date form");
+        // Allow a little slack for test execution time between formatting
+        // the fixture and parsing it.
+        assert!(
+            (110..=120).contains(&parsed.as_secs()),
+            "expected ~120s, got {parsed:?}"
+        );
+    }
+
+    #[test]
+    fn parse_retry_after_value_http_date_in_past_clamps_to_zero() {
+        let past = chrono::Utc::now() - chrono::Duration::seconds(60);
+        let header = past.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+        assert_eq!(parse_retry_after_value(&header), Some(Duration::ZERO));
+    }
+
+    #[test]
+    fn parse_retry_after_value_garbage_is_none() {
+        assert_eq!(parse_retry_after_value("not-a-valid-value"), None);
+    }
+
+    #[test]
+    fn parse_retry_after_value_empty_is_none() {
+        assert_eq!(parse_retry_after_value(""), None);
+    }
+
+    #[test]
+    fn with_retry_after_sets_field_on_error_event() {
+        let event = AssistantMessageEvent::error_throttled("slow down");
+        let event = with_retry_after(event, Some(Duration::from_secs(5)));
+        match event {
+            AssistantMessageEvent::Error { retry_after, .. } => {
+                assert_eq!(retry_after, Some(Duration::from_secs(5)));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn with_retry_after_none_is_none() {
+        let event = AssistantMessageEvent::error_throttled("slow down");
+        let event = with_retry_after(event, None);
+        match event {
+            AssistantMessageEvent::Error { retry_after, .. } => {
+                assert_eq!(retry_after, None);
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn with_retry_after_is_noop_for_non_error_events() {
+        let event = AssistantMessageEvent::Start;
+        let event = with_retry_after(event, Some(Duration::from_secs(5)));
+        assert!(matches!(event, AssistantMessageEvent::Start));
     }
 
     #[test]
@@ -431,8 +597,8 @@ mod tests {
             other => panic!("expected Error, got {other:?}"),
         }
 
-        // Server errors
-        for code in [500, 502, 503, 529] {
+        // Request timeout and server errors
+        for code in [408, 500, 502, 503, 529] {
             let event = error_event_from_status_with_overrides(
                 code,
                 "server error",

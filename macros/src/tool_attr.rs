@@ -99,18 +99,34 @@ pub fn tool_attr_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                     };
 
                     // Deserialize the whole params JSON into the generated struct.
-                    let __p: #params_struct_name = match ::serde_json::from_value(__params) {
-                        Ok(params) => params,
-                        Err(err) => match ::serde_json::from_value(::serde_json::Value::Object(
-                            ::serde_json::Map::new()
-                        )) {
+                    //
+                    // The empty-object fallback below only applies when the LLM sent a
+                    // non-object value (e.g. a bare string) for a tool whose params are
+                    // all optional — there is nothing meaningful to parse in that case.
+                    // If `__params` IS an object but a present field has the wrong type
+                    // or a required field is missing, that is a real validation error and
+                    // must be surfaced rather than silently defaulted (a defaulted value
+                    // could mask a malformed LLM tool call).
+                    let __p: #params_struct_name = if __params.is_object() {
+                        match ::serde_json::from_value(__params) {
                             Ok(params) => params,
-                            Err(_) => {
+                            Err(err) => {
                                 return swink_agent::AgentToolResult::error(format!(
                                     "invalid parameters: {err}"
                                 ));
                             }
-                        },
+                        }
+                    } else {
+                        match ::serde_json::from_value(::serde_json::Value::Object(
+                            ::serde_json::Map::new()
+                        )) {
+                            Ok(params) => params,
+                            Err(err) => {
+                                return swink_agent::AgentToolResult::error(format!(
+                                    "invalid parameters: {err}"
+                                ));
+                            }
+                        }
                     };
 
                     async fn #fn_name(#(#fn_params),*) -> swink_agent::AgentToolResult #body

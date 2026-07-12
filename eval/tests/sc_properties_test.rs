@@ -97,36 +97,42 @@ async fn sc_004_judge_model_swap_is_single_arg_change() {
             pass: true,
             reason: Some("gpt".into()),
             label: None,
+            cost: None,
         },
         JudgeVerdict {
             score: 0.9,
             pass: true,
             reason: Some("gpt".into()),
             label: None,
+            cost: None,
         },
         JudgeVerdict {
             score: 0.9,
             pass: true,
             reason: Some("gpt".into()),
             label: None,
+            cost: None,
         },
         JudgeVerdict {
             score: 0.9,
             pass: true,
             reason: Some("claude".into()),
             label: None,
+            cost: None,
         },
         JudgeVerdict {
             score: 0.9,
             pass: true,
             reason: Some("claude".into()),
             label: None,
+            cost: None,
         },
         JudgeVerdict {
             score: 0.9,
             pass: true,
             reason: Some("claude".into()),
             label: None,
+            cost: None,
         },
     ]));
 

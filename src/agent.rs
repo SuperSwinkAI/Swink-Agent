@@ -261,6 +261,8 @@ pub struct Agent {
     session_state: Arc<std::sync::RwLock<crate::SessionState>>,
     /// Optional credential resolver for tool authentication.
     credential_resolver: Option<Arc<dyn crate::credential::CredentialResolver>>,
+    /// Timeout applied around a credential resolver's `resolve()` call.
+    credential_timeout: std::time::Duration,
     /// Optional context caching configuration.
     cache_config: Option<crate::context_cache::CacheConfig>,
     /// Optional dynamic system prompt.
@@ -364,6 +366,7 @@ impl Agent {
                 options.session_state.unwrap_or_default(),
             )),
             credential_resolver: options.credential_resolver,
+            credential_timeout: options.credential_timeout,
             cache_config: options.cache_config,
             dynamic_system_prompt: options.dynamic_system_prompt.map(Arc::from),
             loop_active: Arc::new(AtomicBool::new(false)),
@@ -461,9 +464,9 @@ impl std::fmt::Debug for Agent {
 #[cfg(feature = "plugins")]
 fn merge_plugin_contributions(mut options: AgentOptions) -> AgentOptions {
     // Sort plugins by priority descending (stable sort preserves insertion order for ties).
-    options
-        .plugins
-        .sort_by_key(|p| std::cmp::Reverse(p.priority()));
+    // Shared with `PluginRegistry::list()` via `crate::plugin::priority_desc` so the two
+    // collections can never drift on ordering semantics.
+    options.plugins.sort_by_key(crate::plugin::priority_desc);
 
     let mut plugin_pre_turn: Vec<Arc<dyn crate::policy::PreTurnPolicy>> = Vec::new();
     let mut plugin_pre_dispatch: Vec<Arc<dyn crate::policy::PreDispatchPolicy>> = Vec::new();
@@ -501,27 +504,44 @@ fn merge_plugin_contributions(mut options: AgentOptions) -> AgentOptions {
                 continue;
             }
             if plugin_tool_names.contains(tool.name()) {
-                let raw_identity = format!("{plugin_name}\0{raw_tool_name}");
-                let disambiguated_name =
-                    disambiguate_provider_safe_tool_name(tool.name(), &raw_identity);
-                tracing::warn!(
-                    plugin = %plugin_name,
-                    original_tool = %raw_tool_name,
-                    original_name = tool.name(),
-                    disambiguated_name = %disambiguated_name,
-                    "disambiguating plugin tool after provider-safe sanitization collision"
-                );
-                tool = Arc::new(crate::plugin::NamespacedTool::with_name(
-                    &plugin_name,
-                    inner_tool,
-                    disambiguated_name,
-                ));
-                if direct_tool_names.contains(tool.name()) {
+                let original_name = tool.name().to_owned();
+                let mut skip_tool = false;
+
+                for attempt in 0usize.. {
+                    let raw_identity = if attempt == 0 {
+                        format!("{plugin_name}\0{raw_tool_name}")
+                    } else {
+                        format!("{plugin_name}\0{raw_tool_name}\0{attempt}")
+                    };
+                    let disambiguated_name =
+                        disambiguate_provider_safe_tool_name(&original_name, &raw_identity);
                     tracing::warn!(
                         plugin = %plugin_name,
-                        tool = tool.name(),
-                        "skipping plugin tool because a direct tool already owns the disambiguated final name"
+                        original_tool = %raw_tool_name,
+                        original_name = %original_name,
+                        disambiguated_name = %disambiguated_name,
+                        attempt,
+                        "disambiguating plugin tool after provider-safe sanitization collision"
                     );
+                    tool = Arc::new(crate::plugin::NamespacedTool::with_name(
+                        &plugin_name,
+                        Arc::clone(&inner_tool),
+                        disambiguated_name,
+                    ));
+                    if direct_tool_names.contains(tool.name()) {
+                        tracing::warn!(
+                            plugin = %plugin_name,
+                            tool = tool.name(),
+                            "skipping plugin tool because a direct tool already owns the disambiguated final name"
+                        );
+                        skip_tool = true;
+                        break;
+                    }
+                    if !plugin_tool_names.contains(tool.name()) {
+                        break;
+                    }
+                }
+                if skip_tool {
                     continue;
                 }
             }
@@ -626,6 +646,34 @@ mod tests {
         assert_eq!(tool_names[0], "my_web_search");
         assert_ne!(tool_names[0], tool_names[1]);
         assert!(tool_names[1].starts_with("my_web_search_"));
+    }
+
+    #[test]
+    fn agent_new_retries_disambiguation_when_fallback_hits_plugin_tool() {
+        let stream_fn = Arc::new(SimpleMockStreamFn::from_text("ok"));
+        let fallback_name = disambiguate_provider_safe_tool_name("my_web_search", "my.web\0search");
+        let (fallback_plugin, fallback_tool) =
+            fallback_name.rsplit_once('_').expect("fallback tool name");
+        let options = AgentOptions::new(
+            "test",
+            crate::testing::default_model(),
+            stream_fn,
+            crate::testing::default_convert,
+        )
+        .with_plugin(Arc::new(
+            MockPlugin::new(fallback_plugin).with_tools(&[fallback_tool]),
+        ))
+        .with_plugin(Arc::new(MockPlugin::new("my-web").with_tools(&["search"])))
+        .with_plugin(Arc::new(MockPlugin::new("my.web").with_tools(&["search"])));
+
+        let agent = Agent::new(options);
+        let tool_names: Vec<&str> = agent.state().tools.iter().map(|tool| tool.name()).collect();
+        let unique_tool_names: HashSet<&str> = tool_names.iter().copied().collect();
+
+        assert_eq!(tool_names.len(), 3);
+        assert_eq!(unique_tool_names.len(), tool_names.len());
+        assert!(tool_names.contains(&fallback_name.as_str()));
+        assert!(tool_names.contains(&"my_web_search"));
     }
 
     #[test]

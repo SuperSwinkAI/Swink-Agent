@@ -7,6 +7,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::theme;
+use crate::ui::tool_panel::truncate_with_ellipsis;
 
 /// Maximum number of diff output lines before truncation.
 const MAX_DIFF_LINES: usize = 50;
@@ -265,13 +266,9 @@ struct DiffCell<'a> {
     style: Style,
 }
 
-/// Truncate a line to max characters.
+/// Truncate a line to max characters, respecting UTF-8 char boundaries.
 fn truncate_line(line: &str, max: usize) -> String {
-    if line.len() <= max {
-        line.to_string()
-    } else {
-        format!("{}...", &line[..max.saturating_sub(3)])
-    }
+    truncate_with_ellipsis(line, max)
 }
 
 /// Compute the longest common subsequence of two line slices.
@@ -486,6 +483,16 @@ mod tests {
         let result = truncate_line(&long, 20);
         assert!(result.len() <= 20);
         assert!(result.ends_with("..."));
+    }
+
+    #[test]
+    fn truncate_line_multibyte_does_not_panic() {
+        // Each CJK character is 3 bytes in UTF-8; a byte-index slice at an
+        // odd offset would land mid-character and panic.
+        let line = "文".repeat(30);
+        let result = truncate_line(&line, 20);
+        assert!(result.ends_with("..."));
+        assert!(result.chars().count() <= 20);
     }
 
     #[test]

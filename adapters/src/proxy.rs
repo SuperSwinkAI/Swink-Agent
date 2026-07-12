@@ -5,6 +5,7 @@
 //! to `{base_url}/v1/stream`, and parses the resulting SSE event stream into
 //! [`AssistantMessageEvent`] values.
 
+use std::collections::{BTreeSet, VecDeque};
 use std::pin::Pin;
 
 use bytes::Bytes;
@@ -121,7 +122,7 @@ impl ProxyStreamFn {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             bearer_token: bearer_token.into(),
-            client: Client::new(),
+            client: crate::base::adapter_http_client(),
         }
     }
 
@@ -270,10 +271,17 @@ fn parse_sse_stream(
     let sse_stream = sse_data_lines_with_callback(response.bytes_stream(), on_raw_payload);
 
     stream::unfold(
-        (Box::pin(sse_stream), cancellation_token, false, false, None),
-        |(mut sse, token, done, started, pending)| async move {
-            if let Some(event) = pending {
-                return Some((event, (sse, token, true, started, None)));
+        (
+            Box::pin(sse_stream),
+            cancellation_token,
+            false,
+            false,
+            VecDeque::new(),
+            ProxyStreamState::default(),
+        ),
+        |(mut sse, token, done, started, mut pending, mut state)| async move {
+            if let Some(event) = pending.pop_front() {
+                return Some((event, (sse, token, done, started, pending, state)));
             }
 
             if done {
@@ -288,6 +296,7 @@ fn parse_sse_stream(
                         error_message: "operation cancelled".to_owned(),
                         usage: None,
                         error_kind: None,
+                        retry_after: None,
                     }
                 }
                 item = sse.next() => {
@@ -308,13 +317,20 @@ fn parse_sse_stream(
                         Some(SseLine::TransportError(message)) => AssistantMessageEvent::error_network(format!(
                                 "network error: {message}",
                             )),
+                        Some(SseLine::ProtocolError(message)) => AssistantMessageEvent::error(
+                            format!("proxy SSE protocol error: {message}"),
+                        ),
                         Some(_) => AssistantMessageEvent::error("unexpected non-data SSE line"),
                     }
                 }
             };
 
-            let (event, started, pending, done) = prepare_stream_event(raw_event, started);
-            Some((event, (sse, token, done, started, pending)))
+            let (events, started, done) = prepare_stream_event(raw_event, started, &mut state);
+            pending.extend(events);
+            let event = pending
+                .pop_front()
+                .expect("prepared event list must not be empty");
+            Some((event, (sse, token, done, started, pending, state)))
         },
     )
 }
@@ -322,24 +338,87 @@ fn parse_sse_stream(
 fn prepare_stream_event(
     event: AssistantMessageEvent,
     started: bool,
-) -> (
-    AssistantMessageEvent,
-    bool,
-    Option<AssistantMessageEvent>,
-    bool,
-) {
+    state: &mut ProxyStreamState,
+) -> (Vec<AssistantMessageEvent>, bool, bool) {
     if matches!(
         event,
         AssistantMessageEvent::Done { .. } | AssistantMessageEvent::Error { .. }
     ) && !started
     {
         let [start, terminal] = crate::base::pre_stream_error(event);
-        return (start, true, Some(terminal), false);
+        return (vec![start, terminal], true, true);
     }
 
     let started = started || matches!(event, AssistantMessageEvent::Start);
     let done = is_terminal_event(&event);
-    (event, started, None, done)
+    if done {
+        let mut events = state.drain_open_blocks();
+        events.push(event);
+        (events, started, true)
+    } else {
+        state.observe(&event);
+        (vec![event], started, false)
+    }
+}
+
+#[derive(Default)]
+struct ProxyStreamState {
+    text: BTreeSet<usize>,
+    thinking: BTreeSet<usize>,
+    tool_calls: BTreeSet<usize>,
+}
+
+impl ProxyStreamState {
+    fn observe(&mut self, event: &AssistantMessageEvent) {
+        match event {
+            AssistantMessageEvent::TextStart { content_index } => {
+                self.text.insert(*content_index);
+            }
+            AssistantMessageEvent::TextEnd { content_index } => {
+                self.text.remove(content_index);
+            }
+            AssistantMessageEvent::ThinkingStart { content_index } => {
+                self.thinking.insert(*content_index);
+            }
+            AssistantMessageEvent::ThinkingEnd { content_index, .. } => {
+                self.thinking.remove(content_index);
+            }
+            AssistantMessageEvent::ToolCallStart { content_index, .. } => {
+                self.tool_calls.insert(*content_index);
+            }
+            AssistantMessageEvent::ToolCallEnd { content_index } => {
+                self.tool_calls.remove(content_index);
+            }
+            _ => {}
+        }
+    }
+
+    fn drain_open_blocks(&mut self) -> Vec<AssistantMessageEvent> {
+        let mut events = Vec::new();
+        for content_index in std::mem::take(&mut self.text) {
+            events.push((
+                content_index,
+                AssistantMessageEvent::TextEnd { content_index },
+            ));
+        }
+        for content_index in std::mem::take(&mut self.thinking) {
+            events.push((
+                content_index,
+                AssistantMessageEvent::ThinkingEnd {
+                    content_index,
+                    signature: None,
+                },
+            ));
+        }
+        for content_index in std::mem::take(&mut self.tool_calls) {
+            events.push((
+                content_index,
+                AssistantMessageEvent::ToolCallEnd { content_index },
+            ));
+        }
+        events.sort_by_key(|(content_index, _)| *content_index);
+        events.into_iter().map(|(_, event)| event).collect()
+    }
 }
 
 /// Parse a single SSE event's `data` field into an `AssistantMessageEvent`.
@@ -420,6 +499,7 @@ fn convert_sse_event(event: SseEventData) -> AssistantMessageEvent {
             error_message,
             usage,
             error_kind,
+            retry_after: None,
         },
     }
 }
@@ -582,6 +662,7 @@ mod tests {
                 error_message,
                 usage,
                 error_kind,
+                retry_after: _,
             } => {
                 assert_eq!(stop_reason, StopReason::Error);
                 assert_eq!(error_message, "boom");
@@ -649,6 +730,7 @@ mod tests {
             error_message: "operation cancelled".to_owned(),
             usage: None,
             error_kind: None,
+            retry_after: None,
         };
         match event {
             AssistantMessageEvent::Error { stop_reason, .. } => {
@@ -672,6 +754,7 @@ mod tests {
             error_message: "test".to_owned(),
             usage: None,
             error_kind: None,
+            retry_after: None,
         };
         assert!(is_terminal_event(&error));
 
@@ -681,24 +764,59 @@ mod tests {
 
     #[test]
     fn terminal_error_before_start_is_prefixed() {
-        let (first, started, pending, done) =
-            prepare_stream_event(AssistantMessageEvent::error_network("boom"), false);
+        let (events, started, done) = prepare_stream_event(
+            AssistantMessageEvent::error_network("boom"),
+            false,
+            &mut ProxyStreamState::default(),
+        );
 
-        assert!(matches!(first, AssistantMessageEvent::Start));
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
         assert!(started);
-        assert!(!done);
-        assert!(matches!(pending, Some(AssistantMessageEvent::Error { .. })));
+        assert!(done);
+        assert!(matches!(events[1], AssistantMessageEvent::Error { .. }));
     }
 
     #[test]
     fn terminal_error_after_start_is_not_prefixed() {
         let error = AssistantMessageEvent::error_network("boom");
-        let (event, started, pending, done) = prepare_stream_event(error, true);
+        let (events, started, done) =
+            prepare_stream_event(error, true, &mut ProxyStreamState::default());
 
-        assert!(matches!(event, AssistantMessageEvent::Error { .. }));
+        assert!(matches!(events[0], AssistantMessageEvent::Error { .. }));
         assert!(started);
         assert!(done);
-        assert!(pending.is_none());
+    }
+
+    #[test]
+    fn terminal_error_after_open_blocks_drains_end_events_first() {
+        let mut state = ProxyStreamState::default();
+        let (events, started, done) = prepare_stream_event(
+            AssistantMessageEvent::TextStart { content_index: 0 },
+            true,
+            &mut state,
+        );
+        assert!(matches!(
+            events.as_slice(),
+            [AssistantMessageEvent::TextStart { content_index: 0 }]
+        ));
+        assert!(started);
+        assert!(!done);
+
+        let (events, started, done) = prepare_stream_event(
+            AssistantMessageEvent::error_network("boom"),
+            true,
+            &mut state,
+        );
+
+        assert!(started);
+        assert!(done);
+        assert!(matches!(
+            events.as_slice(),
+            [
+                AssistantMessageEvent::TextEnd { content_index: 0 },
+                AssistantMessageEvent::Error { .. }
+            ]
+        ));
     }
 
     #[test]
@@ -747,6 +865,7 @@ mod tests {
                             error_message: "cancelled".to_owned(),
                             usage: None,
                             error_kind: None,
+                            retry_after: None,
                         }, (sse, token, true)))
                     }
                     item = sse.next() => {
@@ -774,6 +893,12 @@ mod tests {
                             }
                             Some(SseLine::TransportError(msg)) => Some((
                                 AssistantMessageEvent::error_network(format!("network error: {msg}")),
+                                (sse, token, true),
+                            )),
+                            Some(SseLine::ProtocolError(msg)) => Some((
+                                AssistantMessageEvent::error(format!(
+                                    "proxy SSE protocol error: {msg}"
+                                )),
                                 (sse, token, true),
                             )),
                             Some(_) => Some((AssistantMessageEvent::error_network(

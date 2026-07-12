@@ -75,10 +75,15 @@ impl Evaluator for SemanticToolParameterEvaluator {
         // Flatten all tool calls with their turn index, applying the optional
         // tool-name filter (AS-6.4 / T062).
         let filter = intent.tool_name.as_deref();
-        let applicable: Vec<(usize, &RecordedToolCall)> = invocation
+        let applicable: Vec<(usize, RecordedToolCall)> = invocation
             .turns
             .iter()
-            .flat_map(|turn| turn.tool_calls.iter().map(move |tc| (turn.turn_index, tc)))
+            .flat_map(|turn| {
+                turn.tool_calls
+                    .iter()
+                    .cloned()
+                    .map(move |tc| (turn.turn_index, tc))
+            })
             .filter(|(_, call)| filter.is_none_or(|name| call.name == name))
             .collect();
 
@@ -93,11 +98,14 @@ impl Evaluator for SemanticToolParameterEvaluator {
         // Judge each applicable call. The Evaluator trait is sync; the
         // async judge is driven via whichever runtime context the caller
         // provides (see `drive_judge_calls` for the selection logic).
-        let outcomes: Vec<CallOutcome> = drive_judge_calls(|| async {
+        let judge = Arc::clone(&self.judge);
+        let timeout_limit = self.timeout;
+        let intent = intent.clone();
+        let outcomes: Vec<CallOutcome> = drive_judge_calls(move || async move {
             let mut results = Vec::with_capacity(applicable.len());
             for (turn_index, call) in &applicable {
-                let prompt = build_prompt(intent, *turn_index, call);
-                let outcome = match timeout(self.timeout, self.judge.judge(&prompt)).await {
+                let prompt = build_prompt(&intent, *turn_index, call);
+                let outcome = match timeout(timeout_limit, judge.judge(&prompt)).await {
                     Ok(Ok(verdict)) => CallOutcome::Verdict {
                         tool: call.name.clone(),
                         verdict,
@@ -108,7 +116,7 @@ impl Evaluator for SemanticToolParameterEvaluator {
                     },
                     Err(_elapsed) => CallOutcome::OuterTimeout {
                         tool: call.name.clone(),
-                        limit: self.timeout,
+                        limit: timeout_limit,
                     },
                 };
                 results.push(outcome);
@@ -125,12 +133,12 @@ impl Evaluator for SemanticToolParameterEvaluator {
 ///
 /// Mirrors the helper in [`crate::semantic_tool_selection`] — kept module-
 /// local to avoid a new cross-module public surface. See that module's
-/// helper for the full rationale and known limitation around
-/// current-thread runtimes.
+/// helper for the full runtime-selection rationale.
 fn drive_judge_calls<F, Fut, T>(make_future: F) -> T
 where
-    F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = T>,
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = T> + Send + 'static,
+    T: Send + 'static,
 {
     use tokio::runtime::{Handle, RuntimeFlavor};
 
@@ -140,6 +148,23 @@ where
         return tokio::task::block_in_place(|| handle.block_on(make_future()));
     }
 
+    if Handle::try_current().is_ok() {
+        return std::thread::Builder::new()
+            .name("swink-eval-judge".to_string())
+            .spawn(|| block_on_owned_runtime(make_future))
+            .expect("spawn current-thread judge helper")
+            .join()
+            .expect("current-thread judge helper panicked");
+    }
+
+    block_on_owned_runtime(make_future)
+}
+
+fn block_on_owned_runtime<F, Fut, T>(make_future: F) -> T
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = T>,
+{
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -353,5 +378,30 @@ mod tests {
         let judge: Arc<dyn JudgeClient> = Arc::new(MockJudge::always_pass());
         let evaluator = SemanticToolParameterEvaluator::new(judge);
         assert_eq!(evaluator.timeout, Duration::from_mins(5));
+    }
+
+    #[test]
+    fn evaluates_inside_current_thread_runtime() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("current-thread runtime");
+
+        runtime.block_on(async {
+            let case = simple_case(Some(ToolIntent {
+                intent: "read config for project-alpha".into(),
+                tool_name: Some("read_file".into()),
+            }));
+            let invocation = invocation_with_calls(&["read_file"]);
+            let judge = Arc::new(MockJudge::always_pass());
+            let evaluator = SemanticToolParameterEvaluator::new(judge.clone());
+
+            let result = evaluator
+                .evaluate(&case, &invocation)
+                .expect("semantic tool parameter should apply");
+
+            assert!(result.score.verdict().is_pass());
+            assert_eq!(judge.call_count(), 1);
+        });
     }
 }

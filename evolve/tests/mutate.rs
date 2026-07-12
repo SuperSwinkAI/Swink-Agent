@@ -2,14 +2,15 @@
 
 use std::sync::Arc;
 
+use swink_agent::Cost;
 use swink_agent_eval::{JudgeVerdict, MockJudge, Score};
 
 use swink_agent_evolve::{
-    Ablation, Candidate, CaseFailure, LlmGuided, MutationContext, MutationStrategy,
+    Ablation, Candidate, CaseFailure, CycleBudget, LlmGuided, MutationContext, MutationStrategy,
     TargetComponent, TemplateBased, WeakPoint, deduplicate,
 };
 
-fn make_context(max_candidates: usize) -> MutationContext {
+fn make_context(max_candidates: usize) -> MutationContext<'static> {
     let weak_point = WeakPoint {
         component: TargetComponent::FullPrompt,
         affected_cases: vec![CaseFailure {
@@ -30,6 +31,7 @@ fn make_context(max_candidates: usize) -> MutationContext {
         eval_criteria: "response quality".to_string(),
         seed: None,
         max_candidates,
+        budget: None,
     }
 }
 
@@ -80,6 +82,7 @@ async fn llm_guided_uses_judge_client() {
         pass: true,
         reason: Some(rewrite.to_string()),
         label: None,
+        cost: None,
     }]));
     let strategy = LlmGuided::new(judge);
     let context = make_context(3);
@@ -87,6 +90,67 @@ async fn llm_guided_uses_judge_client() {
     assert_eq!(candidates.len(), 1);
     assert_eq!(candidates[0].mutated_value, rewrite);
     assert_eq!(candidates[0].strategy, "llm_guided");
+}
+
+/// FR-012 / SC-005: an `LlmGuided` mutation call must be recorded against the
+/// cycle budget — at minimum as an invocation count, and as dollar cost when
+/// the judge populates `JudgeVerdict::cost`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn llm_guided_records_budget_invocation_and_cost() {
+    let judge = Arc::new(MockJudge::with_verdicts(vec![JudgeVerdict {
+        score: 0.9,
+        pass: true,
+        reason: Some("improved text".to_string()),
+        label: None,
+        cost: Some(0.01),
+    }]));
+    let strategy = LlmGuided::new(judge);
+    let budget = CycleBudget::new(Cost {
+        total: 10.0,
+        ..Cost::default()
+    });
+    let mut context = make_context(3);
+    context.budget = Some(&budget);
+
+    let candidates = strategy.mutate("original text", &context).unwrap();
+
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(
+        budget.judge_invocations(),
+        1,
+        "one judge call should be counted regardless of whether cost was derivable"
+    );
+    assert!(
+        (budget.remaining().total - 9.99).abs() < 1e-9,
+        "verdict.cost should be recorded into the budget when present, got remaining={:?}",
+        budget.remaining()
+    );
+}
+
+/// When the judge doesn't populate `cost` (the current reality for every
+/// provider client in `swink-agent-eval-judges`), the invocation is still
+/// counted but dollar spend is untouched.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn llm_guided_counts_invocation_without_cost() {
+    let judge = Arc::new(MockJudge::with_verdicts(vec![JudgeVerdict {
+        score: 0.9,
+        pass: true,
+        reason: Some("improved text".to_string()),
+        label: None,
+        cost: None,
+    }]));
+    let strategy = LlmGuided::new(judge);
+    let budget = CycleBudget::new(Cost {
+        total: 10.0,
+        ..Cost::default()
+    });
+    let mut context = make_context(3);
+    context.budget = Some(&budget);
+
+    strategy.mutate("original text", &context).unwrap();
+
+    assert_eq!(budget.judge_invocations(), 1);
+    assert!((budget.remaining().total - 10.0).abs() < 1e-9);
 }
 
 #[test]

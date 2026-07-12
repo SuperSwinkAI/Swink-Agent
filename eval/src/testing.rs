@@ -33,6 +33,7 @@ use crate::judge::{JudgeClient, JudgeError, JudgeFuture, JudgeVerdict};
 ///     pass: true,
 ///     reason: Some("looks good".into()),
 ///     label: Some("equivalent".into()),
+///     cost: None,
 /// }]));
 /// ```
 pub struct MockJudge {
@@ -103,6 +104,7 @@ impl MockJudge {
                 pass: true,
                 reason: Some("mock pass".into()),
                 label: None,
+                cost: None,
             }),
         )
     }
@@ -117,6 +119,7 @@ impl MockJudge {
                 pass: false,
                 reason: Some("mock fail".into()),
                 label: None,
+                cost: None,
             }),
         )
     }
@@ -217,6 +220,7 @@ impl JudgeClient for SlowMockJudge {
                 pass: true,
                 reason: Some("slow pass".into()),
                 label: None,
+                cost: None,
             })
         })
     }
@@ -282,6 +286,7 @@ mod tests {
             pass,
             reason: None,
             label: None,
+            cost: None,
         }
     }
 

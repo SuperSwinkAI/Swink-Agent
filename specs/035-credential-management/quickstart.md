@@ -157,7 +157,19 @@ impl AuthorizationHandler for BrowserAuthHandler {
 }
 
 let resolver = DefaultCredentialResolver::new(Arc::new(store))
-    .with_authorization_handler(Arc::new(BrowserAuthHandler));
+    .with_authorization_handler(Arc::new(BrowserAuthHandler))
+    // Required alongside the handler: without a stored credential there is
+    // no client_id/token_url/redirect_uri to build an authorization URL
+    // from, so each key that should support first-time authorization needs
+    // its OAuth2 client config registered explicitly.
+    .with_authorization_config("google-calendar", AuthorizationConfig {
+        authorization_endpoint: "https://accounts.google.com/o/oauth2/v2/auth".into(),
+        token_url: "https://oauth2.googleapis.com/token".into(),
+        client_id: "...".into(),
+        client_secret: Some("...".into()),
+        redirect_uri: "http://localhost:8080/callback".into(),
+        scopes: vec!["https://www.googleapis.com/auth/calendar.readonly".into()],
+    });
 ```
 
 ### Headless Deployment (No Interactive Auth)

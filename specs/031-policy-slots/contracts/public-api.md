@@ -37,11 +37,16 @@ pub struct PolicyContext<'a> {
     pub new_messages: &'a [AgentMessage],
 }
 
-/// Per-tool-call context for PreDispatch policies.
-pub struct ToolPolicyContext<'a> {
+/// Combined context for PreDispatch policies (corrected 2026-07-06: the
+/// shipped type is `ToolDispatchContext`, not `ToolPolicyContext`, and it has
+/// no separate `PolicyContext` — loop-level metrics are unavailable at the
+/// tool-dispatch call site).
+pub struct ToolDispatchContext<'a> {
     pub tool_name: &'a str,
     pub tool_call_id: &'a str,
     pub arguments: &'a mut Value,
+    pub execution_root: Option<&'a Path>,
+    pub state: &'a SessionState,
 }
 
 /// Per-turn context for PostTurn policies.
@@ -65,11 +70,7 @@ pub trait PreTurnPolicy: Send + Sync {
 /// Slot 2: Per tool call, before approval and execution.
 pub trait PreDispatchPolicy: Send + Sync {
     fn name(&self) -> &str;
-    fn evaluate(
-        &self,
-        ctx: &PolicyContext<'_>,
-        tool: &mut ToolPolicyContext<'_>,
-    ) -> PreDispatchVerdict;
+    fn evaluate(&self, ctx: &mut ToolDispatchContext<'_>) -> PreDispatchVerdict;
 }
 
 /// Slot 3: After each completed turn.
@@ -100,8 +101,7 @@ pub fn run_policies<P>(policies: &[Arc<P>], ...) -> PolicyVerdict;
 /// Stop/Skip short-circuit. Inject accumulates. Panics caught as Continue.
 pub fn run_pre_dispatch_policies(
     policies: &[Arc<dyn PreDispatchPolicy>],
-    ctx: &PolicyContext<'_>,
-    tool: &mut ToolPolicyContext<'_>,
+    ctx: &mut ToolDispatchContext<'_>,
 ) -> PreDispatchVerdict;
 ```
 
@@ -195,7 +195,7 @@ impl PostTurnPolicy for LoopDetectionPolicy { ... }
 // New policy slot system
 pub use policy::{
     PolicyVerdict, PreDispatchVerdict,
-    PolicyContext, ToolPolicyContext, TurnPolicyContext,
+    PolicyContext, ToolDispatchContext, TurnPolicyContext,
     PreTurnPolicy, PreDispatchPolicy, PostTurnPolicy, PostLoopPolicy,
     run_policies, run_pre_dispatch_policies,
 };

@@ -9,20 +9,26 @@
 //! * [`retry_with_cancel`] runs an async factory under that builder while
 //!   racing each attempt against a [`CancellationToken`], so cancellation
 //!   surfaces as [`JudgeError::Other`] rather than waiting out the backoff
-//!   schedule.
+//!   schedule. Every dispatch attempt and retry decision is logged via
+//!   `tracing` (`debug!`/`warn!`) — attempt number and the classified
+//!   [`JudgeError`], never the prompt or response body — so this single
+//!   choke point instruments every provider client in this crate.
 //! * [`BatchedJudgeClient`] wraps a [`JudgeClient`] and exposes a
 //!   [`BatchedJudgeClient::judge_batch`] convenience that dispatches up to
 //!   `batch_size` prompts. Providers that do not support native batching fall
 //!   through to sequential dispatch here (FR-005).
-//! * [`BlockingExt`] is a small adapter so provider-specific `Blocking*`
-//!   wrappers can reuse a single `block_on` helper.
+//! * [`block_on_judge`] is a small adapter so provider-specific `Blocking*`
+//!   wrappers share the same runtime-safe blocking behavior.
 
 use std::future::Future;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use backon::{ExponentialBuilder, Retryable};
+use tokio::runtime::{Builder, Handle, RuntimeFlavor};
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, warn};
 
 use swink_agent_eval::judge::{JudgeClient, JudgeError, JudgeVerdict, MAX_BATCH_SIZE, RetryPolicy};
 
@@ -65,25 +71,45 @@ pub async fn retry_with_cancel<Fut, Factory, Retry>(
     policy: &RetryPolicy,
     cancel: &CancellationToken,
     should_retry: Retry,
-    factory: Factory,
+    mut factory: Factory,
 ) -> Result<JudgeVerdict, JudgeError>
 where
-    Factory: FnMut() -> Fut,
-    Fut: Future<Output = Result<JudgeVerdict, JudgeError>>,
-    Retry: Fn(&JudgeError) -> bool,
+    Factory: FnMut() -> Fut + Send,
+    Fut: Future<Output = Result<JudgeVerdict, JudgeError>> + Send,
+    Retry: Fn(&JudgeError) -> bool + Send + Sync,
 {
     if cancel.is_cancelled() {
+        debug!("judge dispatch skipped: cancellation observed before first attempt");
         return Err(JudgeError::Other("cancelled".to_string()));
     }
 
     let builder = build_retry(policy);
+    let attempt = AtomicUsize::new(0);
     // Wrap the Retry driver in an async block so `tokio::select!` can
-    // race it against cancellation uniformly.
-    let driver = async move { factory.retry(builder).when(should_retry).await };
+    // race it against cancellation uniformly. The inner closure logs each
+    // dispatch attempt; `when` logs the resulting error and whether backon
+    // will retry it — never the prompt or response body.
+    let driver = async move {
+        (move || {
+            let n = attempt.fetch_add(1, Ordering::SeqCst) + 1;
+            debug!(attempt = n, "dispatching judge request");
+            factory()
+        })
+        .retry(builder)
+        .when(|err: &JudgeError| {
+            let retryable = should_retry(err);
+            warn!(error = %err, retryable, "judge request failed");
+            retryable
+        })
+        .await
+    };
 
     tokio::select! {
         biased;
-        () = cancel.cancelled() => Err(JudgeError::Other("cancelled".to_string())),
+        () = cancel.cancelled() => {
+            debug!("judge dispatch cancelled mid-flight");
+            Err(JudgeError::Other("cancelled".to_string()))
+        },
         res = driver => res,
     }
 }
@@ -166,20 +192,77 @@ impl std::fmt::Debug for BatchedJudgeClient {
     }
 }
 
-/// Extension trait for provider-specific blocking wrappers.
+/// Drive a judge future from a blocking wrapper without depending on the
+/// caller's Tokio runtime context.
+pub fn block_on_judge<Fut>(future: Fut) -> Result<JudgeVerdict, JudgeError>
+where
+    Fut: Future<Output = Result<JudgeVerdict, JudgeError>> + Send + 'static,
+{
+    match Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(|| handle.block_on(future))
+        }
+        Ok(_) => std::thread::Builder::new()
+            .name("swink-blocking-judge".to_string())
+            .spawn(|| block_on_owned_runtime(future))
+            .map_err(|error| {
+                JudgeError::Other(format!("failed to spawn blocking judge thread: {error}"))
+            })?
+            .join()
+            .map_err(|_| JudgeError::Other("blocking judge thread panicked".to_string()))?,
+        Err(_) => block_on_owned_runtime(future),
+    }
+}
+
+fn block_on_owned_runtime<Fut>(future: Fut) -> Result<JudgeVerdict, JudgeError>
+where
+    Fut: Future<Output = Result<JudgeVerdict, JudgeError>>,
+{
+    let runtime = Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| {
+            JudgeError::Other(format!(
+                "failed to build runtime for blocking judge client: {error}"
+            ))
+        })?;
+    runtime.block_on(future)
+}
+
+/// Legacy extension trait for blocking on arbitrary futures.
+///
+/// Provider-specific blocking judge clients use [`block_on_judge`] so they can
+/// own the runtime context needed by provider futures.
+#[deprecated(note = "use block_on_judge for judge futures")]
 pub trait BlockingExt: Future + Send + 'static
 where
     Self::Output: Send + 'static,
 {
-    /// Block on the future using the current Tokio runtime handle.
+    /// Block on the future outside Tokio or from a multi-thread runtime.
+    ///
+    /// Panics inside a current-thread Tokio runtime because an arbitrary
+    /// future output type cannot represent a typed runtime-context error.
     fn block_on(self) -> Self::Output
     where
         Self: Sized,
     {
-        tokio::runtime::Handle::current().block_on(self)
+        match Handle::try_current() {
+            Ok(handle) if handle.runtime_flavor() == RuntimeFlavor::MultiThread => {
+                tokio::task::block_in_place(|| handle.block_on(self))
+            }
+            Ok(_) => panic!(
+                "BlockingExt::block_on cannot run inside a current-thread Tokio runtime; use an async API instead"
+            ),
+            Err(_) => Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build current-thread runtime for blocking future")
+                .block_on(self),
+        }
     }
 }
 
+#[allow(deprecated)]
 impl<F> BlockingExt for F
 where
     F: Future + Send + 'static,
@@ -230,6 +313,7 @@ pub fn parse_verdict_text(text: &str) -> Result<JudgeVerdict, JudgeError> {
         pass,
         reason,
         label,
+        cost: None,
     })
 }
 
@@ -247,7 +331,9 @@ fn strip_code_fence(text: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc as StdArc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::Notify;
 
     struct CountingJudge {
         calls: AtomicUsize,
@@ -262,6 +348,7 @@ mod tests {
                     pass: true,
                     reason: None,
                     label: None,
+                    cost: None,
                 })
             })
         }
@@ -286,6 +373,47 @@ mod tests {
         for r in results {
             assert!(r.is_ok());
         }
+    }
+
+    #[test]
+    fn block_on_judge_owns_runtime_without_ambient_tokio() {
+        let result = block_on_judge(async {
+            Ok(JudgeVerdict {
+                score: 0.7,
+                pass: true,
+                reason: Some("ok".to_string()),
+                label: None,
+                cost: None,
+            })
+        })
+        .expect("blocking helper should build its own runtime");
+
+        assert!(result.pass);
+        assert!((result.score - 0.7).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn block_on_judge_owns_runtime_inside_current_thread_runtime() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("current-thread runtime");
+
+        let result = runtime.block_on(async {
+            block_on_judge(async {
+                Ok(JudgeVerdict {
+                    score: 1.0,
+                    pass: true,
+                    reason: None,
+                    label: None,
+                    cost: None,
+                })
+            })
+            .expect("current-thread runtime should delegate to an owned runtime")
+        });
+
+        assert!(result.pass);
+        assert!((result.score - 1.0).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -332,6 +460,7 @@ mod tests {
                 pass: true,
                 reason: None,
                 label: None,
+                cost: None,
             })
         })
         .await;
@@ -340,6 +469,37 @@ mod tests {
             Err(JudgeError::Other(msg)) => assert!(msg.contains("cancel")),
             other => panic!("expected cancellation, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn retry_cancels_in_flight_attempt() {
+        let policy = fast_test_policy();
+        let cancel = CancellationToken::new();
+        let attempts = StdArc::new(AtomicUsize::new(0));
+        let started = StdArc::new(Notify::new());
+
+        let task = {
+            let cancel = cancel.clone();
+            let attempts = StdArc::clone(&attempts);
+            let started = StdArc::clone(&started);
+            tokio::spawn(async move {
+                retry_with_cancel(&policy, &cancel, is_retryable, || {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    started.notify_one();
+                    async { std::future::pending::<Result<JudgeVerdict, JudgeError>>().await }
+                })
+                .await
+            })
+        };
+
+        started.notified().await;
+        cancel.cancel();
+
+        match task.await.expect("retry task should finish") {
+            Err(JudgeError::Other(msg)) => assert!(msg.contains("cancel")),
+            other => panic!("expected in-flight cancellation, got {other:?}"),
+        }
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

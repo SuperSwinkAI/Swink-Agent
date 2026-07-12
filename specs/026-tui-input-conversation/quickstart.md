@@ -35,7 +35,9 @@ cargo run -p swink-agent-tui
 ### InputEditor — Compose and Submit
 
 ```rust
-use swink_agent_tui::ui::input::InputEditor;
+// [Updated to match implementation: `ui` is a private module; the crate
+// root re-exports the supported public surface, per tui/src/lib.rs.]
+use swink_agent_tui::InputEditor;
 
 let mut editor = InputEditor::new();
 
@@ -74,7 +76,7 @@ editor.backspace();      // deletes 'b', text is "ac"
 ### ConversationView — Scroll Control
 
 ```rust
-use swink_agent_tui::ui::conversation::ConversationView;
+use swink_agent_tui::ConversationView;
 
 let mut view = ConversationView::new();
 assert!(view.auto_scroll); // starts with auto-scroll on
@@ -91,7 +93,7 @@ assert!(view.auto_scroll);
 ### Markdown Rendering
 
 ```rust
-use swink_agent_tui::ui::markdown::markdown_to_lines;
+use swink_agent_tui::markdown_to_lines;
 
 let md = "# Hello\n\nThis is **bold** and *italic*.\n\n```rust\nlet x = 42;\n```";
 let lines = markdown_to_lines(md, 80);
@@ -103,7 +105,7 @@ let lines = markdown_to_lines(md, 80);
 ### Syntax Highlighting
 
 ```rust
-use swink_agent_tui::ui::syntax::highlight_code;
+use swink_agent_tui::highlight_code;
 
 // Recognized language: syntax-highlighted output
 let lines = highlight_code("fn main() {}", "rust");

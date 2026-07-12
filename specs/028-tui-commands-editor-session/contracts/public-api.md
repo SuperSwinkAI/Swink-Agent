@@ -56,7 +56,7 @@ pub fn execute_command(input: &str) -> CommandResult;
 ### Hash Command Parsing
 - Input starting with `#` (after trimming) is parsed as a hash command.
 - The `#` prefix is stripped; remaining text is trimmed and matched exactly.
-- Recognized commands: `help`, `clear`, `info`, `copy`, `copy all`, `copy code`, `sessions`, `save`, `load <id>`, `key <provider> <api-key>`, `keys`, `approve`, `approve on`, `approve off`, `approve smart`.
+- Recognized commands: `help`, `clear`, `info`, `copy`, `copy all`, `copy code`, `sessions`, `save`, `load <id>`, `key <provider> <api-key>`, `keys`, `approve`, `approve on`, `approve off`, `approve smart`, `approve untrust`, `approve untrust <tool>`.
 - `load <id>` requires a non-empty ID argument; missing ID returns usage feedback.
 - `key <provider> <api-key>` requires both arguments; missing key returns usage feedback.
 - `approve` without argument returns `QueryApprovalMode`; invalid argument returns usage feedback.
@@ -66,7 +66,7 @@ pub fn execute_command(input: &str) -> CommandResult;
 - Input starting with `/` (after trimming) is parsed as a slash command.
 - The `/` prefix is stripped; the command name is split from arguments at the first space.
 - Recognized commands: `quit` (alias `q`), `thinking`, `system`, `reset`, `editor`, `plan`.
-- `/thinking` requires an argument (off/low/medium/high); missing argument returns usage feedback.
+- `/thinking` requires an argument (off/minimal/low/medium/high/extra-high); missing argument returns usage feedback.
 - `/system` requires an argument (the new prompt); missing argument returns usage feedback.
 - Unrecognized slash commands return `Feedback` with the unknown command name and a hint to type `#help`.
 
@@ -105,7 +105,7 @@ pub fn open_editor(editor_command: &str) -> io::Result<Option<String>>;
 - If neither is set, return `"vi"`.
 
 ### Editor Open
-- Creates a temporary file at `{std::env::temp_dir()}/swink-prompt-{pid}.md`.
+- Creates a temporary file via `tempfile::NamedTempFile::new()?.into_temp_path()` [corrected 2026-07-06: not a deterministic `{std::env::temp_dir()}/swink-prompt-{pid}.md` path — `NamedTempFile` generates a randomized filename in the system temp directory].
 - Launches `editor_command` with the temp file path as the sole argument.
 - Blocks until the editor process exits.
 - On successful exit (status 0): reads the temp file, trims content.
@@ -127,14 +127,17 @@ pub use swink_agent_memory::{JsonlSessionStore, SessionMeta, SessionStore};
 **Contract**:
 
 ### Re-exports
-- `SessionStore`: the persistence trait with `save`, `load`, `list`, `delete`.
+- `SessionStore`: the persistence trait with `save`, `save_full`, `append`, `load`, `load_full`, `list`, `delete`.
 - `JsonlSessionStore`: the JSONL-based file persistence implementation.
-- `SessionMeta`: metadata struct (`id`, `title`, `created_at`, `updated_at`).
+- `SessionMeta`: metadata struct (`id`, `title`, `created_at`, `updated_at`, `version`, `sequence`).
 - See `swink-agent-memory` crate documentation for full trait contract.
 
 ### TUI Integration (in app)
-- `#save` triggers `store.save(session_id, &SessionMeta, &llm_messages)` where `llm_messages` is `&[LlmMessage]` filtered from agent state.
-- `#load <id>` triggers `store.load(id)` → `(SessionMeta, Vec<LlmMessage>)` and replaces conversation state.
+
+[Corrected 2026-07-06: the app uses the `save_full`/`load_full` pair, not the simpler `save`/`load`, so it can atomically persist and restore a crash-recovery agent-state snapshot alongside the transcript.]
+
+- `#save` triggers `store.save_full(session_id, &SessionMeta, &agent_messages, &state_snapshot)` where `agent_messages` is `&[AgentMessage]` from the agent's state and `state_snapshot` is a `serde_json::Value` snapshot of the agent's `SessionState`.
+- `#load <id>` triggers `store.load_full(id, registry)` → `(SessionMeta, Vec<AgentMessage>, Option<serde_json::Value>)`; the optional snapshot is restored via `SessionState::restore_from_snapshot` (falling back to `SessionState::new()` when absent), and the conversation state is replaced.
 - `#sessions` triggers `store.list()` and displays session metadata as feedback.
 - Session ID is set at app creation; reused across saves.
 - Corrupted or missing session files produce an error feedback message; the TUI continues with its current state.

@@ -7,6 +7,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
+use super::path::resolve_writable_path;
 use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validated_schema_for};
 use crate::types::ContentBlock;
 
@@ -15,6 +16,55 @@ use crate::types::ContentBlock;
 pub struct WriteFileTool {
     schema: Value,
     execution_root: Option<PathBuf>,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, RwLock};
+
+    use serde_json::json;
+    use tokio_util::sync::CancellationToken;
+
+    use super::*;
+    use crate::SessionState;
+
+    fn result_text(result: &AgentToolResult) -> &str {
+        match result.content.first() {
+            Some(ContentBlock::Text { text }) => text.as_str(),
+            _ => panic!("expected text content"),
+        }
+    }
+
+    #[tokio::test]
+    async fn write_file_rejects_relative_path_outside_execution_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        tokio::fs::create_dir(&root).await.unwrap();
+        let outside = temp.path().join("outside.txt");
+
+        let result = WriteFileTool::new()
+            .with_execution_root(&root)
+            .execute(
+                "call-1",
+                json!({ "path": "../outside.txt", "content": "outside" }),
+                CancellationToken::new(),
+                None,
+                Arc::new(RwLock::new(SessionState::new())),
+                None,
+            )
+            .await;
+
+        assert!(result.is_error);
+        assert!(
+            result_text(&result).contains("escapes execution root"),
+            "unexpected result: {}",
+            result_text(&result)
+        );
+        assert!(
+            !tokio::fs::try_exists(&outside).await.unwrap(),
+            "write escaped execution root"
+        );
+    }
 }
 
 impl WriteFileTool {
@@ -95,7 +145,11 @@ impl AgentTool for WriteFileTool {
                 return AgentToolResult::error("cancelled");
             }
 
-            let path = resolve_path(&parsed.path, self.execution_root.as_deref());
+            let path =
+                match resolve_writable_path(&parsed.path, self.execution_root.as_deref()).await {
+                    Ok(path) => path,
+                    Err(error) => return AgentToolResult::error(error),
+                };
 
             // Read existing content for diff (empty string if file doesn't exist)
             let old_content = tokio::fs::read_to_string(&path).await.unwrap_or_default();
@@ -133,16 +187,5 @@ impl AgentTool for WriteFileTool {
                 }
             }
         })
-    }
-}
-
-fn resolve_path(path: &str, execution_root: Option<&Path>) -> PathBuf {
-    let path = Path::new(path);
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else if let Some(root) = execution_root {
-        root.join(path)
-    } else {
-        path.to_path_buf()
     }
 }

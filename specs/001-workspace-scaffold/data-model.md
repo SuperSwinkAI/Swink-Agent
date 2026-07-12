@@ -19,7 +19,7 @@ The root container that defines all crate members and shared settings.
 | Attribute | Value | Location |
 |-----------|-------|----------|
 | resolver | "2" | `Cargo.toml` `[workspace]` |
-| members | 7 crates (see below) | `Cargo.toml` `[workspace].members` |
+| members | 7 crates (see below) [grown to 16 members + root as of 2026-07-06 — see growth note in spec.md] | `Cargo.toml` `[workspace].members` |
 | shared dependencies | Centralized versions | `Cargo.toml` `[workspace.dependencies]` |
 
 ### Crates
@@ -73,7 +73,7 @@ dependencies.
 
 - Every library crate's `lib.rs` re-exports the public API surface
 - The TUI crate has both `lib.rs` (for testable components) and `main.rs` (entry point)
-- The xtask crate has only `main.rs` (empty in this scaffold)
+- The xtask crate has only `main.rs` (empty in this scaffold) — stale as of 2026-07-06: `xtask/src/main.rs` is now a ~200-line `clap` CLI (includes a `VerifyCatalog` subcommand)
 - All library crates include `#[forbid(unsafe_code)]` at the crate root
 
 ## Validation Rules

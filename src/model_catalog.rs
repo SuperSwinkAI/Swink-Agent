@@ -4,8 +4,9 @@ use chrono::NaiveDate;
 use serde::Deserialize;
 
 use crate::ModelSpec;
-use crate::types::{Cost, ModelCapabilities, Usage};
+use crate::types::{Cost, ModelCapabilities, ThinkingLevel, Usage};
 
+/// Whether a provider's models run on a remote API or on local hardware.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderKind {
@@ -13,6 +14,7 @@ pub enum ProviderKind {
     Local,
 }
 
+/// How requests to a provider are authenticated.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthMode {
@@ -21,6 +23,7 @@ pub enum AuthMode {
     AwsSigv4,
 }
 
+/// Provider API version selector used when building request URLs.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApiVersion {
@@ -28,6 +31,7 @@ pub enum ApiVersion {
     V1beta,
 }
 
+/// A capability a preset's model supports, as declared in the catalog TOML.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PresetCapability {
@@ -39,6 +43,7 @@ pub enum PresetCapability {
     StructuredOutput,
 }
 
+/// Release maturity of a preset's model at the provider.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PresetStatus {
@@ -71,6 +76,7 @@ impl PresetStatus {
     }
 }
 
+/// A single named model preset within a [`ProviderCatalog`], as loaded from the catalog TOML.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct PresetCatalog {
     pub id: String,
@@ -97,6 +103,7 @@ pub struct PresetCatalog {
     pub cost_per_million_cache_write: Option<f64>,
 }
 
+/// A provider entry in the model catalog, holding its auth/connection settings and presets.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ProviderCatalog {
     pub key: String,
@@ -120,6 +127,7 @@ impl ProviderCatalog {
     }
 }
 
+/// The full model catalog: a list of providers, each with its own presets.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ModelCatalog {
     /// Date (`YYYY-MM-DD`) the compiled-in pricing table was last verified
@@ -186,6 +194,8 @@ impl ModelCatalog {
     }
 }
 
+/// A preset flattened together with its parent provider's fields, for standalone use
+/// once resolved via [`ModelCatalog::preset`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct CatalogPreset {
     pub provider_key: String,
@@ -233,10 +243,21 @@ impl CatalogPreset {
     }
 
     /// Create a [`ModelSpec`] pre-populated with capabilities from the catalog.
+    ///
+    /// Local thinking-capable models default to [`ThinkingLevel::Medium`] so
+    /// thinking is active out of the box (local inference treats any non-`Off`
+    /// level as a binary "on" toggle). Remote presets keep the opt-in
+    /// [`ThinkingLevel::Off`] default because remote thinking consumes billable
+    /// token budget. Callers can still disable thinking explicitly via
+    /// [`ModelSpec::with_thinking_level`] with [`ThinkingLevel::Off`].
     #[must_use]
     pub fn model_spec(&self) -> ModelSpec {
-        ModelSpec::new(&self.provider_key, &self.model_id)
-            .with_capabilities(self.model_capabilities())
+        let capabilities = self.model_capabilities();
+        let mut spec = ModelSpec::new(&self.provider_key, &self.model_id);
+        if self.provider_kind == ProviderKind::Local && capabilities.supports_thinking {
+            spec = spec.with_thinking_level(ThinkingLevel::Medium);
+        }
+        spec.with_capabilities(capabilities)
     }
 
     /// Returns `true` when the preset's status is [`PresetStatus::Deprecated`].
@@ -528,6 +549,37 @@ mod tests {
         assert!(caps.supports_tool_use);
         assert!(caps.supports_streaming);
         assert!(!caps.supports_structured_output);
+    }
+
+    #[test]
+    fn local_thinking_preset_model_spec_defaults_to_thinking_on() {
+        let preset = model_catalog().preset("local", "gemma4_e2b").unwrap();
+        let spec = preset.model_spec();
+        assert!(spec.capabilities().supports_thinking);
+        assert_ne!(spec.thinking_level, ThinkingLevel::Off);
+    }
+
+    #[test]
+    fn local_non_thinking_preset_model_spec_stays_off() {
+        let preset = model_catalog().preset("local", "smollm3_3b").unwrap();
+        let spec = preset.model_spec();
+        assert!(!spec.capabilities().supports_thinking);
+        assert_eq!(spec.thinking_level, ThinkingLevel::Off);
+    }
+
+    #[test]
+    fn remote_thinking_preset_model_spec_stays_opt_in() {
+        let preset = model_catalog().preset("anthropic", "sonnet_46").unwrap();
+        let spec = preset.model_spec();
+        assert!(spec.capabilities().supports_thinking);
+        assert_eq!(spec.thinking_level, ThinkingLevel::Off);
+    }
+
+    #[test]
+    fn local_thinking_default_can_be_explicitly_disabled() {
+        let preset = model_catalog().preset("local", "gemma4_e2b").unwrap();
+        let spec = preset.model_spec().with_thinking_level(ThinkingLevel::Off);
+        assert_eq!(spec.thinking_level, ThinkingLevel::Off);
     }
 
     #[test]

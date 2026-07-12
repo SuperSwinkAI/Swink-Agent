@@ -1,6 +1,6 @@
 # Agent Struct
 
-**Source file:** `src/agent.rs`
+**Source files:** `src/agent.rs` plus the `src/agent/` module (`invoke.rs`, `control.rs`, `events.rs`, `queueing.rs`, `structured_output.rs`, `checkpointing.rs`, `mutation.rs`, `state_updates.rs`)
 **Related:** [PRD §13](../../planning/PRD.md#13-agent-struct)
 
 The `Agent` struct is the primary public interface of the harness. It is a stateful wrapper over the agent loop that owns conversation history, manages the steering and follow-up queues, exposes three invocation modes, and fans lifecycle events out to subscribers.
@@ -20,7 +20,7 @@ flowchart TB
         Queues["Message Queues<br/>steering_queue<br/>follow_up_queue"]
         API["Invocation API<br/>prompt_stream() · prompt_async() · prompt_sync()<br/>prompt_text() · prompt_text_with_images() · prompt_text_sync()<br/>structured_output() · structured_output_sync()<br/>structured_output_typed&lt;T&gt;() · structured_output_typed_sync&lt;T&gt;()<br/>continue_stream() · continue_async() · continue_sync()"]
         Events["Event Subscriptions<br/>listener registry<br/>subscribe / unsubscribe"]
-        Control["Control<br/>abort() · reset()<br/>wait_for_idle()"]
+        Control["Control<br/>abort() · reset() · pause()<br/>wait_for_idle()"]
     end
 
     subgraph LoopLayer["🔄 Agent Loop"]
@@ -67,9 +67,9 @@ flowchart LR
     end
 
     subgraph Owned["Owned by Agent (private)"]
-        SteerQ["steering_queue: Arc&lt;Mutex&lt;Vec&lt;AgentMessage&gt;&gt;&gt;"]
-        FollowQ["follow_up_queue: Arc&lt;Mutex&lt;Vec&lt;AgentMessage&gt;&gt;&gt;"]
-        Listeners["listeners: HashMap&lt;SubscriptionId, Box&lt;dyn Fn(&AgentEvent)&gt;&gt;"]
+        SteerQ["steering_queue: Arc&lt;Mutex&lt;VecDeque&lt;AgentMessage&gt;&gt;&gt;"]
+        FollowQ["follow_up_queue: Arc&lt;Mutex&lt;VecDeque&lt;AgentMessage&gt;&gt;&gt;"]
+        Listeners["listeners: ListenerRegistry"]
         Cancel["abort_controller: Option&lt;CancellationToken&gt;"]
         IdleNotify["idle_notify: Arc&lt;Notify&gt;"]
         StreamMode["steering_mode: SteeringMode<br/>(default: OneAtATime)"]
@@ -177,30 +177,6 @@ Forwarders now have panic protection via `catch_unwind`, matching the behavior o
 
 ## L4 — Steering and Follow-up Queue Draining
 
-```mermaid
-sequenceDiagram
-    participant App as Application
-    participant Agent as Agent Struct
-    participant RunLoop as run_loop
-
-    App->>Agent: prompt("do something")
-    Agent->>RunLoop: launch with steering callback
-
-    Note over RunLoop: executing tool calls...
-
-    App->>Agent: steer(message)
-    Note over Agent: pushed to steering_queue
-
-    RunLoop->>Agent: poll message_provider.poll_steering()
-    Agent-->>RunLoop: [steering message]
-    Note over RunLoop: skip remaining tools,<br/>inject steering msg,<br/>start new turn
-
-    Note over RunLoop: agent reaches natural stop...
-
-    RunLoop->>Agent: poll message_provider.poll_follow_up()
-    Agent-->>RunLoop: [] (empty)
-    RunLoop-->>Agent: AgentEnd
-    Agent-->>App: AgentResult
-```
+`steer()` and `follow_up()` push onto the agent's queues; the loop drains them via `message_provider.poll_steering()` / `poll_follow_up()`. The full interrupt sequence (tool cancellation, message injection, new turn) is documented in the [agent-loop Steering Interrupt Flow](../agent-loop/README.md#l4--steering-interrupt-flow).
 
 > **Note:** On error or abort, follow-up queues are NOT polled — the loop exits immediately.

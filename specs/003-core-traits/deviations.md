@@ -32,6 +32,7 @@ reviewed and accepted as an intentional design choice.
 | D-020 | Implementation extras not in spec | Not specified | `redact_sensitive_values` helper | Sanitizes tool arguments before logging; security utility beyond spec scope. | Accepted — intentional design choice |
 | D-021 | Implementation extras not in spec | Not specified | `validate_schema` helper | Validates a `serde_json::Value` against a JSON Schema; shared by tool validation and tests. | Accepted — intentional design choice |
 | D-022 | Implementation extras not in spec | Not specified | `unknown_tool_result` / `validation_error_result` constructors | Convenience constructors for common error-path `AgentToolResult` values; reduce boilerplate in the loop. | Accepted — intentional design choice |
+| D-023 | `AgentTool::execute` signature | `execute(&self, call_id: &str, arguments: Value, cancellation_token: CancellationToken, update_callback: Option<Box<dyn Fn(String) + Send>>) -> AgentToolResult` (FR-002: tool call ID, validated parameters, cancellation token, optional streaming callback) | Two additional trailing parameters: `state: Arc<std::sync::RwLock<SessionState>>` (shared session state for reading/writing structured data) and `credential: Option<ResolvedCredential>` (resolved credential when `auth_config()` returns `Some`) — see `src/tool.rs` | Added by specs 034 (session state) and 035 (credential resolution) to let tools read/write shared session data and receive resolved auth credentials without a separate side-channel. | Accepted — intentional design choice |
 
 ---
 
@@ -42,4 +43,6 @@ reviewed and accepted as an intentional design choice.
 - Deviations D-001 through D-016 are modifications to spec-defined contracts.
 - Deviations D-017 through D-022 are additive extensions that do not conflict
   with the spec; they provide functionality the spec did not cover.
+- D-023 is a later modification to a spec-defined contract (`AgentTool::execute`),
+  added by specs 034/035 after this deviation log was first written [2026-07-06].
 - No spec-required item was removed or left unimplemented.

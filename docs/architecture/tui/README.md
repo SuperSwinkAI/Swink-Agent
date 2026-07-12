@@ -31,7 +31,7 @@ App
 │   │   └── Streaming cursor while in-progress
 │   ├── Tool Result Block
 │   │   ├── Yellow left border, success/error content
-│   │   └── DiffView (for file modifications)
+│   │   └── Inline diff rendering (for file modifications)
 │   ├── Error Block
 │   │   └── Red left border
 │   └── System Block
@@ -67,9 +67,8 @@ tui/src/
 │   ├── persistence.rs   — Session save/load integration
 │   ├── render_helpers.rs — Shared rendering utilities
 │   └── state.rs         — App state fields and mutations
-├── commands.rs    — Command parsing: hash commands (#help, #clear, #info, #copy,
-│                    #copy all, #copy code) and slash commands (/quit,
-│                    /thinking, /system, /reset)
+├── commands.rs    — Command parsing: hash commands (#…) and slash commands
+│                    (/…). Full list in §Command System below
 ├── config.rs      — TuiConfig loaded from ~/.config/swink-agent/tui.toml
 │                    Fields: show_thinking, auto_scroll, tick_rate_ms, default_model,
 │                    theme, color_mode, editor_command
@@ -109,8 +108,8 @@ tui/src/
     ├── status_bar.rs    — Status bar: formatted tokens, elapsed time, cost, retry
     ├── tool_panel.rs    — ToolPanel: braille spinner for active tools, ✓/✗ for
     │                      completed, auto-fade after 10s
-    └── diff.rs          — DiffView: syntax-highlighted unified/side-by-side diffs
-                           with per-hunk approve/reject for file modifications
+    └── diff.rs          — DiffData + render_diff_lines(): unified and
+                           side-by-side diff rendering for file modifications
 ```
 
 ---
@@ -169,8 +168,7 @@ Agent integration uses `prompt_stream()` with an mpsc forwarder task that sends 
 | `F3` | Cycle color mode (Custom → MonoWhite → MonoBlack) |
 | `F4` | Cycle model (applied on next send) |
 | `Shift+←` / `Shift+→` | Select previous/next tool block |
-| `y` / `n` (in diff view) | Approve/reject individual diff hunk (Planned -- not yet implemented) |
-| `a` (in diff view) | Approve all remaining diff hunks (Planned -- not yet implemented) |
+| `y` / `n` / `a` (in diff view) | Per-hunk approve/reject/approve-all (Planned — not implemented; TUI_PHASES T5.2) |
 
 Typing any printable character auto-focuses the input editor.
 
@@ -226,7 +224,7 @@ Two command prefixes are supported:
 - `#load <id>` — load a saved session
 - `#keys` — show configured API keys
 - `#key <provider> <key>` — set an API key
-- `#approve smart` — enable smart approval mode (auto-approve reads, prompt for writes)
+- `#approve smart` — enable smart approval mode (auto-approve read-only and trusted tools, prompt for writes)
 - `#approve on` / `#approve off` — enable Enabled / Bypassed mode
 - `#approve untrust <tool>` — remove a tool from session-trusted set
 - `#approve untrust` — clear all session-trusted tools
@@ -304,24 +302,20 @@ The TUI uses `tracing` with `tracing-appender` for file-based logging. Logs are 
 
 ## Dependencies
 
-| Crate | Version | Purpose |
-|---|---|---|
-| `swink-agent` | workspace | Core agent library |
-| `swink-agent-adapters` | workspace | LLM provider adapters (Ollama, proxy) |
-| `swink-agent-memory` | workspace | Session persistence, compaction strategies |
-| `ratatui` | 0.30 | Terminal UI framework |
-| `crossterm` | 0.29 | Terminal backend (with `event-stream` feature) |
-| `tokio` | — | Async runtime |
-| `syntect` | 5 | Syntax highlighting for code blocks |
-| `futures` | — | Stream utilities for EventStream |
-| `arboard` | 3 | Clipboard access |
-| `toml` | 0.8 | Configuration file parsing |
-| `dirs` | 6 | Platform config directory resolution |
-| `serde` | — | Configuration deserialization |
-| `keyring` | 3 | Cross-platform keychain integration for API key storage |
-| `tracing` | 0.1 | Structured logging facade |
-| `tracing-subscriber` | 0.3 | Log output subscriber layer |
-| `tracing-appender` | 0.2 | Daily rolling file log output |
+Versions live in `tui/Cargo.toml`.
+
+| Crate | Purpose |
+|---|---|
+| `swink-agent` | Core agent library |
+| `swink-agent-adapters` | LLM provider adapters (Ollama, proxy) |
+| `swink-agent-memory` | Session persistence, compaction strategies |
+| `ratatui` / `crossterm` | Terminal UI framework and backend (`event-stream` feature) |
+| `tokio` / `futures` | Async runtime and stream utilities |
+| `syntect` | Syntax highlighting for code blocks |
+| `arboard` | Clipboard access |
+| `toml` / `serde` / `dirs` | Configuration parsing and platform config dirs |
+| `keyring` | Cross-platform keychain integration for API key storage |
+| `tracing` / `tracing-subscriber` / `tracing-appender` | File-based logging (daily rolling) |
 
 ---
 
@@ -329,50 +323,13 @@ The TUI uses `tracing` with `tracing-appender` for file-based logging. Logs are 
 
 **Related:** [PRD §16.6](../../planning/PRD.md#166-inline-diff-view)
 
-> **Status: Diff display implemented; hunk-level approval UI pending (Phase T5).** Unified diff rendering with LCS-based computation, syntax-highlighted additions/removals, and context lines are present. Per-hunk approve/reject interaction and side-by-side layout are planned but not yet implemented.
+When a tool result's details carry write-file diff fields (path, new-file flag, old/new content — emitted by `WriteFileTool`), the `ToolExecutionEnd` handler parses them into a `DiffData` (`tui/src/ui/diff.rs`) attached to the tool-result message, and the conversation view renders a syntax-highlighted diff instead of raw tool output:
 
-When the agent modifies a file via `WriteFileTool`, the TUI renders the change as a syntax-highlighted diff instead of displaying raw tool output. Users can approve or reject individual hunks before changes are finalized.
+- **Unified** (default): `+`/`-` prefixed lines with green/red styling
+- **Side-by-side**: two columns (old | new) when the terminal is ≥ 160 columns wide and the file is not newly created; falls back to unified otherwise
+- Output is truncated after 50 diff lines
 
-### Module
-
-New file: `tui/src/ui/diff.rs` — the `DiffView` component.
-
-### Data Model
-
-```
-DiffBlock
-├── file_path: String
-├── hunks: Vec<DiffHunk>
-│   ├── old_start: usize
-│   ├── new_start: usize
-│   ├── old_lines: Vec<String>
-│   ├── new_lines: Vec<String>
-│   └── status: HunkStatus (Pending | Approved | Rejected)
-└── layout: DiffLayout (Unified | SideBySide)
-```
-
-### Layout Modes
-
-- **Unified** (default): `+`/`-` prefixed lines with green/red backgrounds, 3-line context around each hunk
-- **Side-by-side**: Two equal columns (old | new) when `terminal_width >= 160`. Falls back to unified on narrower terminals
-
-### Integration
-
-- Triggered by `ToolExecutionEnd` events for `WriteFileTool`
-- The tool result carries diff data (old content vs. new content)
-- `app.rs` converts the tool result into a `DiffBlock` attached to the corresponding `DisplayMessage`
-
-### Interaction
-
-```
-Arrow Up/Down  — Navigate between hunks
-y              — Approve current hunk
-n              — Reject current hunk
-a              — Approve all remaining hunks
-Esc            — Exit diff view
-```
-
-Rejected hunks generate a follow-up tool result message to the agent explaining which changes were reverted.
+> **Planned — not implemented** ([TUI_PHASES T5.2](../../planning/TUI_PHASES.md)): per-hunk approve/reject interaction (`y`/`n`/`a`). Diffs are display-only today.
 
 ---
 
@@ -380,31 +337,7 @@ Rejected hunks generate a follow-up tool result message to the agent explaining 
 
 **Related:** [PRD §16.7](../../planning/PRD.md#167-context-window-progress-bar)
 
-A compact gauge in the status bar visualizing how full the context window is. Helps users anticipate when context overflow or compaction will occur.
-
-### Rendering
-
-Renders as a 10-character bar with Unicode block characters and a percentage label:
-
-```
-[████████░░] 82%
-```
-
-Color transitions based on fill percentage:
-- Green (`context_green()`): < 60%
-- Yellow (`context_yellow()`): 60–85%
-- Red (`context_red()`): > 85%
-
-### Data Flow
-
-- New fields on `App`: `context_fill_pct: f32`, `context_budget: usize`
-- Updated on `TurnEnd` events using the `estimate_tokens` heuristic (chars / 4)
-- Model context window size sourced from agent configuration or adapter metadata
-
-### Module Changes
-
-- `tui/src/ui/status_bar.rs` — add gauge widget segment between cost and retry indicator
-- `tui/src/theme.rs` — `context_green()`, `context_yellow()`, `context_red()` color functions (respect `ColorMode`)
+The status bar renders a 10-character gauge with a percentage label (`[████████░░] 82%`) showing context-window fill. Fill is recomputed on `TurnEnd` using the `estimate_tokens` heuristic (chars / 4) against the model's context budget. Colors respect `ColorMode` via `theme.rs`: `context_green()` < 60%, `context_yellow()` 60–85%, `context_red()` > 85%.
 
 ---
 
@@ -412,43 +345,7 @@ Color transitions based on fill percentage:
 
 **Related:** [PRD §16.8](../../planning/PRD.md#168-external-editor-mode)
 
-Allows users to compose prompts in a full-featured external editor instead of the built-in input widget.
-
-### Module
-
-New file: `tui/src/editor.rs`
-
-### Flow
-
-```
-User types /editor
-    │
-    ├── Create temp file in std::env::temp_dir()
-    ├── Leave alternate screen (crossterm)
-    ├── Disable raw mode
-    ├── Spawn $EDITOR <tempfile> as child process
-    ├── Wait for editor to exit
-    ├── Re-enable raw mode
-    ├── Re-enter alternate screen
-    ├── Re-initialize crossterm::EventStream
-    │
-    ├── Editor exit code == 0 AND file non-empty
-    │   └── Submit file contents as user prompt
-    │
-    └── Editor exit code != 0 OR file empty
-        └── Treat as cancellation, show system message
-```
-
-### Editor Resolution
-
-1. `editor_command` from `TuiConfig` (if set)
-2. `$EDITOR` environment variable
-3. `$VISUAL` environment variable
-4. `vi` (fallback)
-
-### Terminal Handoff
-
-Uses the same `restore_terminal()` / `setup_terminal()` helpers from `main.rs`. Critical: `crossterm::EventStream` must be re-initialized after returning from the editor, since the old stream's file descriptor state is stale.
+`/editor` (`tui/src/editor.rs`) composes a prompt in an external editor: the TUI writes a temp file, restores the terminal (leave alternate screen, disable raw mode), and spawns the editor. On exit code 0 with non-empty content, the file contents are submitted as the user prompt; otherwise it is treated as cancellation. Editor resolution order: `editor_command` (TuiConfig) → `$EDITOR` → `$VISUAL` → `vi`. After returning, the `crossterm::EventStream` is re-initialized because the old stream's file descriptor state is stale.
 
 ---
 
@@ -456,33 +353,7 @@ Uses the same `restore_terminal()` / `setup_terminal()` helpers from `main.rs`. 
 
 **Related:** [PRD §16.9](../../planning/PRD.md#169-plan-mode)
 
-A read-only operating mode where the agent produces a structured plan without executing write or destructive tools.
-
-### State
-
-New enum on `App`:
-
-```rust
-enum OperatingMode {
-    Plan,
-    Execute,  // default
-}
-```
-
-### Tool Filtering
-
-When entering plan mode:
-- `App::enter_plan_mode()` calls `agent.enter_plan_mode()`, which returns the saved tools and system prompt, filters to read-only tools, and appends a planning addendum to the system prompt.
-
-When switching back to `Execute`:
-- `App::exit_plan_mode()` calls `agent.exit_plan_mode(saved_tools, saved_prompt)` to restore the full tool set and original system prompt.
-- The last plan message is enqueued as a follow-up message so the agent can reference it.
-
-### UI Indicators
-
-- Status bar shows `[PLAN]` (blue background) or `[EXEC]` (green background) badge next to the agent state indicator
-- Messages produced in plan mode render with a blue left border instead of the standard cyan
-- Mode toggle: `Shift+Tab` or `/plan` command, both update `operating_mode` and set `dirty = true`
+`OperatingMode { Plan, Execute }` on `App` (default `Execute`), toggled with `Shift+Tab` or `/plan`. Entering plan mode calls `agent.enter_plan_mode()`, which saves the current tools and system prompt, filters to read-only tools, and appends a planning addendum to the system prompt. Exiting calls `agent.exit_plan_mode(saved_tools, saved_prompt)` to restore both, and enqueues the last plan message as a follow-up so the agent can reference it. The status bar shows a `[PLAN]` (blue) / `[EXEC]` (green) badge, and plan-mode messages render with a blue left border instead of the standard cyan.
 
 ---
 
@@ -490,102 +361,12 @@ When switching back to `Execute`:
 
 **Related:** [PRD §16.10](../../planning/PRD.md#1610-collapsible-tool-result-blocks)
 
-Tool invocations and their results are grouped into collapsible blocks in the conversation view, reducing visual noise during tool-heavy turns.
-
-### Data Model Changes
-
-New fields on `DisplayMessage` (for tool result messages):
-
-```
-collapsed: bool          — current collapse state
-summary: String          — one-line summary for collapsed view
-user_expanded: bool      — true if user manually expanded (prevents auto-collapse)
-```
-
-### Rendering
-
-**Collapsed** (single line):
-```
-[▶] read_file  ✓  src/main.rs (42 lines)
-```
-
-**Expanded** (full content):
-```
-[▼] read_file  ✓  src/main.rs (42 lines)
-│ fn main() {
-│     let config = Config::load();
-│     ...
-│ }
-```
-
-### Focus Model
-
-From any focus:
-- `F2` toggles collapse/expand on the selected (or most recent) tool block
-- `Shift+←` / `Shift+→` cycles the selection across tool result messages
-
-### Auto-Collapse Behavior
-
-- New tool results start expanded during streaming
-- `tick()` checks for tool result messages that have been expanded for > 10 seconds and collapses them
-- Exception: if `user_expanded == true`, the block stays expanded until the user manually collapses it
+Tool result messages carry `collapsed`, `summary`, and `user_expanded` state. Collapsed blocks render as a single summary line (`[▶] read_file ✓ src/main.rs (42 lines)`); expanded blocks show full content. New tool results start expanded and are auto-collapsed by `tick()` after 10 seconds unless the user expanded them manually (`user_expanded`). `F2` toggles the selected (or most recent) tool block; `Shift+←` / `Shift+→` cycles the selection.
 
 ---
 
-## Tiered Approval Modes
+## Tiered Approval
 
 **Related:** [PRD §16.11](../../planning/PRD.md#1611-tiered-approval-modes)
 
-Extends the binary on/off approval system with a risk-aware `Smart` mode.
-
-### Core Crate Change
-
-New variant in `ApprovalMode` enum (`src/tool.rs`):
-
-```rust
-enum ApprovalMode {
-    Enabled,    // prompt for all tool calls
-    Smart,      // auto-approve reads, prompt for writes (new default)
-    Bypassed,   // auto-approve all tool calls
-}
-```
-
-### TUI State
-
-New field on `App`:
-
-```
-session_trusted_tools: HashSet<String>
-```
-
-Populated when the user chooses "always approve" during a Smart-mode approval prompt.
-
-### Decision Flow
-
-```
-Tool call arrives
-  │
-  ├── ApprovalMode::Bypassed
-  │   └── auto-approve
-  │
-  ├── requires_approval() == false
-  │   └── auto-approve
-  │
-  ├── ApprovalMode::Smart
-  │   ├── tool name in session_trusted_tools
-  │   │   └── auto-approve
-  │   └── else
-  │       └── prompt: [y]es / [n]o / [a]lways
-  │
-  └── ApprovalMode::Enabled
-      └── prompt: [y]es / [n]o
-```
-
-### Command Updates
-
-- `#approve smart` — enable Smart mode
-- `#approve on` — enable Enabled mode (prompt for all)
-- `#approve off` — enable Bypassed mode (auto-approve all)
-- `#approve untrust <tool>` — remove a specific tool from session-trusted set
-- `#approve untrust` — clear all session-trusted tools
-- `#approve` (no argument) — display current mode and list of session-trusted tools
+`ApprovalMode` (`src/tool.rs`) has three variants: `Enabled` (prompt for every tool call), `Smart` (the default — auto-approve read-only and session-trusted tools, prompt for writes), and `Bypassed` (auto-approve everything). In Smart mode the prompt offers `[y]es / [n]o / [a]lways`; choosing "always" adds the tool to `App::session_trusted_tools` for the rest of the session. Modes and the trusted set are managed with the `#approve` command family listed in [§Command System](#command-system).

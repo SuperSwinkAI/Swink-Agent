@@ -134,6 +134,7 @@ impl EvolutionRunner {
                 eval_criteria: "response quality".to_string(),
                 seed: self.config.seed,
                 max_candidates: self.config.max_candidates_per_strategy,
+                budget: Some(&self.config.budget),
             };
 
             for strategy in &self.config.strategies {
@@ -179,10 +180,11 @@ impl EvolutionRunner {
                 break;
             }
             let override_prompt = prompt_override(candidate);
-            let wrapped_factory = Arc::new(MutatingAgentFactory::new(
-                Arc::clone(&self.factory),
-                override_prompt,
-            ));
+            let tool_override = tool_description_override(candidate);
+            let wrapped_factory = Arc::new(
+                MutatingAgentFactory::new(Arc::clone(&self.factory), override_prompt)
+                    .with_tool_override(tool_override),
+            );
             let set_result = self
                 .eval_runner
                 .run_set(&self.config.eval_set, wrapped_factory.as_ref())
@@ -201,14 +203,25 @@ impl EvolutionRunner {
 
         let candidates_evaluated = candidate_results.len();
 
-        // Phase: gate.
-        let gate = AcceptanceGate::new(self.config.acceptance_threshold);
+        // Phase: gate. Wire each case's real `metadata` (which may carry a
+        // `priority` field, FR-015) through so P1/P2/P3 exemption is not
+        // inert — without this, `is_p1` never finds a match and every case
+        // fails safe to P1, silently disabling the P2/P3 exemption.
+        let case_metadata: std::collections::HashMap<String, serde_json::Value> = self
+            .config
+            .eval_set
+            .cases
+            .iter()
+            .map(|c| (c.id.clone(), c.metadata.clone()))
+            .collect();
+        let gate =
+            AcceptanceGate::new(self.config.acceptance_threshold).with_case_metadata(case_metadata);
         let acceptance = gate.evaluate(&baseline, &candidate_results);
 
         // Phase: persist.
         let persister = CyclePersister::new(&self.config.output_root);
         let output_dir = persister
-            .persist(cycle_number, &acceptance, &baseline)
+            .persist(cycle_number, &acceptance, &baseline, &mutation_errors)
             .map(Some)
             .unwrap_or(None);
 
@@ -352,6 +365,22 @@ fn prompt_override(candidate: &Candidate) -> Option<String> {
             Some(candidate.mutated_value.clone())
         }
         TargetComponent::ToolDescription { .. } => None,
+    }
+}
+
+/// Build the tool-description override for a `ToolDescription` candidate, if
+/// any, so it can be threaded through `MutatingAgentFactory`.
+fn tool_description_override(
+    candidate: &Candidate,
+) -> Option<crate::evaluate::ToolDescriptionOverride> {
+    match &candidate.component {
+        TargetComponent::ToolDescription { tool_name } => {
+            Some(crate::evaluate::ToolDescriptionOverride {
+                tool_name: tool_name.clone(),
+                description: candidate.mutated_value.clone(),
+            })
+        }
+        TargetComponent::FullPrompt | TargetComponent::PromptSection { .. } => None,
     }
 }
 

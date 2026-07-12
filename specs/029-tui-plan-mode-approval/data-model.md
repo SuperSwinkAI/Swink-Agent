@@ -9,7 +9,7 @@
 
 | Entity | Location | Fields |
 |---|---|---|
-| `ApprovalMode` | `src/tool.rs:239` | Enabled, Smart, Bypassed |
+| `ApprovalMode` | `src/tool.rs:385` [corrected line ref] | Enabled, Smart, Bypassed |
 | `ToolApproval` | `src/tool.rs:200` | Approved, Rejected, ApprovedWith(Value) |
 | `ToolApprovalRequest` | `src/tool.rs:213` | tool_call_id, tool_name, arguments, requires_approval |
 | `OperatingMode` | `tui/src/app/state.rs` | Execute, Plan |

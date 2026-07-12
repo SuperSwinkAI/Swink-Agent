@@ -73,6 +73,23 @@ fn tool_attr_schema_no_params() {
     );
 }
 
+#[tokio::test]
+async fn tool_attr_zero_param_tool_falls_back_to_empty_object() {
+    let result = PingTool
+        .execute(
+            "call-ping",
+            json!("ignored"),
+            CancellationToken::new(),
+            None,
+            Arc::new(RwLock::new(SessionState::new())),
+            None,
+        )
+        .await;
+
+    assert!(!result.is_error);
+    assert_eq!(first_text(&result), "pong");
+}
+
 // ── CancellationToken not leaked into schema ─────────────────────────────────
 //
 // A CancellationToken parameter must be excluded from the generated schema and
@@ -141,6 +158,41 @@ async fn tool_attr_invalid_type_params_return_tool_error() {
     assert_eq!(
         first_text(&result),
         "invalid parameters: invalid type: string \"twice\", expected u32"
+    );
+}
+
+// ── All-Option params must not silently default on a type-mismatched field ──
+//
+// Regression test: when every parameter is `Option<T>`, a present field with
+// the wrong JSON type must still be rejected, not silently swapped for an
+// all-`None` default. That would mask a malformed LLM tool call instead of
+// surfacing it.
+
+#[tool(name = "configure", description = "Configure an optional setting")]
+async fn configure(level: Option<u32>) -> swink_agent::AgentToolResult {
+    swink_agent::AgentToolResult::text(format!("{level:?}"))
+}
+
+#[tokio::test]
+async fn tool_attr_all_optional_params_reject_type_mismatch() {
+    let result = ConfigureTool
+        .execute(
+            "call-configure",
+            json!({ "level": "not-a-number" }),
+            CancellationToken::new(),
+            None,
+            Arc::new(RwLock::new(SessionState::new())),
+            None,
+        )
+        .await;
+
+    assert!(
+        result.is_error,
+        "a type-mismatched field must error, not silently default to None"
+    );
+    assert_eq!(
+        first_text(&result),
+        "invalid parameters: invalid type: string \"not-a-number\", expected u32"
     );
 }
 

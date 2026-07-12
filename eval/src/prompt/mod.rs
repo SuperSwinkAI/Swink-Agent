@@ -118,6 +118,8 @@ impl PromptContext {
 pub enum PromptError {
     #[error("missing prompt variable: {name}")]
     MissingVariable { name: String },
+    #[error("built-in template {version} is missing")]
+    MissingBuiltinTemplate { version: String },
     #[error("duplicate prompt template version: {version}")]
     DuplicateTemplate { version: String },
     #[error("prompt render error: {0}")]

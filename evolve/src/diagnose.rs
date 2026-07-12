@@ -3,6 +3,7 @@ use crate::types::BaselineSnapshot;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use swink_agent_eval::Score;
+use tracing::debug;
 
 /// Identifies which part of an agent config is being targeted for mutation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -55,7 +56,10 @@ impl Diagnoser {
                 if metric.score.value >= metric.score.threshold {
                     continue;
                 }
-                let component = Self::component_for_evaluator(&metric.evaluator_name);
+                let component = Self::component_for_evaluator(
+                    &metric.evaluator_name,
+                    metric.details.as_deref(),
+                );
                 let key = Self::component_key(&component);
                 let failure = CaseFailure {
                     case_id: case_result.case_id.clone(),
@@ -99,21 +103,49 @@ impl Diagnoser {
         weak_points
     }
 
-    fn component_for_evaluator(evaluator_name: &str) -> TargetComponent {
-        if let Some(tool_name) = evaluator_name.strip_prefix("tool:") {
-            return TargetComponent::ToolDescription {
-                tool_name: tool_name.to_string(),
-            };
-        }
+    /// Map a failing metric to the component responsible for it.
+    ///
+    /// `semantic_tool_selection` and `semantic_tool_parameter` are per-invocation
+    /// aggregate evaluators: `evaluator_name` never identifies a specific tool
+    /// (it's always the evaluator's own static name), so the only place a real
+    /// tool name can come from is the evaluator's `details` string, which both
+    /// evaluators format as `"{tool}: {pass|fail} (...)"` segments joined by
+    /// `"; "` (see `eval::semantic_tool_selection::aggregate` /
+    /// `eval::semantic_tool_parameter`). We parse the first `fail` segment for
+    /// its tool name; when that format isn't present (or changes), we fall
+    /// back to `FullPrompt` rather than fabricate a `tool_name` that matches no
+    /// real tool and would silently no-op in `with_replaced_tool`.
+    fn component_for_evaluator(evaluator_name: &str, details: Option<&str>) -> TargetComponent {
         if matches!(
             evaluator_name,
             "semantic_tool_selection" | "semantic_tool_parameter"
         ) {
-            return TargetComponent::ToolDescription {
-                tool_name: evaluator_name.to_string(),
-            };
+            if let Some(tool_name) = Self::failing_tool_name_from_details(details) {
+                return TargetComponent::ToolDescription { tool_name };
+            }
+            debug!(
+                evaluator_name,
+                ?details,
+                "could not parse a failing tool name from evaluator details; \
+                 attributing weak point to FullPrompt instead of fabricating a tool_name"
+            );
+            return TargetComponent::FullPrompt;
         }
         TargetComponent::FullPrompt
+    }
+
+    /// Extract the tool name of the first `fail`-marked segment in a
+    /// semantic-tool-* evaluator's `details` string.
+    fn failing_tool_name_from_details(details: Option<&str>) -> Option<String> {
+        let details = details?;
+        details.split("; ").find_map(|segment| {
+            let (name, rest) = segment.split_once(": ")?;
+            if rest.trim_start().starts_with("fail") {
+                Some(name.trim().to_string())
+            } else {
+                None
+            }
+        })
     }
 
     fn component_key(component: &TargetComponent) -> String {

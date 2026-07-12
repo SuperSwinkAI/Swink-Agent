@@ -1,3 +1,7 @@
+use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
 use swink_agent_rpc::jsonrpc::{IncomingMessage, JsonRpcPeer, RpcError};
 use tokio::io::duplex;
 
@@ -25,7 +29,9 @@ async fn notification_round_trip() {
             assert_eq!(method, "ping");
             assert_eq!(params.unwrap()["seq"], 1);
         }
-        other => panic!("expected notification, got {other:?}"),
+        other @ IncomingMessage::Request { .. } => {
+            panic!("expected notification, got {other:?}")
+        }
     }
 }
 
@@ -41,7 +47,9 @@ async fn request_response_round_trip() {
                 assert_eq!(method, "echo");
                 sender_b.respond_ok(id, params.unwrap()).unwrap();
             }
-            other => panic!("expected request, got {other:?}"),
+            other @ IncomingMessage::Notification { .. } => {
+                panic!("expected request, got {other:?}")
+            }
         }
     });
 
@@ -79,15 +87,8 @@ async fn error_response_surfaces_as_err() {
 }
 
 #[tokio::test]
-#[ignore = "hangs on GH Actions ubuntu runners; reader task may not detect duplex drop promptly"]
 async fn pending_requests_fail_on_disconnect() {
-    let (a_read, b_write) = duplex(8192);
-    let (b_read, a_write) = duplex(8192);
-    let a = JsonRpcPeer::new(a_read, a_write);
-    let b = JsonRpcPeer::new(b_read, b_write);
-
-    // Drop b immediately to simulate peer disconnect.
-    drop(b);
+    let a = JsonRpcPeer::new(std::io::Cursor::new(Vec::new()), tokio::io::sink());
 
     let result: Result<serde_json::Value, RpcError> = a
         .sender()
@@ -95,6 +96,42 @@ async fn pending_requests_fail_on_disconnect() {
         .await;
 
     assert_eq!(result.unwrap_err().code, RpcError::DISCONNECTED);
+}
+
+#[tokio::test]
+async fn pending_requests_fail_on_writer_disconnect() {
+    let (reader, _remote_writer) = duplex(8192);
+    let a = JsonRpcPeer::new(reader, FailingWrite);
+
+    let result: Result<serde_json::Value, RpcError> = a
+        .sender()
+        .request("anything", &serde_json::Value::Null)
+        .await;
+
+    assert_eq!(result.unwrap_err().code, RpcError::DISCONNECTED);
+}
+
+struct FailingWrite;
+
+impl tokio::io::AsyncWrite for FailingWrite {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Poll::Ready(Err(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "writer disconnected",
+        )))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
 }
 
 #[tokio::test]
@@ -161,4 +198,45 @@ async fn oversize_line_closes_connection() {
         result.is_none(),
         "connection should close after oversized line"
     );
+}
+
+#[tokio::test]
+async fn oversize_line_without_newline_closes_connection() {
+    let oversized = vec![b'x'; swink_agent_rpc::jsonrpc::MAX_LINE_BYTES + 1];
+    let mut peer = JsonRpcPeer::new(std::io::Cursor::new(oversized), tokio::io::sink());
+
+    let result = peer.recv_incoming().await;
+    assert!(
+        result.is_none(),
+        "connection should close before reading an oversized unterminated line"
+    );
+}
+
+#[tokio::test]
+async fn malformed_json_line_is_dropped_without_closing_connection() {
+    use tokio::io::AsyncWriteExt as _;
+
+    let (raw_reader, mut raw_writer) = duplex(8192);
+    let (sink_reader, sink_writer) = duplex(8192);
+    let mut peer = JsonRpcPeer::new(raw_reader, sink_writer);
+    drop(sink_reader);
+
+    raw_writer.write_all(b"{not json}\n").await.unwrap();
+    raw_writer
+        .write_all(br#"{"jsonrpc":"2.0","method":"still.open","params":{"ok":true}}"#)
+        .await
+        .unwrap();
+    raw_writer.write_all(b"\n").await.unwrap();
+    drop(raw_writer);
+
+    let msg = peer.recv_incoming().await.unwrap();
+    match msg {
+        IncomingMessage::Notification { method, params } => {
+            assert_eq!(method, "still.open");
+            assert_eq!(params.unwrap()["ok"], true);
+        }
+        other @ IncomingMessage::Request { .. } => {
+            panic!("expected notification after malformed line, got {other:?}")
+        }
+    }
 }

@@ -88,7 +88,7 @@ A developer encounters various error conditions when communicating with the Bedr
 - **FR-002**: The adapter MUST stream tool call responses, emitting tool name, argument deltas, and completion events.
 - **FR-003**: The adapter MUST sign all requests using AWS Signature Version 4 with the provided credentials and region.
 - **FR-004**: The adapter MUST support temporary credentials (session tokens) in the SigV4 signing process.
-- **FR-005**: The adapter MUST convert agent messages to the Bedrock message format using the shared conversion trait.
+- **FR-005**: The adapter MUST convert agent messages to the Bedrock message format via provider-specific conversion following the shared pattern.
 - **FR-006**: The adapter MUST classify errors using the shared error classifier (throttling → rate limit, access denied → auth, 5xx → network, timeout → network).
 - **FR-007**: The adapter MUST construct Bedrock-specific endpoint URLs from the region and model ID.
 - **FR-008**: The adapter MUST parse the AWS event-stream binary protocol using the `aws-smithy-eventstream` crate for response framing and CRC validation.

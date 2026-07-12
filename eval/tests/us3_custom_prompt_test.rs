@@ -53,6 +53,7 @@ impl JudgeClient for CapturingJudge {
                 pass: true,
                 reason: Some("captured".into()),
                 label: None,
+                cost: None,
             })
         })
     }
