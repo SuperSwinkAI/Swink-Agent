@@ -42,6 +42,25 @@ Each guard can **approve**, **modify**, or **halt** the agent before the next st
 
 ---
 
+## Recommended Production Policy Set
+
+The library ships anything-goes: no policies run unless enabled. Deployments that run agents autonomously should wire, at minimum, **Budget**, **Max Turns**, **Sandbox**, and **Tool Deny List**. The `swink-agent-policies` crate bundles exactly this set behind the `recommended` feature:
+
+```rust,ignore
+use swink_agent_policies::RecommendedPolicies;
+
+let options = RecommendedPolicies::builder()
+    .max_cost(10.0)                       // stop at $10 total spend (default)
+    .max_turns(50)                        // stop after 50 turns (default)
+    .sandbox_root("/srv/agent-workspace") // restrict file tools (default: cwd)
+    .deny_tools(["bash"])                 // block shell access (default)
+    .apply(options);
+```
+
+Pair it with the contract-test helper `assert_production_guardrails(&options, "bash")` in your test suite: it verifies all four policies are present and configured with non-trivial limits, so a refactor can't silently drop a guardrail. See the [`swink-agent-policies` README](../policies/README.md#recommended-production-guardrails) for details.
+
+---
+
 ## Key Properties
 
 - **Default-off.** No policies run unless explicitly enabled. Zero overhead when unused.

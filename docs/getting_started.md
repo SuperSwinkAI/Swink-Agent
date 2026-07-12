@@ -152,6 +152,27 @@ let id = agent.subscribe(|event| { /* handle AgentEvent */ });
 let result = agent.prompt_async(messages).await?;
 ```
 
+## Add Production Guardrails
+
+By default the library runs anything-goes — no policy slots are populated. If your embedding runs agents autonomously, wire the recommended guardrail set from `swink-agent-policies` (feature `recommended`) before shipping:
+
+```rust
+use swink_agent_policies::{RecommendedPolicies, assert_production_guardrails};
+
+let options = RecommendedPolicies::builder()
+    .max_cost(10.0)                       // budget cap in USD (default: 10.0)
+    .max_turns(50)                        // turn cap (default: 50)
+    .sandbox_root("/srv/agent-workspace") // file-tool root (default: cwd)
+    .deny_tools(["bash"])                 // blocked tools (default: ["bash"])
+    .apply(options);
+
+// In your test suite: fails if any of the four guardrails
+// (budget, max-turns, sandbox, deny-list) is missing or trivial.
+assert_production_guardrails(&options, "bash");
+```
+
+See [Policy Guardrails](policy-overview.md) for the full checkpoint model and the other available policies.
+
 ## Tests
 
 ```bash
