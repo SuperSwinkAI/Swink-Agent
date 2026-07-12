@@ -271,6 +271,7 @@ impl AssistantMessageEvent {
             error_message: message.into(),
             usage: None,
             error_kind: Some(StreamErrorKind::ModelRetired),
+            retry_after: None,
         }
     }
 
