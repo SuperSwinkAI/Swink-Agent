@@ -1,6 +1,7 @@
 //! Session storage trait for pluggable persistence backends.
 
 use std::io;
+use std::sync::Once;
 
 use swink_agent::{AgentMessage, CustomMessageRegistry};
 
@@ -87,15 +88,58 @@ pub trait SessionStore: Send + Sync {
     /// Delete a session by ID.
     fn delete(&self, id: &str) -> io::Result<()>;
 
-    /// Save session state snapshot. Default: no-op.
+    /// Save session state snapshot.
+    ///
+    /// The default implementation is a no-op that **discards the state**:
+    /// the snapshot is dropped and a later [`load_state`](Self::load_state)
+    /// returns `None`. It exists only for backward compatibility with
+    /// pre-034 store implementations (spec 034 FR-018). The first time the
+    /// default runs in a process it emits a `tracing::warn!` so the data
+    /// loss is visible; subsequent calls are silent.
+    ///
+    /// **Planned breaking change:** `save_state` will become a required
+    /// (non-defaulted) trait method in the next major version bump. Custom
+    /// `SessionStore` implementations should override it (together with
+    /// [`load_state`](Self::load_state)) now.
     fn save_state(&self, id: &str, state: &serde_json::Value) -> io::Result<()> {
-        let _ = (id, state);
+        static WARN_ONCE: Once = Once::new();
+        WARN_ONCE.call_once(|| {
+            tracing::warn!(
+                session_id = %id,
+                "SessionStore::save_state default no-op invoked: this store does not \
+                 implement state persistence, so session state will be lost. Override \
+                 save_state and load_state; they become required methods in the next \
+                 major version. This warning is emitted once per process."
+            );
+        });
+        let _ = state;
         Ok(())
     }
 
-    /// Load session state snapshot. Default: `None` (empty state).
+    /// Load session state snapshot.
+    ///
+    /// The default implementation always returns `Ok(None)` (empty state),
+    /// even if a matching [`save_state`](Self::save_state) call appeared to
+    /// succeed. It exists only for backward compatibility with pre-034 store
+    /// implementations (spec 034 FR-018). The first time the default runs in
+    /// a process it emits a `tracing::warn!` so the silent fallback is
+    /// visible; subsequent calls are silent.
+    ///
+    /// **Planned breaking change:** `load_state` will become a required
+    /// (non-defaulted) trait method in the next major version bump. Custom
+    /// `SessionStore` implementations should override it (together with
+    /// [`save_state`](Self::save_state)) now.
     fn load_state(&self, id: &str) -> io::Result<Option<serde_json::Value>> {
-        let _ = id;
+        static WARN_ONCE: Once = Once::new();
+        WARN_ONCE.call_once(|| {
+            tracing::warn!(
+                session_id = %id,
+                "SessionStore::load_state default no-op invoked: this store does not \
+                 implement state persistence, so loads always return empty state. \
+                 Override save_state and load_state; they become required methods in \
+                 the next major version. This warning is emitted once per process."
+            );
+        });
         Ok(None)
     }
 
@@ -148,8 +192,8 @@ pub trait SessionStore: Send + Sync {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
 
     use chrono::Utc;
     use serde_json::json;
@@ -223,6 +267,129 @@ mod tests {
             version: 1,
             sequence: 0,
         }
+    }
+
+    /// Store that relies on the trait defaults for `save_state`/`load_state`,
+    /// simulating a pre-034 custom `SessionStore` implementation.
+    struct DefaultStateStore;
+
+    impl SessionStore for DefaultStateStore {
+        fn save(
+            &self,
+            _id: &str,
+            _meta: &SessionMeta,
+            _messages: &[AgentMessage],
+        ) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn append(&self, _id: &str, _messages: &[AgentMessage]) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn load(
+            &self,
+            _id: &str,
+            _registry: Option<&CustomMessageRegistry>,
+        ) -> io::Result<(SessionMeta, Vec<AgentMessage>)> {
+            Ok((sample_meta(), Vec::new()))
+        }
+
+        fn list(&self) -> io::Result<Vec<SessionMeta>> {
+            Ok(Vec::new())
+        }
+
+        fn delete(&self, _id: &str) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn load_with_options(
+            &self,
+            _id: &str,
+            _options: &LoadOptions,
+        ) -> io::Result<(SessionMeta, Vec<SessionEntry>)> {
+            Ok((sample_meta(), Vec::new()))
+        }
+    }
+
+    /// Captures tracing output into a shared buffer for assertions.
+    #[derive(Clone, Default)]
+    struct CaptureWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl CaptureWriter {
+        fn contents(&self) -> String {
+            String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+        }
+    }
+
+    impl std::io::Write for CaptureWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CaptureWriter {
+        type Writer = Self;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// The default `save_state`/`load_state` must stay behavioral no-ops
+    /// (spec 034 FR-018 / SC-006) while warning exactly once per process
+    /// per method that state persistence is not implemented.
+    ///
+    /// This is the only test in this binary that exercises the defaults
+    /// (all other tests use stores that override the state methods), so the
+    /// process-wide `Once` observed here is deterministic.
+    #[test]
+    fn default_state_methods_are_noops_and_warn_once_per_process() {
+        let store = DefaultStateStore;
+        let writer = CaptureWriter::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(writer.clone())
+            .with_ansi(false)
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            // No-op contract preserved: save succeeds, load returns None.
+            store
+                .save_state("session-1", &json!({"scroll": 1}))
+                .unwrap();
+            assert_eq!(store.load_state("session-1").unwrap(), None);
+
+            // Second round trips must not warn again.
+            store
+                .save_state("session-1", &json!({"scroll": 2}))
+                .unwrap();
+            assert_eq!(store.load_state("session-1").unwrap(), None);
+        });
+
+        let output = writer.contents();
+        assert!(
+            output.contains("WARN"),
+            "expected WARN level output: {output}"
+        );
+        assert_eq!(
+            output
+                .matches("SessionStore::save_state default no-op")
+                .count(),
+            1,
+            "save_state warning must fire exactly once: {output}"
+        );
+        assert_eq!(
+            output
+                .matches("SessionStore::load_state default no-op")
+                .count(),
+            1,
+            "load_state warning must fire exactly once: {output}"
+        );
     }
 
     #[test]
