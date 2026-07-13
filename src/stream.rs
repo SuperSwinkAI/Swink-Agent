@@ -64,6 +64,45 @@ pub enum CacheStrategy {
 /// the streaming pipeline.
 pub type OnRawPayload = Arc<dyn Fn(&str) + Send + Sync>;
 
+// ─── ServingOptions ──────────────────────────────────────────────────────────
+
+/// Provider-native serving options, primarily for self-hosted/local backends.
+///
+/// Provider-agnostic names; each adapter maps them onto its protocol's native
+/// knobs and silently ignores fields its protocol has no equivalent for:
+///
+/// | Field            | Ollama                | OpenAI-compatible (OpenAI, Azure, xAI) |
+/// |------------------|-----------------------|----------------------------------------|
+/// | `context_length` | `options.num_ctx`     | —                                      |
+/// | `top_p`          | `options.top_p`       | `top_p`                                |
+/// | `keep_alive`     | `keep_alive`          | —                                      |
+/// | `extra`          | merged into `options` | merged into the request body           |
+///
+/// `extra` is the escape hatch for provider knobs without a typed field
+/// (e.g. Ollama's `repeat_penalty`). On key collision, typed fields win over
+/// `extra` entries. The default (all `None`, empty `extra`) leaves request
+/// bodies byte-identical to builds without serving options.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ServingOptions {
+    /// Model context window to serve this request with (Ollama `num_ctx`).
+    pub context_length: Option<u64>,
+    /// Nucleus-sampling probability mass.
+    pub top_p: Option<f64>,
+    /// How long the backend should keep the model loaded after the request
+    /// (Ollama `keep_alive`, e.g. `"5m"`).
+    pub keep_alive: Option<String>,
+    /// Additional provider-native options passed through verbatim.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub extra: std::collections::BTreeMap<String, Value>,
+}
+
+impl ServingOptions {
+    /// True when nothing is set — adapters can skip serialization work.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 // ─── StreamOptions ───────────────────────────────────────────────────────────
 
 /// Per-call configuration passed through to the LLM provider.
@@ -83,6 +122,8 @@ pub struct StreamOptions {
     pub cache_strategy: CacheStrategy,
     /// Optional callback for observing raw SSE data lines before parsing.
     pub on_raw_payload: Option<OnRawPayload>,
+    /// Provider-native serving options (local backends). Default = none set.
+    pub serving: ServingOptions,
 }
 
 impl std::fmt::Debug for StreamOptions {
@@ -98,6 +139,7 @@ impl std::fmt::Debug for StreamOptions {
                 "on_raw_payload",
                 &self.on_raw_payload.as_ref().map(|_| "<callback>"),
             )
+            .field("serving", &self.serving)
             .finish()
     }
 }

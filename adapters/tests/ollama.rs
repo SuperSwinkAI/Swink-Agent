@@ -15,8 +15,8 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use common::{notify_on_request, test_context};
 use swink_agent::{
-    AssistantMessageEvent, ModelCapabilities, ModelSpec, StopReason, StreamFn, StreamOptions,
-    ThinkingLevel,
+    AssistantMessageEvent, ModelCapabilities, ModelSpec, ServingOptions, StopReason, StreamFn,
+    StreamOptions, ThinkingLevel,
 };
 use swink_agent_adapters::OllamaStreamFn;
 
@@ -775,4 +775,88 @@ async fn ollama_think_field_absent_when_thinking_off() {
         .iter()
         .any(|e| matches!(e, AssistantMessageEvent::Done { .. }));
     assert!(has_done, "expected Done event, got: {events:?}");
+}
+
+/// 19. `ServingOptions` serialize into the request body: `context_length` as
+/// `options.num_ctx`, `top_p` and `extra` keys inside `options`, and
+/// `keep_alive` at the top level. Typed fields win over colliding `extra` keys.
+#[tokio::test]
+async fn ollama_serving_options_serialize_into_request_body() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/chat"))
+        .and(body_string_contains("\"num_ctx\":8192"))
+        .and(body_string_contains("\"top_p\":0.9"))
+        .and(body_string_contains("\"keep_alive\":\"5m\""))
+        .and(body_string_contains("\"repeat_penalty\":1.1"))
+        .respond_with(ndjson_response(&[
+            r#"{"message":{"role":"assistant","content":"ok"},"done":false}"#,
+            r#"{"message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":5,"eval_count":10}"#,
+        ]))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let ollama = OllamaStreamFn::new(server.uri());
+    let model = test_model();
+    let context = test_context();
+    let options = StreamOptions {
+        serving: ServingOptions {
+            context_length: Some(8192),
+            top_p: Some(0.9),
+            keep_alive: Some("5m".to_string()),
+            // The colliding `num_ctx` must lose to the typed `context_length`.
+            extra: [
+                ("repeat_penalty".to_string(), serde_json::json!(1.1)),
+                ("num_ctx".to_string(), serde_json::json!(1)),
+            ]
+            .into_iter()
+            .collect(),
+        },
+        ..StreamOptions::default()
+    };
+    let token = CancellationToken::new();
+    let events: Vec<_> = ollama
+        .stream(&model, &context, &options, token)
+        .collect::<Vec<_>>()
+        .await;
+
+    assert!(matches!(events[0], AssistantMessageEvent::Start));
+    let has_done = events
+        .iter()
+        .any(|e| matches!(e, AssistantMessageEvent::Done { .. }));
+    assert!(has_done, "expected Done event, got: {events:?}");
+}
+
+/// 20. Default `ServingOptions` leave the request body untouched: no
+/// `num_ctx`, `top_p`, `keep_alive`, or `options` key at all when nothing
+/// sets a generation option.
+#[tokio::test]
+async fn ollama_default_serving_options_leave_body_unchanged() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/chat"))
+        .respond_with(ndjson_response(&[
+            r#"{"message":{"role":"assistant","content":"hi"},"done":false}"#,
+            r#"{"message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":5,"eval_count":10}"#,
+        ]))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let ollama = OllamaStreamFn::new(server.uri());
+    let events = collect_events(&ollama).await;
+    let has_done = events
+        .iter()
+        .any(|e| matches!(e, AssistantMessageEvent::Done { .. }));
+    assert!(has_done, "expected Done event, got: {events:?}");
+
+    let requests = server.received_requests().await.expect("recording enabled");
+    let body = String::from_utf8(requests[0].body.clone()).expect("utf8 body");
+    for key in ["num_ctx", "top_p", "keep_alive", "\"options\""] {
+        assert!(
+            !body.contains(key),
+            "default serving options must not emit `{key}`, body: {body}"
+        );
+    }
 }

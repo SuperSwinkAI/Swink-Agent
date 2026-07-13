@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — per-request serving-options seam
+
+- **`ServingOptions`** on `StreamOptions.serving` — a provider-agnostic surface for local/self-hosted serving knobs: `context_length`, `top_p`, `keep_alive`, and an `extra` passthrough map (`BTreeMap<String, serde_json::Value>`). Typed fields win over colliding `extra` keys; the default leaves request bodies unchanged.
+- **Ollama adapter** serializes `context_length` as `options.num_ctx`, `top_p` into `options`, `keep_alive` at the top level, and merges `extra` into `options`. Requests with no generation options now omit the `options` key entirely (previously an empty `"options":{}` was sent).
+- **OpenAI-protocol adapters** (OpenAI, Azure, xAI via the shared transport) serialize `top_p` and merge `extra` into the request body; `context_length`/`keep_alive` have no OAI equivalent and are ignored.
+- `StreamOptionsConfig` round-trips the new field (omitted from snapshots when default).
+
+### Notes
+
+- Additive but breaking for downstream code that constructs `StreamOptions` or `StreamOptionsConfig` with exhaustive struct literals — add `serving: ServingOptions::default()` or use `..Default::default()`.
+
 ## [0.10.0] - 2026-07-12
 
 ### Added — model deprecation & pricing staleness (#1064)

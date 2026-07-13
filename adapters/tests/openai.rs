@@ -1052,3 +1052,65 @@ async fn openai_empty_response_body() {
         "expected 'stream ended unexpectedly', got: {err}"
     );
 }
+
+/// `ServingOptions`: `top_p` serializes as a typed body field and `extra`
+/// keys merge into the top-level body; keys colliding with typed fields are
+/// dropped (typed fields win). `context_length`/`keep_alive` have no OAI
+/// equivalent and must not appear.
+#[tokio::test]
+async fn serving_options_serialize_into_request_body() {
+    use wiremock::matchers::body_string_contains;
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(body_string_contains("\"top_p\":0.9"))
+        .and(body_string_contains("\"logit_bias\":{\"50256\":-100}"))
+        .respond_with(sse_response(
+            &[
+                r#"data: {"choices":[{"delta":{"content":"ok"},"index":0}]}"#,
+                "",
+                r#"data: {"choices":[{"delta":{},"finish_reason":"stop","index":0}]}"#,
+                "",
+                "data: [DONE]",
+                "",
+                "",
+            ]
+            .join("\n"),
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let stream_fn = OpenAiStreamFn::new(server.uri(), "test-key");
+    let options = StreamOptions {
+        serving: swink_agent::ServingOptions {
+            context_length: Some(8192),
+            top_p: Some(0.9),
+            keep_alive: Some("5m".to_string()),
+            extra: [
+                ("logit_bias".to_string(), serde_json::json!({"50256": -100})),
+                // Colliding key: the typed `top_p` above must win.
+                ("top_p".to_string(), serde_json::json!(0.1)),
+            ]
+            .into_iter()
+            .collect(),
+        },
+        ..StreamOptions::default()
+    };
+    let events = collect_events_with_options(&stream_fn, options).await;
+    assert!(matches!(events[0], AssistantMessageEvent::Start));
+
+    let requests = server.received_requests().await.expect("recording enabled");
+    let body = String::from_utf8(requests[0].body.clone()).expect("utf8 body");
+    assert!(!body.contains("num_ctx"), "no num_ctx on OAI path: {body}");
+    assert!(
+        !body.contains("context_length"),
+        "no context_length: {body}"
+    );
+    assert!(!body.contains("keep_alive"), "no keep_alive: {body}");
+    assert!(
+        !body.contains("0.1"),
+        "extra top_p must lose to typed: {body}"
+    );
+}
