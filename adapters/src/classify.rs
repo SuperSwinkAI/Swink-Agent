@@ -86,7 +86,8 @@ pub fn is_model_retired_response(status: u16, body: &str) -> bool {
     }
     body.contains("model")
         && (body.contains("decommission")
-            || body.contains("deprecat")
+            || body.contains("deprecated")
+            || body.contains("deprecation")
             || body.contains("retired")
             || body.contains("no longer supported")
             || body.contains("not found")
