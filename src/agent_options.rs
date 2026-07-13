@@ -759,7 +759,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "testkit"))]
 mod credential_timeout_tests {
     use super::*;
     use crate::testing::SimpleMockStreamFn;
