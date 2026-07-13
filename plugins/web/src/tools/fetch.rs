@@ -790,7 +790,13 @@ mod tests {
         assert_eq!(user_agent, Some("SwinkAgent/0.5-test"));
     }
 
-    #[tokio::test]
+    // Pinned to a single-threaded runtime so the whole `execute` future,
+    // including its `web fetch completed` log, is polled on the same thread
+    // that installed the thread-local capture subscriber via `capture()`.
+    // `execute` never spawns, so no work escapes this thread. A multi-threaded
+    // runtime could migrate the future across `.await` points and emit the log
+    // on a worker thread the capture guard does not cover (flaky on macOS CI).
+    #[tokio::test(flavor = "current_thread")]
     async fn execute_logs_url_status_size_and_latency_on_success() {
         // FR-016: web requests must log target URL, HTTP status, response
         // size, and latency for debugging and auditing.
@@ -839,7 +845,9 @@ mod tests {
         assert!(log_output.contains(&server.uri()), "{log_output}");
     }
 
-    #[tokio::test]
+    // Single-threaded runtime keeps the `web fetch body read failed` log on the
+    // capture thread; see the note on the success-path test above.
+    #[tokio::test(flavor = "current_thread")]
     async fn execute_logs_status_and_latency_on_http_error() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))

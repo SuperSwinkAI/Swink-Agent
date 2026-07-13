@@ -384,7 +384,13 @@ mod tests {
         assert!(provider_failure.is_error);
     }
 
-    #[tokio::test]
+    // Pinned to a single-threaded runtime so the whole `execute` future,
+    // including its `web search completed` log, is polled on the same thread
+    // that installed the thread-local capture subscriber via `capture()`.
+    // `execute` never spawns, so no work escapes this thread. A multi-threaded
+    // runtime could migrate the future across `.await` points and emit the log
+    // on a worker thread the capture guard does not cover (flaky on macOS CI).
+    #[tokio::test(flavor = "current_thread")]
     async fn execute_logs_provider_query_size_and_latency_on_success() {
         // FR-016: log every web request. Search has no single URL, so the
         // provider name + query stand in for it.
@@ -425,7 +431,9 @@ mod tests {
         assert!(log_output.contains("latency_ms="), "{log_output}");
     }
 
-    #[tokio::test]
+    // Single-threaded runtime keeps the `web search failed` log on the capture
+    // thread; see the note on the success-path test above.
+    #[tokio::test(flavor = "current_thread")]
     async fn execute_logs_provider_and_query_on_failure() {
         let failing_tool = SearchTool::new(Arc::new(FailingProvider), 10);
         let state = Arc::new(std::sync::RwLock::new(SessionState::default()));
