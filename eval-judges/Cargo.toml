@@ -42,8 +42,8 @@ proxy = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core", "dep:reqwest
 live-judges = []
 
 [dependencies]
-swink-agent-eval = { path = "../eval", version = "0.10.0", default-features = false }
-swink-agent-adapters = { path = "../adapters", version = "0.10.0", default-features = false, optional = true }
+swink-agent-eval = { path = "../eval", version = "0.11.0", default-features = false }
+swink-agent-adapters = { path = "../adapters", version = "0.11.0", default-features = false, optional = true }
 backon = { workspace = true, features = ["tokio-sleep"] }
 reqwest = { workspace = true, optional = true }
 serde.workspace = true

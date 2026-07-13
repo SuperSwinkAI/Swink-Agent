@@ -93,6 +93,12 @@ pub struct StreamOptionsConfig {
     /// Preferred transport protocol.
     #[serde(default)]
     pub transport: StreamTransport,
+    /// Provider-native serving options (local backends).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::stream::ServingOptions::is_default"
+    )]
+    pub serving: crate::stream::ServingOptions,
 }
 
 impl From<&crate::stream::StreamOptions> for StreamOptionsConfig {
@@ -102,6 +108,7 @@ impl From<&crate::stream::StreamOptions> for StreamOptionsConfig {
             max_tokens: opts.max_tokens,
             session_id: opts.session_id.clone(),
             transport: opts.transport,
+            serving: opts.serving.clone(),
         }
     }
 }
@@ -118,6 +125,7 @@ impl StreamOptionsConfig {
             transport: self.transport,
             cache_strategy: crate::stream::CacheStrategy::default(),
             on_raw_payload: None,
+            serving: self.serving.clone(),
         }
     }
 }
@@ -501,12 +509,25 @@ mod tests {
             max_tokens: Some(4096),
             session_id: Some("sess-123".into()),
             transport: StreamTransport::Sse,
+            serving: crate::stream::ServingOptions {
+                context_length: Some(8192),
+                keep_alive: Some("5m".into()),
+                ..Default::default()
+            },
         };
         let json = serde_json::to_string(&config).unwrap();
         let restored: StreamOptionsConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.temperature, Some(0.7));
         assert_eq!(restored.max_tokens, Some(4096));
         assert_eq!(restored.session_id.as_deref(), Some("sess-123"));
+        assert_eq!(restored.serving.context_length, Some(8192));
+        assert_eq!(restored.serving.keep_alive.as_deref(), Some("5m"));
+    }
+
+    #[test]
+    fn stream_options_config_omits_default_serving_options() {
+        let json = serde_json::to_string(&StreamOptionsConfig::default()).unwrap();
+        assert!(!json.contains("serving"));
     }
 
     #[test]
@@ -519,6 +540,7 @@ mod tests {
             transport: StreamTransport::Sse,
             cache_strategy: crate::stream::CacheStrategy::default(),
             on_raw_payload: None,
+            serving: crate::stream::ServingOptions::default(),
         };
         let config = StreamOptionsConfig::from(&opts);
         let json = serde_json::to_string(&config).unwrap();
@@ -548,6 +570,7 @@ mod tests {
                 max_tokens: Some(8192),
                 session_id: None,
                 transport: StreamTransport::Sse,
+                serving: crate::stream::ServingOptions::default(),
             },
             steering_mode: SteeringModeConfig::OneAtATime,
             follow_up_mode: FollowUpModeConfig::All,
@@ -646,6 +669,7 @@ mod tests {
                 max_tokens: Some(2048),
                 session_id: Some("s1".into()),
                 transport: StreamTransport::Sse,
+                serving: crate::stream::ServingOptions::default(),
             },
             steering_mode: SteeringModeConfig::All,
             follow_up_mode: FollowUpModeConfig::All,

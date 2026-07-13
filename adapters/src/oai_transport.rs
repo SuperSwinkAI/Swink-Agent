@@ -223,6 +223,28 @@ pub fn prepare_oai_request(
     context: &AgentContext,
     options: &StreamOptions,
 ) -> reqwest::RequestBuilder {
+    // Typed request fields win over colliding `ServingOptions::extra` keys.
+    // (`context_length`/`keep_alive` have no OAI-protocol equivalent and are
+    // intentionally not serialized here — see the `ServingOptions` docs.)
+    const TYPED_KEYS: &[&str] = &[
+        "model",
+        "messages",
+        "stream",
+        "stream_options",
+        "temperature",
+        "max_tokens",
+        "top_p",
+        "tools",
+        "tool_choice",
+    ];
+    let extra = options
+        .serving
+        .extra
+        .iter()
+        .filter(|(k, _)| !TYPED_KEYS.contains(&k.as_str()))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
     let messages =
         convert::convert_messages::<OaiConverter>(&context.messages, &context.system_prompt);
     let (tools, tool_choice) = build_oai_tools(&context.tools);
@@ -235,8 +257,10 @@ pub fn prepare_oai_request(
         }),
         temperature: options.temperature,
         max_tokens: options.max_tokens,
+        top_p: options.serving.top_p,
         tools,
         tool_choice,
+        extra,
     };
     client.post(url).json(&body)
 }
