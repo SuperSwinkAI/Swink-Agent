@@ -60,6 +60,75 @@ fn corrupted_line_recovers_remaining_messages() {
 }
 
 #[test]
+fn truncated_utf8_tail_line_recovers_remaining_messages() {
+    // Regression for #1067: a crash mid-append can leave the final line
+    // truncated inside a multi-byte UTF-8 sequence. Unlike malformed-but-
+    // valid-UTF-8 JSON, this used to abort the entire load with an
+    // `io::Error` before per-line classification ran.
+    let tmp = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
+
+    let meta = sample_meta("truncated_tail", "Truncated tail");
+    let messages = vec![
+        user_message("msg1"),
+        user_message("msg2"),
+        user_message("msg3"),
+        user_message("msg4"),
+        user_message("msg5"),
+    ];
+    store.save("truncated_tail", &meta, &messages).unwrap();
+
+    // Simulate a partially flushed 6th message: a valid JSON prefix whose
+    // text ends in the first byte of the two-byte UTF-8 encoding of 'é'
+    // (0xC3 0xA9), with the second byte and the newline lost in the crash.
+    let path = tmp.path().join("truncated_tail.jsonl");
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes.extend_from_slice(br#"{"type":"user","content":[{"type":"text","text":"caf"#);
+    bytes.push(0xC3);
+    std::fs::write(&path, &bytes).unwrap();
+
+    // Load should skip the truncated tail line and recover all 5 messages.
+    let (loaded_meta, loaded_msgs) = store.load("truncated_tail", None).unwrap();
+    assert_eq!(loaded_meta.id, "truncated_tail");
+    assert_eq!(loaded_msgs.len(), 5);
+}
+
+#[test]
+fn invalid_utf8_middle_line_recovers_remaining_messages() {
+    // Invalid UTF-8 is tolerated per-line, not only at the tail: lines after
+    // the corrupt one must still be classified and recovered.
+    let tmp = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
+
+    let meta = sample_meta("utf8_middle", "UTF-8 middle");
+    let messages = vec![
+        user_message("msg1"),
+        user_message("msg2"),
+        user_message("msg3"),
+    ];
+    store.save("utf8_middle", &meta, &messages).unwrap();
+
+    // Corrupt the 2nd message line (line index 2) with a lone continuation
+    // byte, keeping the following lines intact.
+    let path = tmp.path().join("utf8_middle.jsonl");
+    let content = std::fs::read(&path).unwrap();
+    let mut lines: Vec<Vec<u8>> = content
+        .split(|&b| b == b'\n')
+        .filter(|line| !line.is_empty())
+        .map(<[u8]>::to_vec)
+        .collect();
+    assert_eq!(lines.len(), 4); // 1 meta + 3 messages
+    lines[2] = vec![b'{', 0xBF, b'}'];
+    let mut rewritten = lines.join(&b'\n');
+    rewritten.push(b'\n');
+    std::fs::write(&path, &rewritten).unwrap();
+
+    let (loaded_meta, loaded_msgs) = store.load("utf8_middle", None).unwrap();
+    assert_eq!(loaded_meta.id, "utf8_middle");
+    assert_eq!(loaded_msgs.len(), 2);
+}
+
+#[test]
 fn all_message_lines_corrupted_returns_empty_messages() {
     let tmp = tempfile::tempdir().unwrap();
 

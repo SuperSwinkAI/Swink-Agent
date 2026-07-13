@@ -172,16 +172,37 @@ fn open_session_file(path: &Path, id: &str) -> io::Result<std::fs::File> {
 
 fn read_meta_and_message_lines(path: &Path, id: &str) -> io::Result<(SessionMeta, Vec<String>)> {
     let file = open_session_file(path, id)?;
-    let reader = io::BufReader::new(file);
-    let mut lines = reader.lines();
+    let mut reader = io::BufReader::new(file);
 
-    let meta_line = lines.next().ok_or_else(empty_file)??;
+    let meta_bytes = read_raw_line(&mut reader)?.ok_or_else(empty_file)?;
+    let meta_line = String::from_utf8(meta_bytes).map_err(invalid_meta)?;
     let mut meta =
         canonical_meta_for_id(serde_json::from_str(&meta_line).map_err(invalid_meta)?, id);
+
+    // Read message lines as raw bytes and validate UTF-8 per line. A crash
+    // mid-append can truncate the final line inside a multi-byte UTF-8
+    // sequence; `BufRead::lines()` would surface that as an `io::Error` and
+    // abort the whole load before any per-line record classification runs.
+    // Instead, skip the corrupt line with a warning so the rest of the
+    // session is recovered (spec 021 FR-004: partial recovery over total
+    // failure, same as bad-JSON lines in `classify_and_migrate`).
     let mut remaining_lines = Vec::new();
     let mut pending_append_lines: Option<Vec<String>> = None;
-    for line in lines {
-        let line = line?;
+    let mut line_num = 1_usize;
+    while let Some(raw) = read_raw_line(&mut reader)? {
+        line_num += 1;
+        let line = match String::from_utf8(raw) {
+            Ok(line) => line,
+            Err(error) => {
+                tracing::warn!(
+                    line = line_num,
+                    error = %error,
+                    "skipping invalid-UTF-8 line in session {id} \
+                     (likely truncated by a crash mid-write)"
+                );
+                continue;
+            }
+        };
         match SessionRecord::parse(&line) {
             Ok(SessionRecord::AppendBegin) => {
                 if pending_append_lines.is_some() {
@@ -210,6 +231,26 @@ fn read_meta_and_message_lines(path: &Path, id: &str) -> io::Result<(SessionMeta
     }
 
     Ok((meta, remaining_lines))
+}
+
+/// Read one `\n`-terminated line as raw bytes, without requiring valid UTF-8.
+///
+/// Returns `Ok(None)` at EOF. A trailing `\n` (and preceding `\r`, if any) is
+/// stripped, matching [`BufRead::lines`] semantics. The final line is
+/// returned even when it lacks a terminating newline (e.g. a write cut short
+/// by a crash).
+fn read_raw_line(reader: &mut impl BufRead) -> io::Result<Option<Vec<u8>>> {
+    let mut buf = Vec::new();
+    if reader.read_until(b'\n', &mut buf)? == 0 {
+        return Ok(None);
+    }
+    if buf.last() == Some(&b'\n') {
+        buf.pop();
+        if buf.last() == Some(&b'\r') {
+            buf.pop();
+        }
+    }
+    Ok(Some(buf))
 }
 
 fn extract_state_from_lines(lines: &[String], id: &str) -> io::Result<Option<serde_json::Value>> {
@@ -268,11 +309,12 @@ const META_TAIL_WINDOW: u64 = 64 * 1024;
 /// back to the historical forward line-by-line scan, so the result — last
 /// parseable Meta wins, unparseable lines skipped — is identical.
 ///
-/// Invalid UTF-8 in a complete line is an error, mirroring
-/// [`BufRead::lines`] in the historical scan (spec 021 FR-004 addendum /
-/// issue #1067 track relaxing this). The one intentional divergence: invalid
-/// UTF-8 that lies before the tail window of a large file goes unnoticed when
-/// a later Meta commit is found, favoring recovery of the committed metadata.
+/// An invalid-UTF-8 line (e.g. a multi-byte character torn by a crash
+/// mid-write) is skipped with a warning like any other unparseable line,
+/// matching the tolerant forward scan (spec 021 FR-004 addendum / issue
+/// #1067). Invalid UTF-8 that lies before the tail window of a large file
+/// goes unnoticed when a later Meta commit is found, favoring recovery of
+/// the committed metadata.
 fn find_last_meta_commit(
     file: &mut std::fs::File,
     body_start: u64,
@@ -292,7 +334,7 @@ fn find_last_meta_commit(
         // partial line (they may even split a multi-byte character at the
         // window boundary), so only the bytes after it are complete lines.
         if let Some(pos) = buf.iter().position(|&b| b == b'\n')
-            && let Some(meta) = last_meta_in_complete_lines(&buf[pos + 1..])?
+            && let Some(meta) = last_meta_in_complete_lines(&buf[pos + 1..])
         {
             return Ok(Some(meta));
         }
@@ -302,11 +344,19 @@ fn find_last_meta_commit(
 
     // Terminal case: the remaining window covers the whole body. Stream
     // forward line-by-line exactly like the historical implementation so
-    // memory stays bounded and error behavior is unchanged.
+    // memory stays bounded, tolerating invalid-UTF-8 lines the same way
+    // the full-load forward scan does.
     file.seek(SeekFrom::Start(body_start))?;
     let mut meta = None;
-    for line in io::BufReader::new(file).lines() {
-        let line = line?;
+    let mut reader = io::BufReader::new(file);
+    while let Some(raw) = read_raw_line(&mut reader)? {
+        let Ok(line) = String::from_utf8(raw) else {
+            tracing::warn!(
+                "skipping invalid-UTF-8 line in session meta scan \
+                 (likely truncated by a crash mid-write)"
+            );
+            continue;
+        };
         if let Ok(SessionRecord::Meta(meta_update)) = SessionRecord::parse(&line) {
             meta = Some(*meta_update);
         }
@@ -317,26 +367,28 @@ fn find_last_meta_commit(
 /// Scans complete lines in reverse for the last parseable Meta record.
 ///
 /// `bytes` must start at a real line boundary and extend to end of file.
-fn last_meta_in_complete_lines(bytes: &[u8]) -> io::Result<Option<SessionMeta>> {
-    // Mirror `BufRead::lines`: complete lines must be valid UTF-8. This also
-    // covers a torn tail line that truncates a multi-byte character, which
-    // the historical forward scan rejected the same way.
-    let text = std::str::from_utf8(bytes).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "stream did not contain valid UTF-8",
-        )
-    })?;
-    for line in text.split('\n').rev() {
-        let line = line.strip_suffix('\r').unwrap_or(line);
+fn last_meta_in_complete_lines(bytes: &[u8]) -> Option<SessionMeta> {
+    // Validate UTF-8 per line: an invalid-UTF-8 line (e.g. a torn tail line
+    // that truncates a multi-byte character) is skipped like any other
+    // unparseable line, matching the tolerant forward scan (spec 021 FR-004
+    // addendum / issue #1067).
+    for line in bytes.split(|&b| b == b'\n').rev() {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
         if line.is_empty() {
             continue;
         }
-        if let Ok(SessionRecord::Meta(meta_update)) = SessionRecord::parse(line) {
-            return Ok(Some(*meta_update));
+        let Ok(text) = std::str::from_utf8(line) else {
+            tracing::warn!(
+                "skipping invalid-UTF-8 line in session meta scan \
+                 (likely truncated by a crash mid-write)"
+            );
+            continue;
+        };
+        if let Ok(SessionRecord::Meta(meta_update)) = SessionRecord::parse(text) {
+            return Some(*meta_update);
         }
     }
-    Ok(None)
+    None
 }
 
 fn canonical_meta_for_id(mut meta: SessionMeta, id: &str) -> SessionMeta {
@@ -2839,7 +2891,7 @@ mod tests {
     }
 
     #[test]
-    fn read_meta_errors_on_torn_multibyte_tail() {
+    fn read_meta_tolerates_torn_multibyte_tail() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("torn-utf8.jsonl");
         let first = fresh_meta("torn-utf8");
@@ -2848,20 +2900,19 @@ mod tests {
         committed.sequence = 2;
 
         // A crash mid-write can truncate a multi-byte UTF-8 character in the
-        // tail line. Current semantics (spec 021 FR-004 addendum / #1067):
-        // the read fails with InvalidData, matching the forward scan.
+        // tail line. Semantics per spec 021 FR-004 addendum (#1067): the torn
+        // line is skipped and the last committed meta is still recovered,
+        // in both the tail scan and the forward scan.
         let mut body = format!("{}\n", meta_commit_line(&committed)).into_bytes();
         body.extend_from_slice(b"{\"_meta\":true,\xE2\x82");
         write_raw_session_file(&path, &first, &body);
 
-        let err = read_meta_with_line_len(&path, "torn-utf8").unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        let oracle_err = read_meta_and_message_lines(&path, "torn-utf8").unwrap_err();
-        assert_eq!(oracle_err.kind(), io::ErrorKind::InvalidData);
+        let meta = read_meta_checked_against_forward_scan(&path, "torn-utf8");
+        assert_eq!(meta, committed);
     }
 
     #[test]
-    fn read_meta_errors_on_torn_multibyte_tail_in_large_file() {
+    fn read_meta_tolerates_torn_multibyte_tail_in_large_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("large-torn-utf8.jsonl");
         let first = fresh_meta("large-torn-utf8");
@@ -2881,11 +2932,10 @@ mod tests {
         body.extend_from_slice(b"{\"_meta\":true,\xE2\x82");
         write_raw_session_file(&path, &first, &body);
 
-        let err = read_meta_with_line_len(&path, "large-torn-utf8").unwrap_err();
+        let meta = read_meta_checked_against_forward_scan(&path, "large-torn-utf8");
         assert_eq!(
-            err.kind(),
-            io::ErrorKind::InvalidData,
-            "windowed tail scan must reject invalid UTF-8 like the forward scan"
+            meta, committed,
+            "windowed tail scan must skip invalid UTF-8 like the forward scan"
         );
     }
 
