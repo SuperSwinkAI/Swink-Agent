@@ -419,7 +419,7 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use crate::domain::{DomainFilter, ResolvedHost};
-    use crate::tools::log_capture::{SharedLogBuffer, capture};
+    use crate::tools::log_capture::{SharedLogBuffer, capture_serialized};
 
     use super::FetchTool;
 
@@ -817,7 +817,7 @@ mod tests {
             .await;
 
         let logs = SharedLogBuffer::default();
-        let _guard = capture(logs.clone());
+        let _guard = capture_serialized(logs.clone()).await;
 
         let tool = FetchTool::new(4_096, Duration::from_secs(5))
             .with_domain_filter(localhost_filter(), 10);
@@ -857,7 +857,7 @@ mod tests {
             .await;
 
         let logs = SharedLogBuffer::default();
-        let _guard = capture(logs.clone());
+        let _guard = capture_serialized(logs.clone()).await;
 
         let tool = FetchTool::new(4_096, Duration::from_secs(5))
             .with_domain_filter(localhost_filter(), 10);

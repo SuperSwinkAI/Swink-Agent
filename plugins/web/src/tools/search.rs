@@ -178,7 +178,7 @@ mod tests {
 
     use super::SearchTool;
     use crate::search::{SearchError, SearchProvider, SearchResult};
-    use crate::tools::log_capture::{SharedLogBuffer, capture};
+    use crate::tools::log_capture::{SharedLogBuffer, capture_serialized};
 
     struct MockProvider {
         results: Vec<SearchResult>,
@@ -405,7 +405,7 @@ mod tests {
         let state = Arc::new(std::sync::RwLock::new(SessionState::default()));
 
         let logs = SharedLogBuffer::default();
-        let _guard = capture(logs.clone());
+        let _guard = capture_serialized(logs.clone()).await;
 
         let result = tool
             .execute(
@@ -439,7 +439,7 @@ mod tests {
         let state = Arc::new(std::sync::RwLock::new(SessionState::default()));
 
         let logs = SharedLogBuffer::default();
-        let _guard = capture(logs.clone());
+        let _guard = capture_serialized(logs.clone()).await;
 
         let result = failing_tool
             .execute(
