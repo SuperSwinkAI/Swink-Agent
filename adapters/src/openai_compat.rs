@@ -86,10 +86,18 @@ pub struct OaiChatRequest {
     pub temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<OaiTool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<String>,
+    /// Extra provider-native body fields ([`ServingOptions::extra`]); callers
+    /// must exclude keys that collide with the typed fields above.
+    ///
+    /// [`ServingOptions::extra`]: swink_agent::ServingOptions
+    #[serde(flatten)]
+    pub extra: std::collections::BTreeMap<String, Value>,
 }
 
 // ─── Response / streaming types ─────────────────────────────────────────────

@@ -68,20 +68,38 @@ struct OllamaChatRequest {
     messages: Vec<OllamaMessage>,
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    options: Option<OllamaOptions>,
+    options: Option<serde_json::Map<String, Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    keep_alive: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<OllamaTool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     think: Option<bool>,
 }
 
-/// Ollama generation options.
-#[derive(Debug, Serialize)]
-struct OllamaOptions {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    num_predict: Option<u64>,
+/// Build Ollama's `options` object from the stream/serving options.
+///
+/// `ServingOptions::extra` keys go in first so typed fields win on collision;
+/// `None` when nothing is set, so default requests carry no `options` key.
+fn generation_options(options: &StreamOptions) -> Option<serde_json::Map<String, Value>> {
+    let serving = &options.serving;
+    let mut map: serde_json::Map<String, Value> = serving
+        .extra
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let typed = [
+        ("temperature", options.temperature.map(Value::from)),
+        ("num_predict", options.max_tokens.map(Value::from)),
+        ("top_p", serving.top_p.map(Value::from)),
+        ("num_ctx", serving.context_length.map(Value::from)),
+    ];
+    for (key, value) in typed {
+        if let Some(value) = value {
+            map.insert(key.to_string(), value);
+        }
+    }
+    (!map.is_empty()).then_some(map)
 }
 
 // ─── Response types ─────────────────────────────────────────────────────────
@@ -258,10 +276,8 @@ async fn send_request(
         model: model.model_id.clone(),
         messages,
         stream: true,
-        options: Some(OllamaOptions {
-            temperature: options.temperature,
-            num_predict: options.max_tokens,
-        }),
+        options: generation_options(options),
+        keep_alive: options.serving.keep_alive.clone(),
         tools,
         think: if model.thinking_level == ThinkingLevel::Off {
             None
