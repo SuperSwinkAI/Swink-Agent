@@ -124,9 +124,37 @@ pub(crate) mod log_capture {
         }
     }
 
+    /// Pin tracing's global max level to `INFO` for the whole test binary.
+    ///
+    /// `capture()` installs only *scoped* (thread-local) subscribers. With no
+    /// global default, tracing's global `MAX_LEVEL` fast-path — which `info!`
+    /// consults before dispatching — flickers as scoped guards are set and
+    /// dropped across the test harness's worker threads under a shared-process
+    /// runner (`cargo test`, unlike per-process `cargo nextest`). A completion
+    /// `info!` can then be filtered out before reaching the capture buffer,
+    /// failing the assertion intermittently.
+    ///
+    /// Installing a global default at `INFO` once keeps `MAX_LEVEL` pinned at
+    /// `INFO` for the binary's lifetime; the scoped capture subscriber still
+    /// takes precedence on the test's own thread. The global writer is a sink,
+    /// so it produces no output.
+    fn pin_global_info_level() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            let global = tracing_subscriber::fmt()
+                .with_max_level(tracing::Level::INFO)
+                .with_writer(std::io::sink)
+                .finish();
+            // Ignore the error if a global default was already set elsewhere;
+            // any global default is enough to pin the level.
+            let _ = tracing::subscriber::set_global_default(global);
+        });
+    }
+
     /// Install a capturing subscriber as the default for the current thread.
     /// Dropping the returned guard restores the previous default.
     pub(crate) fn capture(buffer: SharedLogBuffer) -> tracing::subscriber::DefaultGuard {
+        pin_global_info_level();
         let subscriber = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::INFO)
             .without_time()
