@@ -39,6 +39,43 @@ Each guard can **approve**, **modify**, or **halt** the agent before the next st
 | **PII Redactor** | Post-Turn | Removes personally identifiable information from responses |
 | **Content Filter** | Post-Turn | Blocks responses containing prohibited keywords or patterns |
 | **Audit Logger** | Post-Turn | Records every turn to a persistent log for compliance review |
+| **Memory Nudge** | Post-Turn | Heuristically detects save-worthy content in agent turns and nudges it toward memory |
+
+---
+
+## Recommended Production Policy Set
+
+The library default is **anything-goes**: with no policies configured, the agent loop runs with no restrictions (`specs/031-policy-slots/spec.md` FR-009). That default is correct for the library — it's the right posture for experimentation, tests, and callers who want to compose their own guardrails from scratch.
+
+It is **not** a safe default for an autonomous agent running unattended in production. Embedders (for example, a daemon that runs agents on a schedule or in response to external events) MUST wire at least these four policies themselves:
+
+| Policy | Checkpoint | Crate path |
+|--------|-----------|------------|
+| **BudgetPolicy** | Pre-Turn | `policies/src/budget.rs` (`swink-agent-policies`, feature `budget`) |
+| **MaxTurnsPolicy** | Pre-Turn | `policies/src/max_turns.rs` (feature `max-turns`) |
+| **SandboxPolicy** | Pre-Dispatch | `policies/src/sandbox.rs` (feature `sandbox`) |
+| **ToolDenyListPolicy** | Pre-Dispatch | `policies/src/deny_list.rs` (feature `deny-list`) |
+
+Each can be wired individually via `AgentOptions::with_pre_turn_policy(...)` / `with_pre_dispatch_policy(...)` — see `policies/examples/with_policies.rs` and `policies/README.md` for the full chain — or all four at once via the bundled `RecommendedPolicies` builder ([#1065](https://github.com/SuperSwinkAI/Swink-Agent/issues/1065)), which also ships an integration-contract test embedders can run to verify their own wiring didn't accidentally drop a guardrail (see below).
+
+---
+
+## Recommended Production Policy Set
+
+The library ships anything-goes: no policies run unless enabled. Deployments that run agents autonomously should wire, at minimum, **Budget**, **Max Turns**, **Sandbox**, and **Tool Deny List**. The `swink-agent-policies` crate bundles exactly this set behind the `recommended` feature:
+
+```rust,ignore
+use swink_agent_policies::RecommendedPolicies;
+
+let options = RecommendedPolicies::builder()
+    .max_cost(10.0)                       // stop at $10 total spend (default)
+    .max_turns(50)                        // stop after 50 turns (default)
+    .sandbox_root("/srv/agent-workspace") // restrict file tools (default: cwd)
+    .deny_tools(["bash"])                 // block shell access (default)
+    .apply(options);
+```
+
+Pair it with the contract-test helper `assert_production_guardrails(&options, "bash")` in your test suite: it verifies all four policies are present and configured with non-trivial limits, so a refactor can't silently drop a guardrail. See the [`swink-agent-policies` README](../policies/README.md#recommended-production-guardrails) for details.
 
 ---
 

@@ -61,7 +61,7 @@
 - [x] T020 [US1] Implement `ToolPanel::set_awaiting_approval(&mut self, id: &str, name: &str, arguments: &Value)` — creates `PendingApproval` with redacted argument summary using `swink_agent::redact_sensitive_values` in `tui/src/ui/tool_panel.rs`
 - [x] T021 [US1] Implement `ToolPanel::resolve_approval(&mut self, id: &str, approved: bool)` — removes from `pending_approvals`, adds `ResolvedApproval` in `tui/src/ui/tool_panel.rs`
 - [x] T022 [US1] Implement `ToolPanel::tick(&mut self)` — advance `spinner_frame` (mod 10), prune completed entries older than 10s, prune resolved approvals older than 2s in `tui/src/ui/tool_panel.rs`
-- [x] T023 [US1] Implement `ToolPanel::is_visible(&self) -> bool` and `ToolPanel::has_pending_approval(&self) -> bool` — `is_visible` returns true if any of the four collections is non-empty in `tui/src/ui/tool_panel.rs`
+- [x] T023 [US1] Implement `ToolPanel::is_visible(&self) -> bool` and `ToolPanel::has_pending_approval(&self) -> bool` — `is_visible` returns true if any of the four collections is non-empty in `tui/src/ui/tool_panel.rs` [`has_pending_approval` never implemented — not present in `tui/src/ui/tool_panel.rs`]
 - [x] T024 [US1] Implement `ToolPanel::height(&self) -> u16` — 0 when hidden, min(total_entries + 2 borders, 10) when visible in `tui/src/ui/tool_panel.rs`
 - [x] T025 [US1] Implement `ToolPanel::render(&self, frame: &mut Frame, area: Rect)` — render active tools with braille spinner (SPINNER constant ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏), completed tools with ✓/✗ badge, pending approvals with ⚠ icon, resolved approvals with brief text in `tui/src/ui/tool_panel.rs`
 - [x] T026 [US1] Update layout in `tui/src/ui/mod.rs` to allocate conditional tool panel region (0 or `tool_panel.height()` lines) above conversation area
@@ -110,7 +110,7 @@
 - [x] T043 [US3] Update agent bridge to accumulate `total_input_tokens`, `total_output_tokens`, `total_cost` from `AgentEvent::TurnEnd` usage data in `tui/src/app/agent_bridge.rs`
 - [x] T044 [US3] Set `app.status` transitions: Idle on init, Running on `AgentEvent::TurnStart`, Idle on `AgentEvent::TurnEnd`, Error on `AgentEvent::Error`, Aborted on user cancel (Ctrl+C / Esc) in `tui/src/app/agent_bridge.rs` and `tui/src/app/event_loop.rs`
 - [x] T045 [US3] Set `app.retry_attempt` from `AgentEvent::RetryAttempt` events and clear on successful `AgentEvent::TurnEnd` in `tui/src/app/agent_bridge.rs`
-- [x] T046 [P] [US3] Add unit test verifying status bar renders all segments with correct colors for each `AgentStatus` variant in `tui/src/ui/status_bar.rs` or `tui/src/app/tests.rs`
+- [x] T046 [P] [US3] Add unit test verifying status bar renders all segments with correct colors for each `AgentStatus` variant in `tui/src/ui/status_bar.rs` or `tui/src/app/tests/` [test never landed — `tui/src/ui/status_bar.rs` has no `#[test]` coverage]
 
 **Checkpoint**: Status bar shows all resource and state information, updates in real time during agent interactions.
 
@@ -148,10 +148,10 @@
 - [x] T055 [US5] Generate one-line `summary` (first line of content, max 60 chars) when creating `DisplayMessage` for tool results in `tui/src/app/agent_bridge.rs`
 - [x] T056 [US5] Render collapsed tool result blocks as single-line summary with `[+]` indicator and selected highlight; expanded blocks with `[-]` indicator and `[F2]` hint in `tui/src/ui/conversation.rs`
 - [x] T057 [US5] Document F2 as "Collapse tool" in help panel key list in `tui/src/ui/help_panel.rs`
-- [x] T058 [P] [US5] Add unit tests for auto-collapse timing, user-expanded prevention, toggle behavior in `tui/src/app/tests.rs`
-- [x] T059 [P] [US5] Add unit tests for `select_next_tool_block` and `select_prev_tool_block` navigation in `tui/src/app/tests.rs`
-- [x] T060 [P] [US5] Add unit test for F2 key event toggling most recent and selected tool blocks in `tui/src/app/tests.rs`
-- [x] T061 [P] [US5] Add unit test for Shift+Left/Right cycling from input focus in `tui/src/app/tests.rs`
+- [x] T058 [P] [US5] Add unit tests for auto-collapse timing, user-expanded prevention, toggle behavior in `tui/src/app/tests/tool_blocks.rs`
+- [x] T059 [P] [US5] Add unit tests for `select_next_tool_block` and `select_prev_tool_block` navigation in `tui/src/app/tests/tool_blocks.rs`
+- [x] T060 [P] [US5] Add unit test for F2 key event toggling most recent and selected tool blocks in `tui/src/app/tests/tool_blocks.rs`
+- [x] T061 [P] [US5] Add unit test for Shift+Left/Right cycling from input focus in `tui/src/app/tests/input_ui.rs`
 
 **Checkpoint**: Tool blocks auto-collapse after 10s, F2 toggles selected block, Shift+arrows cycle selection. User-expanded blocks persist.
 

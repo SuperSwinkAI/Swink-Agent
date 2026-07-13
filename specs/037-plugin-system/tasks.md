@@ -153,7 +153,7 @@
 
 ### Tests for User Story 7
 
-- [x] T035 [US7] Write test: plugin tools appear as `"{plugin_name}.{tool_name}"` in agent tool list in `tests/plugin_integration.rs`
+- [x] T035 [US7] Write test: plugin tools appear as `"{plugin_name}.{tool_name}"` in agent tool list in `tests/plugin_integration.rs` [superseded by issue #608: separator is `_`, i.e. `"{plugin_name}_{tool_name}"`]
 - [x] T036 [P] [US7] Write test: two plugins contributing same-named tools — both appear with distinct namespace prefixes in `tests/plugin_integration.rs`
 - [x] T037 [P] [US7] Write test: direct tool with same name as namespaced plugin tool — direct tool found first when dispatching in `tests/plugin_integration.rs`
 
@@ -190,7 +190,7 @@
 
 - [x] T042 [P] Add `MockPlugin` test helper to `tests/common/mod.rs` (configurable name, priority, contributed policies/tools, init tracking)
 - [x] T043 [P] Verify `cargo test -p swink-agent --no-default-features` passes (plugins feature disabled, no compile errors)
-- [x] T044 [P] Verify `cargo test -p swink-agent --features plugins` passes (all plugin tests run)
+- [x] T044 [P] Verify `cargo test -p swink-agent --features plugins,testkit --test plugin_integration --test plugin_registry` passes (all plugin tests run)
 - [x] T045 [P] Verify `cargo clippy --workspace -- -D warnings` passes with plugins feature enabled
 - [x] T046 Update `src/lib.rs` public API re-exports: `Plugin`, `PluginRegistry` behind `#[cfg(feature = "plugins")]`
 - [x] T047 Add plugin system entry to AGENTS.md lessons learned section
@@ -254,7 +254,7 @@ Task: "T015 [US1] Implement event observer integration"
 1. Complete Phase 1: Setup (feature gate + module scaffold)
 2. Complete Phase 2: Foundational (trait + registry + NamespacedTool)
 3. Complete Phase 3: User Story 1 (single plugin registration works end-to-end)
-4. **STOP and VALIDATE**: `cargo test -p swink-agent --features plugins`
+4. **STOP and VALIDATE**: `cargo test -p swink-agent --features plugins,testkit --test plugin_integration --test plugin_registry`
 5. A consumer can now register one plugin and see its contributions active
 
 ### Incremental Delivery

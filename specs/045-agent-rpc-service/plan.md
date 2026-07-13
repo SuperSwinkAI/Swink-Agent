@@ -74,8 +74,10 @@ rpc/
 │   └── bin/
 │       └── swink_agentd.rs # swink-agentd daemon binary
 └── tests/
-    ├── peer.rs             # JSON-RPC peer unit tests
-    └── end_to_end.rs       # Full server/client integration tests
+    ├── peer.rs             # JSON-RPC peer unit tests (in-memory duplex pairs)
+    └── end_to_end.rs       # Real UnixListener tests: bind + 0600 perms + client
+                            # handshake/prompt round trip, socket cleanup on
+                            # shutdown, and rejecting a second bind while active
 ```
 
 **Structure Decision**: Single library crate with a binary target. The `jsonrpc/` submodule isolates the transport-agnostic peer from the agent-specific server/client. Feature gates (`client`, `server`, `cli`) control what compiles.

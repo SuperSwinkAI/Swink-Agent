@@ -190,9 +190,16 @@ impl OptimizationTarget {
 }
 
 /// Per-cycle cost accumulator. Shared via `Arc<CycleBudget>` across all phases.
+#[derive(Debug)]
 pub struct CycleBudget {
     max_cost: Cost,
     spent: Mutex<Cost>,
+    /// Count of LLM-guided mutation (judge) calls made against this budget
+    /// (FR-012 / SC-005). Tracked independently of `spent` because current
+    /// `JudgeClient` implementations don't yet populate `JudgeVerdict::cost`
+    /// (see `eval::judge::JudgeVerdict`), so invocation count is the only
+    /// cost signal available for those calls today.
+    judge_invocations: std::sync::atomic::AtomicUsize,
 }
 
 impl CycleBudget {
@@ -200,12 +207,25 @@ impl CycleBudget {
         Self {
             max_cost,
             spent: Mutex::new(Cost::default()),
+            judge_invocations: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
     pub fn record(&self, cost: Cost) {
         let mut spent = self.spent.lock().unwrap();
         *spent += cost;
+    }
+
+    /// Record that one LLM-guided mutation call was dispatched (FR-012).
+    pub fn record_judge_invocation(&self) {
+        self.judge_invocations
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Number of LLM-guided mutation calls recorded so far this cycle.
+    pub fn judge_invocations(&self) -> usize {
+        self.judge_invocations
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn remaining(&self) -> Cost {

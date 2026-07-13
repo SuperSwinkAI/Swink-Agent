@@ -91,7 +91,7 @@ A library consumer receives a transfer signal from the agent loop and must decid
 ### Edge Cases
 
 - What happens when the LLM calls `transfer_to_agent` alongside other tool calls in the same turn? The transfer tool's result carries the transfer signal. The agent loop processes all tool results, detects the transfer signal among them, and terminates the turn with the transfer stop reason. Other tool results from the same turn are included in the conversation history that transfers to the target agent.
-- What happens when the LLM calls `transfer_to_agent` multiple times in one turn? Only the first transfer signal is honored. Subsequent transfer tool calls in the same turn return an error result ("transfer already pending").
+- What happens when the LLM calls `transfer_to_agent` multiple times in one turn? Only the first transfer signal (by original tool-call order) is honored. The tool has no shared "pending" state, so every call still returns its own success result; the loop's post-execution scan picks the first signal and logs the rest as warnings rather than erroring them (see research.md R6).
 - What happens when `allowed_targets` is an empty set? No transfers are possible — every transfer attempt returns an error. This is a valid (if unusual) configuration that effectively disables the tool.
 - What happens when an agent transfers to itself? The transfer chain detects this as a circular transfer (the current agent is always the first entry in the chain) and rejects it.
 - What happens when the agent loop is cancelled while a transfer is in progress? The cancellation takes precedence. The loop terminates with an Aborted stop reason, not a Transfer.
@@ -109,7 +109,7 @@ A library consumer receives a transfer signal from the agent loop and must decid
 - **FR-007**: The agent loop MUST surface the transfer signal via the stop reason mechanism so the caller receives it as part of the normal result — no new return types.
 - **FR-008**: The tool result type MUST support an optional transfer signal field. When this field is present on any tool result, the agent loop MUST terminate the current turn and return the transfer signal to the caller via the stop reason. The loop itself MUST NOT execute the transfer.
 - **FR-009**: If the LLM calls the transfer tool alongside other tools in the same turn, all tool results MUST be processed. The transfer signal terminates the turn after processing.
-- **FR-010**: If the LLM calls the transfer tool multiple times in one turn, only the first transfer MUST be honored. Subsequent calls MUST return an error result.
+- **FR-010**: If the LLM calls the transfer tool multiple times in one turn, only the first transfer (by original tool-call order) MUST be honored. The transfer tool is stateless, so every call still completes with its own success result; the loop scans all results after concurrent execution and honors only the first transfer signal, logging the rest as warnings (see research.md R6). Subsequent calls do not receive an error result.
 - **FR-011**: System MUST provide a `TransferChain` that tracks an ordered sequence of agent names and a configurable maximum depth (default: 5).
 - **FR-012**: `TransferChain` MUST reject transfers that would create a circular reference — if the target agent name already appears anywhere in the chain.
 - **FR-013**: `TransferChain` MUST reject transfers that would exceed the configured maximum depth.

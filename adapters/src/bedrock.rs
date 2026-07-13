@@ -263,6 +263,7 @@ fn cancelled_event(message: &'static str) -> AssistantMessageEvent {
         error_message: message.to_string(),
         usage: None,
         error_kind: None,
+        retry_after: None,
     }
 }
 
@@ -314,7 +315,7 @@ impl BedrockStreamFn {
             access_key_id: access_key_id.into(),
             secret_access_key: secret_access_key.into(),
             session_token,
-            client: Client::new(),
+            client: crate::base::adapter_http_client(),
         }
     }
 
@@ -332,7 +333,7 @@ impl BedrockStreamFn {
             access_key_id: access_key_id.into(),
             secret_access_key: secret_access_key.into(),
             session_token,
-            client: Client::new(),
+            client: crate::base::adapter_http_client(),
         }
     }
 }
@@ -410,6 +411,14 @@ impl BedrockStreamFn {
             )
             .await?;
             warn!(status = code, "Bedrock HTTP error");
+            // Bedrock reports context overflow as HTTP 400 ValidationException
+            // with a documented message (e.g. "Input is too long for requested
+            // model.") — classify it structurally before status-based mapping.
+            if code == 400 && crate::classify::is_context_overflow_message(&body) {
+                return Err(AssistantMessageEvent::error_context_overflow(format!(
+                    "Bedrock context window exceeded (HTTP {code}): {body}"
+                )));
+            }
             return Err(crate::classify::error_event_from_status(
                 code, &body, "Bedrock",
             ));
@@ -667,7 +676,10 @@ fn process_smithy_message(
 
 /// Classify a Bedrock exception frame into the correct error category.
 ///
-/// Bedrock exception types map to three buckets:
+/// Bedrock exception types map to four buckets:
+/// - **`ContextWindowExceeded`** (recoverable via compaction):
+///   `validationException` whose message matches a documented
+///   context-overflow wording (e.g. "Input is too long for requested model.")
 /// - **Throttled** (retryable): `throttlingException`, `tooManyRequestsException`
 /// - **Auth** (non-retryable): `accessDeniedException`, `validationException`,
 ///   `resourceNotFoundException`
@@ -677,20 +689,33 @@ fn process_smithy_message(
 /// Unknown exception types fall through to a generic (unclassified) error so they
 /// are not silently treated as retryable.
 fn classify_bedrock_exception(exc_type: &str, payload: &str) -> AssistantMessageEvent {
-    let lower = exc_type.to_lowercase();
+    let exception_name = canonical_bedrock_exception_name(exc_type);
 
-    if lower.contains("throttl") || lower.contains("toomanyrequests") {
+    if exception_name.as_str() == "validationexception"
+        && crate::classify::is_context_overflow_message(payload)
+    {
+        return AssistantMessageEvent::error_context_overflow(format!(
+            "Bedrock context window exceeded ({exc_type}): {payload}"
+        ));
+    }
+
+    if matches!(
+        exception_name.as_str(),
+        "throttlingexception" | "toomanyrequestsexception"
+    ) {
         AssistantMessageEvent::error_throttled(format!("Bedrock throttled: {payload}"))
-    } else if lower.contains("accessdenied")
-        || lower.contains("validation")
-        || lower.contains("resourcenotfound")
-    {
+    } else if matches!(
+        exception_name.as_str(),
+        "accessdeniedexception" | "validationexception" | "resourcenotfoundexception"
+    ) {
         AssistantMessageEvent::error_auth(format!("Bedrock client error ({exc_type}): {payload}"))
-    } else if lower.contains("internalserver")
-        || lower.contains("modelstreamerror")
-        || lower.contains("modeltimeout")
-        || lower.contains("serviceunavailable")
-    {
+    } else if matches!(
+        exception_name.as_str(),
+        "internalserverexception"
+            | "modelstreamerrorexception"
+            | "modeltimeoutexception"
+            | "serviceunavailableexception"
+    ) {
         AssistantMessageEvent::error_network(format!(
             "Bedrock server error ({exc_type}): {payload}"
         ))
@@ -698,6 +723,15 @@ fn classify_bedrock_exception(exc_type: &str, payload: &str) -> AssistantMessage
         // Unknown exception type — do not assume retryable.
         AssistantMessageEvent::error(format!("Bedrock exception ({exc_type}): {payload}"))
     }
+}
+
+fn canonical_bedrock_exception_name(exc_type: &str) -> String {
+    exc_type
+        .trim()
+        .rsplit(['#', '.', '/'])
+        .next()
+        .unwrap_or(exc_type)
+        .to_ascii_lowercase()
 }
 
 fn parse_metadata_frame(
@@ -872,6 +906,15 @@ fn build_request(context: &AgentContext, options: &StreamOptions) -> BedrockRequ
     }
 }
 
+/// Convert harness messages to Bedrock message format.
+///
+/// This function uses a bespoke conversion instead of the shared
+/// [`MessageConverter`](super::convert::MessageConverter) trait because
+/// the Bedrock Converse API requires the system prompt as a separate
+/// top-level field rather than as a message (handled by the caller in
+/// [`build_request`]) and represents tool use/results as typed content
+/// blocks (`toolUse`/`toolResult`) distinct from Anthropic's or OpenAI's
+/// wire formats.
 fn convert_messages(messages: &[AgentMessage]) -> Vec<BedrockMessage> {
     let mut result = Vec::new();
     for message in messages {
@@ -1048,6 +1091,7 @@ const _: () = {
 mod tests {
     use super::*;
     use reqwest::header::{CONTENT_TYPE, HOST};
+    use swink_agent::StreamErrorKind;
 
     #[test]
     fn sigv4_signs_request_with_expected_headers() {
@@ -1241,6 +1285,30 @@ mod tests {
         );
         assert_eq!(map_stop_reason(None).unwrap(), StopReason::Stop);
         assert!(map_stop_reason(Some("guardrail_intervened")).is_err());
+    }
+
+    #[test]
+    fn bedrock_exception_classification_uses_exact_suffix() {
+        let throttled = classify_bedrock_exception(
+            "com.amazonaws.bedrockruntime#ThrottlingException",
+            "slow down",
+        );
+        assert!(matches!(
+            throttled,
+            AssistantMessageEvent::Error {
+                error_kind: Some(StreamErrorKind::Throttled),
+                ..
+            }
+        ));
+
+        let false_positive = classify_bedrock_exception("NotThrottlingException", "plain error");
+        assert!(matches!(
+            false_positive,
+            AssistantMessageEvent::Error {
+                error_kind: None,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -1457,6 +1525,47 @@ mod tests {
         match &events[1] {
             AssistantMessageEvent::Error { error_kind, .. } => {
                 assert_eq!(*error_kind, Some(swink_agent::StreamErrorKind::Auth));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exception_frame_validation_input_too_long_is_context_overflow() {
+        let mut state = BedrockStreamState::new();
+        let msg = make_exception_message(
+            "validationException",
+            br#"{"message":"Input is too long for requested model."}"#,
+        );
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
+        match &events[1] {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert_eq!(
+                    *error_kind,
+                    Some(swink_agent::StreamErrorKind::ContextWindowExceeded)
+                );
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exception_frame_validation_context_limit_is_context_overflow() {
+        let mut state = BedrockStreamState::new();
+        let msg = make_exception_message(
+            "validationException",
+            br#"{"message":"input length and `max_tokens` exceed context limit: 199999 + 4096 > 200000"}"#,
+        );
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 2);
+        match &events[1] {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert_eq!(
+                    *error_kind,
+                    Some(swink_agent::StreamErrorKind::ContextWindowExceeded)
+                );
             }
             other => panic!("expected Error, got {other:?}"),
         }

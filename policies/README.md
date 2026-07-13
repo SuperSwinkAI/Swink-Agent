@@ -15,6 +15,7 @@ Ready-made policy implementations for [`swink-agent`](https://crates.io/crates/s
 - **`sandbox`** — `SandboxPolicy` restricts filesystem tools to a root directory
 - **`loop-detection`** — `LoopDetectionPolicy` spots repeated tool-call patterns
 - **`checkpoint`** — `CheckpointPolicy` persists agent state after each turn
+- **`recommended`** — `RecommendedPolicies` preset bundles the four production guardrails (budget, max-turns, sandbox, deny-list) in one call, plus contract-test helpers
 
 **Application policies:**
 - **`prompt-guard`** — `PromptInjectionGuard` blocks suspicious patterns in user messages and tool results
@@ -52,6 +53,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 See `cargo run -p swink-agent-policies --example with_policies` for a runnable end-to-end demo.
+
+## Recommended Production Guardrails
+
+The library default is anything-goes — no policy slots are populated. Embedders running agents autonomously in production should wire the recommended guardrail set. The `recommended` feature bundles it in one call:
+
+```rust,ignore
+use swink_agent_policies::RecommendedPolicies;
+
+let options = RecommendedPolicies::builder()
+    .max_cost(10.0)                      // default: $10 USD
+    .max_turns(50)                       // default: 50 turns
+    .sandbox_root("/srv/agent-workspace") // default: process cwd
+    .deny_tools(["bash"])                // default: ["bash"]
+    .apply(options);
+```
+
+This wires `BudgetPolicy` + `MaxTurnsPolicy` (pre-turn) and `SandboxPolicy` + `ToolDenyListPolicy` (pre-dispatch), appending to any policies already present.
+
+To catch accidental guardrail removal in downstream code, run the integration-contract helper in your test suite against your real `AgentOptions` construction:
+
+```rust,ignore
+use swink_agent_policies::assert_production_guardrails;
+
+#[test]
+fn production_options_keep_their_guardrails() {
+    let options = build_my_production_options();
+    // Panics unless all four policies are present with non-trivial limits
+    // and "bash" is actually denied.
+    assert_production_guardrails(&options, "bash");
+}
+```
+
+`verify_production_guardrails` is the non-panicking variant, returning every violation as a `Vec<String>`. Both check presence by canonical policy name and probe each policy behaviorally (extreme cost/turn counts, an escape path, the denied tool), so a `BudgetPolicy` with no limits or a sandbox rooted at `/` fails the contract.
 
 ## Architecture
 

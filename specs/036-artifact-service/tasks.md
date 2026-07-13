@@ -210,7 +210,7 @@
 
 **Purpose**: Integration, configuration hookup, and workspace-level validation.
 
-- [x] T076 [P] Agent integration: `ArtifactStore` uses RPITIT (not object-safe), so `Arc<dyn ArtifactStore>` is not possible. Instead, `artifact_tools<S: ArtifactStore>(store: Arc<S>)` provides the integration point — users pass artifact tools via `with_tools()`
+- [x] T076 [P] Agent integration: `ArtifactStore` methods return a hand-written boxed future (`ArtifactFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ArtifactError>> + Send + 'a>>`), not RPITIT, so the trait is object-safe and `Arc<dyn ArtifactStore>` works (used throughout, e.g. `SaveArtifactTool` captures `Arc<dyn ArtifactStore>`). The integration point is `artifact_tools(store: Arc<dyn ArtifactStore>) -> Vec<Arc<dyn AgentTool>>` — users pass artifact tools via `with_tools()`
 - [x] T077 [P] Verify `cargo clippy --workspace -- -D warnings` passes with zero warnings
 - [x] T078 [P] Verify `cargo test --workspace` passes (all crates, all features)
 - [x] T079 [P] Verify `cargo build -p swink-agent --no-default-features` compiles (no artifact deps pulled in)

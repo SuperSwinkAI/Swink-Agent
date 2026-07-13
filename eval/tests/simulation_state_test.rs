@@ -75,6 +75,7 @@ async fn tool_simulator_emits_schema_validation_error_on_bad_response() {
         pass: true,
         reason: Some("{\"status\": 42}".into()),
         label: None,
+        cost: None,
     }]));
     let sim = ToolSimulator::new(
         vec![ToolSchema::new("status_check", schema)],
@@ -100,6 +101,7 @@ async fn tool_simulator_records_valid_invocations_in_bucket() {
         pass: true,
         reason: Some("{\"ok\": true}".into()),
         label: None,
+        cost: None,
     }]));
     let sim = ToolSimulator::new(vec![ToolSchema::new("probe", schema)], judge, "test-model");
     let out = sim

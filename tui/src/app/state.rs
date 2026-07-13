@@ -233,6 +233,8 @@ pub struct App {
     pub operating_mode: OperatingMode,
     /// Whether a plan approval prompt is pending.
     pub pending_plan_approval: bool,
+    /// First message index belonging to the active plan-mode session.
+    pub(crate) plan_session_start: Option<usize>,
     /// Available models for F4 cycling.
     pub(crate) available_models: Vec<swink_agent::ModelSpec>,
     /// Current index into `available_models`.

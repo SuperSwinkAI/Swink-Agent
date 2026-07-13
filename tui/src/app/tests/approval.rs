@@ -113,7 +113,9 @@ async fn query_approval_mode_shows_smart() {
     let label = match app.approval_mode() {
         ApprovalMode::Enabled => "enabled",
         ApprovalMode::Bypassed => "disabled (auto-approve)",
-        ApprovalMode::Smart => "smart (auto-approve trusted tools, prompt for untrusted tools)",
+        ApprovalMode::Smart => {
+            "smart (auto-approve read-only and trusted tools, prompt for writes)"
+        }
         _ => "unknown",
     };
     let mut msg = format!("Tool approval: {label}");
@@ -141,10 +143,10 @@ fn approval_mode_default_is_smart() {
 }
 
 #[tokio::test]
-async fn smart_mode_prompts_for_untrusted_readonly_tool() {
+async fn smart_mode_auto_approves_untrusted_readonly_tool() {
     let mut app = make_app_with_mode(ApprovalMode::Smart);
 
-    let (tx, _rx) = tokio::sync::oneshot::channel();
+    let (tx, rx) = tokio::sync::oneshot::channel();
     let request = ToolApprovalRequest {
         tool_call_id: "call_ro".into(),
         tool_name: "read_file".into(),
@@ -155,10 +157,8 @@ async fn smart_mode_prompts_for_untrusted_readonly_tool() {
 
     app.handle_approval_request(request, tx);
 
-    assert!(
-        app.pending_approval.is_some(),
-        "untrusted tool should trigger pending approval"
-    );
+    assert_eq!(rx.await.unwrap(), ToolApproval::Approved);
+    assert!(app.pending_approval.is_none());
 }
 
 #[tokio::test]

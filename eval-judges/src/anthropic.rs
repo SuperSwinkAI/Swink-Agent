@@ -27,7 +27,8 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent_eval::judge::{JudgeClient, JudgeError, JudgeVerdict, RetryPolicy};
 
-use crate::client::{is_retryable, parse_verdict_text, retry_with_cancel};
+use crate::client::{block_on_judge, is_retryable, parse_verdict_text, retry_with_cancel};
+use crate::util::truncate_http_body;
 
 const DEFAULT_ANTHROPIC_VERSION: &str = "2023-06-01";
 const DEFAULT_MAX_TOKENS: u32 = 1024;
@@ -199,8 +200,8 @@ impl JudgeClient for AnthropicJudgeClient {
 /// Blocking convenience wrapper around [`AnthropicJudgeClient`] for callers
 /// that cannot spin a Tokio runtime themselves.
 ///
-/// Uses the *current* Tokio runtime handle (see [`crate::client::BlockingExt`])
-/// so it must be called from a thread with an active multi-thread runtime.
+/// Safe to call outside Tokio or from a Tokio runtime; the shared helper owns
+/// a runtime when the ambient runtime cannot be blocked directly.
 #[derive(Clone, Debug)]
 pub struct BlockingAnthropicJudgeClient {
     inner: AnthropicJudgeClient,
@@ -213,11 +214,11 @@ impl BlockingAnthropicJudgeClient {
         Self { inner }
     }
 
-    /// Run a single judge call synchronously on the current Tokio runtime.
+    /// Run a single judge call synchronously.
     pub fn judge(&self, prompt: &str) -> Result<JudgeVerdict, JudgeError> {
         let client = self.inner.clone();
         let prompt = prompt.to_string();
-        tokio::runtime::Handle::current().block_on(async move { client.judge(&prompt).await })
+        block_on_judge(async move { client.judge(&prompt).await })
     }
 
     /// Borrow the underlying async client for mixed sync/async call sites.
@@ -263,23 +264,14 @@ fn classify_http_error(status: StatusCode, body: &str) -> JudgeError {
         JudgeError::Transport(format!(
             "anthropic http {}: {}",
             status.as_u16(),
-            truncate(body)
+            truncate_http_body(body)
         ))
     } else {
         JudgeError::Other(format!(
             "anthropic http {}: {}",
             status.as_u16(),
-            truncate(body)
+            truncate_http_body(body)
         ))
-    }
-}
-
-fn truncate(body: &str) -> String {
-    const LIMIT: usize = 512;
-    if body.len() <= LIMIT {
-        body.to_string()
-    } else {
-        format!("{}…", &body[..LIMIT])
     }
 }
 

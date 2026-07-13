@@ -11,10 +11,12 @@ use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use swink_agent::ApiVersion;
-use swink_agent::{AssistantMessageEvent, ModelSpec, StopReason, StreamFn, StreamOptions};
+use swink_agent::{
+    AssistantMessageEvent, ModelSpec, StopReason, StreamErrorKind, StreamFn, StreamOptions,
+};
 use swink_agent_adapters::GeminiStreamFn;
 
-use common::{event_name, find_error_message, sse_response, test_context};
+use common::{event_name, find_error_kind, find_error_message, sse_response, test_context};
 
 fn test_model() -> ModelSpec {
     ModelSpec::new("google", "gemini-3-flash-preview")
@@ -178,6 +180,95 @@ async fn google_cancellation_after_first_chunk_emits_aborted_and_closes_text() {
         "unexpected cancellation message: {}",
         terminal_error.1
     );
+}
+
+#[tokio::test]
+async fn google_cancellation_after_tool_call_flushes_final_arguments() {
+    let body = [
+        r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"call_1","name":"get_weather","args":{"city":"Paris"}}}]}}]}"#,
+        "",
+        r#"data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":7,"totalTokenCount":17}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let model = test_model();
+    let context = test_context();
+    let options = StreamOptions::default();
+    let token = CancellationToken::new();
+    let cancel_token = token.clone();
+    let mut stream = Box::pin(stream_fn.stream(&model, &context, &options, token));
+    let mut events = Vec::new();
+    let mut cancelled = false;
+
+    while let Some(event) = stream.next().await {
+        if matches!(event, AssistantMessageEvent::ToolCallStart { .. }) && !cancelled {
+            cancel_token.cancel();
+            cancelled = true;
+        }
+        events.push(event);
+    }
+
+    assert!(cancelled, "expected to cancel after the tool-call start");
+
+    let types: Vec<_> = events.iter().map(event_name).collect();
+    assert!(
+        !types.contains(&"Done"),
+        "cancellation should not emit Done: {types:?}"
+    );
+
+    let delta_pos = types
+        .iter()
+        .position(|event| *event == "ToolCallDelta")
+        .expect("missing final ToolCallDelta");
+    let end_pos = types
+        .iter()
+        .position(|event| *event == "ToolCallEnd")
+        .expect("missing ToolCallEnd");
+    let error_pos = types
+        .iter()
+        .position(|event| *event == "Error")
+        .expect("missing Error");
+    assert!(
+        delta_pos < end_pos && end_pos < error_pos,
+        "tool arguments must flush before cancellation finalizes the block: {types:?}"
+    );
+
+    let arguments: String = events
+        .iter()
+        .filter_map(|event| match event {
+            AssistantMessageEvent::ToolCallDelta { delta, .. } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(arguments, r#"{"city":"Paris"}"#);
+
+    let terminal_error = events
+        .iter()
+        .find_map(|event| match event {
+            AssistantMessageEvent::Error {
+                stop_reason,
+                error_kind,
+                ..
+            } => Some((*stop_reason, *error_kind)),
+            _ => None,
+        })
+        .expect("missing terminal Error event");
+    assert_eq!(terminal_error.0, StopReason::Aborted);
+    assert_eq!(terminal_error.1, None);
 }
 
 #[tokio::test]
@@ -385,6 +476,67 @@ async fn google_multiple_tool_calls() {
 }
 
 #[tokio::test]
+async fn google_tool_calls_at_same_part_index_in_separate_chunks_remain_distinct() {
+    let body = [
+        r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"c1","name":"get_weather","args":{"city":"Paris"}}}]}}]}"#,
+        "",
+        r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"c2","name":"get_time","args":{"tz":"UTC"}}}]}}]}"#,
+        "",
+        r#"data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":12,"totalTokenCount":22}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let events = collect_events(&stream_fn).await;
+
+    let starts: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            AssistantMessageEvent::ToolCallStart {
+                content_index,
+                id,
+                name,
+            } => Some((*content_index, id.as_str(), name.as_str())),
+            _ => None,
+        })
+        .collect();
+    let deltas: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            AssistantMessageEvent::ToolCallDelta {
+                content_index,
+                delta,
+            } => Some((*content_index, delta.as_str())),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        starts,
+        vec![(0, "c1", "get_weather"), (1, "c2", "get_time")],
+        "separate provider tool calls must not collapse by chunk-local part index"
+    );
+    assert_eq!(
+        deltas,
+        vec![(0, r#"{"city":"Paris"}"#), (1, r#"{"tz":"UTC"}"#)],
+        "final tool-call deltas must stay attached to their original starts"
+    );
+}
+
+#[tokio::test]
 async fn google_on_raw_payload_observes_runtime_sse_lines() {
     let body = [
         r#"data: {"candidates":[{"content":{"parts":[{"text":"hello"}]}}]}"#,
@@ -536,6 +688,51 @@ async fn google_http_401_maps_to_auth() {
     );
 }
 
+#[tokio::test]
+async fn google_http_400_token_count_exceeded_sets_context_overflow_kind() {
+    let error_body = r#"{"error":{"code":400,"message":"The input token count (1194046) exceeds the maximum number of tokens allowed (1048576).","status":"INVALID_ARGUMENT"}}"#;
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(error_body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let events = collect_events(&stream_fn).await;
+
+    assert_eq!(
+        find_error_kind(&events),
+        Some(Some(StreamErrorKind::ContextWindowExceeded)),
+        "expected structured ContextWindowExceeded, got: {events:?}"
+    );
+    let msg = find_error_message(&events).expect("expected error event");
+    assert!(
+        msg.contains("exceeds the maximum number of tokens"),
+        "expected provider message preserved, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn google_http_400_other_invalid_argument_has_no_kind() {
+    let error_body = r#"{"error":{"code":400,"message":"Invalid JSON payload received.","status":"INVALID_ARGUMENT"}}"#;
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(error_body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let events = collect_events(&stream_fn).await;
+
+    assert_eq!(
+        find_error_kind(&events),
+        Some(None),
+        "non-overflow 400 must stay unclassified, got: {events:?}"
+    );
+}
+
 // T031: HTTP 403 → auth
 #[tokio::test]
 async fn google_http_403_maps_to_auth() {
@@ -669,6 +866,106 @@ async fn google_safety_finish_reason_is_terminal_no_done_after_error() {
     assert_eq!(
         terminal_count, 1,
         "expected exactly 1 terminal event, got {terminal_count}: {types:?}"
+    );
+}
+
+#[tokio::test]
+async fn google_recitation_finish_reason_emits_terminal_content_filter_error() {
+    let body = [
+        r#"data: {"candidates":[{"content":{"parts":[{"text":"partial"}]},"finishReason":"RECITATION"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":1,"totalTokenCount":6}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let events = collect_events(&stream_fn).await;
+    let types: Vec<_> = events.iter().map(event_name).collect();
+
+    assert!(
+        !types.contains(&"Done"),
+        "RECITATION must be terminal without Done: {types:?}"
+    );
+
+    let terminal_error = events
+        .iter()
+        .find_map(|event| match event {
+            AssistantMessageEvent::Error {
+                stop_reason,
+                error_message,
+                error_kind,
+                ..
+            } => Some((*stop_reason, error_message.clone(), *error_kind)),
+            _ => None,
+        })
+        .expect("missing terminal Error event");
+    assert_eq!(terminal_error.0, StopReason::Error);
+    assert_eq!(terminal_error.2, Some(StreamErrorKind::ContentFiltered));
+    assert!(
+        terminal_error.1.contains("RECITATION"),
+        "expected finish reason in message: {}",
+        terminal_error.1
+    );
+}
+
+#[tokio::test]
+async fn google_malformed_function_call_finish_reason_emits_terminal_error() {
+    let body = [
+        r#"data: {"candidates":[{"finishReason":"MALFORMED_FUNCTION_CALL"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":1,"totalTokenCount":6}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let events = collect_events(&stream_fn).await;
+    let types: Vec<_> = events.iter().map(event_name).collect();
+
+    assert!(
+        !types.contains(&"Done"),
+        "MALFORMED_FUNCTION_CALL must be terminal without Done: {types:?}"
+    );
+
+    let terminal_error = events
+        .iter()
+        .find_map(|event| match event {
+            AssistantMessageEvent::Error {
+                stop_reason,
+                error_message,
+                error_kind,
+                ..
+            } => Some((*stop_reason, error_message.clone(), *error_kind)),
+            _ => None,
+        })
+        .expect("missing terminal Error event");
+    assert_eq!(terminal_error.0, StopReason::Error);
+    assert_eq!(terminal_error.2, None);
+    assert!(
+        terminal_error.1.contains("MALFORMED_FUNCTION_CALL"),
+        "expected finish reason in message: {}",
+        terminal_error.1
     );
 }
 

@@ -613,12 +613,11 @@ mod tests {
         match PostTurnPolicy::evaluate(&policy, &ctx, &turn) {
             PolicyVerdict::Inject(msgs) => {
                 let msg = &msgs[0];
-                if let AgentMessage::Llm(LlmMessage::User(UserMessage { content, .. })) = msg {
-                    if let Some(ContentBlock::Extension { data, .. }) = content.first() {
-                        let turn_number =
-                            data["turn_number"].as_u64().expect("turn_number required");
-                        assert_eq!(turn_number, 7, "turn_number should match ctx.turn_index");
-                    }
+                if let AgentMessage::Llm(LlmMessage::User(UserMessage { content, .. })) = msg
+                    && let Some(ContentBlock::Extension { data, .. }) = content.first()
+                {
+                    let turn_number = data["turn_number"].as_u64().expect("turn_number required");
+                    assert_eq!(turn_number, 7, "turn_number should match ctx.turn_index");
                 }
             }
             other => panic!("expected Inject, got: {other:?}"),

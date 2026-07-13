@@ -10,10 +10,14 @@ use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use swink_agent::{AssistantMessageEvent, ModelSpec, StopReason, StreamFn, StreamOptions};
+use swink_agent::{
+    AssistantMessageEvent, ModelSpec, StopReason, StreamErrorKind, StreamFn, StreamOptions,
+};
 use swink_agent_adapters::OpenAiStreamFn;
 
-use common::{event_name, find_error_message, sse_response, test_context};
+use common::{
+    event_name, find_error_kind, find_error_message, notify_on_request, sse_response, test_context,
+};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -444,6 +448,57 @@ async fn openai_http_429() {
 }
 
 #[tokio::test]
+async fn openai_http_400_context_length_exceeded_sets_context_overflow_kind() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(
+            r#"{"error":{"message":"This model's maximum context length is 128000 tokens. However, your messages resulted in 131000 tokens. Please reduce the length of the messages.","type":"invalid_request_error","param":"messages","code":"context_length_exceeded"}}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let sf = OpenAiStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    assert!(
+        matches!(events.first(), Some(AssistantMessageEvent::Start)),
+        "pre-stream HTTP failures must start with Start: {events:?}"
+    );
+    assert_eq!(
+        find_error_kind(&events),
+        Some(Some(StreamErrorKind::ContextWindowExceeded)),
+        "expected structured ContextWindowExceeded, got: {events:?}"
+    );
+    let err = find_error_message(&events).expect("expected error event");
+    assert!(
+        err.contains("maximum context length"),
+        "expected provider message preserved, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn openai_http_400_generic_bad_request_has_no_kind() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(
+            r#"{"error":{"message":"Invalid value for 'temperature'","type":"invalid_request_error","param":"temperature","code":null}}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let sf = OpenAiStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    assert_eq!(
+        find_error_kind(&events),
+        Some(None),
+        "generic 400 must stay unclassified, got: {events:?}"
+    );
+}
+
+#[tokio::test]
 async fn openai_http_500() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -492,7 +547,8 @@ async fn openai_cancellation() {
     ]
     .join("\n");
 
-    let slow_response = sse_response(&body).set_delay(std::time::Duration::from_secs(30));
+    let (slow_response, request_seen) =
+        notify_on_request(sse_response(&body).set_delay(std::time::Duration::from_secs(30)));
 
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -508,13 +564,15 @@ async fn openai_cancellation() {
     let token = CancellationToken::new();
 
     let cancel_token = token.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        cancel_token.cancel();
+    let events_handle = tokio::spawn(async move {
+        sf.stream(&model, &context, &options, token)
+            .collect::<Vec<_>>()
+            .await
     });
 
-    let stream = sf.stream(&model, &context, &options, token);
-    let events: Vec<_> = stream.collect().await;
+    request_seen.notified().await;
+    cancel_token.cancel();
+    let events = events_handle.await.expect("stream task should complete");
 
     let has_aborted = events.iter().any(|e| {
         matches!(

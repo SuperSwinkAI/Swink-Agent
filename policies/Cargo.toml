@@ -13,11 +13,12 @@ readme = "README.md"
 [features]
 default = ["all"]
 full = ["all"]
-all = ["budget", "max-turns", "deny-list", "sandbox", "loop-detection", "checkpoint", "prompt-guard", "pii", "content-filter", "audit", "memory-nudge"]
+all = ["budget", "max-turns", "deny-list", "sandbox", "recommended", "loop-detection", "checkpoint", "prompt-guard", "pii", "content-filter", "audit", "memory-nudge"]
 budget = []
 max-turns = []
 deny-list = []
 sandbox = ["serde_json"]
+recommended = ["budget", "max-turns", "deny-list", "sandbox", "serde_json"]
 loop-detection = ["serde_json"]
 checkpoint = ["dep:tokio"]
 prompt-guard = ["regex"]
@@ -27,14 +28,14 @@ audit = ["chrono", "serde", "serde_json", "unicode-truncate"]
 memory-nudge = ["serde_json"]
 
 [dependencies]
-swink-agent = { path = "..", version = "0.9.0", default-features = false }
+swink-agent = { path = "..", version = "0.10.0", default-features = false }
 regex = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true, features = ["rt"] }
 tracing = { workspace = true }
-unicode-truncate = { version = "2", optional = true }
+unicode-truncate = { version = "2.0.1", optional = true }
 
 [dev-dependencies]
 swink-agent = { path = "..", default-features = false, features = ["testkit"] }
@@ -46,7 +47,7 @@ tokio-util = { workspace = true }
 
 [[example]]
 name = "with_policies"
-required-features = ["budget", "max-turns", "deny-list", "loop-detection"]
+required-features = ["budget", "max-turns", "deny-list", "loop-detection", "recommended"]
 
 [lints]
 workspace = true

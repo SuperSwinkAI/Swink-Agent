@@ -144,7 +144,11 @@ impl OllamaStreamFn {
     pub fn new(base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
-            client: Client::new(),
+            // Local inference: model cold-load into VRAM (or a huge-prompt
+            // prefill) can sit silent well past the default 120s idle read
+            // timeout before the first streamed byte — see the regression
+            // caveat on issue #920. Use the generous local client instead.
+            client: crate::base::local_adapter_http_client(),
         }
     }
 }
@@ -410,6 +414,7 @@ fn parse_ndjson_stream(
                         error_message: "operation cancelled".to_string(),
                         usage: None,
                         error_kind: None,
+                        retry_after: None,
                     });
                     done = true;
                     Some((events, (lines, token, state, done, false)))
@@ -603,7 +608,10 @@ fn ndjson_lines(
                         ));
                     }
                     None => {
-                        // Stream ended cleanly — flush remaining buffer
+                        // Stream ended cleanly. A syntactically complete final
+                        // JSON frame is valid without a trailing newline; an
+                        // incomplete one is a transport EOF, not a protocol
+                        // parse error.
                         let trimmed = buf
                             .iter()
                             .position(|byte| !byte.is_ascii_whitespace())
@@ -629,6 +637,14 @@ fn ndjson_lines(
                                     ));
                                 }
                             };
+                            if let Err(err) = serde_json::from_str::<serde_json::Value>(&line) {
+                                errored = true;
+                                buf.clear();
+                                return Some((
+                                    Err(format!("incomplete trailing NDJSON frame: {err}")),
+                                    (stream, buf, errored),
+                                ));
+                            }
                             buf.clear();
                             return Some((Ok(line), (stream, buf, errored)));
                         }
@@ -756,10 +772,30 @@ mod tests {
 
     #[tokio::test]
     async fn ndjson_flush_remaining_buffer_no_trailing_newline() {
-        let bytes_stream = stream::iter(vec![Ok(bytes::Bytes::from("no_newline"))]);
+        let bytes_stream = stream::iter(vec![Ok(bytes::Bytes::from(
+            r#"{"message":{"content":"done"},"done":true}"#,
+        ))]);
         let mut lines = ndjson_lines(bytes_stream);
 
-        assert_eq!(lines.next().await.unwrap().unwrap(), "no_newline");
+        assert_eq!(
+            lines.next().await.unwrap().unwrap(),
+            r#"{"message":{"content":"done"},"done":true}"#
+        );
+        assert!(lines.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn ndjson_incomplete_trailing_frame_is_network_error() {
+        let bytes_stream = stream::iter(vec![Ok(bytes::Bytes::from(
+            r#"{"message":{"content":"partial"}"#,
+        ))]);
+        let mut lines = ndjson_lines(bytes_stream);
+
+        let err = lines.next().await.unwrap().unwrap_err();
+        assert!(
+            err.contains("incomplete trailing NDJSON frame"),
+            "got: {err}"
+        );
         assert!(lines.next().await.is_none());
     }
 

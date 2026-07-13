@@ -11,12 +11,12 @@ categories = ["development-tools", "authentication"]
 readme = "README.md"
 
 [dependencies]
-swink-agent = { path = "..", version = "0.9.0", default-features = false }
+swink-agent = { path = "..", version = "0.10.0", default-features = false }
 reqwest.workspace = true
 chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["sync", "time"] }
 futures.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
@@ -26,4 +26,4 @@ uuid.workspace = true
 wiremock.workspace = true
 pretty_assertions.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
-tracing-subscriber = { version = "0.3", features = ["fmt"] }
+tracing-subscriber = { version = "0.3.23", features = ["fmt"] }

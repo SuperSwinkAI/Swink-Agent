@@ -1,10 +1,12 @@
 use std::sync::OnceLock;
 
+use chrono::NaiveDate;
 use serde::Deserialize;
 
 use crate::ModelSpec;
-use crate::types::{Cost, ModelCapabilities, Usage};
+use crate::types::{Cost, ModelCapabilities, ThinkingLevel, Usage};
 
+/// Whether a provider's models run on a remote API or on local hardware.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderKind {
@@ -12,6 +14,7 @@ pub enum ProviderKind {
     Local,
 }
 
+/// How requests to a provider are authenticated.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthMode {
@@ -20,6 +23,7 @@ pub enum AuthMode {
     AwsSigv4,
 }
 
+/// Provider API version selector used when building request URLs.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApiVersion {
@@ -27,6 +31,7 @@ pub enum ApiVersion {
     V1beta,
 }
 
+/// A capability a preset's model supports, as declared in the catalog TOML.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PresetCapability {
@@ -38,13 +43,40 @@ pub enum PresetCapability {
     StructuredOutput,
 }
 
+/// Release maturity of a preset's model at the provider.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PresetStatus {
     Ga,
     Preview,
+    /// The provider has retired (or announced retirement of) this model.
+    ///
+    /// The preset stays listed so catalog lookups and cost calculation keep
+    /// working for historical data, and `replacement_model_id` points
+    /// consumers at the successor model when one is known.
+    ///
+    /// TOML representation (existing string statuses are unaffected):
+    ///
+    /// ```toml
+    /// [providers.presets.status.deprecated]
+    /// replacement_model_id = "gpt-5.4"
+    /// ```
+    Deprecated {
+        #[serde(default)]
+        replacement_model_id: Option<String>,
+    },
 }
 
+impl PresetStatus {
+    /// Returns `true` for [`PresetStatus::Deprecated`], regardless of whether
+    /// a replacement model is recorded.
+    #[must_use]
+    pub const fn is_deprecated(&self) -> bool {
+        matches!(self, Self::Deprecated { .. })
+    }
+}
+
+/// A single named model preset within a [`ProviderCatalog`], as loaded from the catalog TOML.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct PresetCatalog {
     pub id: String,
@@ -71,6 +103,7 @@ pub struct PresetCatalog {
     pub cost_per_million_cache_write: Option<f64>,
 }
 
+/// A provider entry in the model catalog, holding its auth/connection settings and presets.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ProviderCatalog {
     pub key: String,
@@ -94,8 +127,14 @@ impl ProviderCatalog {
     }
 }
 
+/// The full model catalog: a list of providers, each with its own presets.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ModelCatalog {
+    /// Date (`YYYY-MM-DD`) the compiled-in pricing table was last verified
+    /// against provider published prices. Used by the pricing-staleness
+    /// warning at agent construction; `None` disables the check.
+    #[serde(default)]
+    pub pricing_as_of: Option<String>,
     #[serde(default)]
     pub providers: Vec<ProviderCatalog>,
 }
@@ -155,6 +194,8 @@ impl ModelCatalog {
     }
 }
 
+/// A preset flattened together with its parent provider's fields, for standalone use
+/// once resolved via [`ModelCatalog::preset`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct CatalogPreset {
     pub provider_key: String,
@@ -202,11 +243,128 @@ impl CatalogPreset {
     }
 
     /// Create a [`ModelSpec`] pre-populated with capabilities from the catalog.
+    ///
+    /// Local thinking-capable models default to [`ThinkingLevel::Medium`] so
+    /// thinking is active out of the box (local inference treats any non-`Off`
+    /// level as a binary "on" toggle). Remote presets keep the opt-in
+    /// [`ThinkingLevel::Off`] default because remote thinking consumes billable
+    /// token budget. Callers can still disable thinking explicitly via
+    /// [`ModelSpec::with_thinking_level`] with [`ThinkingLevel::Off`].
     #[must_use]
     pub fn model_spec(&self) -> ModelSpec {
-        ModelSpec::new(&self.provider_key, &self.model_id)
-            .with_capabilities(self.model_capabilities())
+        let capabilities = self.model_capabilities();
+        let mut spec = ModelSpec::new(&self.provider_key, &self.model_id);
+        if self.provider_kind == ProviderKind::Local && capabilities.supports_thinking {
+            spec = spec.with_thinking_level(ThinkingLevel::Medium);
+        }
+        spec.with_capabilities(capabilities)
     }
+
+    /// Returns `true` when the preset's status is [`PresetStatus::Deprecated`].
+    #[must_use]
+    pub fn is_deprecated(&self) -> bool {
+        self.status
+            .as_ref()
+            .is_some_and(PresetStatus::is_deprecated)
+    }
+
+    /// The catalog-recorded replacement for a deprecated preset, if any.
+    ///
+    /// Returns `None` for non-deprecated presets and for deprecated presets
+    /// without a known successor.
+    #[must_use]
+    pub fn replacement_model_id(&self) -> Option<&str> {
+        match self.status.as_ref()? {
+            PresetStatus::Deprecated {
+                replacement_model_id,
+            } => replacement_model_id.as_deref(),
+            _ => None,
+        }
+    }
+}
+
+impl ModelCatalog {
+    /// The parsed `pricing_as_of` date, or `None` if absent or malformed.
+    #[must_use]
+    pub fn pricing_as_of_date(&self) -> Option<NaiveDate> {
+        NaiveDate::parse_from_str(self.pricing_as_of.as_deref()?, "%Y-%m-%d").ok()
+    }
+
+    /// Check whether the catalog's pricing data is stale as of `today`.
+    ///
+    /// Returns `Some(PricingStaleness)` when the pricing table is older than
+    /// `threshold_days`, and `None` when it is fresh or when the catalog
+    /// carries no (parseable) `pricing_as_of` date.
+    #[must_use]
+    pub fn pricing_staleness_at(
+        &self,
+        today: NaiveDate,
+        threshold_days: u32,
+    ) -> Option<PricingStaleness> {
+        let as_of = self.pricing_as_of_date()?;
+        let age_days = (today - as_of).num_days();
+        (age_days > i64::from(threshold_days)).then_some(PricingStaleness {
+            as_of,
+            age_days,
+            threshold_days,
+        })
+    }
+}
+
+/// Default staleness threshold (in days) for the compiled-in pricing table.
+pub const DEFAULT_PRICING_STALENESS_DAYS: u32 = 180;
+
+/// Environment variable that overrides [`DEFAULT_PRICING_STALENESS_DAYS`]
+/// for the warning logged at agent construction. Value is a day count.
+pub const PRICING_STALENESS_ENV_VAR: &str = "SWINK_PRICING_STALENESS_DAYS";
+
+/// Details of a stale compiled-in pricing table.
+///
+/// Produced by [`pricing_staleness`] / [`ModelCatalog::pricing_staleness_at`]
+/// when the catalog's `pricing_as_of` date is older than the threshold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PricingStaleness {
+    /// Date the pricing table was last verified.
+    pub as_of: NaiveDate,
+    /// Age of the pricing table in days, relative to the evaluation date.
+    pub age_days: i64,
+    /// The threshold that was exceeded.
+    pub threshold_days: u32,
+}
+
+/// Check the compiled-in catalog's pricing staleness against today's date.
+///
+/// Returns `Some` when the pricing table is older than `threshold_days`.
+/// See [`DEFAULT_PRICING_STALENESS_DAYS`] for the default threshold used at
+/// agent construction.
+#[must_use]
+pub fn pricing_staleness(threshold_days: u32) -> Option<PricingStaleness> {
+    model_catalog().pricing_staleness_at(chrono::Utc::now().date_naive(), threshold_days)
+}
+
+/// Log a once-per-process warning when the compiled-in pricing table is
+/// older than the configured threshold.
+///
+/// The threshold defaults to [`DEFAULT_PRICING_STALENESS_DAYS`] and can be
+/// overridden via the [`PRICING_STALENESS_ENV_VAR`] environment variable.
+/// Called at agent construction.
+pub(crate) fn warn_if_pricing_stale() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let threshold_days = std::env::var(PRICING_STALENESS_ENV_VAR)
+            .ok()
+            .and_then(|value| value.trim().parse::<u32>().ok())
+            .unwrap_or(DEFAULT_PRICING_STALENESS_DAYS);
+        if let Some(staleness) = pricing_staleness(threshold_days) {
+            tracing::warn!(
+                pricing_as_of = %staleness.as_of,
+                age_days = staleness.age_days,
+                threshold_days = staleness.threshold_days,
+                "compiled-in model pricing table may be stale; costs from \
+                 calculate_cost() may not match current provider prices"
+            );
+        }
+    });
 }
 
 #[must_use]
@@ -225,6 +383,10 @@ pub fn model_catalog() -> &'static ModelCatalog {
 #[must_use]
 pub fn calculate_cost(model_id: &str, usage: &Usage) -> Cost {
     let Some(preset) = model_catalog().find_preset_by_model_id(model_id) else {
+        tracing::debug!(
+            model_id,
+            "model not found in catalog; cost reported as zero"
+        );
         return Cost::default();
     };
 
@@ -390,6 +552,37 @@ mod tests {
     }
 
     #[test]
+    fn local_thinking_preset_model_spec_defaults_to_thinking_on() {
+        let preset = model_catalog().preset("local", "gemma4_e2b").unwrap();
+        let spec = preset.model_spec();
+        assert!(spec.capabilities().supports_thinking);
+        assert_ne!(spec.thinking_level, ThinkingLevel::Off);
+    }
+
+    #[test]
+    fn local_non_thinking_preset_model_spec_stays_off() {
+        let preset = model_catalog().preset("local", "smollm3_3b").unwrap();
+        let spec = preset.model_spec();
+        assert!(!spec.capabilities().supports_thinking);
+        assert_eq!(spec.thinking_level, ThinkingLevel::Off);
+    }
+
+    #[test]
+    fn remote_thinking_preset_model_spec_stays_opt_in() {
+        let preset = model_catalog().preset("anthropic", "sonnet_46").unwrap();
+        let spec = preset.model_spec();
+        assert!(spec.capabilities().supports_thinking);
+        assert_eq!(spec.thinking_level, ThinkingLevel::Off);
+    }
+
+    #[test]
+    fn local_thinking_default_can_be_explicitly_disabled() {
+        let preset = model_catalog().preset("local", "gemma4_e2b").unwrap();
+        let spec = preset.model_spec().with_thinking_level(ThinkingLevel::Off);
+        assert_eq!(spec.thinking_level, ThinkingLevel::Off);
+    }
+
+    #[test]
     fn manual_model_spec_defaults_to_no_capabilities() {
         let spec = crate::ModelSpec::new("custom", "my-model");
         let caps = spec.capabilities();
@@ -501,6 +694,139 @@ mod tests {
             model_catalog()
                 .find_preset_by_model_id("nonexistent")
                 .is_none()
+        );
+    }
+
+    // --- Deprecation status ---
+
+    const DEPRECATED_CATALOG: &str = r#"
+        pricing_as_of = "2026-01-01"
+
+        [[providers]]
+        key = "test"
+        display_name = "Test Provider"
+        kind = "remote"
+
+        [[providers.presets]]
+        id = "old_model"
+        display_name = "Old Model"
+        model_id = "old-model-1"
+        status = { deprecated = { replacement_model_id = "new-model-2" } }
+
+        [[providers.presets]]
+        id = "sunset_model"
+        display_name = "Sunset Model"
+        model_id = "sunset-model-1"
+        status = { deprecated = {} }
+
+        [[providers.presets]]
+        id = "current_model"
+        display_name = "Current Model"
+        model_id = "new-model-2"
+        status = "ga"
+    "#;
+
+    #[test]
+    fn deprecated_catalog_entry_parses_with_replacement_id() {
+        let catalog: ModelCatalog = toml::from_str(DEPRECATED_CATALOG).unwrap();
+        let preset = catalog.preset("test", "old_model").unwrap();
+        assert_eq!(
+            preset.status,
+            Some(PresetStatus::Deprecated {
+                replacement_model_id: Some("new-model-2".to_string()),
+            })
+        );
+        assert!(preset.is_deprecated());
+        assert_eq!(preset.replacement_model_id(), Some("new-model-2"));
+    }
+
+    #[test]
+    fn deprecated_catalog_entry_parses_without_replacement_id() {
+        let catalog: ModelCatalog = toml::from_str(DEPRECATED_CATALOG).unwrap();
+        let preset = catalog.preset("test", "sunset_model").unwrap();
+        assert_eq!(
+            preset.status,
+            Some(PresetStatus::Deprecated {
+                replacement_model_id: None,
+            })
+        );
+        assert!(preset.is_deprecated());
+        assert_eq!(preset.replacement_model_id(), None);
+    }
+
+    #[test]
+    fn string_statuses_remain_backward_compatible() {
+        let catalog: ModelCatalog = toml::from_str(DEPRECATED_CATALOG).unwrap();
+        let preset = catalog.preset("test", "current_model").unwrap();
+        assert_eq!(preset.status, Some(PresetStatus::Ga));
+        assert!(!preset.is_deprecated());
+        assert_eq!(preset.replacement_model_id(), None);
+
+        // The compiled catalog (string statuses only) must still parse and
+        // contain no deprecated entries today.
+        let compiled = model_catalog();
+        for provider in &compiled.providers {
+            for preset in &provider.presets {
+                assert!(
+                    !preset
+                        .status
+                        .as_ref()
+                        .is_some_and(PresetStatus::is_deprecated),
+                    "unexpected deprecated preset {}.{}",
+                    provider.key,
+                    preset.id
+                );
+            }
+        }
+    }
+
+    // --- Pricing staleness ---
+
+    #[test]
+    fn pricing_staleness_triggers_past_threshold() {
+        let catalog: ModelCatalog = toml::from_str(DEPRECATED_CATALOG).unwrap();
+        let today = NaiveDate::from_ymd_opt(2026, 8, 1).unwrap();
+        let staleness = catalog.pricing_staleness_at(today, 180).unwrap();
+        assert_eq!(
+            staleness.as_of,
+            NaiveDate::from_ymd_opt(2026, 1, 1).unwrap()
+        );
+        assert_eq!(staleness.age_days, 212);
+        assert_eq!(staleness.threshold_days, 180);
+    }
+
+    #[test]
+    fn pricing_staleness_not_triggered_before_threshold() {
+        let catalog: ModelCatalog = toml::from_str(DEPRECATED_CATALOG).unwrap();
+        // 31 days old — under a 180-day threshold.
+        let today = NaiveDate::from_ymd_opt(2026, 2, 1).unwrap();
+        assert!(catalog.pricing_staleness_at(today, 180).is_none());
+        // Exactly at the threshold is still fresh (strictly greater triggers).
+        let today = NaiveDate::from_ymd_opt(2026, 6, 30).unwrap();
+        assert!(catalog.pricing_staleness_at(today, 180).is_none());
+        // One day past the threshold triggers.
+        let today = NaiveDate::from_ymd_opt(2026, 7, 1).unwrap();
+        assert!(catalog.pricing_staleness_at(today, 181).is_none());
+        assert!(catalog.pricing_staleness_at(today, 180).is_some());
+    }
+
+    #[test]
+    fn pricing_staleness_none_when_date_absent_or_malformed() {
+        let today = NaiveDate::from_ymd_opt(2030, 1, 1).unwrap();
+        let absent: ModelCatalog = toml::from_str("").unwrap();
+        assert!(absent.pricing_as_of_date().is_none());
+        assert!(absent.pricing_staleness_at(today, 0).is_none());
+
+        let malformed: ModelCatalog = toml::from_str("pricing_as_of = \"soonish\"").unwrap();
+        assert!(malformed.pricing_as_of_date().is_none());
+        assert!(malformed.pricing_staleness_at(today, 0).is_none());
+    }
+
+    #[test]
+    fn compiled_catalog_carries_parseable_pricing_as_of() {
+        assert!(
+            model_catalog().pricing_as_of_date().is_some(),
+            "src/model_catalog.toml must set a valid pricing_as_of date"
         );
     }
 }

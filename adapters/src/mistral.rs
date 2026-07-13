@@ -29,7 +29,7 @@ use swink_agent::{
 };
 
 use crate::convert;
-use crate::oai_transport::{OaiAdapterShell, oai_send_and_parse};
+use crate::oai_transport::{OaiAdapterShell, classify_oai_error_body, oai_send_and_parse};
 use crate::openai_compat::{OaiConverter, OaiMessage, build_oai_tools};
 
 /// Charset for generating Mistral-compatible 9-char tool call IDs.
@@ -97,7 +97,6 @@ impl StreamFn for MistralStreamFn {
 struct MistralIdMap {
     harness_to_mistral: HashMap<String, String>,
     mistral_to_harness: HashMap<String, String>,
-    counter: u32,
 }
 
 impl MistralIdMap {
@@ -105,7 +104,6 @@ impl MistralIdMap {
         Self {
             harness_to_mistral: HashMap::new(),
             mistral_to_harness: HashMap::new(),
-            counter: 0,
         }
     }
 
@@ -114,7 +112,7 @@ impl MistralIdMap {
         if let Some(mid) = self.harness_to_mistral.get(harness_id) {
             return mid.clone();
         }
-        let mid = self.generate_mistral_id();
+        let mid = Self::generate_mistral_id();
         self.harness_to_mistral
             .insert(harness_id.to_string(), mid.clone());
         self.mistral_to_harness
@@ -138,14 +136,13 @@ impl MistralIdMap {
     }
 
     /// Generate a 9-char `[a-zA-Z0-9]` ID using a UUID.
-    fn generate_mistral_id(&mut self) -> String {
+    fn generate_mistral_id() -> String {
         let uuid = uuid::Uuid::new_v4();
         let bytes = uuid.as_bytes();
         let mut id = String::with_capacity(9);
         for &b in &bytes[..9] {
             id.push(MISTRAL_ID_CHARSET[b as usize % MISTRAL_ID_CHARSET.len()] as char);
         }
-        self.counter += 1;
         id
     }
 }
@@ -211,7 +208,7 @@ fn mistral_stream<'a>(
             mistral.shell.provider(),
             cancellation_token,
             options.on_raw_payload.clone(),
-            |_, _| None,
+            |status, body| classify_oai_error_body(status, body, mistral.shell.provider()),
         );
         normalize_response_stream(raw_stream, id_map)
     })

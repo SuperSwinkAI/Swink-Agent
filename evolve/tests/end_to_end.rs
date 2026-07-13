@@ -50,7 +50,7 @@ impl MutationStrategy for PanickingStrategy {
     fn mutate(
         &self,
         _target: &str,
-        _context: &MutationContext,
+        _context: &MutationContext<'_>,
     ) -> Result<Vec<Candidate>, MutationError> {
         panic!("intentional test panic")
     }
@@ -67,7 +67,7 @@ impl MutationStrategy for HelpfulToUsefulStrategy {
     fn mutate(
         &self,
         target: &str,
-        context: &MutationContext,
+        context: &MutationContext<'_>,
     ) -> Result<Vec<Candidate>, MutationError> {
         let mutated = target.replace("helpful", "useful");
         if mutated == target {
@@ -317,5 +317,134 @@ async fn cycle_cost_matches_eval_costs() {
         result.total_cost.total,
         result.baseline.cost.total,
         candidate_cost,
+    );
+}
+
+// ─── US4/US5: real case-priority metadata reaches the acceptance gate ──────
+
+/// Appends " MARKER" to the target — used to drive a case's response
+/// deterministically via `SystemPromptEchoFactory`.
+struct MarkerStrategy;
+
+impl MutationStrategy for MarkerStrategy {
+    fn name(&self) -> &str {
+        "marker"
+    }
+    fn mutate(
+        &self,
+        target: &str,
+        context: &MutationContext<'_>,
+    ) -> Result<Vec<Candidate>, MutationError> {
+        Ok(vec![Candidate::new(
+            context.weak_point.component.clone(),
+            target.to_string(),
+            format!("{target} MARKER"),
+            self.name().to_string(),
+        )])
+    }
+}
+
+/// A case that passes at baseline (no "MARKER" in the echoed prompt) and
+/// regresses to failing once the candidate's "MARKER" suffix is applied.
+fn regressing_case(id: &str, priority: Option<&str>) -> EvalCase {
+    let metadata = match priority {
+        Some(p) => serde_json::json!({ "priority": p }),
+        None => serde_json::Value::Null,
+    };
+    EvalCase {
+        id: id.to_string(),
+        name: id.to_string(),
+        description: None,
+        system_prompt: "You are a helpful assistant.".to_string(),
+        user_messages: vec!["hello".to_string()],
+        expected_response: Some(ResponseCriteria::Custom(Arc::new(|response: &str| Score {
+            value: if response.contains("MARKER") {
+                0.1
+            } else {
+                0.9
+            },
+            threshold: 0.5,
+        }))),
+        expected_trajectory: None,
+        expected_assertion: None,
+        expected_interactions: None,
+        few_shot_examples: vec![],
+        budget: None,
+        evaluators: vec![],
+        metadata,
+        attachments: vec![],
+        session_id: None,
+        expected_environment_state: None,
+        expected_tool_intent: None,
+        semantic_tool_selection: false,
+        state_capture: None,
+    }
+}
+
+/// A case that fails at baseline and passes once "MARKER" is present —
+/// pulls the aggregate score up enough to clear the acceptance threshold
+/// despite `regressing_case`'s P1/P2 regression.
+fn improving_case(id: &str) -> EvalCase {
+    EvalCase {
+        id: id.to_string(),
+        name: id.to_string(),
+        description: None,
+        system_prompt: "You are a helpful assistant.".to_string(),
+        user_messages: vec!["hello".to_string()],
+        expected_response: Some(ResponseCriteria::Custom(Arc::new(|response: &str| Score {
+            value: if response.contains("MARKER") {
+                0.9
+            } else {
+                0.1
+            },
+            threshold: 0.5,
+        }))),
+        expected_trajectory: None,
+        expected_assertion: None,
+        expected_interactions: None,
+        few_shot_examples: vec![],
+        budget: None,
+        evaluators: vec![],
+        metadata: serde_json::Value::Null,
+        attachments: vec![],
+        session_id: None,
+        expected_environment_state: None,
+        expected_tool_intent: None,
+        semantic_tool_selection: false,
+        state_capture: None,
+    }
+}
+
+/// Without wiring real case metadata into the acceptance gate, every case
+/// fails safe to P1 and this regression would be rejected as `P1Regression`
+/// even though `c1` is explicitly tagged P2 in the eval set. This proves
+/// `EvolutionRunner` now threads `EvalCase.metadata` through to the gate
+/// (FR-015).
+#[tokio::test]
+async fn p2_tagged_case_regression_does_not_block_acceptance() {
+    let tmp = tempfile::tempdir().unwrap();
+    let target = OptimizationTarget::new("You are a helpful assistant.", vec![]);
+    let set = make_eval_set(vec![
+        regressing_case("c1", Some("P2")),
+        improving_case("c2"),
+        improving_case("c3"),
+    ]);
+    let config = OptimizationConfig::new(set, tmp.path())
+        .with_strategies(vec![Box::new(MarkerStrategy)])
+        .with_acceptance_threshold(0.01);
+    let mut runner = EvolutionRunner::new(target, config, Arc::new(SystemPromptEchoFactory), None);
+
+    let result = runner.run_cycle().await.unwrap();
+
+    assert_eq!(result.status, CycleStatus::Complete);
+    assert!(
+        !result.acceptance.applied.is_empty(),
+        "P2-tagged regression on c1 must not block acceptance; rejected: {:?}",
+        result
+            .acceptance
+            .rejected
+            .iter()
+            .map(|(_, _, v)| v)
+            .collect::<Vec<_>>()
     );
 }

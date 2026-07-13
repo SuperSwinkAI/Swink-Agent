@@ -79,7 +79,9 @@ A developer wants to persist their conversation so they can resume it later. The
 3. **Given** a restored session, **When** the developer sends a new message, **Then** the agent continues the conversation with full history context.
 4. **Given** no saved sessions exist, **When** the developer attempts to load, **Then** a message indicates no sessions are available.
 
-**Custom message preservation**: When a saved session is loaded with `launch_with_session()`, the TUI supplies the agent's `CustomMessageRegistry` to the session store's `load()` method, ensuring `AgentMessage::Custom` messages survive the save/load/resume round trip.
+**Custom message preservation**: When a saved session is loaded with `launch_with_session()`, the TUI supplies the agent's `CustomMessageRegistry` to the session store's `load_full()` method, ensuring `AgentMessage::Custom` messages survive the save/load/resume round trip.
+
+[Corrected 2026-07-06: the app's actual save/load path is `SessionStore::save_full`/`load_full`, not the simpler `save`/`load` pair. `save_full` additionally persists a crash-recovery state snapshot (a `serde_json::Value` capturing in-progress agent state); `load_full` returns that snapshot and the TUI restores it via `SessionState::restore_from_snapshot`, falling back to `SessionState::new()` when no snapshot was saved.]
 
 ---
 
@@ -116,15 +118,15 @@ A developer wants to share or save parts of the conversation by copying them to 
 
 ### Functional Requirements
 
-- **FR-001**: The TUI MUST recognize hash commands (prefixed with `#`) and execute them: #help, #clear, #info, #copy, #copy all, #copy code, #approve on/off/smart.
+- **FR-001**: The TUI MUST recognize hash commands (prefixed with `#`) and execute them: #help, #clear, #info, #copy, #copy all, #copy code, #approve on/off/smart, #approve untrust (revoke all session tool trust) and #approve untrust <tool> (revoke trust for one tool), #save, #load <id>, #sessions, #key <provider> <key>, #keys.
 - **FR-002**: The TUI MUST recognize slash commands (prefixed with `/`) and execute them: /quit, /thinking, /system, /reset, /plan, /editor. Model switching is via F4 key cycling.
 - **FR-003**: Unrecognized hash or slash commands MUST produce an error message listing valid commands.
 - **FR-004**: The external editor MUST be resolved in order: config override, EDITOR environment variable, VISUAL environment variable, `vi` fallback.
 - **FR-005**: The TUI MUST suspend its display while the external editor is open and resume when the editor closes.
 - **FR-006**: An empty file saved from the external editor MUST cancel the action (no message submitted).
 - **FR-007**: Temporary files created for the external editor MUST be cleaned up after use.
-- **FR-008**: The TUI MUST support saving conversation sessions (messages and metadata) to persistent storage via the session store.
-- **FR-009**: The TUI MUST support loading previously saved sessions and restoring conversation history.
+- **FR-008**: The TUI MUST support saving conversation sessions (messages and metadata) to persistent storage via the session store's `save_full` API, which also persists a crash-recovery state snapshot of in-progress agent state alongside the message transcript.
+- **FR-009**: The TUI MUST support loading previously saved sessions and restoring conversation history via the session store's `load_full` API, restoring the crash-recovery snapshot (when present) via `SessionState::restore_from_snapshot`.
 - **FR-010**: The #copy command MUST copy the last assistant message to the system clipboard.
 - **FR-011**: The #copy all command MUST copy the entire conversation to the system clipboard.
 - **FR-012**: The #copy code command MUST extract and copy only code blocks from the last assistant response.

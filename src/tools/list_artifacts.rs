@@ -11,15 +11,15 @@ use crate::artifact::ArtifactStore;
 use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validated_schema_for};
 
 /// Built-in tool that lists all artifacts in the current session.
-pub struct ListArtifactsTool<S: ArtifactStore + 'static> {
-    store: Arc<S>,
+pub struct ListArtifactsTool {
+    store: Arc<dyn ArtifactStore>,
     schema: Value,
 }
 
-impl<S: ArtifactStore + 'static> ListArtifactsTool<S> {
+impl ListArtifactsTool {
     /// Create a new `ListArtifactsTool` backed by the given store.
     #[must_use]
-    pub fn new(store: Arc<S>) -> Self {
+    pub fn new(store: Arc<dyn ArtifactStore>) -> Self {
         Self {
             store,
             schema: validated_schema_for::<Params>(),
@@ -31,8 +31,7 @@ impl<S: ArtifactStore + 'static> ListArtifactsTool<S> {
 #[schemars(deny_unknown_fields)]
 struct Params {}
 
-#[allow(clippy::unnecessary_literal_bound)]
-impl<S: ArtifactStore + 'static> AgentTool for ListArtifactsTool<S> {
+impl AgentTool for ListArtifactsTool {
     fn name(&self) -> &str {
         "list_artifacts"
     }

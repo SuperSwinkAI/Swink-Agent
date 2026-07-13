@@ -53,7 +53,7 @@ impl PluginRegistry {
     pub fn register(&mut self, plugin: Arc<dyn Plugin>);
     pub fn unregister(&mut self, name: &str);
     pub fn get(&self, name: &str) -> Option<&Arc<dyn Plugin>>;
-    pub fn list(&self) -> &[Arc<dyn Plugin>];  // sorted by priority (desc)
+    pub fn list(&self) -> Vec<&Arc<dyn Plugin>>;  // sorted by priority (desc)
     pub fn is_empty(&self) -> bool;
     pub fn len(&self) -> usize;
 }

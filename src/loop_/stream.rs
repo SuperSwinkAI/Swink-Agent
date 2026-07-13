@@ -147,7 +147,7 @@ fn is_fallback_eligible_error(msg: &AssistantMessage) -> bool {
 }
 
 /// Run the retry loop for a single model/stream-fn pair.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn stream_with_retry_single(
     model: &ModelSpec,
     stream_fn: &Arc<dyn StreamFn>,
@@ -172,6 +172,7 @@ async fn stream_with_retry_single(
     let _llm_guard = llm_span.enter();
 
     let mut attempt: u32 = 0;
+    let mut attempt_llm_messages = llm_messages.to_vec();
 
     loop {
         attempt += 1;
@@ -185,7 +186,7 @@ async fn stream_with_retry_single(
         // Build the context with LLM messages for this call
         let call_context = AgentContext {
             system_prompt: system_prompt.to_string(),
-            messages: llm_messages
+            messages: attempt_llm_messages
                 .iter()
                 .map(|m| AgentMessage::Llm(m.clone()))
                 .collect(),
@@ -231,18 +232,29 @@ async fn stream_with_retry_single(
         };
 
         // Handle error events
-        if let Some((stop_reason, error_message, _usage, error_kind)) = had_error {
+        if let Some((stop_reason, error_message, _usage, error_kind, retry_after)) = had_error {
             let retry_result = handle_stream_error(
                 model,
                 config,
                 stop_reason,
                 &error_message,
                 error_kind,
+                retry_after,
                 attempt,
             );
             match retry_result {
                 StreamErrorAction::ContextOverflow => return StreamResult::ContextOverflow,
-                StreamErrorAction::Retry(delay) => {
+                StreamErrorAction::Retry {
+                    delay,
+                    cache_miss_prior_prefix_len,
+                } => {
+                    if let Some(prior_prefix_len) = cache_miss_prior_prefix_len {
+                        prepare_cache_miss_retry(
+                            config,
+                            &mut attempt_llm_messages,
+                            prior_prefix_len,
+                        );
+                    }
                     tokio::time::sleep(delay).await;
                     continue;
                 }
@@ -283,24 +295,32 @@ async fn stream_with_retry_single(
 #[allow(clippy::large_enum_variant)]
 enum StreamErrorAction {
     ContextOverflow,
-    Retry(std::time::Duration),
+    Retry {
+        delay: std::time::Duration,
+        cache_miss_prior_prefix_len: Option<usize>,
+    },
     FatalError {
         result: StreamResult,
         message: AssistantMessage,
     },
 }
 
+/// Error captured from a stream attempt: stop reason, message, usage,
+/// error kind, and the provider's retry-after hint (if any).
+type StreamErrorInfo = (
+    StopReason,
+    String,
+    Option<crate::types::Usage>,
+    Option<crate::stream::StreamErrorKind>,
+    Option<std::time::Duration>,
+);
+
 /// Result of streaming a single attempt from the provider.
 enum StreamAttemptResult {
     /// Events were collected successfully (may include an error event).
     Collected {
         events: Vec<AssistantMessageEvent>,
-        error: Option<(
-            StopReason,
-            String,
-            Option<crate::types::Usage>,
-            Option<crate::stream::StreamErrorKind>,
-        )>,
+        error: Option<StreamErrorInfo>,
     },
     /// Early exit due to cancellation or channel close.
     EarlyExit {
@@ -330,14 +350,24 @@ async fn stream_single_attempt(
     );
 
     let mut events: Vec<AssistantMessageEvent> = Vec::new();
-    let mut had_error: Option<(
-        StopReason,
-        String,
-        Option<crate::types::Usage>,
-        Option<crate::stream::StreamErrorKind>,
-    )> = None;
+    let mut had_error: Option<StreamErrorInfo> = None;
 
-    while let Some(event) = stream.next().await {
+    loop {
+        let event = tokio::select! {
+            () = cancellation_token.cancelled() => {
+                return StreamAttemptResult::EarlyExit {
+                    result: StreamResult::Aborted,
+                    events,
+                };
+            }
+            next = stream.next() => {
+                let Some(event) = next else {
+                    break;
+                };
+                event
+            }
+        };
+
         if cancellation_token.is_cancelled() {
             return StreamAttemptResult::EarlyExit {
                 result: StreamResult::Aborted,
@@ -350,6 +380,7 @@ async fn stream_single_attempt(
             error_message,
             usage,
             error_kind,
+            retry_after,
         } = &event
         {
             had_error = Some((
@@ -357,6 +388,7 @@ async fn stream_single_attempt(
                 error_message.clone(),
                 usage.clone(),
                 *error_kind,
+                *retry_after,
             ));
         }
 
@@ -422,12 +454,14 @@ async fn emit_delta_event(
 }
 
 /// Handle a stream error: classify it, check retryability, return action.
+#[allow(clippy::too_many_arguments)]
 fn handle_stream_error(
     model: &ModelSpec,
     config: &Arc<AgentLoopConfig>,
     stop_reason: StopReason,
     error_message: &str,
     error_kind: Option<crate::stream::StreamErrorKind>,
+    retry_after: Option<std::time::Duration>,
     attempt: u32,
 ) -> StreamErrorAction {
     let harness_error = classify_stream_error(error_message, stop_reason, error_kind);
@@ -442,13 +476,15 @@ fn handle_stream_error(
     let mut retry_strategy_consulted = false;
     if matches!(harness_error, AgentError::CacheMiss) {
         warn!("provider cache miss, resetting cache state for retry");
-        {
+        let prior_prefix_len = {
             let mut cache_state = config
                 .cache_state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let prior_prefix_len = cache_state.cached_prefix_len;
             cache_state.reset();
-        }
+            prior_prefix_len
+        };
         retry_strategy_consulted = true;
         if config.retry_strategy.should_retry(&harness_error, attempt) {
             let delay = config.retry_strategy.delay(attempt);
@@ -458,7 +494,10 @@ fn handle_stream_error(
                 error = %harness_error,
                 "retrying after cache miss"
             );
-            return StreamErrorAction::Retry(delay);
+            return StreamErrorAction::Retry {
+                delay,
+                cache_miss_prior_prefix_len: Some(prior_prefix_len),
+            };
         }
     }
 
@@ -472,11 +511,22 @@ fn handle_stream_error(
         };
     }
 
-    // Check if retryable — RetryStrategy is the sole decision point
+    // Check if retryable — RetryStrategy is the sole decision point.
+    // A provider-supplied Retry-After hint takes precedence over the
+    // strategy's computed backoff (the provider knows its own limits).
     if !retry_strategy_consulted && config.retry_strategy.should_retry(&harness_error, attempt) {
-        let delay = config.retry_strategy.delay(attempt);
-        warn!(attempt, ?delay, error = %harness_error, "retrying after transient error");
-        return StreamErrorAction::Retry(delay);
+        let delay = retry_after.unwrap_or_else(|| config.retry_strategy.delay(attempt));
+        warn!(
+            attempt,
+            ?delay,
+            provider_hint = retry_after.is_some(),
+            error = %harness_error,
+            "retrying after transient error"
+        );
+        return StreamErrorAction::Retry {
+            delay,
+            cache_miss_prior_prefix_len: None,
+        };
     }
 
     // Non-retryable error
@@ -485,6 +535,58 @@ fn handle_stream_error(
     StreamErrorAction::FatalError {
         result: StreamResult::Message(error_msg.clone()),
         message: error_msg,
+    }
+}
+
+fn prepare_cache_miss_retry(
+    config: &Arc<AgentLoopConfig>,
+    messages: &mut [LlmMessage],
+    prior_prefix_len: usize,
+) {
+    let Some(cache_config) = config.cache_config.as_ref() else {
+        return;
+    };
+
+    let write_hint = crate::context_cache::CacheHint::Write {
+        ttl: cache_config.ttl,
+    };
+    let mut saw_cached_message = false;
+    for message in messages {
+        if llm_cache_hint(message).is_some() {
+            saw_cached_message = true;
+            set_llm_cache_hint(message, write_hint.clone());
+        }
+    }
+
+    if !saw_cached_message && prior_prefix_len == 0 {
+        return;
+    }
+
+    let mut cache_state = config
+        .cache_state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let hint = cache_state.advance_turn(cache_config);
+    debug_assert!(matches!(
+        hint,
+        crate::context_cache::CacheHint::Write { .. }
+    ));
+    cache_state.cached_prefix_len = prior_prefix_len;
+}
+
+fn llm_cache_hint(message: &LlmMessage) -> Option<&crate::context_cache::CacheHint> {
+    match message {
+        LlmMessage::User(message) => message.cache_hint.as_ref(),
+        LlmMessage::Assistant(message) => message.cache_hint.as_ref(),
+        LlmMessage::ToolResult(message) => message.cache_hint.as_ref(),
+    }
+}
+
+fn set_llm_cache_hint(message: &mut LlmMessage, hint: crate::context_cache::CacheHint) {
+    match message {
+        LlmMessage::User(message) => message.cache_hint = Some(hint),
+        LlmMessage::Assistant(message) => message.cache_hint = Some(hint),
+        LlmMessage::ToolResult(message) => message.cache_hint = Some(hint),
     }
 }
 

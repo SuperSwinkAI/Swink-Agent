@@ -77,7 +77,7 @@ A developer encounters various error conditions (invalid key, rate limiting, ser
 - What happens when an alternative provider returns chunks in a different order — adapter iterates choices and processes whatever fields are present; order-tolerant.
 - How does the adapter handle a `[DONE]` sentinel that arrives mid-content — stream end without `[DONE]` is handled gracefully; open blocks are finalized if a stop_reason was set.
 - What happens when a provider returns an empty choices array — empty iteration does nothing; no crash or error.
-- How are tool calls handled when the provider omits the tool call ID — a UUID is auto-generated (`tc_{uuid}`).
+- How are tool calls handled when the provider omits the tool call ID — a fallback ID is generated from the provider name and tool call index (`{provider}-tool-{index}`).
 - What happens when the provider returns an unrecognized finish_reason — defaults to `StopReason::Stop` via wildcard match.
 - **Tool-call start timing**: The adapter buffers tool call data until both a `content_index` and a tool name are known before emitting `ToolCallStart`. A `ToolCallStart` event is never emitted with an empty or unknown tool name.
 - **`content_filter` finish reason is terminal**: When the provider returns `finish_reason: "content_filter"`, the adapter treats this as a terminal error condition and emits `AssistantMessageEvent::error_content_filtered()`. It does not fall through to the normal `StopReason::Stop` mapping.
@@ -117,7 +117,7 @@ A developer encounters various error conditions (invalid key, rate limiting, ser
 - Q: Chunks in different order from alternative providers? → A: Order-tolerant; processes whatever fields present.
 - Q: `[DONE]` mid-content or missing? → A: Gracefully finalizes blocks if stop_reason was set.
 - Q: Empty choices array? → A: No-op; no crash.
-- Q: Missing tool call ID? → A: Auto-generates UUID (`tc_{uuid}`).
+- Q: Missing tool call ID? → A: Auto-generates a fallback ID from the provider name and tool call index (`{provider}-tool-{index}`).
 - Q: Unrecognized finish_reason? → A: Defaults to `StopReason::Stop`.
 
 ## Assumptions

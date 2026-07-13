@@ -13,16 +13,7 @@ use swink_agent::{
     PreTurnPolicy, TurnPolicyContext,
 };
 
-/// A policy that detects prompt injection attempts in user messages and tool results.
-///
-/// Ships with ~10 default patterns targeting common injection phrases. Custom
-/// patterns can be added via [`with_pattern`](Self::with_pattern). Each pattern
-/// is compiled as a case-insensitive regex.
-///
-/// # Slots
-///
-/// - **`PreTurn`**: scans new user messages for direct injection.
-/// - **`PostTurn`**: scans tool results for indirect injection.
+/// A single named, pre-compiled regex pattern used internally by [`PromptInjectionGuard`].
 struct NamedPattern {
     name: String,
     regex: Regex,
@@ -37,6 +28,16 @@ impl NamedPattern {
     }
 }
 
+/// A policy that detects prompt injection attempts in user messages and tool results.
+///
+/// Ships with ~10 default patterns targeting common injection phrases. Custom
+/// patterns can be added via [`with_pattern`](Self::with_pattern). Each pattern
+/// is compiled as a case-insensitive regex.
+///
+/// # Slots
+///
+/// - **`PreTurn`**: scans new user messages for direct injection.
+/// - **`PostTurn`**: scans tool results for indirect injection.
 pub struct PromptInjectionGuard {
     patterns: Vec<NamedPattern>,
 }

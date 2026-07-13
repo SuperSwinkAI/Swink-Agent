@@ -14,9 +14,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use swink_agent::{
     AssistantMessageEvent, ModelSpec, StopReason, StreamErrorKind, StreamFn, StreamOptions,
 };
-use swink_agent_adapters::{AzureAuth, AzureStreamFn};
+use swink_agent_adapters::{AzureAuth, AzureCloud, AzureStreamFn};
 
-use common::{event_name, sse_response, test_context};
+use common::{event_name, find_error_kind, notify_on_request, sse_response, test_context};
 
 fn test_model() -> ModelSpec {
     ModelSpec::new("azure", "gpt-5.4")
@@ -465,6 +465,50 @@ fn entra_stream_fn(api_server: &MockServer, token_url: &str) -> AzureStreamFn {
         },
     )
     .with_token_endpoint(token_url.to_string())
+}
+
+#[tokio::test]
+async fn entra_id_cloud_authority_builds_tenant_token_url() {
+    let token_server = MockServer::start().await;
+    let api_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/test-tenant/oauth2/v2.0/token"))
+        .and(body_string_contains("grant_type=client_credentials"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(token_response_body("cloud-token", 3600)),
+        )
+        .expect(1)
+        .mount(&token_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(header("Authorization", "Bearer cloud-token"))
+        .respond_with(sse_response(&simple_sse_body()))
+        .expect(1)
+        .mount(&api_server)
+        .await;
+
+    let stream_fn = AzureStreamFn::new(
+        api_server.uri(),
+        AzureAuth::EntraId {
+            tenant_id: "test-tenant".into(),
+            client_id: "test-client-id".into(),
+            client_secret: "test-client-secret".into(),
+        },
+    )
+    .with_cloud(AzureCloud::CustomAuthorityHost(token_server.uri()));
+
+    let events = collect_events(&stream_fn).await;
+
+    assert!(events.iter().any(|e| matches!(
+        e,
+        AssistantMessageEvent::Done {
+            stop_reason: StopReason::Stop,
+            ..
+        }
+    )));
 }
 
 // ── T032: Entra ID token acquisition — verify POST params ─────────────────
@@ -917,6 +961,128 @@ async fn sse_content_filter_finish_reason() {
     );
 }
 
+#[tokio::test]
+async fn sse_content_filter_results_filtered() {
+    let body = [
+        r#"data: {"choices":[{"delta":{"content":"partial"}}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{},"content_filter_results":{"hate":{"filtered":true,"severity":"medium"}},"finish_reason":null}],"usage":{"prompt_tokens":5,"completion_tokens":1}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let auth = AzureAuth::ApiKey("test-key".into());
+    let stream_fn = AzureStreamFn::new(server.uri(), auth);
+    let events = collect_events(&stream_fn).await;
+
+    let error_event = events
+        .iter()
+        .find(|e| matches!(e, AssistantMessageEvent::Error { .. }));
+    assert!(
+        error_event.is_some(),
+        "expected ContentFiltered error event, got: {events:?}"
+    );
+    match error_event.unwrap() {
+        AssistantMessageEvent::Error {
+            error_kind,
+            error_message,
+            ..
+        } => {
+            assert_eq!(*error_kind, Some(StreamErrorKind::ContentFiltered));
+            assert!(
+                error_message.contains("content filter"),
+                "message should mention content filter: {error_message}"
+            );
+        }
+        _ => unreachable!(),
+    }
+
+    let terminal_count = events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                AssistantMessageEvent::Done { .. } | AssistantMessageEvent::Error { .. }
+            )
+        })
+        .count();
+    assert_eq!(
+        terminal_count, 1,
+        "exactly one terminal event expected, got {terminal_count}"
+    );
+}
+
+// ── HTTP 400 context_length_exceeded → ContextWindowExceeded ───────────────
+
+#[tokio::test]
+async fn http_400_context_length_exceeded_sets_context_overflow_kind() {
+    let error_body = serde_json::json!({
+        "error": {
+            "code": "context_length_exceeded",
+            "type": "invalid_request_error",
+            "param": "messages",
+            "message": "This model's maximum context length is 128000 tokens. However, your messages resulted in 131000 tokens."
+        }
+    })
+    .to_string();
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(&error_body))
+        .mount(&server)
+        .await;
+
+    let auth = AzureAuth::ApiKey("test-key".into());
+    let stream_fn = AzureStreamFn::new(server.uri(), auth);
+    let events = collect_events(&stream_fn).await;
+
+    assert_eq!(
+        find_error_kind(&events),
+        Some(Some(StreamErrorKind::ContextWindowExceeded)),
+        "expected structured ContextWindowExceeded, got: {events:?}"
+    );
+}
+
+// ── HTTP 400 content_filter (Azure OpenAI code) → ContentFiltered ──────────
+
+#[tokio::test]
+async fn http_400_content_filter_code_sets_content_filtered_kind() {
+    let error_body = serde_json::json!({
+        "error": {
+            "code": "content_filter",
+            "message": "The response was filtered due to the prompt triggering Azure content management policy."
+        }
+    })
+    .to_string();
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(&error_body))
+        .mount(&server)
+        .await;
+
+    let auth = AzureAuth::ApiKey("test-key".into());
+    let stream_fn = AzureStreamFn::new(server.uri(), auth);
+    let events = collect_events(&stream_fn).await;
+
+    assert_eq!(
+        find_error_kind(&events),
+        Some(Some(StreamErrorKind::ContentFiltered)),
+        "expected structured ContentFiltered, got: {events:?}"
+    );
+}
+
 // ── T045: HTTP error body with ContentFilterBlocked → ContentFiltered ──────
 
 #[tokio::test]
@@ -1125,13 +1291,15 @@ async fn entra_id_cancellation_during_token_refresh_is_promptly_aborted() {
     let token_server = MockServer::start().await;
     let api_server = MockServer::start().await;
 
+    let (token_response, token_request_seen) = notify_on_request(
+        ResponseTemplate::new(200)
+            .set_body_string(token_response_body("slow-token", 3600))
+            .set_delay(Duration::from_secs(30)),
+    );
+
     Mock::given(method("POST"))
         .and(path("/token"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_string(token_response_body("slow-token", 3600))
-                .set_delay(Duration::from_secs(30)),
-        )
+        .respond_with(token_response)
         .expect(1)
         .mount(&token_server)
         .await;
@@ -1147,24 +1315,19 @@ async fn entra_id_cancellation_during_token_refresh_is_promptly_aborted() {
     let stream_fn = entra_stream_fn(&api_server, &token_url);
     let token = CancellationToken::new();
     let cancel_token = token.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        cancel_token.cancel();
+    let events_handle = tokio::spawn(async move {
+        let model = test_model();
+        let context = test_context();
+        let options = StreamOptions::default();
+        stream_fn
+            .stream(&model, &context, &options, token)
+            .collect::<Vec<_>>()
+            .await
     });
 
-    let events = tokio::time::timeout(
-        Duration::from_secs(2),
-        stream_fn
-            .stream(
-                &test_model(),
-                &test_context(),
-                &StreamOptions::default(),
-                token,
-            )
-            .collect::<Vec<_>>(),
-    )
-    .await
-    .expect("Azure cancellation should not wait for token refresh");
+    token_request_seen.notified().await;
+    cancel_token.cancel();
+    let events = events_handle.await.expect("stream task should complete");
 
     assert!(
         matches!(events.first(), Some(AssistantMessageEvent::Start)),

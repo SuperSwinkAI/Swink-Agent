@@ -13,7 +13,7 @@ mod turn;
 mod types;
 
 pub use config::AgentLoopConfig;
-pub use event::{AgentEvent, TurnEndReason};
+pub use event::{AgentEvent, TransferRejectionReason, TurnEndReason};
 pub use types::*;
 
 use std::error::Error as _;
@@ -265,8 +265,8 @@ async fn run_loop_inner(
                     PolicyVerdict::Inject(msgs) => {
                         state.pending_messages.extend(msgs);
                         config
-                            .pending_message_snapshot
-                            .replace(&state.pending_messages);
+                            .runtime_state
+                            .replace_pending_messages(&state.pending_messages);
                         continue 'outer;
                     }
                 }
@@ -278,8 +278,8 @@ async fn run_loop_inner(
                 if !msgs.is_empty() {
                     state.pending_messages.extend(msgs);
                     config
-                        .pending_message_snapshot
-                        .replace(&state.pending_messages);
+                        .runtime_state
+                        .replace_pending_messages(&state.pending_messages);
                     continue 'outer;
                 }
             }
@@ -375,6 +375,9 @@ pub fn classify_stream_error(
                 AgentError::network(std::io::Error::other(error_message.to_string()))
             }
             StreamErrorKind::ContentFiltered => AgentError::ContentFiltered,
+            StreamErrorKind::ModelRetired => AgentError::ModelRetired {
+                message: error_message.to_string(),
+            },
         };
     }
 
@@ -396,6 +399,15 @@ pub fn classify_stream_error(
     }
     if lower.contains("content filter") || lower.contains("content_filter") {
         return AgentError::ContentFiltered;
+    }
+    if lower.contains("model_not_found")
+        || lower.contains("model_decommissioned")
+        || (lower.contains("model")
+            && (lower.contains("decommissioned") || lower.contains("has been retired")))
+    {
+        return AgentError::ModelRetired {
+            message: error_message.to_string(),
+        };
     }
     if stop_reason == StopReason::Aborted {
         return AgentError::Aborted;
@@ -492,6 +504,40 @@ mod tests {
             Some(StreamErrorKind::ContextWindowExceeded),
         );
         assert!(matches!(err, AgentError::ContextWindowOverflow { .. }));
+    }
+
+    #[test]
+    fn classify_model_retired_by_kind() {
+        let err = classify_stream_error(
+            "OpenAI model retired or unavailable (HTTP 404): model_not_found",
+            StopReason::Error,
+            Some(StreamErrorKind::ModelRetired),
+        );
+        match err {
+            AgentError::ModelRetired { ref message } => {
+                assert!(message.contains("model_not_found"));
+            }
+            ref other => panic!("expected ModelRetired, got {other:?}"),
+        }
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn classify_model_retired_by_string() {
+        for msg in [
+            "error code model_not_found for gpt-4-32k",
+            "the model claude-1 has been decommissioned",
+            "model gemini-1.0 has been retired",
+        ] {
+            let err = classify_stream_error(msg, StopReason::Error, None);
+            assert!(
+                matches!(err, AgentError::ModelRetired { .. }),
+                "expected ModelRetired for \"{msg}\", got {err:?}"
+            );
+        }
+        // Plain mention of "model" must not trigger retirement.
+        let err = classify_stream_error("model produced invalid output", StopReason::Error, None);
+        assert!(!matches!(err, AgentError::ModelRetired { .. }));
     }
 
     #[test]

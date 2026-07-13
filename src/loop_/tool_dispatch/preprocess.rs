@@ -106,7 +106,6 @@ pub(super) async fn preprocess_tool_calls(
     let mut prepared: Vec<PreparedToolCall> = Vec::new();
     let mut injected_messages: Vec<AgentMessage> = Vec::new();
     let mut pre_dispatch_results: Vec<PreDispatchPassResult> = Vec::with_capacity(tool_calls.len());
-    let mut batch_stop_reason: Option<String> = None;
 
     let state_snapshot = {
         let guard = config
@@ -154,9 +153,15 @@ pub(super) async fn preprocess_tool_calls(
                 });
             }
             PreDispatchVerdict::Stop(reason) => {
-                if batch_stop_reason.is_none() {
-                    batch_stop_reason = Some(reason);
-                }
+                return Err(stopped_preprocess_outcome(
+                    tool_calls,
+                    reason,
+                    results,
+                    tool_timings,
+                    injected_messages,
+                    tx,
+                )
+                .await);
             }
             PreDispatchVerdict::Skip(error_text) => {
                 pre_dispatch_results.push(PreDispatchPassResult::Skip { idx, error_text });
@@ -164,19 +169,7 @@ pub(super) async fn preprocess_tool_calls(
         }
     }
 
-    if let Some(reason) = batch_stop_reason {
-        return Err(stopped_preprocess_outcome(
-            tool_calls,
-            reason,
-            results,
-            tool_timings,
-            injected_messages,
-            tx,
-        )
-        .await);
-    }
-
-    // A later `Stop` must abort the entire batch before any approval side
+    // `Stop` aborts the entire batch before any approval side
     // effects are emitted, so approval runs only after the whole batch clears
     // pre-dispatch.
     for pre_dispatch_result in pre_dispatch_results {

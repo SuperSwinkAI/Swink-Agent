@@ -44,7 +44,7 @@ pub(crate) async fn run_parallel(
     factory: &Arc<dyn AgentFactory>,
     event_handler: &Option<Arc<dyn Fn(PipelineEvent) + Send + Sync>>,
     id: PipelineId,
-    _name: String,
+    name: String,
     branches: Vec<String>,
     merge_strategy: MergeStrategy,
     input: String,
@@ -54,11 +54,18 @@ pub(crate) async fn run_parallel(
         return Err(PipelineError::Cancelled);
     }
 
+    if let Some(handler) = event_handler {
+        handler(PipelineEvent::Started {
+            pipeline_id: id.clone(),
+            pipeline_name: name,
+        });
+    }
+
     let pipeline_start = Instant::now();
     let child_token = cancellation_token.child_token();
     let branch_count = branches.len();
     let (tx, mut rx) =
-        tokio::sync::mpsc::channel::<Result<BranchResult, PipelineError>>(branch_count);
+        tokio::sync::mpsc::channel::<Result<BranchResult, PipelineError>>(branch_count.max(1));
 
     // Spawn a task for each branch.
     for (index, branch_name) in branches.iter().enumerate() {
@@ -149,7 +156,7 @@ pub(crate) async fn run_parallel(
     // Drop our copy so the channel closes when all tasks finish.
     drop(tx);
 
-    match merge_strategy {
+    let result = match merge_strategy {
         MergeStrategy::Concat { separator } => {
             merge_concat(&mut rx, branch_count, separator, id, pipeline_start).await
         }
@@ -169,7 +176,17 @@ pub(crate) async fn run_parallel(
             )
             .await
         }
+    };
+
+    if let (Ok(output), Some(handler)) = (&result, event_handler) {
+        handler(PipelineEvent::Completed {
+            pipeline_id: output.pipeline_id.clone(),
+            total_duration: output.total_duration,
+            total_usage: output.total_usage.clone(),
+        });
     }
+
+    result
 }
 
 /// Concat: wait for all branches, fail if any errors.
@@ -664,6 +681,30 @@ mod tests {
         assert_eq!(result.final_response, "only-one");
         assert_eq!(result.steps.len(), 1);
         assert_eq!(result.steps[0].agent_name, "solo");
+    }
+
+    #[tokio::test]
+    async fn concat_with_no_branches_returns_empty_output() {
+        let factory = make_factory(vec![]);
+
+        let result = super::run_parallel(
+            &(factory as Arc<dyn super::super::executor::AgentFactory>),
+            &None,
+            PipelineId::new("test-empty-concat"),
+            "test".to_owned(),
+            vec![],
+            MergeStrategy::Concat {
+                separator: "\n".to_owned(),
+            },
+            "hello".to_owned(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.final_response, "");
+        assert!(result.steps.is_empty());
+        assert_eq!(result.total_usage, Usage::default());
     }
 
     #[tokio::test]

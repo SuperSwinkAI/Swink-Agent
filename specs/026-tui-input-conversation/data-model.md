@@ -31,6 +31,7 @@
 | `move_home()` | `fn(&mut self)` | Move cursor to start of current line |
 | `move_end()` | `fn(&mut self)` | Move cursor to end of current line |
 | `submit()` | `fn(&mut self) -> Option<String>` | Submit text, save to history, clear editor. Returns `None` if whitespace-only |
+| `submit_without_history()` | `fn(&mut self) -> Option<String>` | Submit text and clear editor like `submit()`, but deliberately skips the history push. See "Secret redaction" below. |
 | `history_prev()` | `fn(&mut self)` | Navigate to previous history entry (saves draft on first call) |
 | `history_next()` | `fn(&mut self)` | Navigate to next history entry (restores draft at end) |
 | `is_empty()` | `fn(&self) -> bool` | True if all lines are empty |
@@ -111,6 +112,18 @@ Not a separate struct. History behavior is implemented directly on `InputEditor`
 - `history_index: Option<usize>` — navigation position
 - `saved_input: Option<Vec<String>>` — in-progress draft preserved during navigation
 - `history_prev()` / `history_next()` — navigation methods
+
+**Secret redaction via `submit_without_history()`**: `InputEditor` exposes a second submit
+path, `submit_without_history()` (`tui/src/ui/input.rs`), that returns the trimmed input and
+resets the editor exactly like `submit()` but deliberately does not push the submitted lines
+onto `history`. It exists so that secret-bearing input — for example a `#key openai sk-...`
+credential command — cannot later be recalled via Up-arrow history navigation and
+accidentally re-displayed or re-submitted. This is exercised by
+`submit_without_history_clears_but_skips_history`,
+`submit_without_history_on_empty_returns_none`, and
+`history_navigation_after_submit_without_history_is_empty` in `tui/src/ui/input.rs`'s test
+module, which assert both that history stays empty and that the secret value is never
+recoverable via `history_prev()` afterward (including for multi-line submissions).
 
 ---
 

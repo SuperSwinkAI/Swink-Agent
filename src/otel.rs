@@ -6,11 +6,36 @@
 //! (`agent.run`, `agent.turn`, `agent.llm_call`, `agent.tool`), so enabling
 //! this layer is all that's needed to export them to an `OTel`-compatible backend.
 
+use std::error::Error;
+use std::fmt;
+
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use tracing_subscriber::Layer;
+
+/// Error returned when [`init_otel_layer`] fails to build the OTLP exporter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OtelInitError {
+    message: String,
+}
+
+impl OtelInitError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for OtelInitError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl Error for OtelInitError {}
 
 /// Configuration for the convenience `OTel` initialization helper.
 #[derive(Debug, Clone)]
@@ -39,12 +64,17 @@ impl Default for OtelInitConfig {
 /// use tracing_subscriber::prelude::*;
 /// use swink_agent::otel::{OtelInitConfig, init_otel_layer};
 ///
-/// let otel_layer = init_otel_layer(OtelInitConfig::default());
+/// let otel_layer = init_otel_layer(OtelInitConfig::default()).expect("otel init");
 /// tracing_subscriber::registry()
 ///     .with(otel_layer)
 ///     .init();
 /// ```
-pub fn init_otel_layer<S>(config: OtelInitConfig) -> impl Layer<S>
+///
+/// # Errors
+///
+/// Returns [`OtelInitError`] if the OTLP gRPC exporter fails to build (e.g.
+/// an invalid endpoint configuration).
+pub fn init_otel_layer<S>(config: OtelInitConfig) -> Result<impl Layer<S>, OtelInitError>
 where
     S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
 {
@@ -56,7 +86,7 @@ where
         .with_tonic()
         .with_endpoint(endpoint)
         .build()
-        .expect("failed to build OTLP exporter");
+        .map_err(|err| OtelInitError::new(format!("failed to build OTLP exporter: {err}")))?;
 
     let provider = SdkTracerProvider::builder()
         .with_batch_exporter(exporter)
@@ -69,7 +99,7 @@ where
 
     let tracer = provider.tracer("swink-agent");
 
-    tracing_opentelemetry::layer().with_tracer(tracer)
+    Ok(tracing_opentelemetry::layer().with_tracer(tracer))
 }
 
 // ─── Send + Sync assertion ──────────────────────────────────────────────────

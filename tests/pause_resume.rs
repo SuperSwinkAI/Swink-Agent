@@ -232,7 +232,7 @@ async fn pause_keeps_running_until_stream_dropped() {
         !agent.is_running(),
         "agent should be idle after stream is dropped"
     );
-    let _checkpoint = checkpoint; // keep checkpoint alive for the assertion above
+    drop(checkpoint); // checkpoint no longer needed past this point
     let new_stream = agent.prompt_stream(vec![user_msg("new run")]);
     assert!(
         new_stream.is_ok(),

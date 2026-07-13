@@ -21,7 +21,10 @@ use swink_agent::{
 };
 use swink_agent_adapters::MistralStreamFn;
 
-use common::{event_name, extract_stop_reason, find_error_message, sse_response, test_context};
+use common::{
+    event_name, extract_stop_reason, find_error_kind, find_error_message, notify_on_request,
+    sse_response, test_context,
+};
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -259,7 +262,8 @@ async fn stream_cancellation() {
     ]
     .join("\n");
 
-    let slow_response = sse_response(&body).set_delay(std::time::Duration::from_secs(30));
+    let (slow_response, request_seen) =
+        notify_on_request(sse_response(&body).set_delay(std::time::Duration::from_secs(30)));
 
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -275,12 +279,15 @@ async fn stream_cancellation() {
     let token = CancellationToken::new();
 
     let cancel_token = token.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        cancel_token.cancel();
+    let events_handle = tokio::spawn(async move {
+        sf.stream(&model, &context, &options, token)
+            .collect::<Vec<_>>()
+            .await
     });
 
-    let events: Vec<_> = sf.stream(&model, &context, &options, token).collect().await;
+    request_seen.notified().await;
+    cancel_token.cancel();
+    let events = events_handle.await.expect("stream task should complete");
 
     let has_aborted = events.iter().any(|e| {
         matches!(
@@ -763,7 +770,7 @@ async fn finish_reason_error() {
         message.contains("finish_reason=error"),
         "expected finish_reason in message, got: {message}"
     );
-    assert_eq!(error_kind, Some(StreamErrorKind::Network));
+    assert_eq!(error_kind, None);
 
     let usage = usage.expect("expected usage on terminal error");
     assert_eq!(usage.input, 5);
@@ -819,6 +826,33 @@ async fn http_500_server_error() {
 
     let err = find_error_message(&events).expect("expected error event");
     assert!(err.contains("server error"), "got: {err}");
+}
+
+#[tokio::test]
+async fn http_400_prompt_too_large_sets_context_overflow_kind() {
+    // Mistral uses a top-level error envelope (no nested "error" object) and
+    // reports context overflow only via the documented message wording.
+    let error_body = r#"{"object":"error","message":"Prompt contains 40960 tokens, too large for model with 32768 maximum context length","type":"invalid_request_error","param":null,"code":null}"#;
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(error_body))
+        .mount(&server)
+        .await;
+
+    let sf = MistralStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    assert_eq!(
+        find_error_kind(&events),
+        Some(Some(StreamErrorKind::ContextWindowExceeded)),
+        "expected structured ContextWindowExceeded, got: {events:?}"
+    );
+    let err = find_error_message(&events).expect("expected error event");
+    assert!(
+        err.contains("too large for model"),
+        "expected provider message preserved, got: {err}"
+    );
 }
 
 #[tokio::test]

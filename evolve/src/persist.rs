@@ -35,12 +35,18 @@ impl CyclePersister {
 
     /// Persist a single cycle to `<output_root>/cycle-{N:04}-{timestamp}/`.
     ///
+    /// `mutation_errors` are strategy panics/errors caught during the mutation
+    /// phase (FR-021) — each is written as its own `MutationError`-verdict
+    /// manifest entry so the audit trail survives even when a candidate was
+    /// never produced or evaluated for that strategy.
+    ///
     /// Returns the path of the created cycle directory.
     pub fn persist(
         &self,
         cycle_number: u32,
         acceptance_result: &AcceptanceResult,
         baseline: &BaselineSnapshot,
+        mutation_errors: &[(String, String)],
     ) -> std::io::Result<PathBuf> {
         let now = chrono::Utc::now();
         let ts = now.format("%Y-%m-%dT%H-%M-%SZ").to_string();
@@ -86,6 +92,20 @@ impl CyclePersister {
                 "Rejected",
                 Some(reason),
             ));
+        }
+        for (strategy_name, message) in mutation_errors {
+            entries.push(ManifestEntry {
+                cycle_id: cycle_number,
+                timestamp: now_iso.clone(),
+                target_component: "Unknown".to_string(),
+                original_value: String::new(),
+                mutated_value: String::new(),
+                strategy: strategy_name.clone(),
+                baseline_score: baseline.aggregate_score,
+                candidate_score: baseline.aggregate_score,
+                verdict: "MutationError".to_string(),
+                rejection_reason: Some(message.clone()),
+            });
         }
 
         let manifest: String = entries

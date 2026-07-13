@@ -44,15 +44,19 @@ Shared read-only context available to every policy evaluation.
 
 Implements: `Debug`. Lifetime `'a` borrows from loop state.
 
-### ToolPolicyContext (struct, borrowed)
+### ToolDispatchContext (struct, borrowed)
 
-Per-tool-call context for PreDispatch policies. Provides mutable access to arguments.
+**Corrected 2026-07-06**: this entity was originally documented as `ToolPolicyContext` with three fields (`tool_name`, `tool_call_id`, `arguments`). The type actually shipped in `src/policy.rs` is named `ToolDispatchContext` and carries two additional fields; it does **not** carry any loop-level metrics (turn index, accumulated usage/cost, message count, overflow signal) — those are unavailable at the tool-dispatch call site, so `PreDispatchPolicy::evaluate` is not given a `PolicyContext` at all (see the corrected trait signature below).
+
+Combined context for PreDispatch policies. Contains only the data reliably available during tool dispatch — the per-call fields and read-only session state. Provides mutable access to arguments.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `tool_name` | `&'a str` | Name of the tool being called |
 | `tool_call_id` | `&'a str` | Unique identifier for this tool call |
-| `arguments` | `&'a mut Value` | Mutable reference to tool call arguments |
+| `arguments` | `&'a mut serde_json::Value` | Mutable reference to tool call arguments |
+| `execution_root` | `Option<&'a Path>` | Working directory the tool will resolve relative paths against, when known |
+| `state` | `&'a crate::SessionState` | Read-only access to the session state |
 
 Implements: `Debug` (arguments redacted in debug output).
 
@@ -86,7 +90,7 @@ Slot 2: Evaluated per tool call, before approval and execution. Can mutate argum
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `name` | `&self -> &str` | Policy identifier for tracing |
-| `evaluate` | `&self, ctx: &PolicyContext<'_>, tool: &mut ToolPolicyContext<'_> -> PreDispatchVerdict` | Evaluate the policy |
+| `evaluate` | `&self, ctx: &mut ToolDispatchContext<'_> -> PreDispatchVerdict` | Evaluate the policy (corrected 2026-07-06: no separate `PolicyContext` parameter — see `ToolDispatchContext` above) |
 
 Required bounds: `Send + Sync`. (Runner uses `AssertUnwindSafe` for `catch_unwind`; implementors do not need `UnwindSafe`.)
 
@@ -191,7 +195,7 @@ AgentLoopConfig
 
 Slot Runner
 ├── run_policies(Vec<Arc<dyn {Pre,Post}*Policy>>, PolicyContext) -> PolicyVerdict
-└── run_pre_dispatch_policies(Vec<Arc<dyn PreDispatchPolicy>>, PolicyContext, ToolPolicyContext) -> PreDispatchVerdict
+└── run_pre_dispatch_policies(Vec<Arc<dyn PreDispatchPolicy>>, &mut ToolDispatchContext) -> PreDispatchVerdict
 
 Dispatch Pipeline (new order):
   PreDispatchPolicy::evaluate() (Slot 2, may transform args or Skip)

@@ -3,7 +3,7 @@
 **Input**: Design documents from `/specs/028-tui-commands-editor-session/`
 **Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/public-api.md, quickstart.md
 
-**Tests**: Tests are included per user story. Unit tests in the respective source modules; integration tests in `tui/src/app/tests.rs`.
+**Tests**: Tests are included per user story. Unit tests in the respective source modules; integration tests in `tui/src/app/tests/` [corrected 2026-07-06: the former monolithic `tui/src/app/tests.rs` was split into `tui/src/app/tests/{mod,approval,helpers,input_ui,persistence,plan_mode,tool_blocks,agent_bridge}.rs`].
 
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
 
@@ -128,7 +128,7 @@
 ### Implementation for User Story 3
 
 - [x] T047 [US3] Implement `resolve_editor(config_override: Option<&str>) -> String` in `tui/src/editor.rs`: check config override, then `$EDITOR`, then `$VISUAL`, then `"vi"` fallback
-- [x] T048 [US3] Implement `open_editor(editor_command: &str) -> io::Result<Option<String>>` in `tui/src/editor.rs`: create temp file at `{temp_dir}/swink-prompt-{pid}.md`, launch editor via `std::process::Command`, read result, clean up in all paths (success, error, cancel)
+- [x] T048 [US3] Implement `open_editor(editor_command: &str) -> io::Result<Option<String>>` in `tui/src/editor.rs`: create temp file via `tempfile::NamedTempFile::new()?.into_temp_path()` [corrected 2026-07-06: randomized temp path, not a deterministic `{temp_dir}/swink-prompt-{pid}.md` name], launch editor via `std::process::Command`, read result, clean up in all paths (success, error, cancel)
 - [x] T049 [US3] Wire editor in event loop (`tui/src/app/event_loop.rs`): when `open_editor_requested` is set, suspend TUI via `restore_terminal()`, launch editor, resume TUI, submit content or show cancel/error feedback. Recreate event stream after resume.
 
 **Checkpoint**: US3 complete — external editor round-trip works end-to-end
@@ -143,10 +143,10 @@
 
 ### Tests for User Story 4
 
-- [x] T050 [P] [US4] Test `save_session` in `tui/src/app/tests.rs`: create App with `JsonlSessionStore` in tempdir, push messages, call `save_session()`, verify file created and feedback message shown
-- [x] T051 [P] [US4] Test `load_session` in `tui/src/app/tests.rs`: save a session, clear app, call `load_session(id)`, verify messages restored and session_id updated
-- [x] T052 [P] [US4] Test `list_sessions` in `tui/src/app/tests.rs`: save a session, call `list_sessions()`, verify feedback contains session ID
-- [x] T053 [P] [US4] Test `load_nonexistent_session` in `tui/src/app/tests.rs`: call `load_session("nonexistent")`, verify error feedback shown
+- [x] T050 [P] [US4] Test `save_session` in `tui/src/app/tests/` [corrected 2026-07-06: no test named exactly `save_session` was found under `tui/src/app/tests/*.rs`; the closest coverage is `auto_save_session()` call sites in `tui/src/app/tests/input_ui.rs` and `tui/src/app/tests/persistence.rs` (e.g. `auto_save_persists_session_state_snapshot`) — this task may have landed under a different name or scope]: create App with `JsonlSessionStore` in tempdir, push messages, call `save_session()`, verify file created and feedback message shown
+- [x] T051 [P] [US4] Test `load_session` in `tui/src/app/tests/` [corrected 2026-07-06: no test named exactly `load_session`; related coverage exists as `load_session_restores_error_messages_with_role_and_content` and other `load_session_*` tests in `tui/src/app/tests/persistence.rs`, `load_session_keeps_full_agent_state_but_trims_visible_history` in `tui/src/app/tests/input_ui.rs`, and `resume_into_loads_existing_session` in `tui/src/app/tests/input_ui.rs`]: save a session, clear app, call `load_session(id)`, verify messages restored and session_id updated
+- [x] T052 [P] [US4] Test `list_sessions` in `tui/src/app/tests/` [corrected 2026-07-06: no test named `list_sessions` or exercising `list_sessions()` was found under `tui/src/app/tests/*.rs`; this task may not have landed as described]: save a session, call `list_sessions()`, verify feedback contains session ID
+- [x] T053 [P] [US4] Test `load_nonexistent_session` in `tui/src/app/tests/` [corrected 2026-07-06: no test named exactly `load_nonexistent_session`; the closest match is `resume_into_errors_on_missing_session` in `tui/src/app/tests/input_ui.rs`]: call `load_session("nonexistent")`, verify error feedback shown
 
 ### Implementation for User Story 4
 

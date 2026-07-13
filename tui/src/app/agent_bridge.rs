@@ -205,9 +205,10 @@ impl App {
         request: swink_agent::ToolApprovalRequest,
         responder: tokio::sync::oneshot::Sender<ToolApproval>,
     ) {
-        if self.approval_mode() == swink_agent::ApprovalMode::Smart
-            && self.session_trusted_tools.contains(&request.tool_name)
-        {
+        let smart_auto_approved = self.approval_mode() == swink_agent::ApprovalMode::Smart
+            && (!request.requires_approval
+                || self.session_trusted_tools.contains(&request.tool_name));
+        if smart_auto_approved {
             let _ = responder.send(ToolApproval::Approved);
         } else {
             // Clear any active trust follow-up when a new approval arrives.
@@ -237,10 +238,13 @@ impl App {
     pub(super) fn approve_plan(&mut self) {
         self.pending_plan_approval = false;
 
-        // Collect all assistant messages from plan mode.
+        let session_start = self.plan_session_start.unwrap_or(0);
+
+        // Collect assistant messages from the active plan-mode session.
         let plan_messages: Vec<String> = self
             .messages
             .iter()
+            .skip(session_start)
             .filter(|m| m.plan_mode && m.role == MessageRole::Assistant)
             .map(|m| m.content.clone())
             .collect();
@@ -271,23 +275,29 @@ impl App {
         let (saved_tools, saved_prompt) = agent.enter_plan_mode();
         self.saved_tools = Some(saved_tools);
         self.saved_system_prompt = Some(saved_prompt);
+        self.plan_session_start = Some(self.messages.len());
 
         self.operating_mode = OperatingMode::Plan;
         self.push_system_message("Entered plan mode — read-only tools only.".to_string());
     }
 
-    pub(super) fn exit_plan_mode(&mut self) {
-        let Some(agent) = &mut self.agent else {
-            return;
-        };
-
-        if let (Some(tools), Some(prompt)) =
-            (self.saved_tools.take(), self.saved_system_prompt.take())
+    pub(super) fn restore_plan_mode_state(&mut self) {
+        if let Some(agent) = &mut self.agent
+            && let (Some(tools), Some(prompt)) =
+                (self.saved_tools.take(), self.saved_system_prompt.take())
         {
             agent.exit_plan_mode(tools, prompt);
         }
 
+        self.saved_tools = None;
+        self.saved_system_prompt = None;
         self.operating_mode = OperatingMode::Execute;
+        self.pending_plan_approval = false;
+        self.plan_session_start = None;
+    }
+
+    pub(super) fn exit_plan_mode(&mut self) {
+        self.restore_plan_mode_state();
         self.push_system_message("Exited plan mode — all tools available.".to_string());
     }
 }
