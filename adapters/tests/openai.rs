@@ -15,7 +15,9 @@ use swink_agent::{
 };
 use swink_agent_adapters::OpenAiStreamFn;
 
-use common::{event_name, find_error_kind, find_error_message, sse_response, test_context};
+use common::{
+    event_name, find_error_kind, find_error_message, notify_on_request, sse_response, test_context,
+};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -545,7 +547,8 @@ async fn openai_cancellation() {
     ]
     .join("\n");
 
-    let slow_response = sse_response(&body).set_delay(std::time::Duration::from_secs(30));
+    let (slow_response, request_seen) =
+        notify_on_request(sse_response(&body).set_delay(std::time::Duration::from_secs(30)));
 
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -561,13 +564,15 @@ async fn openai_cancellation() {
     let token = CancellationToken::new();
 
     let cancel_token = token.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        cancel_token.cancel();
+    let events_handle = tokio::spawn(async move {
+        sf.stream(&model, &context, &options, token)
+            .collect::<Vec<_>>()
+            .await
     });
 
-    let stream = sf.stream(&model, &context, &options, token);
-    let events: Vec<_> = stream.collect().await;
+    request_seen.notified().await;
+    cancel_token.cancel();
+    let events = events_handle.await.expect("stream task should complete");
 
     let has_aborted = events.iter().any(|e| {
         matches!(

@@ -223,3 +223,33 @@ An agent developer has run several optimization cycles and wants to review the h
 - Cost tracking uses the `Cost` and `Usage` types from the existing eval results. The evolve crate aggregates costs across phases but does not implement its own token counting.
 - The output directory is on a local filesystem. Remote storage backends are out of scope.
 - System prompt sections are delimited by markdown headers (e.g., `## Section Name`) or user-defined markers. The section parser is best-effort — unstructured prompts are treated as a single section.
+
+## Addendum: ToolDescription Candidate Delivery Mechanism (2026-07-06)
+
+Neither this spec nor `data-model.md` specifies *how* a `ToolDescription` candidate's mutated text reaches the `Agent` an `AgentFactory` constructs for evaluation — `EvalCase` (owned by `swink-agent-eval`) has no first-class field for a tool override, unlike `system_prompt`, which every factory already consumes for `FullPrompt`/`PromptSection` candidates. Without a delivery mechanism, `MutatingAgentFactory` had no way to make `ToolDescription` candidates take effect at all: they evaluated identical to baseline and could never be accepted (FR-009/010/011/014 broken for the tool-schema third of the optimization surface).
+
+Resolved via the minimal in-scope mechanism (`evolve/` crate only, no changes to `swink-agent-eval`):
+
+- `evolve::evaluate::ToolDescriptionOverride { tool_name, description }` is serialized into `EvalCase.metadata[TOOL_DESCRIPTION_OVERRIDE_KEY]` — `metadata` is `EvalCase`'s documented "arbitrary metadata for user-defined extensions" field, the same pattern already implicit in FR-015's `priority` metadata convention.
+- `evolve::evaluate::apply_tool_description_override()` wraps the named tool in a `DescriptionOverrideTool` decorator that overrides only `description()`, delegating everything else unchanged.
+- **Consequence**: an `AgentFactory` must opt in by calling `ToolDescriptionOverride::from_case()` and applying the override when building its tool list, the same way every factory already opts in to `case.system_prompt`. A factory that ignores the key evaluates the candidate as a no-op — visible via a `tracing::warn!` from `apply_tool_description_override` when the named tool isn't found, not a silent failure. See `evolve/tests/tool_description.rs` for the end-to-end proof and the no-op-when-ignored case.
+
+## Addendum: Diagnoser Tool-Name Attribution for Semantic Tool Evaluators (2026-07-06)
+
+FR-006 requires `WeakPoint` to identify "the target component (prompt section or tool schema)," but neither this spec nor the evaluator contracts in spec 023 document how to recover a *specific* failing tool's name from `semantic_tool_selection` / `semantic_tool_parameter` results. Both evaluators are per-invocation aggregates: `EvalMetricResult.evaluator_name` is always the evaluator's own static name, never a tool name.
+
+Resolved by parsing the evaluator's own `details` string, which both evaluators format as `"{tool}: {pass|fail} (...)"` segments joined by `"; "` (an existing, if informal, convention already used for human-readable diagnostics). `Diagnoser::component_for_evaluator` takes the first `fail`-marked segment's tool name; when the format isn't present or doesn't parse, it attributes the weak point to `FullPrompt` instead of fabricating a `tool_name` that matches no real tool (the previous behavior, which silently no-opped candidates the same way the ToolDescription addendum above describes).
+
+## Addendum: JudgeVerdict.cost and LLM-Guided Budget Tracking (2026-07-06)
+
+FR-012 requires LLM-guided mutations to "track token usage and stop when the budget is exhausted," but `JudgeVerdict` (spec 023) has no cost field and `MutationContext` had no path to `CycleBudget` at all, so `LlmGuided::mutate()` could never record anything. Resolved additively:
+
+- `JudgeVerdict.cost: Option<f64>` (`eval/src/judge.rs`) — `None` when the concrete `JudgeClient` can't derive dollar cost. As of this addendum, every provider client in `swink-agent-eval-judges` (Anthropic, OpenAI, etc.) discards response usage entirely, so `cost` is `None` in practice for all shipped clients; the field exists so a future client that does parse usage/pricing has somewhere to put it.
+- `MutationContext.budget: Option<&CycleBudget>`, threaded from `EvolutionRunner::run_cycle()`.
+- `CycleBudget::record_judge_invocation()` / `judge_invocations()` — an invocation counter tracked independently of dollar `spent`, since invocation count is the only cost signal available today. `LlmGuided::mutate()` always counts the invocation and additionally calls `CycleBudget::record()` with real cost when `verdict.cost` is `Some`.
+
+This means SC-005 ("cost tracking is accurate within 5% of actual LLM spend") is not yet fully satisfiable for LLM-guided mutation cost specifically — only invocation counting is — until a provider client in `swink-agent-eval-judges` populates `JudgeVerdict.cost`. Baseline/candidate eval costs (the bulk of a cycle's spend) were already tracked correctly via `EvalSetResult.summary.total_cost` and are unaffected by this addendum.
+
+## Addendum: Mutation-Error Manifest Entry Shape (2026-07-06)
+
+FR-021 requires strategy panics to be "recorded as `MutationError::Panic` in the manifest," but `CyclePersister::persist()` had no parameter for the mutation-phase errors that `EvolutionRunner::run_cycle()` already tracked in-memory (`CycleResult.mutation_errors: Vec<(String, String)>` — strategy name and error/panic message; no component or candidate is available at that point, since the panic occurs before a candidate exists). `persist()` now takes `mutation_errors: &[(String, String)]` and writes one `ManifestEntry` per error with `verdict: "MutationError"`, `strategy` set to the strategy name, `rejection_reason` set to the error message, and `target_component`/`original_value`/`mutated_value` left as placeholders (`"Unknown"` / empty strings) since no real candidate was produced. Consumers of the manifest (e.g. `CyclePersister::load_history`) should treat `verdict == "MutationError"` as a distinct case from `Accepted`/`Rejected`/`AcceptedNotApplied`.

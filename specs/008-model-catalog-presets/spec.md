@@ -184,3 +184,13 @@ Three Gemma 4 presets added under the `local` provider for Ollama-based inferenc
 | `gemma4_26b` | `gemma4:26b` | 256K | text, tools, streaming, thinking | No |
 
 `smollm3_3b` demoted to `group = "legacy"`, `include_by_default = false`. These presets target Ollama (not local-llm/llama.cpp), so they omit `repo_id`/`filename`. The `thinking` capability enables the Ollama `think` request field via the adapter.
+
+## Addendum: Model Deprecation & Pricing Staleness (2026-07-06)
+
+The catalog is compiled in at build time (Assumptions, above) and this spec's own Assumptions section already anticipates a `deprecated` status ("Preset status indicates whether the model is generally available, in preview, or deprecated") — but `PresetStatus` (`src/model_catalog.rs`) currently implements only `Ga` and `Preview`. There is no runtime handling for two related staleness scenarios: a provider retiring a model out from under a compiled catalog entry, and the compiled pricing table drifting from the provider's current published prices. Tracked in [#1064](https://github.com/SuperSwinkAI/Swink-Agent/issues/1064).
+
+Proposed shape:
+
+- Add a `PresetStatus::Deprecated { replacement_model_id: Option<String> }` variant so a still-listed-but-retired preset can point callers at its replacement.
+- Add a structured error signal (surfaced through the same `error_kind`/`StreamErrorKind` mechanism being hardened by [#1063](https://github.com/SuperSwinkAI/Swink-Agent/issues/1063)) for provider responses indicating the requested model has been retired — distinct from `remote_presets.rs`'s existing `UnknownModelId`, which is a client-side "not in our compiled catalog" error rather than a provider-side retirement.
+- Add a pricing-staleness warning (e.g. a compiled catalog timestamp compared against a configurable threshold, logged at agent construction) so operators know their compiled pricing may no longer match the provider's published rates. Runtime pricing *updates* remain out of scope per this spec's existing Edge Cases — this addendum only adds a *warning*, not a live-refresh mechanism.

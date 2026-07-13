@@ -50,8 +50,8 @@ impl TiktokenCounter {
 
     /// Build a counter from the tokenizer mapped to a model name.
     pub fn from_model(model: &str) -> Result<Self, TiktokenError> {
-        tiktoken_rs::get_bpe_from_model(model)
-            .map(Self::new)
+        tiktoken_rs::bpe_for_model(model)
+            .map(|bpe| Self::new(bpe.clone()))
             .map_err(|err| TiktokenError::new(err.to_string()))
     }
 

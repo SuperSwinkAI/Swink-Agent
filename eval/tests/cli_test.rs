@@ -17,7 +17,10 @@ use std::process::Command;
 use std::time::Duration;
 
 use swink_agent::{Cost, ModelSpec, StopReason, Usage};
-use swink_agent_eval::{EvalCaseResult, EvalSetResult, EvalSummary, Invocation, Verdict};
+use swink_agent_eval::{
+    EvalCaseResult, EvalSetResult, EvalSummary, Invocation, JsonReporter, Reporter, ReporterOutput,
+    Verdict,
+};
 use tempfile::TempDir;
 
 fn binary_path() -> &'static str {
@@ -68,6 +71,16 @@ fn sample_result(pass_rate: f64) -> EvalSetResult {
 fn write_json<T: serde::Serialize>(dir: &TempDir, name: &str, value: &T) -> std::path::PathBuf {
     let path = dir.path().join(name);
     fs::write(&path, serde_json::to_vec_pretty(value).expect("encode")).expect("write");
+    path
+}
+
+fn write_reporter_json(dir: &TempDir, name: &str, result: &EvalSetResult) -> std::path::PathBuf {
+    let path = dir.path().join(name);
+    let output = JsonReporter::new().render(result).expect("render json");
+    let ReporterOutput::Artifact { bytes, .. } = output else {
+        panic!("JsonReporter should emit an artifact");
+    };
+    fs::write(&path, bytes).expect("write");
     path
 }
 
@@ -128,6 +141,34 @@ fn report_renders_json_format_matching_in_process_reporter() {
 }
 
 #[test]
+fn report_accepts_json_reporter_artifact() {
+    let dir = TempDir::new().unwrap();
+    let result = sample_result(1.0);
+    let result_path = write_reporter_json(&dir, "reporter-result.json", &result);
+
+    let out = Command::new(binary_path())
+        .args([
+            "report",
+            "--result",
+            result_path.to_str().unwrap(),
+            "--format",
+            "console",
+        ])
+        .output()
+        .expect("spawn");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("cli-test") && stdout.contains("case-00"),
+        "console output should surface reporter artifact ids; got: {stdout}"
+    );
+}
+
+#[test]
 fn gate_returns_zero_when_thresholds_met() {
     let dir = TempDir::new().unwrap();
     let result_path = write_json(&dir, "result.json", &sample_result(1.0));
@@ -148,6 +189,33 @@ fn gate_returns_zero_when_thresholds_met() {
         .status()
         .expect("spawn");
     assert_eq!(status.code(), Some(0), "gate should pass at 100% pass rate");
+}
+
+#[test]
+fn gate_accepts_json_reporter_artifact() {
+    let dir = TempDir::new().unwrap();
+    let result_path = write_reporter_json(&dir, "reporter-result.json", &sample_result(1.0));
+    let cfg_path = write_json(
+        &dir,
+        "gate.json",
+        &serde_json::json!({ "min_pass_rate": 0.9 }),
+    );
+
+    let status = Command::new(binary_path())
+        .args([
+            "gate",
+            "--result",
+            result_path.to_str().unwrap(),
+            "--gate-config",
+            cfg_path.to_str().unwrap(),
+        ])
+        .status()
+        .expect("spawn");
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "gate should load reporter JSON artifacts"
+    );
 }
 
 #[test]
@@ -219,19 +287,23 @@ fn report_returns_two_when_result_missing() {
 }
 
 #[test]
-fn run_requires_real_execution_configuration() {
+fn run_executes_eval_set_writes_result_and_reports() {
     let dir = TempDir::new().unwrap();
-    let set_yaml = r#"
-id: cli-run-needs-config
-name: CLI run needs config
-cases:
-  - id: c1
-    name: Case 1
-    system_prompt: You are a test agent.
-    user_messages: ["hi"]
-"#;
-    let set_path = dir.path().join("set.yaml");
-    fs::write(&set_path, set_yaml).unwrap();
+    let set_path = write_json(
+        &dir,
+        "set.json",
+        &serde_json::json!({
+            "id": "cli-run",
+            "name": "CLI run",
+            "cases": [{
+                "id": "c1",
+                "name": "Case 1",
+                "system_prompt": "You are a test agent.",
+                "user_messages": ["hi"],
+                "expected_response": { "mode": "contains", "substring": "hi" }
+            }]
+        }),
+    );
     let out_path = dir.path().join("result.json");
 
     let out = Command::new(binary_path())
@@ -248,15 +320,60 @@ cases:
         ])
         .output()
         .expect("spawn");
-    assert_eq!(out.status.code(), Some(2));
-    assert!(
-        !out_path.exists(),
-        "run should not write a false-green artifact when no real execution configuration exists"
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
     );
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let result: EvalSetResult =
+        serde_json::from_slice(&fs::read(&out_path).expect("result should be written"))
+            .expect("result JSON should decode");
+    assert_eq!(result.eval_set_id, "cli-run");
+    assert_eq!(result.summary.total_cases, 1);
+    assert_eq!(result.summary.passed, 1);
+    let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stderr.contains("real agent and evaluator configuration is required"),
-        "configuration error details should be emitted to stderr; got: {stderr}"
+        stdout.contains("cli-run") || stdout.contains("c1"),
+        "console report should render the executed result; got: {stdout}"
+    );
+}
+
+#[test]
+fn run_returns_one_when_eval_set_fails() {
+    let dir = TempDir::new().unwrap();
+    let set_path = write_json(
+        &dir,
+        "set.json",
+        &serde_json::json!({
+            "id": "cli-run-fails",
+            "name": "CLI run fails",
+            "cases": [{
+                "id": "c1",
+                "name": "Case 1",
+                "system_prompt": "You are a test agent.",
+                "user_messages": ["actual response"],
+                "expected_response": { "mode": "contains", "substring": "different" }
+            }]
+        }),
+    );
+
+    let out = Command::new(binary_path())
+        .args([
+            "run",
+            "--set",
+            set_path.to_str().unwrap(),
+            "--parallelism",
+            "1",
+            "--reporter",
+            "console",
+        ])
+        .output()
+        .expect("spawn");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "failing eval cases should map to gate-failed exit 1"
     );
 }
 

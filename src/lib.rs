@@ -100,8 +100,8 @@ pub use context_version::{
 };
 pub use convert::{MessageConverter, ToolSchema, convert_messages, extract_tool_schemas};
 pub use credential::{
-    AuthConfig, AuthScheme, Credential, CredentialError, CredentialFuture, CredentialResolver,
-    CredentialStore, CredentialType, ResolvedCredential,
+    AuthConfig, AuthScheme, AuthorizationHandler, Credential, CredentialError, CredentialFuture,
+    CredentialResolver, CredentialStore, CredentialType, ResolvedCredential,
 };
 pub use emit::Emission;
 pub use error::{AgentError, DowncastError};
@@ -111,7 +111,10 @@ pub use fn_tool::FnTool;
 pub use handle::{AgentHandle, AgentStatus};
 #[cfg(feature = "hot-reload")]
 pub use hot_reload::{ScriptTool, ToolWatcher};
-pub use loop_::{AgentEvent, AgentLoopConfig, TurnEndReason, agent_loop, agent_loop_continue};
+pub use loop_::{
+    AgentEvent, AgentLoopConfig, TransferRejectionReason, TurnEndReason, agent_loop,
+    agent_loop_continue,
+};
 pub use message_provider::{
     ChannelMessageProvider, ComposedMessageProvider, MessageProvider, MessageSender, from_fns,
     message_channel,
@@ -129,7 +132,7 @@ pub use orchestrator::{
     SupervisorPolicy,
 };
 #[cfg(feature = "otel")]
-pub use otel::{OtelInitConfig, init_otel_layer};
+pub use otel::{OtelInitConfig, OtelInitError, init_otel_layer};
 pub use registry::{AgentRef, AgentRegistry};
 pub use retry::{DefaultRetryStrategy, RetryStrategy};
 pub use schema::schema_for;
@@ -171,8 +174,8 @@ pub use util::{now_timestamp, prefix_chars, suffix_chars};
 
 #[cfg(feature = "artifact-store")]
 pub use artifact::{
-    ArtifactByteStream, ArtifactData, ArtifactError, ArtifactMeta, ArtifactStore, ArtifactVersion,
-    StreamingArtifactStore, validate_artifact_name, validate_session_id,
+    ArtifactByteStream, ArtifactData, ArtifactError, ArtifactFuture, ArtifactMeta, ArtifactStore,
+    ArtifactVersion, StreamingArtifactStore, validate_artifact_name, validate_session_id,
 };
 pub use display::{CoreDisplayMessage, DisplayRole, IntoDisplayMessages};
 #[cfg(feature = "plugins")]

@@ -24,6 +24,8 @@ via `AgentLoopConfig` and `AgentContext`. It returns an async stream of
 **Constraints**: Zero unsafe code. Zero clippy warnings. All async, cooperative cancellation only.
 **Scale/Scope**: ~4 source files in `src/loop_/`, ~1200 lines total
 
+**Layout update [2026-07-06]**: The implementation has since grown to 12 files across `src/loop_/` and `src/loop_/tool_dispatch/` (~6,500 lines total, verified via `find src/loop_ -name '*.rs' | xargs wc -l`). Tool dispatch was split out of a single file into a three-phase `tool_dispatch/` submodule (`preprocess.rs` → `execute.rs` → `collect.rs`, plus `shared.rs`). See the updated Source Code tree below.
+
 ## Constitution Check
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
@@ -77,6 +79,8 @@ tests/
 ├── loop_max_tokens.rs       # US7: max tokens recovery
 └── loop_cancellation.rs     # Cancellation via token
 ```
+
+**Layout update [2026-07-06]**: The tree above reflects the original plan. Actual current layout: `src/loop_/` holds `mod.rs`, `config.rs`, `event.rs`, `overflow.rs`, `stream.rs`, `turn.rs`, `types.rs`, plus a `tool_dispatch/` submodule (`mod.rs`, `preprocess.rs`, `execute.rs`, `collect.rs`, `shared.rs`) — 12 files, ~6,500 lines total, verified via `ls src/loop_/ src/loop_/tool_dispatch/` and `find src/loop_ -name '*.rs' | xargs wc -l`. The per-user-story test files above were never created as separate files; they were consolidated into `tests/agent_loop.rs` (single-turn, tool execution, steering, follow-up, cancellation), `tests/retry.rs` (retry integration), `tests/fallback.rs` (model fallback), and `tests/loop_overflow.rs` (context overflow recovery, matches the plan as-is).
 
 **Structure Decision**: The loop module uses the trailing-underscore
 convention (`loop_/`) since `loop` is a reserved word. Four files split

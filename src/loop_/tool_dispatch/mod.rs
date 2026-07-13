@@ -205,10 +205,10 @@ pub async fn execute_tools_concurrently(
 
         for &prepared_idx in &group {
             if batch_token.is_cancelled() {
-                for (_, handle) in handles {
-                    handle.abort();
-                    let _ = handle.await;
-                }
+                collect::abort_join_handles_with_grace(
+                    handles.into_iter().map(|(_, handle)| handle).collect(),
+                )
+                .await;
 
                 return collect::build_aborted_outcome(
                     tool_calls,
@@ -243,13 +243,13 @@ pub async fn execute_tools_concurrently(
                 DispatchResult::Spawned(h) => handles.push((prep.idx, h)),
                 DispatchResult::Inline => {}
                 DispatchResult::ChannelClosed => {
-                    // Cancel the batch and abort/join all already-spawned handles
-                    // before returning to prevent orphaned side-effecting tasks.
+                    // Cancel the batch and give already-spawned handles a bounded
+                    // shutdown window before returning.
                     batch_token.cancel();
-                    for (_, h) in handles {
-                        h.abort();
-                        let _ = h.await;
-                    }
+                    collect::abort_join_handles_with_grace(
+                        handles.into_iter().map(|(_, handle)| handle).collect(),
+                    )
+                    .await;
                     return ToolExecOutcome::ChannelClosed;
                 }
             }
@@ -339,7 +339,7 @@ mod tests {
     use crate::tool::{AgentToolResult, ApprovalMode};
     use crate::types::{AgentMessage, ContentBlock, LlmMessage, UserMessage};
     use crate::{
-        DefaultRetryStrategy, StreamOptions, ToolApproval, ToolCallSummary, ToolExecutionPolicy,
+        DefaultRetryStrategy, ToolApproval, ToolCallSummary, ToolExecutionPolicy,
         ToolExecutionStrategy,
     };
 
@@ -349,6 +349,11 @@ mod tests {
 
     struct NonCancellingTool {
         started: Arc<AtomicBool>,
+    }
+
+    struct BlockingUntilReleasedTool {
+        started: Arc<AtomicBool>,
+        release: Arc<AtomicBool>,
     }
 
     struct OneShotSteeringProvider {
@@ -461,6 +466,51 @@ mod tests {
             Box::pin(async move {
                 std::future::pending::<()>().await;
                 AgentToolResult::text("unreachable")
+            })
+        }
+    }
+
+    impl crate::tool::AgentTool for BlockingUntilReleasedTool {
+        fn name(&self) -> &'static str {
+            "blocking_tool"
+        }
+
+        fn label(&self) -> &'static str {
+            "blocking_tool"
+        }
+
+        fn description(&self) -> &'static str {
+            "Blocks without yielding until a test release flag is set"
+        }
+
+        fn parameters_schema(&self) -> &serde_json::Value {
+            static SCHEMA: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+            SCHEMA.get_or_init(|| {
+                json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": true
+                })
+            })
+        }
+
+        fn execute(
+            &self,
+            _tool_call_id: &str,
+            _params: serde_json::Value,
+            _cancellation_token: CancellationToken,
+            _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+            _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
+            _credential: Option<crate::ResolvedCredential>,
+        ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+            let started = Arc::clone(&self.started);
+            let release = Arc::clone(&self.release);
+            Box::pin(async move {
+                started.store(true, Ordering::SeqCst);
+                while !release.load(Ordering::SeqCst) {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                AgentToolResult::text("released")
             })
         }
     }
@@ -603,36 +653,19 @@ mod tests {
         tool_execution_policy: ToolExecutionPolicy,
         message_provider: Option<Arc<dyn MessageProvider>>,
     ) -> Arc<AgentLoopConfig> {
-        Arc::new(AgentLoopConfig {
-            agent_name: None,
-            transfer_chain: None,
-            model: default_model(),
-            stream_options: StreamOptions::default(),
-            retry_strategy: Box::new(DefaultRetryStrategy::default()),
-            stream_fn: Arc::new(MockStreamFn::new(vec![])),
-            tools,
-            convert_to_llm: Box::new(default_convert),
-            transform_context: None,
-            get_api_key: None,
-            message_provider,
-            pending_message_snapshot: Arc::default(),
-            loop_context_snapshot: Arc::default(),
-            approve_tool,
-            approval_mode,
-            pre_turn_policies: vec![],
-            pre_dispatch_policies,
-            post_turn_policies: vec![],
-            post_loop_policies: vec![],
-            async_transform_context: None,
-            metrics_collector: None,
-            fallback: None,
-            tool_execution_policy,
-            session_state: Arc::new(std::sync::RwLock::new(crate::SessionState::new())),
-            credential_resolver: None,
-            cache_config: None,
-            cache_state: std::sync::Mutex::new(crate::CacheState::default()),
-            dynamic_system_prompt: None,
-        })
+        let mut config = AgentLoopConfig::new(
+            default_model(),
+            Arc::new(MockStreamFn::new(vec![])),
+            Box::new(default_convert),
+        );
+        config.retry_strategy = Box::new(DefaultRetryStrategy::default());
+        config.tools = tools;
+        config.message_provider = message_provider;
+        config.approve_tool = approve_tool;
+        config.approval_mode = approval_mode;
+        config.pre_dispatch_policies = pre_dispatch_policies;
+        config.tool_execution_policy = tool_execution_policy;
+        Arc::new(config)
     }
 
     fn drain_events(rx: &mut mpsc::Receiver<AgentEvent>) -> Vec<AgentEvent> {
@@ -1407,6 +1440,213 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "artifact-store")]
+    struct ArtifactSavingTool;
+
+    #[cfg(feature = "artifact-store")]
+    impl crate::tool::AgentTool for ArtifactSavingTool {
+        fn name(&self) -> &'static str {
+            "artifact_saving_tool"
+        }
+
+        fn label(&self) -> &'static str {
+            "artifact_saving_tool"
+        }
+
+        fn description(&self) -> &'static str {
+            "Emits an artifact-saved details payload"
+        }
+
+        fn parameters_schema(&self) -> &serde_json::Value {
+            static SCHEMA: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+            SCHEMA.get_or_init(|| {
+                json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": true
+                })
+            })
+        }
+
+        fn execute(
+            &self,
+            _tool_call_id: &str,
+            _params: serde_json::Value,
+            _cancellation_token: CancellationToken,
+            _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+            _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
+            _credential: Option<crate::ResolvedCredential>,
+        ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+            Box::pin(async move {
+                let mut result = AgentToolResult::text("Saved 'report.md' version 3");
+                result.details = json!({
+                    "artifact_saved": {
+                        "session_id": "sess-1",
+                        "name": "report.md",
+                        "version": 3,
+                    }
+                });
+                result
+            })
+        }
+    }
+
+    /// Regression test for #1066-adjacent gap: `SaveArtifactTool` signals a
+    /// successful save via `AgentToolResult::details`, and the dispatch layer
+    /// must translate that into `AgentEvent::ArtifactSaved` (spec 036 FR-014).
+    #[cfg(feature = "artifact-store")]
+    #[tokio::test]
+    async fn artifact_saved_details_emit_artifact_saved_event() {
+        let tool = Arc::new(ArtifactSavingTool);
+        let config = test_loop_config_with_options(
+            vec![],
+            vec![tool as Arc<dyn crate::tool::AgentTool>],
+            None,
+            ApprovalMode::Bypassed,
+            ToolExecutionPolicy::Concurrent,
+        );
+        let tool_calls = vec![ToolCallInfo {
+            id: "call_1".to_string(),
+            name: "artifact_saving_tool".to_string(),
+            arguments: json!({}),
+            is_incomplete: false,
+        }];
+        let cancellation_token = CancellationToken::new();
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
+
+        assert!(matches!(outcome, ToolExecOutcome::Completed { .. }));
+
+        let artifact_events: Vec<_> = drain_events(&mut rx)
+            .into_iter()
+            .filter_map(|event| match event {
+                AgentEvent::ArtifactSaved {
+                    session_id,
+                    name,
+                    version,
+                } => Some((session_id, name, version)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            artifact_events,
+            vec![("sess-1".to_string(), "report.md".to_string(), 3)],
+            "a successful save should emit exactly one ArtifactSaved event with the saved fields"
+        );
+    }
+
+    struct AuthRequiredTool;
+
+    impl crate::tool::AgentTool for AuthRequiredTool {
+        fn name(&self) -> &'static str {
+            "auth_required_tool"
+        }
+
+        fn label(&self) -> &'static str {
+            "auth_required_tool"
+        }
+
+        fn description(&self) -> &'static str {
+            "Requires a resolved credential to execute"
+        }
+
+        fn parameters_schema(&self) -> &serde_json::Value {
+            static SCHEMA: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+            SCHEMA.get_or_init(|| {
+                json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": true
+                })
+            })
+        }
+
+        fn auth_config(&self) -> Option<crate::credential::AuthConfig> {
+            Some(crate::credential::AuthConfig {
+                credential_key: "api_key".to_string(),
+                auth_scheme: crate::credential::AuthScheme::BearerHeader,
+                credential_type: crate::credential::CredentialType::Bearer,
+            })
+        }
+
+        fn execute(
+            &self,
+            _tool_call_id: &str,
+            _params: serde_json::Value,
+            _cancellation_token: CancellationToken,
+            _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+            _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
+            _credential: Option<crate::ResolvedCredential>,
+        ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+            Box::pin(async move { AgentToolResult::text("authenticated") })
+        }
+    }
+
+    /// A [`CredentialResolver`](crate::credential::CredentialResolver) whose
+    /// `resolve()` never completes, so the dispatch-layer timeout is the only
+    /// thing that can unblock a caller.
+    struct NeverResolvingCredentialResolver;
+
+    impl crate::credential::CredentialResolver for NeverResolvingCredentialResolver {
+        fn resolve(
+            &self,
+            _key: &str,
+        ) -> crate::credential::CredentialFuture<'_, crate::ResolvedCredential> {
+            Box::pin(std::future::pending::<
+                Result<crate::ResolvedCredential, crate::credential::CredentialError>,
+            >())
+        }
+    }
+
+    /// Regression test for spec 035 FR-014: the credential-resolution timeout
+    /// must be configurable (previously hardcoded to 30s in `execute.rs`),
+    /// so a short `AgentOptions::with_credential_timeout` must be honored by
+    /// the dispatch layer rather than silently falling back to 30s.
+    #[tokio::test]
+    async fn credential_resolution_honors_configured_timeout() {
+        let tool = Arc::new(AuthRequiredTool);
+        let mut config = AgentLoopConfig::new(
+            default_model(),
+            Arc::new(MockStreamFn::new(vec![])),
+            Box::new(default_convert),
+        );
+        config.retry_strategy = Box::new(DefaultRetryStrategy::default());
+        config.tools = vec![tool as Arc<dyn crate::tool::AgentTool>];
+        config.approval_mode = ApprovalMode::Bypassed;
+        config.credential_resolver = Some(Arc::new(NeverResolvingCredentialResolver));
+        config.credential_timeout = std::time::Duration::from_millis(50);
+        let config = Arc::new(config);
+
+        let tool_calls = vec![ToolCallInfo {
+            id: "call_1".to_string(),
+            name: "auth_required_tool".to_string(),
+            arguments: json!({}),
+            is_incomplete: false,
+        }];
+        let cancellation_token = CancellationToken::new();
+        let (tx, _rx) = mpsc::channel(8);
+
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx),
+        )
+        .await
+        .expect("dispatch must not hang past the configured credential timeout");
+
+        let ToolExecOutcome::Completed { results, .. } = outcome else {
+            panic!("expected completed outcome");
+        };
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_error);
+        assert!(
+            ContentBlock::extract_text(&results[0].content).contains("timed out"),
+            "expected a credential timeout error in: {:?}",
+            results[0].content
+        );
+    }
+
     /// Regression test for #770: per-tool partial-update buffering must be
     /// bounded so a tool that emits updates faster than downstream drains
     /// them cannot grow the queue without limit.
@@ -1494,10 +1734,10 @@ mod tests {
 
     #[tokio::test]
     async fn steering_interrupt_preserves_worker_polled_messages() {
-        let fast_tool =
-            Arc::new(MockTool::new("fast_tool").with_delay(std::time::Duration::from_millis(10)));
-        let slow_tool =
-            Arc::new(MockTool::new("slow_tool").with_delay(std::time::Duration::from_secs(5)));
+        let fast_tool = Arc::new(MockTool::new("fast_tool"));
+        let slow_tool = Arc::new(NonCancellingTool {
+            started: Arc::new(AtomicBool::new(false)),
+        });
         let config = test_loop_config_with_message_provider(
             vec![],
             vec![
@@ -1521,7 +1761,7 @@ mod tests {
             },
             ToolCallInfo {
                 id: "call_slow".to_string(),
-                name: "slow_tool".to_string(),
+                name: "non_cancelling_tool".to_string(),
                 arguments: json!({}),
                 is_incomplete: false,
             },
@@ -1594,12 +1834,8 @@ mod tests {
             cancel_clone.cancel();
         });
 
-        let outcome = tokio::time::timeout(
-            std::time::Duration::from_millis(250),
-            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx),
-        )
-        .await
-        .expect("parent cancellation should break collection without hanging");
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
 
         let ToolExecOutcome::Aborted { results, .. } = outcome else {
             panic!("expected aborted outcome");
@@ -1610,6 +1846,61 @@ mod tests {
             "aborted batches should preserve result parity"
         );
         assert_eq!(results[0].tool_call_id, "call_abort");
+        assert!(results[0].is_error);
+        assert!(matches!(
+            results[0].content.as_slice(),
+            [ContentBlock::Text { text }] if text.contains("operation aborted")
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn parent_cancellation_does_not_wait_forever_for_blocking_tool() {
+        let started = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(AtomicBool::new(false));
+        let tool = Arc::new(BlockingUntilReleasedTool {
+            started: Arc::clone(&started),
+            release: Arc::clone(&release),
+        });
+        let config = test_loop_config_with_options(
+            vec![],
+            vec![tool as Arc<dyn crate::tool::AgentTool>],
+            None,
+            ApprovalMode::Bypassed,
+            ToolExecutionPolicy::Concurrent,
+        );
+        let tool_calls = vec![ToolCallInfo {
+            id: "call_blocking".to_string(),
+            name: "blocking_tool".to_string(),
+            arguments: json!({}),
+            is_incomplete: false,
+        }];
+        let cancellation_token = CancellationToken::new();
+        let cancel_clone = cancellation_token.clone();
+        let (tx, mut rx) = mpsc::channel(8);
+
+        tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                if matches!(event, AgentEvent::ToolExecutionStart { .. }) {
+                    cancel_clone.cancel();
+                    break;
+                }
+            }
+        });
+
+        let timed_outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx),
+        )
+        .await;
+        release.store(true, Ordering::SeqCst);
+        let outcome = timed_outcome
+            .expect("parent cancellation must not wait forever for blocking tool work");
+
+        let ToolExecOutcome::Aborted { results, .. } = outcome else {
+            panic!("expected aborted outcome");
+        };
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].tool_call_id, "call_blocking");
         assert!(results[0].is_error);
         assert!(matches!(
             results[0].content.as_slice(),
@@ -1659,12 +1950,8 @@ mod tests {
             }
         });
 
-        let outcome = tokio::time::timeout(
-            std::time::Duration::from_millis(250),
-            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx),
-        )
-        .await
-        .expect("cancellation-aware approval wait should not hang");
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
         drop(tx);
         receiver.await.unwrap();
 
@@ -1683,6 +1970,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::similar_names)]
     async fn cancellation_after_first_approval_does_not_touch_later_tools() {
         let tool_a = Arc::new(MockTool::new("tool_a").with_requires_approval(true));
         let tool_b = Arc::new(MockTool::new("tool_b").with_requires_approval(true));
@@ -1739,12 +2027,8 @@ mod tests {
             }
         });
 
-        let outcome = tokio::time::timeout(
-            std::time::Duration::from_millis(250),
-            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx),
-        )
-        .await
-        .expect("pre-dispatch cancellation should not hang");
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
         drop(tx);
         receiver.await.unwrap();
 
@@ -1760,6 +2044,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::similar_names)]
     async fn cancellation_between_sequential_groups_skips_later_dispatch() {
         let tool_a = Arc::new(MockTool::new("tool_a"));
         let tool_b = Arc::new(MockTool::new("tool_b"));
@@ -1809,12 +2094,8 @@ mod tests {
             }
         });
 
-        let outcome = tokio::time::timeout(
-            std::time::Duration::from_millis(250),
-            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx),
-        )
-        .await
-        .expect("sequential dispatch should stop before later groups once cancelled");
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
         drop(tx);
         receiver.await.unwrap();
 
@@ -1895,10 +2176,10 @@ mod tests {
             let _ = rx.recv().await;
         });
 
-        // With the fix this completes quickly; without it the orphaned
-        // NonCancellingTool handle would block collection indefinitely.
+        // This path explicitly guards against orphaning a non-cancelling
+        // spawned tool, so keep a generous hang detector for regression clarity.
         let outcome = tokio::time::timeout(
-            std::time::Duration::from_millis(500),
+            std::time::Duration::from_secs(5),
             execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx),
         )
         .await

@@ -189,6 +189,7 @@ struct GeminiUsageMetadata {
 struct GeminiToolCallState {
     /// Harness-side content index returned by [`BlockAccumulator::open_tool_call`].
     content_index: usize,
+    name: String,
     /// Latest full arguments snapshot from Gemini.  Updated on every chunk but
     /// only emitted as a single [`AssistantMessageEvent::ToolCallDelta`] at
     /// finalization to avoid corrupted concatenation when Gemini rewrites
@@ -200,9 +201,11 @@ struct GeminiToolCallState {
 struct GeminiStreamState {
     /// Shared block lifecycle accumulator (index allocation, open/close, drain).
     blocks: crate::block_accumulator::BlockAccumulator,
-    /// Provider-part-index → harness state.  Kept for argument diffing and
-    /// delta event emission; block lifecycle is owned by `blocks`.
-    tool_calls: HashMap<usize, GeminiToolCallState>,
+    /// Provider tool-call identity → harness state.  Kept for argument diffing
+    /// and delta event emission; block lifecycle is owned by `blocks`.
+    tool_calls: HashMap<String, GeminiToolCallState>,
+    generated_tool_call_keys_by_part_index: HashMap<usize, String>,
+    next_generated_tool_call: usize,
     saw_tool_call: bool,
     usage: Usage,
     stop_reason: Option<StopReason>,
@@ -230,7 +233,7 @@ impl GeminiStreamFn {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             api_key: api_key.into(),
             api_version,
-            client: Client::new(),
+            client: crate::base::adapter_http_client(),
         }
     }
 
@@ -611,16 +614,13 @@ fn parse_sse_stream(
 ) -> impl Stream<Item = AssistantMessageEvent> + Send {
     let line_stream = sse_data_lines_with_callback(response.bytes_stream(), on_raw_payload);
 
-    // NOTE: Google's cancel behavior differs from Anthropic/OpenAI — it uses
-    // error_network (retryable) rather than Aborted. We preserve this via a
-    // custom cancel handler in on_item's None branch, and accept the generic
-    // Aborted from sse_adapter_stream's cancel path. This is a semantic
-    // simplification: cancellation is non-retryable regardless of error_kind.
-    crate::sse::sse_adapter_stream(
+    // Gemini buffers full tool-call argument snapshots, so cancellation needs
+    // an adapter-specific finalizer that flushes those snapshots before closing
+    // open blocks.
+    crate::sse::sse_adapter_stream_with_cancel_finalizer(
         line_stream,
         cancellation_token,
         GeminiStreamState::default(),
-        "Google request cancelled",
         |item, state| match item {
             None => {
                 // If we already emitted a terminal event (e.g. SAFETY error),
@@ -693,7 +693,23 @@ fn parse_sse_stream(
             Some(SseLine::TransportError(message)) => SseAction::Done(
                 state.emit_terminal_network_error(format!("Google {message}"), true),
             ),
+            Some(SseLine::ProtocolError(message)) => SseAction::Done(state.emit_terminal_error(
+                AssistantMessageEvent::error(format!("Google {message}")),
+                true,
+            )),
             Some(_) => SseAction::Skip,
+        },
+        |state| {
+            state.emit_terminal_error(
+                AssistantMessageEvent::Error {
+                    stop_reason: StopReason::Aborted,
+                    error_message: "Google request cancelled".to_string(),
+                    usage: None,
+                    error_kind: None,
+                    retry_after: None,
+                },
+                true,
+            )
         },
     )
 }
@@ -757,15 +773,9 @@ fn process_chunk(
     }
 
     if let Some(ref finish_reason) = candidate.finish_reason {
-        if finish_reason == "SAFETY" {
-            warn!("Google Gemini response blocked by safety filter");
-            events.extend(state.emit_final_tool_deltas());
-            events.extend(state.blocks.close_text());
-            events.extend(state.blocks.close_thinking(None));
-            events.extend(crate::finalize::finalize_blocks(state));
-            events.push(AssistantMessageEvent::error_content_filtered(
-                "Google Gemini: response blocked by safety filter",
-            ));
+        if let Some(error) = terminal_error_for_finish_reason(finish_reason) {
+            warn!(%finish_reason, "Google Gemini response ended with terminal error");
+            events.extend(state.emit_terminal_error(error, true));
             state.terminated = true;
         } else {
             state.stop_reason = Some(map_finish_reason(finish_reason, state.saw_tool_call));
@@ -779,19 +789,17 @@ fn process_function_call(
     state: &mut GeminiStreamState,
     events: &mut Vec<AssistantMessageEvent>,
 ) {
-    // Open a new tool-call block the first time we see this part_index.
-    if !state.tool_calls.contains_key(&part_index) {
+    let (key, id) = tool_call_identity(part_index, &function_call, state);
+
+    if !state.tool_calls.contains_key(&key) {
         state.saw_tool_call = true;
-        let id = function_call
-            .id
-            .clone()
-            .unwrap_or_else(|| format!("gemini-tool-{part_index}"));
         let (content_index, start_ev) = state.blocks.open_tool_call(id, function_call.name.clone());
         events.push(start_ev);
         state.tool_calls.insert(
-            part_index,
+            key.clone(),
             GeminiToolCallState {
                 content_index,
+                name: function_call.name.clone(),
                 arguments: String::new(),
             },
         );
@@ -799,7 +807,7 @@ fn process_function_call(
 
     let entry = state
         .tool_calls
-        .get_mut(&part_index)
+        .get_mut(&key)
         .expect("just inserted or already present");
 
     // Gemini sends full argument snapshots, not deltas.  We buffer the latest
@@ -814,11 +822,70 @@ fn process_function_call(
     entry.arguments = serialized_args;
 }
 
+fn tool_call_identity(
+    part_index: usize,
+    function_call: &GeminiFunctionCall,
+    state: &mut GeminiStreamState,
+) -> (String, String) {
+    if let Some(id) = function_call.id.clone() {
+        return (format!("provider:{id}"), id);
+    }
+
+    if let Some(existing_key) = state
+        .generated_tool_call_keys_by_part_index
+        .get(&part_index)
+        && state
+            .tool_calls
+            .get(existing_key)
+            .is_some_and(|tool_call| tool_call.name == function_call.name)
+    {
+        let id = existing_key.strip_prefix("generated:").map_or_else(
+            || existing_key.clone(),
+            |sequence| format!("gemini-tool-{sequence}"),
+        );
+        return (existing_key.clone(), id);
+    }
+
+    let sequence = state.next_generated_tool_call;
+    state.next_generated_tool_call += 1;
+    let key = format!("generated:{sequence}");
+    state
+        .generated_tool_call_keys_by_part_index
+        .insert(part_index, key.clone());
+    (key, format!("gemini-tool-{sequence}"))
+}
+
 fn map_finish_reason(finish_reason: &str, saw_tool_call: bool) -> StopReason {
     match finish_reason {
         "MAX_TOKENS" => StopReason::Length,
         _ if saw_tool_call => StopReason::ToolUse,
         _ => StopReason::Stop,
+    }
+}
+
+fn terminal_error_for_finish_reason(finish_reason: &str) -> Option<AssistantMessageEvent> {
+    let message = format!("Google Gemini: terminal finish reason {finish_reason}");
+    match finish_reason {
+        "SAFETY" => Some(AssistantMessageEvent::error_content_filtered(
+            "Google Gemini: response blocked by safety filter",
+        )),
+        "RECITATION"
+        | "BLOCKLIST"
+        | "PROHIBITED_CONTENT"
+        | "SPII"
+        | "IMAGE_SAFETY"
+        | "IMAGE_PROHIBITED_CONTENT"
+        | "IMAGE_RECITATION" => Some(AssistantMessageEvent::error_content_filtered(message)),
+        "MALFORMED_FUNCTION_CALL" | "LANGUAGE" | "OTHER" | "IMAGE_OTHER" | "NO_IMAGE" => {
+            Some(AssistantMessageEvent::Error {
+                stop_reason: StopReason::Error,
+                error_message: message,
+                usage: None,
+                error_kind: None,
+                retry_after: None,
+            })
+        }
+        _ => None,
     }
 }
 
@@ -936,9 +1003,10 @@ mod tests {
             .blocks
             .open_tool_call("call_1".into(), "read_file".into());
         state.tool_calls.insert(
-            0,
+            "provider:call_1".into(),
             GeminiToolCallState {
                 content_index,
+                name: "read_file".into(),
                 arguments: r#"{"path":"foo.rs"}"#.into(),
             },
         );

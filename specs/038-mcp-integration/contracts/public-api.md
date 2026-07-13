@@ -8,7 +8,7 @@
 
 ```rust
 // Configuration
-pub use config::{McpServerConfig, McpTransport, ToolFilter};
+pub use config::{McpServerConfig, McpTransport, SseBearerAuth, ToolFilter};
 
 // Manager (main entry point)
 pub use manager::McpManager;
@@ -18,6 +18,9 @@ pub use error::McpError;
 
 // Tool type (for introspection; consumers rarely need this directly)
 pub use tool::McpTool;
+
+// Connection type (for introspection; consumers rarely need this directly)
+pub use connection::{McpConnection, McpConnectionStatus};
 ```
 
 ## Configuration API
@@ -52,8 +55,21 @@ pub enum McpTransport {
     Sse {
         url: String,
         bearer_token: Option<String>,
+        bearer_auth: Option<SseBearerAuth>,
         headers: HashMap<String, String>,
     },
+}
+```
+
+### SseBearerAuth
+
+```rust
+/// Resolver-backed bearer auth for SSE MCP transports. When set, the bearer
+/// secret is resolved from the credential store at connect time instead of
+/// being embedded directly in `bearer_token`.
+pub struct SseBearerAuth {
+    pub credential_key: String,
+    pub credential_type: CredentialType,
 }
 ```
 

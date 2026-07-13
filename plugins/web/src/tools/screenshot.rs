@@ -1,17 +1,21 @@
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+use tracing::{info, warn};
 use url::Url;
 
 use swink_agent::{AgentTool, AgentToolResult, ContentBlock, ImageSource, ToolFuture};
 
 use crate::domain::DomainFilter;
 use crate::playwright::{PlaywrightBridge, PlaywrightError, ScreenshotOutput, Viewport};
-use crate::tools::{OperationOutcome, await_with_cancellation, validate_url_against_filter};
+use crate::tools::{
+    OperationOutcome, await_with_cancellation, reset_bridge_after_ambiguous_playwright_error,
+    validate_url_against_filter,
+};
 
 /// Tool for taking screenshots of web pages.
 ///
@@ -42,7 +46,7 @@ impl ScreenshotTool {
             playwright_path,
             default_viewport,
             timeout,
-            domain_filter: None,
+            domain_filter: Some(DomainFilter::blocking_private_ips()),
             schema: build_schema(),
         }
     }
@@ -142,6 +146,11 @@ impl AgentTool for ScreenshotTool {
                 }
             }
 
+            // FR-016: log every web request. Playwright abstracts away the
+            // underlying HTTP status, so URL, image payload size, and latency
+            // are the closest equivalents recorded here.
+            let start = Instant::now();
+
             let operation = {
                 let bridge = guard.as_mut().expect("bridge initialized above");
                 await_with_cancellation(
@@ -152,7 +161,7 @@ impl AgentTool for ScreenshotTool {
                 .await
             };
 
-            match operation {
+            let result = match operation {
                 OperationOutcome::Completed(Ok(screenshot)) => build_screenshot_result(
                     &url,
                     width,
@@ -167,6 +176,7 @@ impl AgentTool for ScreenshotTool {
                     )
                 }
                 OperationOutcome::Completed(Err(e)) => {
+                    reset_bridge_after_ambiguous_playwright_error(&mut guard, &e);
                     AgentToolResult::error(format!("Screenshot failed: {e}"))
                 }
                 OperationOutcome::Cancelled => {
@@ -179,9 +189,35 @@ impl AgentTool for ScreenshotTool {
                     *guard = None;
                     AgentToolResult::error(format!("Screenshot timed out after {:?}", self.timeout))
                 }
+            };
+
+            let size_bytes = image_size_bytes(&result.content);
+            let latency_ms = start.elapsed().as_millis();
+
+            if result.is_error {
+                warn!(url = %url, size_bytes, latency_ms, "web screenshot failed");
+            } else {
+                info!(url = %url, size_bytes, latency_ms, "web screenshot completed");
             }
+
+            result
         })
     }
+}
+
+/// Sum of the base64-encoded image bytes across all content blocks in a tool
+/// result, used as the FR-016 "response size" for a request whose transport
+/// (Playwright) has no directly observable payload size.
+fn image_size_bytes(content: &[ContentBlock]) -> usize {
+    content
+        .iter()
+        .map(|block| match block {
+            ContentBlock::Image {
+                source: ImageSource::Base64 { data, .. },
+            } => data.len(),
+            _ => 0,
+        })
+        .sum()
 }
 
 fn build_screenshot_result(
@@ -244,4 +280,47 @@ fn build_schema() -> Value {
         "required": ["url"],
         "additionalProperties": false
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn direct_constructor_blocks_private_ips_by_default() {
+        let tool = ScreenshotTool::new(
+            Arc::new(Mutex::new(None)),
+            None,
+            Viewport {
+                width: 1280,
+                height: 720,
+            },
+            Duration::from_secs(15),
+        );
+
+        let filter = tool
+            .domain_filter
+            .as_ref()
+            .expect("direct screenshot tool should install a default filter");
+        let localhost = Url::parse("http://127.0.0.1/admin").unwrap();
+
+        assert!(filter.is_allowed(&localhost).is_err());
+    }
+
+    #[test]
+    fn image_size_bytes_sums_base64_image_block_lengths() {
+        let content = vec![ContentBlock::Image {
+            source: ImageSource::Base64 {
+                media_type: "image/png".into(),
+                data: "AAAAAAAAAA".into(),
+            },
+        }];
+
+        assert_eq!(image_size_bytes(&content), 10);
+    }
+
+    #[test]
+    fn image_size_bytes_of_empty_content_is_zero() {
+        assert_eq!(image_size_bytes(&[]), 0);
+    }
 }

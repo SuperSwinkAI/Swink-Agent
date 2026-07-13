@@ -91,6 +91,7 @@ impl JudgeClient for StaticJudge {
                 pass: true,
                 reason: self.0.clone(),
                 label: None,
+                cost: None,
             })
         })
     }

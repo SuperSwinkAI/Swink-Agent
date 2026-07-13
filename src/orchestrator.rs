@@ -33,6 +33,24 @@ pub struct AgentRequest {
     pub reply: oneshot::Sender<Result<AgentResult, AgentError>>,
 }
 
+fn send_agent_reply<T>(
+    agent_name: &str,
+    outcome: &'static str,
+    reply: oneshot::Sender<T>,
+    value: T,
+) -> bool {
+    if reply.send(value).is_ok() {
+        true
+    } else {
+        warn!(
+            agent = %agent_name,
+            outcome,
+            "orchestrator reply receiver dropped"
+        );
+        false
+    }
+}
+
 // ─── Supervisor ─────────────────────────────────────────────────────────────
 
 /// What the supervisor decides after an agent error.
@@ -419,7 +437,12 @@ async fn run_agent_loop(
                         biased;
                         () = cancellation_token.cancelled() => {
                             agent.abort();
-                            let _ = req.reply.send(Err(AgentError::Aborted));
+                            send_agent_reply(
+                                &agent_name,
+                                "aborted",
+                                req.reply,
+                                Err(AgentError::Aborted),
+                            );
                             break Err(AgentError::Aborted);
                         }
                         r = agent.prompt_async(req.messages) => r,
@@ -427,7 +450,7 @@ async fn run_agent_loop(
 
                     match result {
                         Ok(r) => {
-                            let _ = req.reply.send(Ok(r));
+                            send_agent_reply(&agent_name, "completed", req.reply, Ok(r));
                             // Reset restart counter on success.
                             restarts = 0;
                         }
@@ -447,16 +470,16 @@ async fn run_agent_loop(
                                         "supervisor restarting agent"
                                     );
                                     restarts += 1;
-                                    let _ = req.reply.send(Err(err));
+                                    send_agent_reply(&agent_name, "restart", req.reply, Err(err));
                                     agent = Agent::new(factory());
                                 }
                                 SupervisorAction::Escalate => {
-                                    let _ = req.reply.send(Err(err));
+                                    send_agent_reply(&agent_name, "escalate", req.reply, Err(err));
                                     // Agent stays alive.
                                 }
                                 _ => {
                                     // Stop (or restart budget exhausted).
-                                    let _ = req.reply.send(Err(err));
+                                    send_agent_reply(&agent_name, "stop", req.reply, Err(err));
                                     break Err(AgentError::plugin(
                                         "orchestrator",
                                         std::io::Error::other(format!(
@@ -607,6 +630,14 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(format!("{err}").contains("orchestrator"));
+    }
+
+    #[test]
+    fn send_agent_reply_reports_dropped_receiver() {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        drop(reply_rx);
+
+        assert!(!send_agent_reply("worker", "completed", reply_tx, "reply"));
     }
 
     #[test]

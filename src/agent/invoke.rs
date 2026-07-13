@@ -30,6 +30,7 @@ use super::{Agent, SharedRetryStrategy};
 /// guard from clearing the flag for a newer run.
 struct LoopGuardStream {
     inner: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>,
+    cancellation_token: CancellationToken,
     loop_active: Arc<AtomicBool>,
     idle_notify: Arc<Notify>,
     pending_message_snapshot: Arc<crate::pause_state::PendingMessageSnapshot>,
@@ -52,6 +53,7 @@ impl Drop for LoopGuardStream {
         // A newer start_loop will have incremented loop_generation, making
         // this guard's generation stale.
         if self.expected_generation.load(Ordering::Acquire) == self.generation {
+            self.cancellation_token.cancel();
             self.loop_active.store(false, Ordering::Release);
             self.pending_message_snapshot.clear();
             self.loop_context_snapshot.clear();
@@ -283,7 +285,7 @@ impl Agent {
                 initial_new_messages_len,
                 system_prompt,
                 config,
-                token,
+                token.clone(),
             )
         } else {
             agent_loop_with_initial_new_messages_len(
@@ -291,7 +293,7 @@ impl Agent {
                 initial_new_messages_len,
                 system_prompt,
                 config,
-                token,
+                token.clone(),
             )
         };
 
@@ -300,6 +302,7 @@ impl Agent {
 
         let guarded: Pin<Box<dyn Stream<Item = AgentEvent> + Send>> = Box::pin(LoopGuardStream {
             inner: raw_stream,
+            cancellation_token: token,
             loop_active: Arc::clone(&self.loop_active),
             idle_notify: Arc::clone(&self.idle_notify),
             pending_message_snapshot: Arc::clone(&self.pending_message_snapshot),
@@ -342,40 +345,51 @@ impl Agent {
                 queue_provider
             };
 
-        AgentLoopConfig {
-            agent_name: self.agent_name.clone(),
-            transfer_chain: self.transfer_chain.clone(),
-            model: self.state.model.clone(),
-            stream_options: self.stream_options.clone(),
-            retry_strategy: Box::new(SharedRetryStrategy(Arc::clone(&self.retry_strategy))),
-            stream_fn: Arc::clone(&self.stream_fn),
-            tools: self.state.tools.clone(),
-            convert_to_llm: convert_box,
-            transform_context: transform,
-            get_api_key: api_key_box,
-            message_provider: Some(message_provider),
-            pending_message_snapshot: Arc::clone(&self.pending_message_snapshot),
-            loop_context_snapshot: Arc::clone(&self.loop_context_snapshot),
-            approve_tool: self.approve_tool.as_ref().map(|a| {
-                let a = Arc::clone(a);
-                let b: Box<ApproveToolFn> = Box::new(move |req| a(req));
-                b
-            }),
-            approval_mode: self.approval_mode,
-            pre_turn_policies: self.pre_turn_policies.clone(),
-            pre_dispatch_policies: self.pre_dispatch_policies.clone(),
-            post_turn_policies: self.post_turn_policies.clone(),
-            post_loop_policies: self.post_loop_policies.clone(),
-            async_transform_context: self.async_transform_context.as_ref().map(Arc::clone),
-            metrics_collector: self.metrics_collector.as_ref().map(Arc::clone),
-            fallback: self.fallback.clone(),
-            tool_execution_policy: self.tool_execution_policy.clone(),
-            session_state: Arc::clone(&self.session_state),
-            credential_resolver: self.credential_resolver.as_ref().map(Arc::clone),
-            cache_config: self.cache_config.clone(),
-            cache_state: std::sync::Mutex::new(crate::context_cache::CacheState::new()),
-            dynamic_system_prompt: self.dynamic_system_prompt.clone(),
-        }
+        let mut config = AgentLoopConfig::new(
+            self.state.model.clone(),
+            Arc::clone(&self.stream_fn),
+            convert_box,
+        )
+        .with_runtime_snapshots(
+            Arc::clone(&self.pending_message_snapshot),
+            Arc::clone(&self.loop_context_snapshot),
+        );
+        config.agent_name.clone_from(&self.agent_name);
+        config.transfer_chain.clone_from(&self.transfer_chain);
+        config.stream_options = self.stream_options.clone();
+        config.retry_strategy = Box::new(SharedRetryStrategy(Arc::clone(&self.retry_strategy)));
+        config.tools.clone_from(&self.state.tools);
+        config.transform_context = transform;
+        config.get_api_key = api_key_box;
+        config.message_provider = Some(message_provider);
+        config.approve_tool = self.approve_tool.as_ref().map(|a| {
+            let a = Arc::clone(a);
+            let b: Box<ApproveToolFn> = Box::new(move |req| a(req));
+            b
+        });
+        config.approval_mode = self.approval_mode;
+        config.pre_turn_policies.clone_from(&self.pre_turn_policies);
+        config
+            .pre_dispatch_policies
+            .clone_from(&self.pre_dispatch_policies);
+        config
+            .post_turn_policies
+            .clone_from(&self.post_turn_policies);
+        config
+            .post_loop_policies
+            .clone_from(&self.post_loop_policies);
+        config.async_transform_context = self.async_transform_context.as_ref().map(Arc::clone);
+        config.metrics_collector = self.metrics_collector.as_ref().map(Arc::clone);
+        config.fallback.clone_from(&self.fallback);
+        config.tool_execution_policy = self.tool_execution_policy.clone();
+        config.session_state = Arc::clone(&self.session_state);
+        config.credential_resolver = self.credential_resolver.as_ref().map(Arc::clone);
+        config.credential_timeout = self.credential_timeout;
+        config.cache_config.clone_from(&self.cache_config);
+        config
+            .dynamic_system_prompt
+            .clone_from(&self.dynamic_system_prompt);
+        config
     }
 }
 
@@ -416,7 +430,9 @@ mod tests {
         UserMessage,
     };
     use futures::Stream;
+    use futures::StreamExt;
     use serde_json::Value;
+    use tokio::sync::Notify;
     use tokio_util::sync::CancellationToken;
 
     struct StopEveryToolPolicy;
@@ -426,6 +442,13 @@ mod tests {
     }
     struct CountingTool {
         executions: Arc<AtomicU32>,
+    }
+    struct DroppableTool {
+        executions: Arc<AtomicU32>,
+        dropped: Arc<Notify>,
+    }
+    struct DropNotify {
+        dropped: Arc<Notify>,
     }
 
     impl PreDispatchPolicy for StopEveryToolPolicy {
@@ -462,6 +485,7 @@ mod tests {
                     error_message: "no more scripted responses".to_string(),
                     usage: None,
                     error_kind: None,
+                    retry_after: None,
                 }]
             });
             Box::pin(futures::stream::iter(events))
@@ -497,6 +521,51 @@ mod tests {
         ) -> ToolFuture<'_> {
             self.executions.fetch_add(1, Ordering::SeqCst);
             Box::pin(async { AgentToolResult::text("ok") })
+        }
+    }
+
+    impl Drop for DropNotify {
+        fn drop(&mut self) {
+            self.dropped.notify_waiters();
+        }
+    }
+
+    impl AgentTool for DroppableTool {
+        fn name(&self) -> &'static str {
+            "droppable_tool"
+        }
+
+        fn label(&self) -> &'static str {
+            "droppable_tool"
+        }
+
+        fn description(&self) -> &'static str {
+            "test tool"
+        }
+
+        fn parameters_schema(&self) -> &Value {
+            static SCHEMA: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
+            SCHEMA.get_or_init(permissive_object_schema)
+        }
+
+        fn execute(
+            &self,
+            _tool_call_id: &str,
+            _params: Value,
+            cancellation_token: CancellationToken,
+            _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+            _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
+            _credential: Option<crate::credential::ResolvedCredential>,
+        ) -> ToolFuture<'_> {
+            self.executions.fetch_add(1, Ordering::SeqCst);
+            let guard = DropNotify {
+                dropped: Arc::clone(&self.dropped),
+            };
+            Box::pin(async move {
+                let _guard = guard;
+                cancellation_token.cancelled().await;
+                AgentToolResult::error("cancelled")
+            })
         }
     }
 
@@ -593,5 +662,52 @@ mod tests {
                     && tool_result.tool_call_id == "call_1"
                     && tool_result.is_error
         ));
+    }
+
+    #[tokio::test]
+    async fn dropping_prompt_stream_cancels_active_loop() {
+        let stream_fn = Arc::new(CountingStreamFn::new(vec![
+            AssistantMessageEvent::text_response("second"),
+            tool_call_events("call_1", "droppable_tool", "{}"),
+        ]));
+        let executions = Arc::new(AtomicU32::new(0));
+        let dropped = Arc::new(Notify::new());
+        let tool = Arc::new(DroppableTool {
+            executions: Arc::clone(&executions),
+            dropped: Arc::clone(&dropped),
+        });
+        let options = AgentOptions::new(
+            "sys",
+            ModelSpec::new("test", "test-model"),
+            Arc::clone(&stream_fn) as Arc<dyn StreamFn>,
+            crate::agent::default_convert,
+        )
+        .with_tools(vec![tool as Arc<dyn crate::tool::AgentTool>])
+        .with_approval_mode(ApprovalMode::Bypassed);
+        let mut agent = Agent::new(options);
+
+        let mut stream = agent
+            .prompt_stream(vec![user_msg("run the tool")])
+            .expect("prompt_stream should start");
+        while let Some(event) = stream.next().await {
+            if matches!(event, crate::loop_::AgentEvent::ToolExecutionStart { .. }) {
+                break;
+            }
+        }
+        let dropped_notified = dropped.notified();
+        drop(stream);
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), dropped_notified)
+            .await
+            .expect("dropping the stream should tear down active tool work");
+
+        let result = agent
+            .prompt_async(vec![user_msg("run again")])
+            .await
+            .expect("a new run should be allowed after dropping the old stream");
+
+        assert_eq!(executions.load(Ordering::SeqCst), 1);
+        assert_eq!(stream_fn.call_count.load(Ordering::SeqCst), 2);
+        assert_eq!(result.stop_reason, StopReason::Stop);
     }
 }

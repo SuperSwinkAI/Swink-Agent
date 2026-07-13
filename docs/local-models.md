@@ -174,49 +174,13 @@ Tool calling support depends on LM Studio's version and the loaded model's chat 
 
 ## Custom Ollama Modelfile
 
-For fine-tuned weights, custom quantizations, or non-standard chat templates, you can create a custom Ollama Modelfile and register it as a local model.
-
-### Create a Modelfile
-
-```dockerfile
-FROM /path/to/your-gemma4-e2b-finetune.gguf
-
-TEMPLATE """{{ if .System }}<start_of_turn>system
-{{ .System }}<end_of_turn>
-{{ end }}{{ range .Messages }}{{ if eq .Role "user" }}<start_of_turn>user
-{{ .Content }}<end_of_turn>
-{{ else if eq .Role "assistant" }}<start_of_turn>model
-{{ .Content }}<end_of_turn>
-{{ end }}{{ end }}<start_of_turn>model
-"""
-
-PARAMETER stop "<end_of_turn>"
-PARAMETER num_ctx 8192
-PARAMETER temperature 0.7
-```
-
-### Register and run
+For fine-tuned weights, custom quantizations, or non-standard chat templates, write an Ollama Modelfile (see the [Ollama Modelfile docs](https://docs.ollama.com/modelfile) for syntax) and register it:
 
 ```bash
 ollama create my-gemma4-finetune -f Modelfile
-ollama run my-gemma4-finetune "Hello"
 ```
 
-### Usage with Swink Agent
-
-Use `OllamaStreamFn` with the custom model name:
-
-```rust
-use swink_agent_adapters::OllamaStreamFn;
-
-let stream_fn = OllamaStreamFn::new("http://localhost:11434");
-// Set model_id to "my-gemma4-finetune" in your ModelSpec
-```
-
-This approach is useful when you need to:
-- Run a fine-tuned checkpoint not available in the Ollama library
-- Override the default chat template or system prompt
-- Set specific parameter defaults (temperature, top_k, num_ctx)
+Then use `OllamaStreamFn` as usual and set `model_id` in your `ModelSpec` to the custom name (`"my-gemma4-finetune"`).
 
 ---
 
@@ -241,6 +205,10 @@ Enable GPU acceleration via Cargo feature flags on `swink-agent-local-llm`:
 | `cuda`       | NVIDIA CUDA    | Linux, Windows    |
 | `vulkan`     | Vulkan         | Linux, Windows    |
 
+Hosted docs on docs.rs are built with the portable CPU backend plus the `gemma4`
+API surface. Hardware backend features are documented here but are not enabled
+for docs.rs because they require platform-specific toolchains.
+
 Gemma 4 E2B works on CPU (unlike the previous mistralrs-based implementation), but GPU acceleration is strongly recommended for usable performance:
 
 ```toml
@@ -253,7 +221,7 @@ swink-agent-local-llm = { path = "../local-llm", features = ["gemma4", "metal"] 
 ```rust
 use swink_agent_local_llm::{LocalModel, LocalStreamFn, ModelPreset};
 
-// Create a model from a preset (downloads ~5 GB on first run)
+// Create a model from a preset (downloads ~3.46 GB on first run)
 let model = LocalModel::from_preset(ModelPreset::Gemma4E2B);
 
 // Optional: track download and loading progress
@@ -272,15 +240,19 @@ Models are cached in `~/.cache/huggingface/hub/` and reused across runs. The `Mo
 
 ### Available presets
 
-| Preset             | Model              | Size    | Context | Feature Gate |
-|--------------------|--------------------|---------|---------|-------------|
-| `SmolLM3_3B`      | SmolLM3-3B (GGUF)  | ~1.9 GB | 8K      | _(none)_    |
-| `Gemma4E2B`       | Gemma 4 E2B        | ~5 GB   | 128K    | `gemma4`    |
-| `Gemma4E4B`       | Gemma 4 E4B        | ~5.5 GB | 128K    | `gemma4`    |
-| `Gemma4_26B`      | Gemma 4 26B MoE    | ~16 GB  | 256K    | `gemma4`    |
-| `Gemma4_31B`      | Gemma 4 31B Dense  | ~20 GB  | 256K    | `gemma4`    |
+| Preset             | Model              | Size      | Context | Feature Gate |
+|--------------------|--------------------|-----------|---------|-------------|
+| `SmolLM3_3B`      | SmolLM3-3B (GGUF)  | ~1.9 GB   | 8K      | _(none)_    |
+| `Gemma4E2B`       | Gemma 4 E2B        | ~3.46 GB  | 128K    | `gemma4`    |
+| `Gemma4E4B`       | Gemma 4 E4B        | ~5.5 GB   | 128K    | `gemma4`    |
+| `Gemma4_26B`      | Gemma 4 26B MoE    | ~16 GB    | 256K    | `gemma4`    |
+| `Gemma4_31B`      | Gemma 4 31B Dense  | ~20 GB    | 256K    | `gemma4`    |
+
+Local thinking-capable presets ship with thinking enabled by default (`thinking_level = Medium`; see `src/model_catalog.rs`) — unlike remote models, which default to thinking off. There is also an `EmbeddingGemma300M` preset (<200 MB) for text vectorization.
 
 ### Build notes
+
+Building `swink-agent-local-llm` requires `cmake` and a C/C++ toolchain on `PATH` — `llama-cpp-sys-2` compiles llama.cpp from source.
 
 On macOS with Metal, you may need Apple's Metal Toolchain installed:
 

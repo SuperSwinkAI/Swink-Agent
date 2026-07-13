@@ -58,6 +58,7 @@ async fn sub_agent_error_maps_to_tool_error() {
             stop_reason: StopReason::Error,
             error_message: "model exploded".into(),
             error_kind: None,
+            retry_after: None,
             usage: Some(Usage::default()),
         },
     ];
@@ -157,6 +158,7 @@ async fn default_map_result_with_error_and_no_message() {
             stop_reason: StopReason::Error,
             error_message: "boom".into(),
             error_kind: None,
+            retry_after: None,
             usage: None,
         },
     ];

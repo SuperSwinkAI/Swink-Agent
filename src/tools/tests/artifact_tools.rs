@@ -10,8 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::SessionState;
 use crate::artifact::{
-    ArtifactData, ArtifactError, ArtifactMeta, ArtifactStore, ArtifactVersion,
-    validate_artifact_name,
+    ArtifactData, ArtifactMeta, ArtifactStore, ArtifactVersion, validate_artifact_name,
 };
 use crate::tool::{AgentTool, AgentToolResult};
 use crate::types::ContentBlock;
@@ -34,89 +33,106 @@ impl MockArtifactStore {
 }
 
 impl ArtifactStore for MockArtifactStore {
-    async fn save(
-        &self,
-        session_id: &str,
-        name: &str,
+    fn save<'a>(
+        &'a self,
+        session_id: &'a str,
+        name: &'a str,
         data: ArtifactData,
-    ) -> Result<ArtifactVersion, ArtifactError> {
-        validate_artifact_name(name)?;
-        let mut store = self.data.lock().await;
-        let session = store.entry(session_id.to_string()).or_default();
-        let versions = session.entry(name.to_string()).or_default();
+    ) -> crate::artifact::ArtifactFuture<'a, ArtifactVersion> {
+        Box::pin(async move {
+            validate_artifact_name(name)?;
+            let mut store = self.data.lock().await;
+            let session = store.entry(session_id.to_string()).or_default();
+            let versions = session.entry(name.to_string()).or_default();
 
-        #[allow(clippy::cast_possible_truncation)]
-        let next_version = versions.len() as u32 + 1;
-        let version = ArtifactVersion {
-            name: name.to_string(),
-            version: next_version,
-            created_at: Utc::now(),
-            size: data.content.len(),
-            content_type: data.content_type.clone(),
-        };
-        versions.push((version.clone(), data));
-        Ok(version)
+            #[allow(clippy::cast_possible_truncation)]
+            let next_version = versions.len() as u32 + 1;
+            let version = ArtifactVersion {
+                name: name.to_string(),
+                version: next_version,
+                created_at: Utc::now(),
+                size: data.content.len(),
+                content_type: data.content_type.clone(),
+            };
+            versions.push((version.clone(), data));
+            Ok(version)
+        })
     }
 
-    async fn load(
-        &self,
-        session_id: &str,
-        name: &str,
-    ) -> Result<Option<(ArtifactData, ArtifactVersion)>, ArtifactError> {
-        let store = self.data.lock().await;
-        let result = store
-            .get(session_id)
-            .and_then(|session| session.get(name))
-            .and_then(|versions| versions.last())
-            .map(|(v, d)| (d.clone(), v.clone()));
-        Ok(result)
+    fn load<'a>(
+        &'a self,
+        session_id: &'a str,
+        name: &'a str,
+    ) -> crate::artifact::ArtifactFuture<'a, Option<(ArtifactData, ArtifactVersion)>> {
+        Box::pin(async move {
+            let store = self.data.lock().await;
+            let result = store
+                .get(session_id)
+                .and_then(|session| session.get(name))
+                .and_then(|versions| versions.last())
+                .map(|(v, d)| (d.clone(), v.clone()));
+            Ok(result)
+        })
     }
 
-    async fn load_version(
-        &self,
-        session_id: &str,
-        name: &str,
+    fn load_version<'a>(
+        &'a self,
+        session_id: &'a str,
+        name: &'a str,
         version: u32,
-    ) -> Result<Option<(ArtifactData, ArtifactVersion)>, ArtifactError> {
-        let store = self.data.lock().await;
-        let result = store
-            .get(session_id)
-            .and_then(|session| session.get(name))
-            .and_then(|versions| {
-                versions
-                    .iter()
-                    .find(|(v, _)| v.version == version)
-                    .map(|(v, d)| (d.clone(), v.clone()))
-            });
-        Ok(result)
-    }
-
-    async fn list(&self, session_id: &str) -> Result<Vec<ArtifactMeta>, ArtifactError> {
-        let store = self.data.lock().await;
-        let Some(session) = store.get(session_id) else {
-            return Ok(Vec::new());
-        };
-        let mut metas = Vec::with_capacity(session.len());
-        for (name, versions) in session {
-            if let (Some(first), Some(last)) = (versions.first(), versions.last()) {
-                metas.push(ArtifactMeta {
-                    name: name.clone(),
-                    latest_version: last.0.version,
-                    created_at: first.0.created_at,
-                    updated_at: last.0.created_at,
-                    content_type: last.0.content_type.clone(),
+    ) -> crate::artifact::ArtifactFuture<'a, Option<(ArtifactData, ArtifactVersion)>> {
+        Box::pin(async move {
+            let store = self.data.lock().await;
+            let result = store
+                .get(session_id)
+                .and_then(|session| session.get(name))
+                .and_then(|versions| {
+                    versions
+                        .iter()
+                        .find(|(v, _)| v.version == version)
+                        .map(|(v, d)| (d.clone(), v.clone()))
                 });
-            }
-        }
-        Ok(metas)
+            Ok(result)
+        })
     }
 
-    async fn delete(&self, session_id: &str, name: &str) -> Result<(), ArtifactError> {
-        let mut store = self.data.lock().await;
-        if let Some(session) = store.get_mut(session_id) {
-            session.remove(name);
-        }
-        Ok(())
+    fn list<'a>(
+        &'a self,
+        session_id: &'a str,
+    ) -> crate::artifact::ArtifactFuture<'a, Vec<ArtifactMeta>> {
+        Box::pin(async move {
+            let store = self.data.lock().await;
+            let Some(session) = store.get(session_id) else {
+                return Ok(Vec::new());
+            };
+            let mut metas = Vec::with_capacity(session.len());
+            for (name, versions) in session {
+                if let (Some(first), Some(last)) = (versions.first(), versions.last()) {
+                    metas.push(ArtifactMeta {
+                        name: name.clone(),
+                        latest_version: last.0.version,
+                        created_at: first.0.created_at,
+                        updated_at: last.0.created_at,
+                        content_type: last.0.content_type.clone(),
+                    });
+                }
+            }
+            Ok(metas)
+        })
+    }
+
+    fn delete<'a>(
+        &'a self,
+        session_id: &'a str,
+        name: &'a str,
+    ) -> crate::artifact::ArtifactFuture<'a, ()> {
+        Box::pin(async move {
+            let mut store = self.data.lock().await;
+            if let Some(session) = store.get_mut(session_id) {
+                session.remove(name);
+            }
+            Ok(())
+        })
     }
 }
 

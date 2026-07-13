@@ -23,7 +23,7 @@ This feature modifies existing plan mode and approval infrastructure to add:
 - `tui/src/app/lifecycle.rs` — Add `TrustFollowUp` timeout check in `tick()`; initialize new fields
 - `tui/src/commands.rs` — Add `#approve untrust` variants and `CommandResult` variants
 - `tui/src/ui/tool_panel.rs` — Render plan approval prompt and trust follow-up prompt
-- `tui/src/app/tests.rs` — New tests for all changed behavior
+- `tui/src/app/tests/` [corrected from `tests.rs`, now split into `approval.rs`, `plan_mode.rs`, `helpers.rs`, `mod.rs`, and others] — New tests for all changed behavior
 
 ## Build & Verify
 

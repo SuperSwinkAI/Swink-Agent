@@ -72,6 +72,8 @@ policies/                            # NEW crate: swink-agent-policies
     └── composition.rs               # Integration tests: policies composed in an agent config
 ```
 
+**Addendum (2026-07-06)**: The tree above reflects only this spec's original 4-policy scope. Commit `3a4d54d` also relocated 031-policy-slots' six built-in structural policies into this same crate, so `policies/src/` actually contains 12 files: the four above, plus `budget.rs`, `max_turns.rs`, `deny_list.rs`, `sandbox.rs`, `loop_detection.rs`, `checkpoint.rs`, `memory_nudge.rs`, and a shared `patterns.rs` helper. `policies/tests/` actually contains `composition.rs`, `policy_integration.rs`, and a `common/` helper module — not just `composition.rs`.
+
 **Structure Decision**: New `policies/` directory at workspace root, following the pattern of `adapters/`, `memory/`, `eval/`, `tui/`. Each policy is one file — they are self-contained ~200-400 line modules. `lib.rs` re-exports everything behind feature gates.
 
 ## Notes
@@ -82,4 +84,5 @@ policies/                            # NEW crate: swink-agent-policies
 - **ContentFilter pattern categories**: Each pattern has an optional `category: Option<String>`. The filter builder accepts `with_enabled_categories(impl IntoIterator<Item = impl Into<String>>)`. At evaluate time, only patterns whose category is in the enabled set (or has no category) are checked.
 - **AuditSink trait**: Defined as `pub trait AuditSink: Send + Sync { fn write(&self, record: &AuditRecord); }`. Synchronous to match the sync policy trait. `JsonlAuditSink` uses `std::fs::OpenOptions::append` for atomic-ish line writes. Errors logged via `tracing::warn!`, never propagated.
 - **Feature gates**: `prompt-guard` enables `prompt_guard` module + `regex` dep. `pii` enables `pii_redactor` module + `regex` dep. `content-filter` enables `content_filter` module + `regex` dep. `audit` enables `audit_logger` module + `chrono`/`serde_json` deps. `all` (default) enables everything. `regex` is a shared optional dep activated by any of the first three features.
+  - **Addendum (2026-07-06)**: `all` now also enables the six 031-policy-slots built-ins relocated here (`budget`, `max-turns`, `deny-list`, `sandbox`, `loop-detection`, `checkpoint`), for 11 total features — verified against `policies/Cargo.toml`.
 - **ContentBlock::extract_text()**: Public helper on `ContentBlock` that concatenates all `Text` block content. Used by PiiRedactor and ContentFilter to extract scannable text from `AssistantMessage.content` and by PromptInjectionGuard to extract text from `UserMessage.content` and `ToolResultMessage.content`.

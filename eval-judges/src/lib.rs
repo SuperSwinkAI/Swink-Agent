@@ -2,6 +2,19 @@
 //! Judge client implementations for `swink-agent-eval`.
 
 pub mod client;
+#[cfg(any(
+    test,
+    feature = "anthropic",
+    feature = "azure",
+    feature = "bedrock",
+    feature = "gemini",
+    feature = "mistral",
+    feature = "ollama",
+    feature = "openai",
+    feature = "proxy",
+    feature = "xai"
+))]
+mod util;
 
 #[cfg(feature = "anthropic")]
 mod anthropic;

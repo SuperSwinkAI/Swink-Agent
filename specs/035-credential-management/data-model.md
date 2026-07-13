@@ -101,6 +101,23 @@ Callback for interactive OAuth2 authorization.
 |--------|-----------|-------------|
 | `authorize` | `async fn authorize(&self, auth_url: &str, state: &str) -> Result<String, CredentialError>` | Present auth URL to user, return authorization code |
 
+### AuthorizationConfig (auth crate, added 2026-07-06)
+
+Per-key `OAuth2` client configuration for the interactive authorization flow.
+Distinct from `Credential::OAuth2` (an issued token set); this describes the
+inputs needed to *obtain* one when no credential is stored yet.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `authorization_endpoint` | `String` | Provider's authorization page URL |
+| `token_url` | `String` | Token endpoint for the code-for-token exchange |
+| `client_id` | `String` | OAuth2 client identifier |
+| `client_secret` | `Option<String>` | OAuth2 client secret (optional for public clients) |
+| `redirect_uri` | `String` | Redirect URI registered with the provider |
+| `scopes` | `Vec<String>` | Requested scopes |
+
+Registered via `DefaultCredentialResolver::with_authorization_config(key, config)`.
+
 ### CredentialError (core crate)
 
 | Variant | Description |
@@ -131,11 +148,24 @@ Concrete implementation of `CredentialResolver`.
 | Field | Type | Description |
 |-------|------|-------------|
 | `store` | `Arc<dyn CredentialStore>` | Backing store |
-| `client` | `reqwest::Client` | HTTP client for OAuth2 refresh |
+| `client` | `reqwest::Client` | HTTP client for OAuth2 refresh and code exchange |
 | `authorization_handler` | `Option<Arc<dyn AuthorizationHandler>>` | Optional interactive auth |
+| `authorization_configs` | `HashMap<String, AuthorizationConfig>` | Per-key OAuth2 client config for building an authorization URL (added 2026-07-06; see below) |
 | `expiry_buffer` | `Duration` | Proactive refresh window (default: 60s) |
-| `in_flight` | `tokio::sync::Mutex<HashMap<String, Shared<BoxFuture<...>>>>` | Deduplication map |
-| `timeout` | `Duration` | Resolution timeout (default: 30s) |
+| `refresh_sources` | `RwLock<HashMap<String, Arc<SingleFlightTokenSource<...>>>>` | Per-key dedup for both OAuth2 refresh and interactive authorization |
+| `timeout` | `Duration` | Non-interactive resolution timeout (default: 30s) |
+| `authorization_timeout` | `Duration` | Interactive authorization timeout (default: 5m, FR-020; added 2026-07-06) |
+
+**Note on `authorization_configs` (implementation deviation, 2026-07-06)**: the
+original data model's Resolution Flow diagram below ("None → handler
+configured → authorize()") did not specify where the OAuth2 authorization
+endpoint, client id, redirect URI, and scopes come from for a key that has no
+stored credential — `Credential::OAuth2` only exists once a credential has
+already been issued. `AuthorizationConfig` (new type, `auth/src/oauth2.rs`)
+fills this gap and is registered per-key via
+`DefaultCredentialResolver::with_authorization_config`. A key with a handler
+configured but no matching `AuthorizationConfig` behaves as `NotFound`, same
+as no handler at all.
 
 ## State Transitions
 
@@ -157,10 +187,13 @@ Concrete implementation of `CredentialResolver`.
 
 ```
 resolve(key)
-  ├── store.get(key)
-  │   ├── None → check authorization handler
-  │   │   ├── handler configured → authorize() → store.set() → resolve again
-  │   │   └── no handler → CredentialError::NotFound
+  ├── [`timeout` bounds this branch] store.get(key)
+  │   ├── None → check authorization handler + per-key AuthorizationConfig
+  │   │   ├── both configured → build auth URL → authorize() (single-flight
+  │   │   │   dedup, bounded by `authorization_timeout`) → exchange_code() →
+  │   │   │   store.set() → ResolvedCredential::OAuth2AccessToken
+  │   │   │   (elapsed → CredentialError::AuthorizationTimeout)
+  │   │   └── handler and/or config missing → CredentialError::NotFound
   │   └── Some(credential)
   │       ├── ApiKey → ResolvedCredential::ApiKey (always valid)
   │       ├── Bearer
@@ -172,7 +205,10 @@ resolve(key)
   │           └── expired/expiring
   │               ├── has refresh_token → refresh (deduplicated) → store.set() → ResolvedCredential::OAuth2AccessToken
   │               └── no refresh_token → CredentialError::Expired
-  └── timeout wraps entire flow
+  └── `timeout` (default 30s) wraps only the non-interactive branch above;
+      the interactive authorization branch has its own separate
+      `authorization_timeout` (default 5m, FR-020) — see the
+      `DefaultCredentialResolver` field table above for why these are split.
 ```
 
 ## Relationships
@@ -182,7 +218,8 @@ AgentOptions --configures--> CredentialResolver (optional)
 AgentLoopConfig --holds--> CredentialResolver (optional)
 CredentialResolver --uses--> CredentialStore
 CredentialResolver --uses--> AuthorizationHandler (optional)
-CredentialResolver --uses--> reqwest::Client (for refresh)
+CredentialResolver --uses--> AuthorizationConfig (optional, per-key)
+CredentialResolver --uses--> reqwest::Client (for refresh and code exchange)
 AgentTool --declares--> AuthConfig (optional, via auth_config())
 tool_dispatch --calls--> CredentialResolver.resolve()
 tool_dispatch --passes--> ResolvedCredential to tool.execute()

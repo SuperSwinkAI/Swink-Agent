@@ -147,7 +147,7 @@
 - [x] T032 Run `cargo clippy --workspace --no-deps -- -D warnings` and fix any warnings
 - [x] T033 Run `cargo test -p swink-agent-rpc` — all tests pass (peer tests verified)
 - [x] T034 Run `cargo test -p swink-agent-tui` — no regressions from stub removal (333 passed, 0 failed)
-- [ ] T035 Run quickstart.md validation — manual end-to-end with `swink-agentd` and a client
+- [x] T035 Run quickstart.md validation — manual end-to-end with `swink-agentd` and a client (validated 2026-07-06: daemon bound Unix socket with 0600 perms; initialize/initialized handshake; `prompt` streamed 7 `agent.event` notifications (agent_start→agent_end) against the live Anthropic API and returned `{"turn_id":"2"}`; client `shutdown` ended the session; SIGTERM exited the daemon cleanly and the Drop guard removed the socket file)
 
 ---
 

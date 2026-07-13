@@ -290,6 +290,11 @@ impl InputEditor {
         self.lines.len() > 1
     }
 
+    /// True if the editor contains no text (all lines are empty).
+    pub fn is_empty(&self) -> bool {
+        self.lines.iter().all(String::is_empty)
+    }
+
     /// Render the input editor.
     pub fn render(&self, frame: &mut Frame, area: Rect, focused: bool, status_hint: &str) {
         let border_color = if focused {
@@ -713,5 +718,34 @@ mod tests {
         let result = editor.submit();
         assert!(result.is_some());
         assert_eq!(result.unwrap().len(), 10_000);
+    }
+
+    #[test]
+    fn is_empty_true_for_new_editor() {
+        let editor = InputEditor::new();
+        assert!(editor.is_empty());
+    }
+
+    #[test]
+    fn is_empty_false_after_insert() {
+        let mut editor = InputEditor::new();
+        editor.insert_char('a');
+        assert!(!editor.is_empty());
+    }
+
+    #[test]
+    fn is_empty_false_with_blank_second_line() {
+        let mut editor = InputEditor::new();
+        editor.insert_char('a');
+        editor.insert_newline();
+        assert!(!editor.is_empty());
+    }
+
+    #[test]
+    fn is_empty_true_after_submit_clears_editor() {
+        let mut editor = InputEditor::new();
+        editor.insert_char('a');
+        editor.submit();
+        assert!(editor.is_empty());
     }
 }

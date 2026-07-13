@@ -103,7 +103,7 @@ An evaluator wants to check whether agent runs stayed within acceptable resource
 **Acceptance Scenarios**:
 
 1. **Given** a run within all budget limits, **When** scored, **Then** the budget score is 1.0.
-2. **Given** a run exceeding the token budget, **When** scored, **Then** the score is penalized proportionally to the overrun.
+2. **Given** a run exceeding the token budget, **When** scored, **Then** the score is 0.0 (fail) — budget scoring is binary pass/fail, not proportional to the overrun (see `eval/src/budget.rs` and this spec's own T057).
 3. **Given** a run exceeding multiple budget dimensions, **When** scored, **Then** each violation contributes to the penalty.
 
 ---
@@ -148,7 +148,7 @@ An evaluator wants to check whether agent runs stayed within acceptable resource
 - **FR-010**: The system MUST support listing and loading historical evaluation runs.
 - **FR-011**: The system MUST produce tamper-evident audit trails using cryptographic hash chains.
 - **FR-012**: The system MUST support integrity verification of audit trails, detecting and localizing tampering.
-- **FR-013**: The system MUST provide a budget evaluator that scores runs based on token usage, cost, and duration relative to configured limits.
+- **FR-013**: The system MUST provide a budget evaluator that scores runs based on cost, input tokens, output tokens, and turn count relative to configured limits. (Duration was dropped from `BudgetConstraints` as an explicitly accepted loss during the 023 Phase 13 migration — see `eval/src/types.rs::BudgetConstraints` and `eval/src/budget.rs`, neither of which score duration.)
 
 ### Key Entities
 
@@ -161,7 +161,8 @@ An evaluator wants to check whether agent runs stayed within acceptable resource
 - **GateConfig**: Threshold configuration for deployment gating: minimum pass rate, maximum cost, maximum duration.
 - **EvalStore**: The abstraction for persisting and retrieving evaluation results. The filesystem implementation stores results as structured data files.
 - **AuditedInvocation**: A tool invocation record augmented with a cryptographic hash chaining to the previous record, forming a tamper-evident log.
-- **BudgetEvaluator**: An evaluator that scores resource consumption (tokens, cost, duration) against configured budget limits.
+- **BudgetEvaluator**: An evaluator that scores resource consumption (cost, input tokens, output tokens, turn count) against configured budget limits.
+- **EfficiencyEvaluator** (defined in 023 FR-005): Scores a trajectory's efficiency based on duplicate invocation ratio (0.6 weight) and step count ratio (0.4 weight); pre-registered as a 024 default via `EvaluatorRegistry::with_defaults()`.
 
 ## Success Criteria *(mandatory)*
 
@@ -179,6 +180,6 @@ An evaluator wants to check whether agent runs stayed within acceptable resource
 - The trajectory collection and matching capabilities from spec 023 are available for use by evaluators.
 - Eval case data files use JSON as the primary format, with optional YAML support via the `yaml` feature gate.
 - The cryptographic hash function used for audit trails is SHA-256 (via the `sha2` crate).
-- The eval runner executes cases sequentially by default; parallel execution is a future enhancement.
+- The eval runner executes cases sequentially by default (`parallelism = 1`). Configurable parallel case execution shipped in spec 043 (FR-036, `EvalRunner::with_parallelism`, `eval/src/runner.rs`); this remains the sequential default.
 - Score values are normalized to the range 0.0-1.0 for consistency across evaluators.
 - The filesystem-based eval store is sufficient for local development and CI; remote storage backends are a future extension.

@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 
 use thiserror::Error;
 use url::Url;
@@ -28,7 +28,23 @@ pub struct DomainFilter {
     pub block_private_ips: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ResolvedHost {
+    pub host: String,
+    pub addr: SocketAddr,
+}
+
 impl DomainFilter {
+    /// Construct a filter that preserves open-domain access while blocking
+    /// private, loopback, link-local, and otherwise non-routable IP ranges.
+    #[must_use]
+    pub fn blocking_private_ips() -> Self {
+        Self {
+            block_private_ips: true,
+            ..Self::default()
+        }
+    }
+
     /// Check whether the given URL is permitted by the filter.
     ///
     /// Steps:
@@ -39,6 +55,13 @@ impl DomainFilter {
     /// 5. If `block_private_ips` is enabled, DNS-resolved addresses are checked
     ///    against private/loopback/link-local ranges (SSRF protection).
     pub fn is_allowed(&self, url: &Url) -> Result<(), DomainFilterError> {
+        self.validate_and_resolve(url).map(|_| ())
+    }
+
+    pub(crate) fn validate_and_resolve(
+        &self,
+        url: &Url,
+    ) -> Result<Option<ResolvedHost>, DomainFilterError> {
         // 1. Scheme check.
         let scheme = url.scheme();
         if scheme != "http" && scheme != "https" {
@@ -63,19 +86,57 @@ impl DomainFilter {
         }
 
         // 5. Private IP / SSRF check.
+        //
+        // Use the typed `url.host()` enum rather than `host_str()`: IPv6
+        // literals in `host_str()` keep their brackets ("[::1]"), which
+        // neither `Ipv6Addr` parsing nor getaddrinfo accepts, so IP literals
+        // are classified directly from the already-parsed address.
         if self.block_private_ips {
-            let addrs = format!("{host}:80")
-                .to_socket_addrs()
-                .map_err(|e| DomainFilterError::DnsError(host.to_string(), e.to_string()))?;
+            match url.host() {
+                Some(url::Host::Ipv4(ip)) => {
+                    if is_private_ip(&IpAddr::V4(ip)) {
+                        return Err(DomainFilterError::PrivateIp(ip.to_string()));
+                    }
+                }
+                Some(url::Host::Ipv6(ip)) => {
+                    if is_private_ip(&IpAddr::V6(ip)) {
+                        return Err(DomainFilterError::PrivateIp(ip.to_string()));
+                    }
+                }
+                Some(url::Host::Domain(domain)) => {
+                    let port = url.port_or_known_default().unwrap_or(80);
+                    let mut first_public_addr = None;
+                    let addrs = (domain, port).to_socket_addrs().map_err(|e| {
+                        DomainFilterError::DnsError(domain.to_string(), e.to_string())
+                    })?;
 
-            for addr in addrs {
-                if is_private_ip(&addr.ip()) {
-                    return Err(DomainFilterError::PrivateIp(addr.ip().to_string()));
+                    for addr in addrs {
+                        if is_private_ip(&addr.ip()) {
+                            return Err(DomainFilterError::PrivateIp(addr.ip().to_string()));
+                        }
+                        if first_public_addr.is_none() {
+                            first_public_addr = Some(addr);
+                        }
+                    }
+
+                    let addr = first_public_addr.ok_or_else(|| {
+                        DomainFilterError::DnsError(
+                            domain.to_string(),
+                            "no addresses found".to_string(),
+                        )
+                    })?;
+                    return Ok(Some(ResolvedHost {
+                        host: domain.to_string(),
+                        addr,
+                    }));
+                }
+                None => {
+                    return Err(DomainFilterError::InvalidUrl("URL has no host".to_string()));
                 }
             }
         }
 
-        Ok(())
+        Ok(None)
     }
 }
 
@@ -221,10 +282,7 @@ mod tests {
 
     #[test]
     fn private_ip_ranges_are_blocked() {
-        let filter = DomainFilter {
-            block_private_ips: true,
-            ..Default::default()
-        };
+        let filter = DomainFilter::blocking_private_ips();
 
         for url in [
             "http://0.0.0.0/admin",
@@ -239,6 +297,38 @@ mod tests {
         ] {
             assert!(filter.is_allowed(&Url::parse(url).unwrap()).is_err());
         }
+    }
+
+    #[test]
+    fn bracketed_ipv6_private_literals_are_blocked_as_private_not_dns_error() {
+        let filter = DomainFilter::blocking_private_ips();
+
+        for url in [
+            "http://[::1]/admin",
+            "http://[::]/admin",
+            "http://[fd00::1]/internal",
+            "http://[fe80::1]/link-local",
+            "http://[2001:db8::1]/docs",
+        ] {
+            let err = filter.is_allowed(&Url::parse(url).unwrap()).unwrap_err();
+            assert!(
+                matches!(err, DomainFilterError::PrivateIp(_)),
+                "{url} should be PrivateIp, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bracketed_public_ipv6_literal_is_allowed_without_dns_resolution() {
+        let filter = DomainFilter::blocking_private_ips();
+        let url = Url::parse("http://[2606:4700:4700::1111]/").unwrap();
+
+        let resolved = filter
+            .validate_and_resolve(&url)
+            .expect("public IPv6 literal should pass the filter");
+        // IP literals are classified directly from the parsed address and
+        // need no DNS pinning.
+        assert!(resolved.is_none());
     }
 
     #[test]

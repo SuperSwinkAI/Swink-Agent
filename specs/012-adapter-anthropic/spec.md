@@ -122,3 +122,13 @@ A developer encounters various error conditions when communicating with the Anth
 - The shared conversion trait and error classifier from the adapter shared infrastructure (spec 011) are available.
 - Thinking block support requires specific model versions that support extended thinking.
 - The adapter does not manage API key storage — credentials are provided by the caller.
+
+## Addendum: FR-006 Retry-After Implementation Notes (2026-07-06)
+
+FR-006 was previously unimplemented — the adapter classified HTTP errors but never read response headers, so no retry-after hint was ever surfaced. This addendum records the design used to close that gap:
+
+- `AssistantMessageEvent::Error` (core crate, `src/stream.rs`) gained a new field, `retry_after: Option<std::time::Duration>`. `None` means the provider gave no hint (the default for every existing error constructor and for every other adapter); `Some(duration)` means a hint was parsed from the response.
+- `adapters/src/classify.rs` gained two additive helpers: `parse_retry_after(&reqwest::header::HeaderMap) -> Option<Duration>` (and its testable inner `parse_retry_after_value(&str)`), and `with_retry_after(event, Option<Duration>) -> AssistantMessageEvent` to merge a parsed hint onto an already-classified error event. Both are shared infrastructure other adapters can adopt.
+- Header forms supported (RFC 9110 §10.2.3): **delay-seconds** (e.g. `"30"`) and **HTTP-date** (e.g. `"Wed, 21 Oct 2026 07:28:00 GMT"`, parsed via `chrono::DateTime::parse_from_rfc2822` and converted to a duration from now, clamped to zero if already past). Unparseable values return `None`.
+- Wiring is Anthropic-only per FR-006's scope: `adapters/src/anthropic.rs` reads the `Retry-After` header from the HTTP response (before the body is consumed) whenever the response status is non-2xx, and attaches it to the classified event regardless of which status produced it (429, 529, 504, or any other non-success code). In practice only 429 (and occasionally 529) responses carry the header from Anthropic. Mid-stream SSE `error` events (which arrive after a 200 OK, once the stream is already established) have no HTTP headers to read and always carry `retry_after: None`.
+- **Consumption**: the retry call site in `src/loop_/stream.rs` (`handle_stream_error`) prefers a provider-supplied `retry_after` hint over `RetryStrategy::delay`'s computed backoff when the hint is present; the retry *decision* (`should_retry`) remains the strategy's alone, and `RetryStrategy` implementations themselves do not see the hint.

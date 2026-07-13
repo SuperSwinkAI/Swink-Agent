@@ -5,6 +5,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use common::{
@@ -14,14 +15,15 @@ use common::{
 use futures::Stream;
 use futures::stream::StreamExt;
 use serde_json::json;
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolResult, AssistantMessage,
-    AssistantMessageEvent, ContentBlock, Cost, CustomMessage, DefaultRetryStrategy, LlmMessage,
-    MessageProvider, PolicyContext, PolicyVerdict, PostTurnPolicy, PreTurnPolicy, StopReason,
-    StreamFn, StreamOptions, ToolResultMessage, TurnPolicyContext, TurnSnapshot, Usage,
-    UserMessage, agent_loop,
+    AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolResult,
+    AssistantMessage, AssistantMessageEvent, ContentBlock, Cost, CustomMessage,
+    DefaultRetryStrategy, LlmMessage, MessageProvider, ModelSpec, PolicyContext, PolicyVerdict,
+    PostTurnPolicy, PreTurnPolicy, StopReason, StreamFn, StreamOptions, ToolResultMessage,
+    TurnPolicyContext, TurnSnapshot, Usage, UserMessage, agent_loop, agent_loop_continue,
 };
 
 // ─── MockUpdatingTool ─────────────────────────────────────────────────────────
@@ -81,29 +83,47 @@ impl AgentTool for MockUpdatingTool {
     }
 }
 
-struct MockCancellationIgnoringTool {
-    tool_name: String,
+#[derive(Clone, Copy)]
+enum GateToolOutcome {
+    Complete,
+    CompleteOnCancel,
+    Pending,
 }
 
-impl MockCancellationIgnoringTool {
-    fn new(name: &str) -> Self {
+struct ConcurrentGateTool {
+    tool_name: &'static str,
+    started: Arc<Notify>,
+    peer_started: Arc<Notify>,
+    outcome: GateToolOutcome,
+}
+
+impl ConcurrentGateTool {
+    fn new(tool_name: &'static str, started: Arc<Notify>, peer_started: Arc<Notify>) -> Self {
         Self {
-            tool_name: name.to_string(),
+            tool_name,
+            started,
+            peer_started,
+            outcome: GateToolOutcome::Complete,
         }
+    }
+
+    const fn with_outcome(mut self, outcome: GateToolOutcome) -> Self {
+        self.outcome = outcome;
+        self
     }
 }
 
-impl AgentTool for MockCancellationIgnoringTool {
+impl AgentTool for ConcurrentGateTool {
     fn name(&self) -> &str {
-        &self.tool_name
+        self.tool_name
     }
 
     fn label(&self) -> &str {
-        &self.tool_name
+        self.tool_name
     }
 
     fn description(&self) -> &'static str {
-        "A tool that ignores cancellation and never completes unless aborted"
+        "A tool that waits until a peer tool starts"
     }
 
     fn parameters_schema(&self) -> &serde_json::Value {
@@ -121,12 +141,106 @@ impl AgentTool for MockCancellationIgnoringTool {
         &self,
         _tool_call_id: &str,
         _params: serde_json::Value,
-        _cancellation_token: CancellationToken,
+        cancellation_token: CancellationToken,
         _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
         _state: std::sync::Arc<std::sync::RwLock<swink_agent::SessionState>>,
         _credential: Option<swink_agent::ResolvedCredential>,
     ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
-        Box::pin(async move { std::future::pending::<AgentToolResult>().await })
+        let started = Arc::clone(&self.started);
+        let peer_started = Arc::clone(&self.peer_started);
+        let outcome = self.outcome;
+        Box::pin(async move {
+            started.notify_one();
+            peer_started.notified().await;
+            match outcome {
+                GateToolOutcome::Complete => AgentToolResult::text("mock result"),
+                GateToolOutcome::CompleteOnCancel => {
+                    cancellation_token.cancelled().await;
+                    AgentToolResult::text("cancelled")
+                }
+                GateToolOutcome::Pending => std::future::pending::<AgentToolResult>().await,
+            }
+        })
+    }
+}
+
+struct CancelsOnTextStartStreamFn;
+
+impl StreamFn for CancelsOnTextStartStreamFn {
+    fn stream<'a>(
+        &'a self,
+        _model: &'a ModelSpec,
+        _context: &'a AgentContext,
+        _options: &'a StreamOptions,
+        cancellation_token: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        let events = vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::TextStart { content_index: 0 },
+            AssistantMessageEvent::TextDelta {
+                content_index: 0,
+                delta: "unreachable".to_string(),
+            },
+            AssistantMessageEvent::TextEnd { content_index: 0 },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::Stop,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
+        ];
+
+        Box::pin(futures::stream::iter(events).inspect(move |event| {
+            if matches!(event, AssistantMessageEvent::TextStart { .. }) {
+                cancellation_token.cancel();
+            }
+        }))
+    }
+}
+
+struct CancelsThenStallsStreamFn;
+
+impl StreamFn for CancelsThenStallsStreamFn {
+    fn stream<'a>(
+        &'a self,
+        _model: &'a ModelSpec,
+        _context: &'a AgentContext,
+        _options: &'a StreamOptions,
+        cancellation_token: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        Box::pin(CancelsThenStallsStream {
+            cancellation_token,
+            state: StalledStreamState::Start,
+        })
+    }
+}
+
+enum StalledStreamState {
+    Start,
+    CancelThenPending,
+    Pending,
+}
+
+struct CancelsThenStallsStream {
+    cancellation_token: CancellationToken,
+    state: StalledStreamState,
+}
+
+impl Stream for CancelsThenStallsStream {
+    type Item = AssistantMessageEvent;
+
+    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match self.state {
+            StalledStreamState::Start => {
+                self.state = StalledStreamState::CancelThenPending;
+                Poll::Ready(Some(AssistantMessageEvent::Start))
+            }
+            StalledStreamState::CancelThenPending => {
+                self.cancellation_token.cancel();
+                self.state = StalledStreamState::Pending;
+                Poll::Pending
+            }
+            StalledStreamState::Pending => Poll::Pending,
+        }
     }
 }
 
@@ -214,42 +328,13 @@ fn default_convert_to_llm() -> ConvertToLlmBoxed {
 }
 
 fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
-    AgentLoopConfig {
-        agent_name: None,
-        transfer_chain: None,
-        model: default_model(),
-        stream_options: StreamOptions::default(),
-        retry_strategy: Box::new(
-            DefaultRetryStrategy::default()
-                .with_jitter(false)
-                .with_base_delay(Duration::from_millis(1)),
-        ),
-        stream_fn,
-        tools: vec![],
-        convert_to_llm: default_convert_to_llm(),
-        transform_context: None,
-        get_api_key: None,
-        message_provider: None,
-        pending_message_snapshot: Arc::default(),
-        loop_context_snapshot: Arc::default(),
-        approve_tool: None,
-        approval_mode: swink_agent::ApprovalMode::default(),
-        pre_turn_policies: vec![],
-        pre_dispatch_policies: vec![],
-        post_turn_policies: vec![],
-        post_loop_policies: vec![],
-        async_transform_context: None,
-        metrics_collector: None,
-        fallback: None,
-        tool_execution_policy: swink_agent::ToolExecutionPolicy::default(),
-        session_state: std::sync::Arc::new(
-            std::sync::RwLock::new(swink_agent::SessionState::new()),
-        ),
-        credential_resolver: None,
-        cache_config: None,
-        cache_state: std::sync::Mutex::new(swink_agent::CacheState::default()),
-        dynamic_system_prompt: None,
-    }
+    let mut config = AgentLoopConfig::new(default_model(), stream_fn, default_convert_to_llm());
+    config.retry_strategy = Box::new(
+        DefaultRetryStrategy::default()
+            .with_jitter(false)
+            .with_base_delay(Duration::from_millis(1)),
+    );
+    config
 }
 
 fn terminal_done_events(text: &str, stop_reason: StopReason) -> Vec<AssistantMessageEvent> {
@@ -272,6 +357,21 @@ fn terminal_done_events(text: &str, stop_reason: StopReason) -> Vec<AssistantMes
 /// Collect all events from a loop stream.
 async fn collect_events(stream: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>) -> Vec<AgentEvent> {
     stream.collect().await
+}
+
+/// Collect events until the loop reports its terminal event.
+async fn collect_events_until_agent_end(
+    mut stream: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>,
+) -> Vec<AgentEvent> {
+    let mut events = Vec::new();
+    while let Some(event) = stream.next().await {
+        let is_agent_end = matches!(event, AgentEvent::AgentEnd { .. });
+        events.push(event);
+        if is_agent_end {
+            break;
+        }
+    }
+    events
 }
 
 /// Check if events contain a specific variant (by Debug name prefix).
@@ -381,6 +481,31 @@ impl PreTurnPolicy for RecordingPreTurnPolicy {
 struct InjectingOncePostTurnPolicy {
     injected: AtomicBool,
     text: String,
+}
+
+struct InjectingOncePreTurnPolicy {
+    injected: AtomicBool,
+    text: String,
+}
+
+impl PreTurnPolicy for InjectingOncePreTurnPolicy {
+    fn name(&self) -> &'static str {
+        "injecting-once-pre-turn"
+    }
+
+    fn evaluate(&self, _ctx: &PolicyContext<'_>) -> PolicyVerdict {
+        if self.injected.swap(true, Ordering::SeqCst) {
+            PolicyVerdict::Continue
+        } else {
+            PolicyVerdict::Inject(vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: self.text.clone(),
+                }],
+                timestamp: 0,
+                cache_hint: None,
+            }))])
+        }
+    }
 }
 
 impl PostTurnPolicy for InjectingOncePostTurnPolicy {
@@ -601,7 +726,7 @@ async fn transform_context_ordering() {
 }
 
 #[tokio::test]
-async fn pre_turn_policy_observes_transformed_context() {
+async fn pre_turn_policy_keeps_fresh_batch_when_transformer_rewrites_context() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("ok")]));
     let observations = Arc::new(Mutex::new(Vec::new()));
 
@@ -635,9 +760,151 @@ async fn pre_turn_policy_observes_transformed_context() {
         RecordedPreTurnBatch {
             turn_index: 0,
             message_count: 1,
-            new_messages: vec!["transformed prompt".to_string()],
+            new_messages: vec!["original prompt".to_string()],
         },
-        "pre-turn policies must inspect the transformed context sent toward the provider"
+        "pre-turn policies should inspect the immutable fresh batch"
+    );
+
+    let before_llm_messages = events
+        .iter()
+        .find_map(|event| match event {
+            AgentEvent::BeforeLlmCall { messages, .. } => Some(messages),
+            _ => None,
+        })
+        .expect("provider call should emit BeforeLlmCall");
+    let provider_text = before_llm_messages
+        .first()
+        .and_then(|message| match message {
+            LlmMessage::User(user) => Some(ContentBlock::extract_text(&user.content)),
+            _ => None,
+        })
+        .expect("provider input should include transformed user text");
+    assert_eq!(
+        provider_text, "transformed prompt",
+        "transformers should still affect the provider-bound context"
+    );
+}
+
+#[tokio::test]
+async fn pre_turn_new_messages_survive_context_compaction() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("ok")]));
+    let observations = Arc::new(Mutex::new(Vec::new()));
+
+    let mut config = default_config(stream_fn);
+    config.transform_context = Some(Arc::new(
+        move |msgs: &mut Vec<AgentMessage>, _overflow: bool| {
+            if !msgs.is_empty() {
+                msgs.remove(0);
+            }
+        },
+    ));
+    config.pre_turn_policies = vec![Arc::new(RecordingPreTurnPolicy {
+        observations: Arc::clone(&observations),
+    })];
+
+    let events = collect_events(agent_loop_continue(
+        vec![
+            common::user_msg("prior conversation"),
+            common::user_msg("fresh prompt"),
+        ],
+        1,
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "AgentEnd"));
+    let recorded = observations.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 1, "pre-turn policy should run once");
+    assert_eq!(
+        recorded[0],
+        RecordedPreTurnBatch {
+            turn_index: 0,
+            message_count: 1,
+            new_messages: vec!["fresh prompt".to_string()],
+        },
+        "compaction must not make the fresh pre-turn batch empty or polluted"
+    );
+}
+
+#[tokio::test]
+async fn pre_turn_new_messages_exclude_transformer_appends() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("ok")]));
+    let observations = Arc::new(Mutex::new(Vec::new()));
+
+    let mut config = default_config(stream_fn);
+    config.transform_context = Some(Arc::new(
+        move |msgs: &mut Vec<AgentMessage>, _overflow: bool| {
+            msgs.push(common::user_msg("retrieved context"));
+        },
+    ));
+    config.pre_turn_policies = vec![Arc::new(RecordingPreTurnPolicy {
+        observations: Arc::clone(&observations),
+    })];
+
+    let events = collect_events(agent_loop_continue(
+        vec![
+            common::user_msg("prior conversation"),
+            common::user_msg("fresh prompt"),
+        ],
+        1,
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "AgentEnd"));
+    let recorded = observations.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 1, "pre-turn policy should run once");
+    assert_eq!(
+        recorded[0],
+        RecordedPreTurnBatch {
+            turn_index: 0,
+            message_count: 3,
+            new_messages: vec!["fresh prompt".to_string()],
+        },
+        "transformer-appended context must not replace the fresh pre-turn batch"
+    );
+}
+
+#[tokio::test]
+async fn pre_turn_injections_reach_imminent_provider_call() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("ok")]));
+    let mut config = default_config(stream_fn);
+    config.pre_turn_policies = vec![Arc::new(InjectingOncePreTurnPolicy {
+        injected: AtomicBool::new(false),
+        text: "policy context".to_string(),
+    })];
+
+    let events = collect_events(agent_loop(
+        vec![common::user_msg("start")],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "AgentEnd"));
+    let before_llm_messages = events
+        .iter()
+        .find_map(|event| match event {
+            AgentEvent::BeforeLlmCall { messages, .. } => Some(messages),
+            _ => None,
+        })
+        .expect("provider call should emit BeforeLlmCall");
+    let input_text: Vec<String> = before_llm_messages
+        .iter()
+        .filter_map(|message| match message {
+            LlmMessage::User(user) => Some(ContentBlock::extract_text(&user.content)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        input_text,
+        vec!["start".to_string(), "policy context".to_string()],
+        "pre-turn injected messages must be present in the current provider input"
     );
 }
 
@@ -821,29 +1088,43 @@ async fn concurrent_execution() {
         text_only_events("done"),
     ]));
 
-    let delay = Duration::from_millis(100);
-    let tool1 = Arc::new(MockTool::new("slow_tool").with_delay(delay));
-    let tool2 = Arc::new(MockTool::new("slow_tool2").with_delay(delay));
-    let tool3 = Arc::new(MockTool::new("slow_tool3").with_delay(delay));
+    let tool1_started = Arc::new(Notify::new());
+    let tool2_started = Arc::new(Notify::new());
+    let tool3_started = Arc::new(Notify::new());
+
+    let tool1 = Arc::new(ConcurrentGateTool::new(
+        "slow_tool",
+        Arc::clone(&tool1_started),
+        Arc::clone(&tool2_started),
+    ));
+    let tool2 = Arc::new(ConcurrentGateTool::new(
+        "slow_tool2",
+        Arc::clone(&tool2_started),
+        Arc::clone(&tool3_started),
+    ));
+    let tool3 = Arc::new(ConcurrentGateTool::new(
+        "slow_tool3",
+        Arc::clone(&tool3_started),
+        Arc::clone(&tool1_started),
+    ));
 
     let mut config = default_config(stream_fn);
     config.tools = vec![tool1, tool2, tool3];
 
-    let start = std::time::Instant::now();
-    let events = collect_events(agent_loop(
-        vec![],
-        "system".to_string(),
-        config,
-        CancellationToken::new(),
-    ))
-    .await;
-    let elapsed = start.elapsed();
+    let events = tokio::time::timeout(
+        Duration::from_secs(5),
+        collect_events(agent_loop(
+            vec![],
+            "system".to_string(),
+            config,
+            CancellationToken::new(),
+        )),
+    )
+    .await
+    .expect("tools should not deadlock under concurrent dispatch");
 
     assert!(has_event(&events, "AgentEnd"));
-    assert!(
-        elapsed < Duration::from_millis(500),
-        "tools should execute concurrently, took {elapsed:?}"
-    );
+    assert_eq!(count_events(&events, "ToolExecutionEnd"), 3);
 }
 
 // ─── 3.7: Steering interrupt ─────────────────────────────────────────────
@@ -884,8 +1165,21 @@ async fn steering_interrupt() {
         text_only_events("after steering"),
     ]));
 
-    let fast_tool = Arc::new(MockTool::new("fast_tool").with_delay(Duration::from_millis(10)));
-    let slow_tool = Arc::new(MockTool::new("slow_tool").with_delay(Duration::from_millis(500)));
+    let fast_started = Arc::new(Notify::new());
+    let slow_started = Arc::new(Notify::new());
+    let fast_tool = Arc::new(ConcurrentGateTool::new(
+        "fast_tool",
+        Arc::clone(&fast_started),
+        Arc::clone(&slow_started),
+    ));
+    let slow_tool = Arc::new(
+        ConcurrentGateTool::new(
+            "slow_tool",
+            Arc::clone(&slow_started),
+            Arc::clone(&fast_started),
+        )
+        .with_outcome(GateToolOutcome::CompleteOnCancel),
+    );
 
     let steering_call_count = Arc::new(AtomicU32::new(0));
     let steering_count_clone = Arc::clone(&steering_call_count);
@@ -955,8 +1249,21 @@ async fn steering_interrupt_aborts_cancellation_unaware_tools() {
         text_only_events("after steering"),
     ]));
 
-    let fast_tool = Arc::new(MockTool::new("fast_tool").with_delay(Duration::from_millis(10)));
-    let stuck_tool = Arc::new(MockCancellationIgnoringTool::new("stuck_tool"));
+    let fast_started = Arc::new(Notify::new());
+    let stuck_started = Arc::new(Notify::new());
+    let fast_tool = Arc::new(ConcurrentGateTool::new(
+        "fast_tool",
+        Arc::clone(&fast_started),
+        Arc::clone(&stuck_started),
+    ));
+    let stuck_tool = Arc::new(
+        ConcurrentGateTool::new(
+            "stuck_tool",
+            Arc::clone(&stuck_started),
+            Arc::clone(&fast_started),
+        )
+        .with_outcome(GateToolOutcome::Pending),
+    );
 
     let steering_call_count = Arc::new(AtomicU32::new(0));
     let steering_count_clone = Arc::clone(&steering_call_count);
@@ -978,17 +1285,13 @@ async fn steering_interrupt_aborts_cancellation_unaware_tools() {
         }
     })));
 
-    let events = tokio::time::timeout(
-        Duration::from_millis(250),
-        collect_events(agent_loop(
-            vec![],
-            "system".to_string(),
-            config,
-            CancellationToken::new(),
-        )),
-    )
-    .await
-    .expect("steering interrupt should not wait on cancellation-unaware tools");
+    let events = collect_events_until_agent_end(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
 
     assert!(has_event(&events, "AgentEnd"));
     assert_eq!(count_events(&events, "TurnStart"), 2);
@@ -1046,6 +1349,7 @@ async fn error_exit_no_follow_up() {
             error_message: "fatal stream error".to_string(),
             usage: None,
             error_kind: None,
+            retry_after: None,
         },
     ]]));
 
@@ -1078,35 +1382,45 @@ async fn error_exit_no_follow_up() {
 #[tokio::test]
 async fn abort() {
     let token = CancellationToken::new();
-    let token_clone = token.clone();
-
-    let stream_fn = Arc::new(MockStreamFn::new(vec![{
-        let mut events = vec![AssistantMessageEvent::Start];
-        for i in 0..100 {
-            events.push(AssistantMessageEvent::TextStart { content_index: i });
-            events.push(AssistantMessageEvent::TextDelta {
-                content_index: i,
-                delta: "x".to_string(),
-            });
-            events.push(AssistantMessageEvent::TextEnd { content_index: i });
-        }
-        events.push(AssistantMessageEvent::Done {
-            stop_reason: StopReason::Stop,
-            usage: Usage::default(),
-            cost: Cost::default(),
-        });
-        events
-    }]));
+    let token_for_assertion = token.clone();
+    let stream_fn = Arc::new(CancelsOnTextStartStreamFn);
 
     let config = default_config(stream_fn);
 
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(5)).await;
-        token_clone.cancel();
-    });
-
     let events = collect_events(agent_loop(vec![], "system".to_string(), config, token)).await;
 
+    assert!(token_for_assertion.is_cancelled());
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::MessageEnd { message }
+            if message.stop_reason == StopReason::Aborted
+    )));
+    assert!(has_event(&events, "AgentEnd"));
+}
+
+#[tokio::test]
+async fn abort_during_stalled_stream_completes_turn() {
+    let token = CancellationToken::new();
+    let token_for_assertion = token.clone();
+    let stream_fn = Arc::new(CancelsThenStallsStreamFn);
+
+    let config = default_config(stream_fn);
+
+    let events = tokio::time::timeout(
+        Duration::from_secs(5),
+        collect_events_until_agent_end(agent_loop(vec![], "system".to_string(), config, token)),
+    )
+    .await
+    .expect("stalled provider stream should not block cancellation");
+
+    assert!(token_for_assertion.is_cancelled());
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::TurnEnd {
+            reason: swink_agent::TurnEndReason::Aborted,
+            ..
+        }
+    )));
     assert!(has_event(&events, "AgentEnd"));
 }
 
@@ -1122,6 +1436,7 @@ async fn retry_success() {
                 error_message: "rate limit exceeded (429)".to_string(),
                 usage: None,
                 error_kind: None,
+                retry_after: None,
             },
         ],
         text_only_events("retried successfully"),
@@ -1169,6 +1484,7 @@ async fn retry_success_emits_one_logical_message_lifecycle() {
                 error_message: "rate limit exceeded (429)".to_string(),
                 usage: None,
                 error_kind: None,
+                retry_after: None,
             },
         ],
         text_only_events("retried successfully"),
@@ -1244,6 +1560,7 @@ async fn non_retryable_error() {
                 error_message: "fatal stream error".to_string(),
                 usage: None,
                 error_kind: None,
+                retry_after: None,
             },
         ],
         text_only_events("should not reach"),
@@ -1430,6 +1747,7 @@ async fn overflow_signal() {
                 error_message: "context window exceeded".to_string(),
                 usage: None,
                 error_kind: None,
+                retry_after: None,
             },
         ],
         text_only_events("recovered"),

@@ -9,7 +9,7 @@
 
 ### User Story 1 - Monitor Tool Execution in Real Time (Priority: P1)
 
-A developer watches the agent execute tools. The tool panel appears when tool execution begins, showing each active tool with an animated spinner. As tools complete, the spinner is replaced by a check badge (success) or cross badge (failure). After all tools finish and a timeout elapses, the tool panel fades away to reclaim screen space. The developer can see at a glance which tools are running, which succeeded, and which failed.
+A developer watches the agent execute tools. The tool panel appears when tool execution begins, showing each active tool with an animated spinner. As tools complete, the spinner is replaced by a check badge (success) or cross badge (failure). After all tools finish and a timeout elapses, the tool panel fades away to reclaim screen space. The developer can see at a glance which tools are running, which succeeded, and which failed. **[Addition]** While a tool is still running, the panel also shows a truncated preview of its most recent streamed output line next to the spinner, giving the developer live insight into long-running tools (e.g. shell commands) before they complete.
 
 **Why this priority**: Tool execution visibility is critical — without it, the developer cannot tell what the agent is doing or whether something went wrong.
 
@@ -40,6 +40,7 @@ A developer reviews file modifications made by the agent. When a tool produces f
 3. **Given** unchanged lines surround a change, **When** the diff is displayed, **Then** context lines appear in a dimmed style.
 4. **Given** a diff exceeds a size threshold, **When** displayed, **Then** the diff is truncated with a summary of omitted lines.
 5. ~~**Given** a diff for a file with a known type, **When** displayed, **Then** the diff content is syntax-highlighted.~~ *Deferred — diffs use generic color coding (green/red/dim); syntax highlighting is available for markdown code blocks only.*
+6. **[Addition]** **Given** the terminal is at least 160 columns wide and the modified file is not a new file, **When** the diff is displayed, **Then** old and new content render as a side-by-side (two-column) diff instead of the unified layout; below that width, or for newly created files, the unified/inline diff layout is always used.
 
 ---
 
@@ -133,9 +134,9 @@ A developer manages screen space by collapsing and expanding tool result blocks 
 
 ### Key Entities
 
-- **ToolPanel**: A docked region above the conversation area that shows active tools, recently completed tools, pending approvals, and resolved approvals. Uses braille spinner frames. Height capped at 10 lines. Auto-hides when idle.
+- **ToolPanel**: A docked region above the conversation area that shows active tools, recently completed tools, pending approvals, and resolved approvals. Uses braille spinner frames. Height capped at 10 lines. Auto-hides when idle. **[Addition]** Each active tool tracks a `streamed_output` buffer of live/incremental output as it arrives; the panel shows the most recent non-empty output line as a truncated preview next to the tool name while it is still running.
 - **ToolResultBlock**: A collapsible section in the conversation displaying a tool's output. Has expanded and collapsed states, with auto-collapse behavior and user override.
-- **DiffView**: A visual representation of file changes in unified diff format with color-coded additions/removals. Truncates at 50 lines.
+- **DiffView**: A visual representation of file changes in unified diff format with color-coded additions/removals. Truncates at 50 lines. **[Addition]** Switches to a side-by-side (two-column) layout instead of unified when the terminal is >= 160 columns wide and the file is not newly created.
 - **StatusBar**: A persistent UI element displaying model information, token usage, cost, agent state, retry status, and elapsed time.
 - **ContextGauge**: A compact progress bar within the status bar showing context window utilization with color-coded urgency thresholds.
 - **FormatHelper**: Utility functions for rendering human-readable token counts, elapsed time, and context gauge percentages.

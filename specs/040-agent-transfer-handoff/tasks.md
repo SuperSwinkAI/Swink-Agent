@@ -119,12 +119,12 @@
 
 ### Tests for US4
 
-- [x] T033 [US4] Write test: transfer-requested event emitted when transfer tool succeeds in `src/loop_/turn.rs`
-- [x] T034 [US4] Write test: transfer-rejected event emitted when transfer tool returns error (target not found or not allowed) in `src/loop_/turn.rs`
+- [x] T033 [US4] Write test: transfer-requested event emitted when transfer tool succeeds in `src/loop_/turn.rs` — implemented as the dedicated `AgentEvent::TransferInitiated` variant (not `Custom(Emission)`); covered by `tests/transfer.rs::transfer_initiated_event_emitted_on_transfer`.
+- [x] T034 [US4] Write test: transfer-rejected event emitted when a transfer is rejected in `src/loop_/turn.rs` — scope narrowed to `TransferChain` safety rejections (circular / max-depth), since target-not-found/not-allowed rejections are ordinary tool-level errors (`is_error: true`) with no false-success state to correct and no dedicated event; covered by a loop-level test asserting `TransferRejected` fires on circular rejection.
 
 ### Implementation for US4
 
-- [x] T035 [US4] Add transfer event emission in the loop's transfer detection path — emit transfer-requested event (via `AgentEvent::Custom(Emission)`) when transfer signal found, emit transfer-rejected when transfer tool returns error in `src/loop_/turn.rs`
+- [x] T035 [US4] Add transfer event emission in the loop's transfer detection path — emit `AgentEvent::TransferInitiated` when a transfer signal is honored; emit the dedicated `AgentEvent::TransferRejected` variant (carrying `source_agent`, `target_agent`, and a `TransferRejectionReason` of `Circular` or `MaxDepthExceeded`) when the `TransferChain` safety check rejects a transfer, in `src/loop_/turn.rs`. (Implemented as proper `AgentEvent` variants rather than `Custom(Emission)`, matching `TransferInitiated`'s existing style.)
 
 **Checkpoint**: Transfer events work. `cargo test -p swink-agent` passes.
 

@@ -3,6 +3,12 @@
 //! - macOS: Keychain Services
 //! - Windows: Credential Manager
 //! - Linux: secret-service (D-Bus)
+//!
+//! This stores **LLM provider API keys** (Ollama/OpenAI/Anthropic/Custom Proxy) for the
+//! TUI itself. It is unrelated to `swink-agent-auth`'s `CredentialStore` (spec
+//! `035-credential-management`), which is an in-memory-only store for *tool*
+//! authentication secrets. See `specs/035-credential-management/spec.md`'s
+//! terminology note for the distinction.
 
 use std::collections::HashMap;
 

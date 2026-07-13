@@ -15,8 +15,8 @@ use swink_agent::{
 use swink_agent_adapters::AnthropicStreamFn;
 
 use common::{
-    event_name, extract_stop_reason, find_error_kind, find_error_message, sse_response,
-    test_context,
+    event_name, extract_stop_reason, find_error_kind, find_error_message, find_retry_after,
+    notify_on_request, sse_response, test_context,
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -175,6 +175,9 @@ async fn anthropic_thinking_stream() {
         "event: content_block_delta",
         r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me think..."}}"#,
         "",
+        "event: content_block_delta",
+        r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig_abc123"}}"#,
+        "",
         "event: content_block_stop",
         r#"data: {"type":"content_block_stop","index":0}"#,
         "",
@@ -232,6 +235,12 @@ async fn anthropic_thinking_stream() {
         thinking_end_pos < text_start_pos,
         "ThinkingEnd should precede TextStart"
     );
+
+    let thinking_signature = events.iter().find_map(|event| match event {
+        AssistantMessageEvent::ThinkingEnd { signature, .. } => signature.as_deref(),
+        _ => None,
+    });
+    assert_eq!(thinking_signature, Some("sig_abc123"));
 }
 
 #[tokio::test]
@@ -340,6 +349,39 @@ async fn anthropic_http_429() {
     assert!(
         err.contains("rate limit"),
         "expected 'rate limit', got: {err}"
+    );
+    assert_eq!(
+        find_retry_after(&events),
+        None,
+        "no Retry-After header was sent, so the hint should be absent"
+    );
+}
+
+#[tokio::test]
+async fn anthropic_http_429_with_retry_after_header() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("Retry-After", "42")
+                .set_body_string("Rate limited"),
+        )
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    let err = find_error_message(&events).expect("expected error event");
+    assert!(
+        err.contains("rate limit"),
+        "expected 'rate limit', got: {err}"
+    );
+    assert_eq!(
+        find_retry_after(&events),
+        Some(std::time::Duration::from_secs(42)),
+        "Retry-After header should be propagated onto the error event"
     );
 }
 
@@ -549,6 +591,36 @@ async fn anthropic_stream_error_event() {
 }
 
 #[tokio::test]
+async fn anthropic_unknown_stream_error_is_non_retryable() {
+    let body = [
+        "event: error",
+        r#"data: {"type":"error","error":{"type":"invalid_request_error","message":"bad request"}}"#,
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    let error_kind = events
+        .iter()
+        .find_map(|event| match event {
+            AssistantMessageEvent::Error { error_kind, .. } => Some(*error_kind),
+            _ => None,
+        })
+        .expect("expected error event");
+    assert_eq!(error_kind, None);
+}
+
+#[tokio::test]
 async fn anthropic_cancellation() {
     let body = [
         "event: message_start",
@@ -557,7 +629,8 @@ async fn anthropic_cancellation() {
     ]
     .join("\n");
 
-    let slow_response = sse_response(&body).set_delay(std::time::Duration::from_secs(30));
+    let (slow_response, request_seen) =
+        notify_on_request(sse_response(&body).set_delay(std::time::Duration::from_secs(30)));
 
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -573,13 +646,15 @@ async fn anthropic_cancellation() {
     let token = CancellationToken::new();
 
     let cancel_token = token.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        cancel_token.cancel();
+    let events_handle = tokio::spawn(async move {
+        sf.stream(&model, &context, &options, token)
+            .collect::<Vec<_>>()
+            .await
     });
 
-    let stream = sf.stream(&model, &context, &options, token);
-    let events: Vec<_> = stream.collect().await;
+    request_seen.notified().await;
+    cancel_token.cancel();
+    let events = events_handle.await.expect("stream task should complete");
 
     let has_aborted = events.iter().any(|e| {
         matches!(

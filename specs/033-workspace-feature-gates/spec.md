@@ -88,10 +88,10 @@ A headless daemon or library consumer depends on `swink-agent` for its agent loo
 
 ### Functional Requirements
 
-- **FR-001**: The adapters crate MUST expose individual feature flags for all 9 adapter modules — implemented (`anthropic`, `openai`, `ollama`, `gemini`, `proxy`) and stubs (`azure`, `bedrock`, `mistral`, `xai`) — that gate each provider's module compilation and re-exports. Note: the `gemini` feature gates the `google` module (which exports `GeminiStreamFn`); the feature name matches the public type and user mental model.
+- **FR-001**: The adapters crate MUST expose individual feature flags for all 9 adapter modules — implemented (`anthropic`, `openai`, `ollama`, `gemini`, `proxy`) and stubs (`azure`, `bedrock`, `mistral`, `xai`) — that gate each provider's module compilation and re-exports. Note: the `gemini` feature gates the `google` module (which exports `GeminiStreamFn`); the feature name matches the public type and user mental model. **Addendum (2026-07-06)**: this 9-flag inventory omits two other real, non-provider features verified in `adapters/Cargo.toml`: `openai-compat` (the shared OpenAI-compatible-endpoint machinery that `openai` and `xai` both pull in via `openai = ["openai-compat"]` / `xai = ["openai-compat"]`) and the hidden `__no_default_features_sentinel` feature-leak-detection flag (a footnote-level implementation detail, not consumer-facing). Separately, `swink-agent-tui` exposes its own `adapters` feature (`adapters = ["dep:swink-agent-adapters"]`, with a fixed inner feature set) — this spec's FR-001 only covers the `swink-agent-adapters` crate's own flags, not this downstream re-gating in TUI.
 - **FR-002**: The adapters crate MUST compile shared infrastructure (base HTTP client, SSE parsing, error types, conversion utilities) unconditionally, regardless of which provider features are enabled.
 - **FR-003**: The adapters crate MUST provide an `all` feature that enables all 9 adapter feature flags (5 implemented + 4 stubs), plus a `full` convenience feature for the all-adapters profile.
-- **FR-004**: The local-llm crate MUST expose backend feature flags (`metal`, `cuda`, `vulkan`) that forward to the corresponding llama-cpp-2 compile-time features.
+- **FR-004**: The local-llm crate MUST expose backend feature flags (`metal`, `cuda`, `cudnn`, `vulkan`) that forward to the corresponding llama-cpp-2 compile-time features. **Corrected 2026-07-06**: this list previously omitted `cudnn` (verified against `local-llm/Cargo.toml`: `cudnn = ["cuda"]`).
 - **FR-005**: The local-llm crate MUST default to CPU-only inference when no backend feature is explicitly selected (no `default` or `all` feature for backends — explicit opt-in only).
 - **FR-006**: The TUI crate MUST remain opt-in from the workspace root — it MUST NOT be included in the root crate's default features.
 - **FR-007**: The TUI crate MUST preserve its existing `local` feature that optionally depends on `swink-agent-local-llm`.
@@ -100,13 +100,13 @@ A headless daemon or library consumer depends on `swink-agent` for its agent loo
 - **FR-010**: The root crate's `default` features MUST include `builtin-tools` (preserving current behavior). Adapters, TUI, and local-llm are separate workspace crates — consumers opt-in by adding them as direct dependencies.
 - **FR-011**: Feature-gated modules MUST produce compile-time errors when a consumer references a type whose feature is not enabled (Rust's default "unresolved import" error is sufficient — no explicit `compile_error!` macro required).
 - **FR-012**: All existing tests MUST pass with default features enabled, preserving full backward compatibility.
-- **FR-013**: Provider-specific dependencies (e.g., `eventsource-stream` for the proxy adapter, `sha2` for the bedrock adapter) MUST only compile when the corresponding provider feature is enabled. The shared `sse` module has no external dependencies and compiles unconditionally.
+- **FR-013**: Provider-specific dependencies (e.g., the `aws-credential-types`/`aws-sigv4`/`aws-smithy-eventstream`/`aws-smithy-runtime-api`/`aws-smithy-types` family for the bedrock adapter) MUST only compile when the corresponding provider feature is enabled. The shared `sse` module has no external dependencies and compiles unconditionally. **Corrected 2026-07-06**: the original wording claimed `eventsource-stream` gates the proxy adapter and `sha2` gates bedrock — neither dependency exists in `adapters/Cargo.toml`. The proxy adapter's SSE handling is a hand-rolled, always-on module (no optional dependency of its own); bedrock's real optional deps are the `aws-*` family listed above.
 
 ### Key Entities
 
 - **Feature Flag**: A Cargo feature marker that gates compilation of a module and its dependencies. Adapters use `default = []` plus `full = ["all"]`; the policies crate keeps its own `default = ["all"]` profile.
 - **Shared Infrastructure**: The always-compiled foundation of the adapters crate (base HTTP client, SSE utilities, error types, conversion functions) that all providers depend on.
-- **Backend Feature**: A local-llm feature flag (`metal`, `cuda`, `cudnn`, `flash-attn`, `mkl`, `accelerate`) that selects optional hardware acceleration for on-device inference. CPU-only inference is the no-feature fallback.
+- **Backend Feature**: A local-llm feature flag (`metal`, `cuda`, `cudnn`, `vulkan`) that selects optional hardware acceleration for on-device inference. CPU-only inference is the no-feature fallback. **Corrected 2026-07-06**: earlier drafts listed phantom `flash-attn`, `mkl`, and `accelerate` flags that don't exist in `local-llm/Cargo.toml`, and omitted the real `vulkan` flag.
 
 ## Success Criteria *(mandatory)*
 
@@ -117,7 +117,7 @@ A headless daemon or library consumer depends on `swink-agent` for its agent loo
 - **SC-003**: Building the adapters crate with `--no-default-features --features anthropic` succeeds and excludes all other provider modules from compilation.
 - **SC-004**: Building the root crate with `default-features = false` succeeds with only the core agent loop available.
 - **SC-005**: A consumer referencing an ungated adapter type receives a compile error indicating the type is unavailable (Rust's "unresolved import" error).
-- **SC-006**: The local-llm crate builds with each supported backend feature (`metal`, `cuda`, `cudnn`, `flash-attn`, `mkl`, `accelerate`) independently on its target platform, and also builds with no backend feature selected.
+- **SC-006**: The local-llm crate builds with each supported backend feature (`metal`, `cuda`, `cudnn`, `vulkan`) independently on its target platform, and also builds with no backend feature selected. **Corrected 2026-07-06**: see Key Entities addendum above — the phantom `flash-attn`/`mkl`/`accelerate` flags don't exist; `vulkan` does.
 - **SC-007**: The TUI crate and its dependencies do not appear in the dependency tree of a consumer that depends only on `swink-agent` (TUI is a separate workspace crate, not a root dependency).
 
 ## Assumptions
