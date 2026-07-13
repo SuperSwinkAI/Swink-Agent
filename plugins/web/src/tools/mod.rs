@@ -124,9 +124,37 @@ pub(crate) mod log_capture {
         }
     }
 
+    /// Pin tracing's global max level to `INFO` for the whole test binary.
+    ///
+    /// `capture()` installs only *scoped* (thread-local) subscribers. With no
+    /// global default, tracing's global `MAX_LEVEL` fast-path — which `info!`
+    /// consults before dispatching — flickers as scoped guards are set and
+    /// dropped across the test harness's worker threads under a shared-process
+    /// runner (`cargo test`, unlike per-process `cargo nextest`). A completion
+    /// `info!` can then be filtered out before reaching the capture buffer,
+    /// failing the assertion intermittently.
+    ///
+    /// Installing a global default at `INFO` once keeps `MAX_LEVEL` pinned at
+    /// `INFO` for the binary's lifetime; the scoped capture subscriber still
+    /// takes precedence on the test's own thread. The global writer is a sink,
+    /// so it produces no output.
+    fn pin_global_info_level() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            let global = tracing_subscriber::fmt()
+                .with_max_level(tracing::Level::INFO)
+                .with_writer(std::io::sink)
+                .finish();
+            // Ignore the error if a global default was already set elsewhere;
+            // any global default is enough to pin the level.
+            let _ = tracing::subscriber::set_global_default(global);
+        });
+    }
+
     /// Install a capturing subscriber as the default for the current thread.
     /// Dropping the returned guard restores the previous default.
     pub(crate) fn capture(buffer: SharedLogBuffer) -> tracing::subscriber::DefaultGuard {
+        pin_global_info_level();
         let subscriber = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::INFO)
             .without_time()
@@ -135,6 +163,44 @@ pub(crate) mod log_capture {
             .with_writer(buffer)
             .finish();
         tracing::subscriber::set_default(subscriber)
+    }
+
+    /// Process-wide lock serializing capture-based tests.
+    ///
+    /// `capture()` installs a thread-local subscriber whose `INFO` interest
+    /// bumps tracing's *global* max-level; when a guard drops, the global level
+    /// is recomputed. Under a shared-process test runner (`cargo test`, which
+    /// `release.yml` uses — unlike per-process `cargo nextest` in PR CI), one
+    /// capture test's guard drop can transiently lower the global level while
+    /// another is emitting its completion log, dropping that log and failing
+    /// the assertion. Serializing the capture tests keeps exactly one guard
+    /// live at a time, so the global level never dips mid-test.
+    ///
+    /// A `tokio::sync::Mutex` (not `std`) is used deliberately: its guard is
+    /// safe — and clippy-clean — to hold across the `execute(...).await` these
+    /// tests serialize around.
+    #[cfg(test)]
+    pub(crate) static CAPTURE_SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    /// Serialized [`capture`]: acquires [`CAPTURE_SERIAL`] then installs the
+    /// capturing subscriber. Hold the returned guard for the test's duration;
+    /// it releases the subscriber before the lock on drop (field order).
+    #[cfg(test)]
+    pub(crate) async fn capture_serialized(buffer: SharedLogBuffer) -> CaptureGuard {
+        let serial = CAPTURE_SERIAL.lock().await;
+        let default = capture(buffer);
+        CaptureGuard {
+            _default: default,
+            _serial: serial,
+        }
+    }
+
+    /// Guard returned by [`capture_serialized`]. Drops the subscriber first,
+    /// then releases the serialization lock.
+    #[cfg(test)]
+    pub(crate) struct CaptureGuard {
+        _default: tracing::subscriber::DefaultGuard,
+        _serial: tokio::sync::MutexGuard<'static, ()>,
     }
 }
 
