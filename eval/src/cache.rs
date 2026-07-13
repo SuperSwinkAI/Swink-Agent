@@ -2,7 +2,7 @@
 //!
 //! Spec 043-US2 / FR-038 / research §R-020. The runner caches agent
 //! [`Invocation`]s keyed by SHA-256 of a canonical serialisation of
-//! [`CaseFingerprint`] + [`FingerprintContext`]. `LocalFileTaskResultStore`
+//! [`CacheFingerprint`] + [`FingerprintContext`]. `LocalFileTaskResultStore`
 //! lays files out as `<root>/<eval_set_id>/<case_id>/<fingerprint_hex>.json`.
 
 use std::fs;
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::types::{CaseFingerprint, Invocation};
+use crate::types::{CacheFingerprint, Invocation};
 
 /// Agent-side inputs that bind the cache key beyond the static case body.
 #[derive(Debug, Clone, Default, Serialize)]
@@ -28,7 +28,7 @@ pub struct FingerprintContext {
 
 #[derive(Debug, Serialize)]
 struct CanonicalCacheInput<'a> {
-    fingerprint: &'a CaseFingerprint,
+    fingerprint: &'a CacheFingerprint,
     context: &'a FingerprintContext,
 }
 
@@ -39,7 +39,7 @@ pub struct CacheKey(String);
 impl CacheKey {
     /// Construct from the canonical bytes of a `(fingerprint, context)` pair.
     #[must_use]
-    pub fn from_fingerprint(fingerprint: &CaseFingerprint, context: &FingerprintContext) -> Self {
+    pub fn from_fingerprint(fingerprint: &CacheFingerprint, context: &FingerprintContext) -> Self {
         Self::from_bytes(&canonicalize_fingerprint(fingerprint, context))
     }
 
@@ -62,19 +62,21 @@ impl CacheKey {
     }
 }
 
-/// Canonical byte sequence hashed to form a [`CacheKey`]. `CaseFingerprint`
-/// already canonicalises via `BTreeMap` + `CanonicalJsonValue`, so `serde_json`
-/// output is stable across key-order permutations.
+/// Canonical byte sequence hashed to form a [`CacheKey`].
+///
+/// `CacheFingerprint` hashes exactly the case-derived fields FR-038 lists —
+/// see its docs for the full field list and rationale for excluding
+/// scoring-only case fields.
 #[must_use]
 pub fn canonicalize_fingerprint(
-    fingerprint: &CaseFingerprint,
+    fingerprint: &CacheFingerprint,
     context: &FingerprintContext,
 ) -> Vec<u8> {
     serde_json::to_vec(&CanonicalCacheInput {
         fingerprint,
         context,
     })
-    .expect("CaseFingerprint + FingerprintContext always serialize")
+    .expect("CacheFingerprint + FingerprintContext always serialize")
 }
 
 /// SHA-256 of a tool-set (sorted by name, length-prefixed) producing the
@@ -242,10 +244,21 @@ fn validate_identifier(id: &str) -> Result<(), StoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::CanonicalJsonValue;
+    use crate::types::{Attachment, EvalCase};
 
-    fn fp(id: &str) -> CaseFingerprint {
-        CaseFingerprint {
+    fn fp(id: &str) -> CacheFingerprint {
+        CacheFingerprint {
+            case_id: id.into(),
+            system_prompt: "sp".into(),
+            user_messages: vec!["hi".into()],
+        }
+    }
+
+    /// Full `EvalCase` matching the `fp()` helper above, for tests that need
+    /// to go through `EvalCase::cache_fingerprint()` rather than constructing
+    /// a `CacheFingerprint` directly.
+    fn case(id: &str) -> EvalCase {
+        EvalCase {
             id: id.into(),
             name: id.into(),
             description: None,
@@ -258,11 +271,13 @@ mod tests {
             few_shot_examples: vec![],
             budget: None,
             evaluators: vec![],
-            metadata: CanonicalJsonValue::Null,
+            metadata: serde_json::Value::Null,
             attachments: vec![],
+            session_id: None,
             expected_environment_state: None,
             expected_tool_intent: None,
             semantic_tool_selection: false,
+            state_capture: None,
         }
     }
 
@@ -281,6 +296,50 @@ mod tests {
             },
         );
         assert_ne!(a, b);
+    }
+
+    /// FR-038: the cache key MUST be derived from exactly `case_id`,
+    /// `system_prompt`, `user_messages` (case-derived) plus `initial_session`,
+    /// tool-set hash, and agent model (context-derived). A change to any
+    /// *other* case field (budget, evaluators, attachments, expected
+    /// criteria, ...) must NOT change the cache key — those fields affect
+    /// scoring, not what the agent sees.
+    #[test]
+    fn cache_key_ignores_non_key_case_fields() {
+        let mut left = case("c1");
+        let mut right = case("c1");
+        left.budget = Some(crate::types::BudgetConstraints {
+            max_cost: Some(1.0),
+            max_input: None,
+            max_output: None,
+            max_turns: None,
+        });
+        left.evaluators = vec!["trajectory".into()];
+        left.attachments = vec![Attachment::Url("https://example.com/a.png".into())];
+        right.budget = None;
+        right.evaluators = vec![];
+        right.attachments = vec![];
+
+        let empty = FingerprintContext::default();
+        let key_left = CacheKey::from_fingerprint(&left.cache_fingerprint(), &empty);
+        let key_right = CacheKey::from_fingerprint(&right.cache_fingerprint(), &empty);
+        assert_eq!(
+            key_left, key_right,
+            "non-key case fields must not affect the cache key"
+        );
+    }
+
+    /// Complementary to the above: changing a field FR-038 *does* name
+    /// (`system_prompt`) must change the cache key.
+    #[test]
+    fn cache_key_changes_with_key_case_field() {
+        let mut other = case("c1");
+        other.system_prompt = "different system prompt".into();
+
+        let empty = FingerprintContext::default();
+        let key_a = CacheKey::from_fingerprint(&case("c1").cache_fingerprint(), &empty);
+        let key_b = CacheKey::from_fingerprint(&other.cache_fingerprint(), &empty);
+        assert_ne!(key_a, key_b);
     }
 
     #[test]

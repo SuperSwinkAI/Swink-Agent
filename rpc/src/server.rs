@@ -61,7 +61,7 @@ impl AgentServer {
         }
     }
 
-    /// Start the accept loop, running until Ctrl-C.
+    /// Start the accept loop, running until Ctrl-C or SIGTERM.
     ///
     /// # Errors
     ///
@@ -86,7 +86,14 @@ impl AgentServer {
         let shutdown2 = Arc::clone(&shutdown);
 
         tokio::spawn(async move {
-            let _ = tokio::signal::ctrl_c().await;
+            use tokio::signal::unix::{SignalKind, signal};
+
+            let mut sigterm =
+                signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = sigterm.recv() => {}
+            }
             info!("shutdown signal received");
             shutdown2.notify_waiters();
         });

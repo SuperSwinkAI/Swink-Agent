@@ -153,7 +153,7 @@
 
 ### Tests for User Story 7
 
-- [x] T035 [US7] Write test: plugin tools appear as `"{plugin_name}.{tool_name}"` in agent tool list in `tests/plugin_integration.rs`
+- [x] T035 [US7] Write test: plugin tools appear as `"{plugin_name}.{tool_name}"` in agent tool list in `tests/plugin_integration.rs` [superseded by issue #608: separator is `_`, i.e. `"{plugin_name}_{tool_name}"`]
 - [x] T036 [P] [US7] Write test: two plugins contributing same-named tools — both appear with distinct namespace prefixes in `tests/plugin_integration.rs`
 - [x] T037 [P] [US7] Write test: direct tool with same name as namespaced plugin tool — direct tool found first when dispatching in `tests/plugin_integration.rs`
 

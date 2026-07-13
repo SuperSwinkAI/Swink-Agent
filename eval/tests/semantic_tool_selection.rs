@@ -50,6 +50,7 @@ async fn semantically_equivalent_tool_accepted() {
         pass: true,
         reason: Some("fetch_document is equivalent to read_file".into()),
         label: Some("equivalent".into()),
+        cost: None,
     };
     let judge: Arc<dyn JudgeClient> = Arc::new(MockJudge::with_verdicts(vec![verdict]));
     let evaluator = SemanticToolSelectionEvaluator::new(Arc::clone(&judge));
@@ -138,6 +139,7 @@ async fn transport_error_fails_case_but_registry_continues() {
             pass: true,
             reason: Some("ok".into()),
             label: None,
+            cost: None,
         }),
     ]));
     let registry = EvaluatorRegistry::with_defaults_and_judge(Arc::clone(&judge));
@@ -244,6 +246,7 @@ fn evaluates_from_plain_sync_context_without_panic() {
         pass: true,
         reason: Some("ok".into()),
         label: None,
+        cost: None,
     };
     let judge: Arc<dyn JudgeClient> = Arc::new(MockJudge::with_verdicts(vec![verdict]));
     let evaluator = SemanticToolSelectionEvaluator::new(judge);

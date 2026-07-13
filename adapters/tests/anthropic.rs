@@ -13,8 +13,8 @@ use swink_agent::{AssistantMessageEvent, ModelSpec, StopReason, StreamFn, Stream
 use swink_agent_adapters::AnthropicStreamFn;
 
 use common::{
-    event_name, extract_stop_reason, find_error_message, notify_on_request, sse_response,
-    test_context,
+    event_name, extract_stop_reason, find_error_message, find_retry_after, notify_on_request,
+    sse_response, test_context,
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -347,6 +347,39 @@ async fn anthropic_http_429() {
     assert!(
         err.contains("rate limit"),
         "expected 'rate limit', got: {err}"
+    );
+    assert_eq!(
+        find_retry_after(&events),
+        None,
+        "no Retry-After header was sent, so the hint should be absent"
+    );
+}
+
+#[tokio::test]
+async fn anthropic_http_429_with_retry_after_header() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("Retry-After", "42")
+                .set_body_string("Rate limited"),
+        )
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    let err = find_error_message(&events).expect("expected error event");
+    assert!(
+        err.contains("rate limit"),
+        "expected 'rate limit', got: {err}"
+    );
+    assert_eq!(
+        find_retry_after(&events),
+        Some(std::time::Duration::from_secs(42)),
+        "Retry-After header should be propagated onto the error event"
     );
 }
 

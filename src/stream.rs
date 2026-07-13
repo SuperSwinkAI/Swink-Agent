@@ -161,6 +161,15 @@ pub enum AssistantMessageEvent {
         /// When set, the agent loop uses this to classify the error without
         /// falling back to string matching on `error_message`.
         error_kind: Option<StreamErrorKind>,
+        /// Provider-supplied retry-after timing, when the error response
+        /// carried a hint (e.g. a `Retry-After` header on a 429/529
+        /// response).
+        ///
+        /// `None` when the provider gave no such hint, or when the error
+        /// did not originate from an HTTP response (e.g. a mid-stream SSE
+        /// `error` event). Adapters populate this field; the core crate
+        /// only carries it through.
+        retry_after: Option<std::time::Duration>,
     },
 }
 
@@ -176,6 +185,7 @@ impl AssistantMessageEvent {
             error_message: message.into(),
             usage: None,
             error_kind: None,
+            retry_after: None,
         }
     }
 
@@ -189,6 +199,7 @@ impl AssistantMessageEvent {
             error_message: message.into(),
             usage: None,
             error_kind: Some(StreamErrorKind::Throttled),
+            retry_after: None,
         }
     }
 
@@ -202,6 +213,7 @@ impl AssistantMessageEvent {
             error_message: message.into(),
             usage: None,
             error_kind: Some(StreamErrorKind::ContextWindowExceeded),
+            retry_after: None,
         }
     }
 
@@ -215,6 +227,7 @@ impl AssistantMessageEvent {
             error_message: message.into(),
             usage: None,
             error_kind: Some(StreamErrorKind::Auth),
+            retry_after: None,
         }
     }
 
@@ -228,6 +241,7 @@ impl AssistantMessageEvent {
             error_message: message.into(),
             usage: None,
             error_kind: Some(StreamErrorKind::Network),
+            retry_after: None,
         }
     }
 
@@ -241,6 +255,7 @@ impl AssistantMessageEvent {
             error_message: message.into(),
             usage: None,
             error_kind: Some(StreamErrorKind::ContentFiltered),
+            retry_after: None,
         }
     }
 
@@ -715,6 +730,7 @@ pub fn accumulate_message(
                 error_message: em,
                 usage: u,
                 error_kind: ek,
+                retry_after: _,
             } => {
                 validate_terminal_open_blocks("Error", content.as_deref(), &open_blocks, false)?;
                 stop_reason = Some(sr);
@@ -838,6 +854,7 @@ mod tests {
                 error_message: "boom".into(),
                 usage: None,
                 error_kind: None,
+                retry_after: None,
             },
         ];
 
@@ -859,6 +876,7 @@ mod tests {
                 error_message: "boom".into(),
                 usage: None,
                 error_kind: None,
+                retry_after: None,
             },
         ];
 
@@ -884,6 +902,7 @@ mod tests {
                 error_message: "boom".into(),
                 usage: None,
                 error_kind: None,
+                retry_after: None,
             },
         ];
 

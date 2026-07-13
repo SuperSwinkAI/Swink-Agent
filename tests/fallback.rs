@@ -38,6 +38,7 @@ fn error_events(error_message: &str) -> Vec<AssistantMessageEvent> {
             stop_reason: StopReason::Error,
             error_message: error_message.to_string(),
             error_kind: None,
+            retry_after: None,
             usage: None,
         },
     ]

@@ -7,7 +7,7 @@
 
 ## System Overview
 
-The Swink Agent is a Rust workspace composed of fourteen library/binary/plugin crates plus an `xtask` build-tooling crate that provide the core scaffolding for building LLM-powered agentic applications. The **core library** (`swink-agent`) manages the agent loop, message context, tool dispatch, streaming, lifecycle events, model catalogs, agent registries, loop policies, middleware, and inter-agent messaging. The **adapters crate** (`swink-agent-adapters`) provides ready-made `StreamFn` implementations for nine LLM providers: Anthropic, Azure, AWS Bedrock, Google Gemini, Mistral, Ollama, OpenAI (multi-provider compatible), Proxy, and xAI. The **policies crate** (`swink-agent-policies`) provides the shared reusable policy implementations built against the core policy trait API, each feature-gated independently, while plugin crates can also define crate-local policies. The **memory crate** (`swink-agent-memory`) provides session persistence and summarization-aware context compaction. The **local-llm crate** (`swink-agent-local-llm`) provides on-device inference via llama.cpp (Rust bindings: `llama-cpp-2`) with SmolLM3-3B for text/tool generation and EmbeddingGemma-300M for embeddings. All models use GGUF format. The **eval crate** (`swink-agent-eval`) provides trajectory tracing, golden path verification, response matching, cost/latency governance, plus (spec 043) a versioned prompt-template registry, 24 judge-backed/deterministic evaluators across seven families, multi-turn simulation (`ActorSimulator` / `ToolSimulator`), auto-generation (`ExperimentGenerator`), OTel / Langfuse / OpenSearch / CloudWatch trace ingestion, Console/JSON/Markdown/HTML reporters, a LangSmith exporter, and a `swink-eval` CLI binary. The **eval-judges crate** (`swink-agent-eval-judges`, new in spec 043) hosts per-provider `JudgeClient` implementations (Anthropic, OpenAI, Bedrock, Gemini, Mistral, Azure, xAI, Ollama, Proxy) behind feature flags, plus synchronous `Blocking<Provider>JudgeClient` wrappers. The **artifacts crate** (`swink-agent-artifacts`) provides versioned artifact storage with filesystem and in-memory backends. The **auth crate** (`swink-agent-auth`) provides OAuth2 credential management and refresh. The **macros crate** (`swink-agent-macros`) provides derive macros for the agent framework. The **MCP crate** (`swink-agent-mcp`) provides Model Context Protocol integration (stdio/SSE). The **patterns crate** (`swink-agent-patterns`) provides multi-agent orchestration patterns (pipeline, parallel, loop). The **web plugin** (`swink-agent-plugin-web`) provides web browsing and search tools as a plugin. The **TUI crate** (`swink-agent-tui`) is a binary that provides an interactive terminal interface. All LLM provider access is delegated to a `StreamFn` implementation, keeping the core harness fully provider-agnostic.
+The Swink Agent is a Rust workspace composed of sixteen library/binary/plugin crates plus an `xtask` build-tooling crate that provide the core scaffolding for building LLM-powered agentic applications. The **core library** (`swink-agent`) manages the agent loop, message context, tool dispatch, streaming, lifecycle events, model catalogs, agent registries, loop policies, middleware, and inter-agent messaging. The **adapters crate** (`swink-agent-adapters`) provides ready-made `StreamFn` implementations for nine LLM providers: Anthropic, Azure, AWS Bedrock, Google Gemini, Mistral, Ollama, OpenAI (multi-provider compatible), Proxy, and xAI. The **policies crate** (`swink-agent-policies`) provides the shared reusable policy implementations built against the core policy trait API, each feature-gated independently, while plugin crates can also define crate-local policies. The **memory crate** (`swink-agent-memory`) provides session persistence and summarization-aware context compaction. The **local-llm crate** (`swink-agent-local-llm`) provides on-device inference via llama.cpp (Rust bindings: `llama-cpp-2`) with SmolLM3-3B for text/tool generation and EmbeddingGemma-300M for embeddings. All models use GGUF format. The **eval crate** (`swink-agent-eval`) provides trajectory tracing, golden path verification, response matching, cost/latency governance, plus (spec 043) a versioned prompt-template registry, 24 judge-backed/deterministic evaluators across seven families, multi-turn simulation (`ActorSimulator` / `ToolSimulator`), auto-generation (`ExperimentGenerator`), OTel / Langfuse / OpenSearch / CloudWatch trace ingestion, Console/JSON/Markdown/HTML reporters, a LangSmith exporter, and a `swink-eval` CLI binary. The **eval-judges crate** (`swink-agent-eval-judges`, new in spec 043) hosts per-provider `JudgeClient` implementations (Anthropic, OpenAI, Bedrock, Gemini, Mistral, Azure, xAI, Ollama, Proxy) behind feature flags, plus synchronous `Blocking<Provider>JudgeClient` wrappers. The **evolve crate** (`swink-agent-evolve`) provides an eval-driven self-improvement loop over prompts and tool schemas: baseline evaluation → diagnosis → mutation → re-evaluation → acceptance gating → versioned persistence. The **rpc crate** (`swink-agent-rpc`) exposes an `Agent` over a Unix-domain socket as newline-delimited JSON-RPC 2.0 and ships the `swink-agentd` daemon binary (behind its `cli` feature). The **artifacts crate** (`swink-agent-artifacts`) provides versioned artifact storage with filesystem and in-memory backends. The **auth crate** (`swink-agent-auth`) provides OAuth2 credential management and refresh for *tool authentication* (in-memory `CredentialStore`, see spec 035) — distinct from the TUI's keychain-backed *LLM provider API key* storage described below. The **macros crate** (`swink-agent-macros`) provides derive macros for the agent framework. The **MCP crate** (`swink-agent-mcp`) provides Model Context Protocol integration (stdio/SSE). The **patterns crate** (`swink-agent-patterns`) provides multi-agent orchestration patterns (pipeline, parallel, loop). The **web plugin** (`swink-agent-plugin-web`) provides web browsing and search tools as a plugin. The **TUI crate** (`swink-agent-tui`) is a binary that provides an interactive terminal interface. All LLM provider access is delegated to a `StreamFn` implementation, keeping the core harness fully provider-agnostic.
 
 ---
 
@@ -79,482 +79,78 @@ flowchart TB
 
 ## Internal Component Architecture
 
-This diagram shows the major internal modules and how they relate within the harness.
+The C4-L1 diagram above shows the six most load-bearing crates; the full sixteen-crate dependency graph is in [Workspace Crate Dependencies](#workspace-crate-dependencies) below. Within the **core crate**, the major subsystems are (each links to its detailed architecture doc where one exists):
 
-```mermaid
-flowchart TB
-    subgraph CallerLayer["👤 Caller"]
-        App["Calling Application"]
-        Tools["Tool Implementations<br/>(AgentTool trait)"]
-        StreamImpl["StreamFn Implementation<br/>(direct or proxy)"]
-    end
-
-    subgraph AgentLayer["⚙️ Agent Struct"]
-        Agent["Agent<br/>State management<br/>Steering + follow-up queues<br/>Sync / async / streaming API"]
-    end
-
-    subgraph LoopLayer["🔄 Agent Loop"]
-        Loop["run_loop<br/>Turn orchestration<br/>Tool concurrency<br/>Steering + follow-up handling"]
-    end
-
-    subgraph ToolLayer["🔧 Tool System"]
-        Validator["Argument Validator<br/>(JSON Schema)"]
-        Executor["Concurrent Executor<br/>(tokio::spawn per call)"]
-        ToolMW["ToolMiddleware<br/>(intercept execute)"]
-        SubAgentTool["SubAgent<br/>(multi-agent composition)"]
-    end
-
-    subgraph StreamLayer["📡 Streaming Interface"]
-        StreamFn["StreamFn Trait<br/>(provider-agnostic)"]
-    end
-
-    subgraph AdapterLayer["🔌 Adapters Crate"]
-        AnthropicFn["AnthropicStreamFn<br/>(SSE + thinking blocks)"]
-        AzureFn["AzureStreamFn<br/>(SSE)"]
-        BedrockFn["BedrockStreamFn<br/>(SSE + AWS SigV4)"]
-        GeminiFn["GeminiStreamFn<br/>(SSE)"]
-        MistralFn["MistralStreamFn<br/>(SSE)"]
-        OllamaFn["OllamaStreamFn<br/>(NDJSON streaming)"]
-        OpenAiFn["OpenAiStreamFn<br/>(SSE, multi-provider)"]
-        XAiFn["XAiStreamFn<br/>(SSE)"]
-        ProxyFn["ProxyStreamFn<br/>(SSE + delta reconstruction)"]
-        RemotePresets["RemotePresets<br/>(catalog-driven connections)"]
-        Classify["HttpErrorClassifier<br/>(status code mapping)"]
-    end
-
-    subgraph LocalLLMLayer["🧠 Local LLM Crate"]
-        LocalStream["LocalStreamFn<br/>(on-device inference)"]
-        LocalModel["LocalModel<br/>(SmolLM3-3B, GGUF Q4_K_M)"]
-        EmbeddingModel["EmbeddingModel<br/>(EmbeddingGemma-300M)"]
-    end
-
-    subgraph InfraLayer["🏗️ Infrastructure"]
-        Events["Event System<br/>(AgentEvent enum)"]
-        Retry["Retry Strategy<br/>(exp. back-off + jitter)"]
-        Cancel["Cancellation<br/>(CancellationToken)"]
-        Errors["Error Types<br/>(ContextWindowOverflow,<br/>ModelThrottled, StreamError)"]
-        Catalog["ModelCatalog<br/>(TOML-driven provider/<br/>preset registry)"]
-        Registry["AgentRegistry<br/>(named agent lookup)"]
-        Mailbox["AgentMailbox<br/>(inter-agent messaging)"]
-        Policy["PolicySlots<br/>(PreTurn, PreDispatch,<br/>PostTurn, PostLoop)"]
-        StreamMW["StreamMiddleware<br/>(intercept output stream)"]
-        Emission["Emission<br/>(structured event payloads)"]
-        Orchestrator["AgentOrchestrator<br/>(multi-agent supervision)"]
-        Checkpoint["Checkpoint<br/>(loop state snapshots)"]
-        BuiltinPolicies["swink-agent-policies<br/>Core: Budget, Checkpoint,<br/>DenyList, LoopDetection,<br/>MaxTurns, Sandbox<br/>App: PromptInjectionGuard,<br/>PiiRedactor, ContentFilter,<br/>AuditLogger"]
-        Fallback["ModelFallback<br/>(automatic model failover)"]
-        CtxTransformer["ContextTransformer<br/>(sync via TransformContextFn,<br/>async via AsyncContextTransformer)"]
-        CtxVersion["ContextVersion<br/>(versioned context history)"]
-        ToolExecPolicy["ToolExecutionPolicy<br/>(Concurrent/Sequential/Priority)"]
-        Metrics["MetricsCollector<br/>(turn + tool execution metrics)"]
-    end
-
-    subgraph EvalLayer["📊 Evaluation"]
-        EvalRunner["EvalRunner<br/>Orchestration pipeline"]
-        TrajectoryCollector["TrajectoryCollector<br/>AgentEvent → Invocation"]
-        EvalRegistry["EvaluatorRegistry<br/>Judge-backed + deterministic<br/>evaluator families,<br/>aggregation + gates"]
-        PromptRegistry["PromptTemplateRegistry<br/>Versioned judge prompts"]
-        SimGen["Simulation / Generation<br/>ActorSimulator,<br/>ToolSimulator,<br/>ExperimentGenerator"]
-        TraceReport["Trace + Report<br/>TraceProvider,<br/>reporters, telemetry"]
-        AuditTrail["AuditedInvocation<br/>SHA-256 hash chain"]
-        EvalStore["EvalStore<br/>FsEvalStore (JSON)"]
-        EvalJudges["swink-agent-eval-judges<br/>JudgeClient providers"]
-    end
-
-    subgraph MemoryLayer["🧠 Memory"]
-        SessionStore["SessionStore trait<br/>JsonlSessionStore"]
-        Compactor["SummarizingCompactor<br/>Summary injection,<br/>sliding window wrapper"]
-    end
-
-    subgraph TUILayer["🖥️ Terminal UI"]
-        TUIApp["TUI App<br/>Event loop, layout,<br/>focus management"]
-        ConvView["Conversation View<br/>Message rendering,<br/>markdown, syntax highlighting"]
-        InputEditor["Input Editor<br/>Multi-line text input"]
-        ToolPanel["Tool Panel<br/>Active executions, results"]
-        HelpPanel["Help Panel<br/>F1-toggled side panel"]
-        DiffView["Diff View<br/>Inline unified diffs"]
-        StatusBar["Status Bar<br/>Model, usage, state"]
-    end
-
-    subgraph ExternalLayer["🌐 External"]
-        LLMProvider["LLM Provider API"]
-        ProxyServer["LLM Proxy Server"]
-    end
-
-    App -->|"prompt / invoke"| Agent
-    App --> Tools
-    App --> StreamImpl
-    Agent -->|"agent_loop /<br/>agent_loop_continue"| Loop
-    Loop -->|"validate + execute"| Validator
-    Validator --> Executor
-    Executor --> Tools
-    Loop -->|"call StreamFn"| StreamFn
-    StreamFn --> StreamImpl
-    AnthropicFn -->|"implements"| StreamFn
-    AzureFn -->|"implements"| StreamFn
-    BedrockFn -->|"implements"| StreamFn
-    GeminiFn -->|"implements"| StreamFn
-    MistralFn -->|"implements"| StreamFn
-    OllamaFn -->|"implements"| StreamFn
-    OpenAiFn -->|"implements"| StreamFn
-    XAiFn -->|"implements"| StreamFn
-    LocalStream -->|"implements"| StreamFn
-    StreamImpl -->|direct| LLMProvider
-    AnthropicFn -->|"SSE"| LLMProvider
-    AzureFn -->|"SSE"| LLMProvider
-    BedrockFn -->|"SSE"| LLMProvider
-    GeminiFn -->|"SSE"| LLMProvider
-    MistralFn -->|"SSE"| LLMProvider
-    OllamaFn -->|"NDJSON"| LLMProvider
-    OpenAiFn -->|"SSE"| LLMProvider
-    XAiFn -->|"SSE"| LLMProvider
-    LocalStream -->|"local inference"| LocalModel
-    ProxyFn -->|SSE| ProxyServer
-    ProxyServer --> LLMProvider
-    Loop -->|"emit"| Events
-    Events -->|"subscribe"| App
-    Loop --> Retry
-    Loop --> Cancel
-    Loop --> Errors
-    EvalRunner -->|"create_agent"| Agent
-    Events -->|"subscribe"| TrajectoryCollector
-    TrajectoryCollector -->|"Invocation"| EvalRegistry
-    PromptRegistry -->|"render prompts"| EvalRegistry
-    SimGen -->|"produces cases / invocations"| EvalRunner
-    EvalRegistry -->|"judge dispatch"| EvalJudges
-    EvalRegistry -->|"EvalSetResult"| EvalStore
-    TraceReport -->|"trace reload / reporters / spans"| EvalRunner
-    Compactor -->|"wraps"| StreamFn
-    SessionStore -->|"persists"| Events
-    TUIApp -->|"save / load"| SessionStore
-    TUIApp -->|"prompt / abort"| Agent
-    Events -->|"subscribe"| TUIApp
-    TUIApp --> ConvView
-    TUIApp --> InputEditor
-    TUIApp --> ToolPanel
-    TUIApp --> StatusBar
-
-    classDef callerStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
-    classDef agentStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
-    classDef loopStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
-    classDef toolStyle fill:#ff9800,stroke:#e65100,stroke-width:2px,color:#000
-    classDef streamStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
-    classDef adapterStyle fill:#c8e6c9,stroke:#388e3c,stroke-width:2px,color:#000
-    classDef infraStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
-    classDef externalStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
-    classDef tuiStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
-    classDef memoryStyle fill:#ce93d8,stroke:#7b1fa2,stroke-width:2px,color:#000
-    classDef evalStyle fill:#a5d6a7,stroke:#2e7d32,stroke-width:2px,color:#000
-    classDef localStyle fill:#ffcc80,stroke:#e65100,stroke-width:2px,color:#000
-
-    class App,Tools,StreamImpl callerStyle
-    class Agent agentStyle
-    class Loop loopStyle
-    class Validator,Executor,ToolMW,SubAgentTool toolStyle
-    class StreamFn streamStyle
-    class AnthropicFn,AzureFn,BedrockFn,GeminiFn,MistralFn,OllamaFn,OpenAiFn,XAiFn,ProxyFn,RemotePresets,Classify adapterStyle
-    class LocalStream,LocalModel,EmbeddingModel localStyle
-    class Events,Retry,Cancel,Errors,Catalog,Registry,Mailbox,Policy,StreamMW,Emission,Orchestrator,Checkpoint,BuiltinPolicies,Fallback,CtxTransformer,CtxVersion,ToolExecPolicy,Metrics infraStyle
-    class SessionStore,Compactor memoryStyle
-    class EvalRunner,TrajectoryCollector,EvalRegistry,PromptRegistry,SimGen,TraceReport,AuditTrail,EvalStore,EvalJudges evalStyle
-    class TUIApp,ConvView,InputEditor,ToolPanel,HelpPanel,DiffView,StatusBar tuiStyle
-    class LLMProvider,ProxyServer externalStyle
-```
+- **Agent struct** (`src/agent.rs` + `src/agent/`) — the stateful public API: sync/async/streaming invocation, steering and follow-up queues, event subscriptions, structured output, pause/resume checkpointing. See [agent/](agent/README.md).
+- **Agent loop** (`src/loop_/`) — turn orchestration, concurrent tool dispatch, steering/follow-up injection, transfer handling, retry, cancellation. See [agent-loop/](agent-loop/README.md).
+- **Data model** (`src/types/`, `src/state.rs`) — messages, content blocks, usage/cost, stop reasons, `SessionState`/`StateDelta`. See [data-model/](data-model/README.md).
+- **Context pipeline** (`src/context.rs`, `src/context_transformer.rs`, `src/async_context_transformer.rs`) — per-turn context snapshots, sliding-window compaction, the sync `ContextTransformer` and async `AsyncContextTransformer` hooks. See [agent-context/](agent-context/README.md).
+- **Tool system** (`src/tool.rs`, `src/tools/`, `src/tool_middleware.rs`, `src/sub_agent.rs`) — `AgentTool` trait, JSON-Schema argument validation, feature-gated built-in tools, decorator middleware, multi-agent composition via `SubAgent`.
+- **Streaming interface** (`src/stream.rs`, `src/stream_middleware.rs`, `src/retry.rs`) — the provider-agnostic `StreamFn` trait, stream middleware, and pluggable retry strategy.
+- **Infrastructure** — `AgentEvent` system, error taxonomy (`ContextWindowOverflow`, `ModelThrottled`, `StreamError`), `ModelCatalog` (TOML-driven), `AgentRegistry`, `AgentMailbox`, policy slots, `ModelFallback`, checkpoints, `MetricsCollector`, `ToolExecutionPolicy`.
 
 ---
 
 ## Single Turn Data Flow
 
-This diagram traces the path of a single prompt through the harness from invocation to completion.
-
-```mermaid
-flowchart LR
-    subgraph CallerLayer["👤 Caller"]
-        App["Application"]
-    end
-
-    subgraph AgentLayer["⚙️ Agent"]
-        Agent["Agent Struct"]
-        Queue["Steering /<br/>Follow-up Queues"]
-    end
-
-    subgraph LoopLayer["🔄 Loop"]
-        TurnStart["Emit TurnStart"]
-        StreamCall["Call StreamFn"]
-        MsgEvents["Emit MessageStart<br/>MessageUpdate ×N<br/>MessageEnd"]
-        ToolCheck["Extract Tool Calls"]
-        ToolExec["Execute Tools<br/>(concurrent)"]
-        SteerPoll["Poll Steering<br/>Messages"]
-        TurnEnd["Emit TurnEnd"]
-        FollowPoll["Poll Follow-up<br/>Messages"]
-        AgentEnd["Emit AgentEnd"]
-    end
-
-    subgraph InfraLayer["🏗️ Infrastructure"]
-        Retry["Retry Strategy"]
-        Errors["Error Recovery"]
-    end
-
-    subgraph ExternalLayer["🌐 External"]
-        LLM["LLM Provider"]
-    end
-
-    App -->|"prompt()"| Agent
-    Agent --> Queue
-    Agent --> TurnStart
-    TurnStart --> StreamCall
-    StreamCall -->|"retryable failure"| Retry
-    Retry --> StreamCall
-    StreamCall <-->|"SSE or NDJSON<br/>delta stream"| LLM
-    StreamCall --> MsgEvents
-    MsgEvents --> ToolCheck
-    ToolCheck -->|"stop_reason: length"| Errors
-    Errors --> ToolExec
-    ToolCheck -->|"tool calls present"| ToolExec
-    ToolExec --> SteerPoll
-    SteerPoll -->|"steering arrived"| TurnStart
-    SteerPoll -->|"no steering"| TurnEnd
-    TurnEnd --> FollowPoll
-    FollowPoll -->|"follow-up arrived"| TurnStart
-    FollowPoll -->|"none"| AgentEnd
-    AgentEnd -->|"AgentResult"| App
-
-    classDef callerStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
-    classDef agentStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
-    classDef loopStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
-    classDef infraStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
-    classDef externalStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
-
-    class App callerStyle
-    class Agent,Queue agentStyle
-    class TurnStart,StreamCall,MsgEvents,ToolCheck,ToolExec,SteerPoll,TurnEnd,FollowPoll,AgentEnd loopStyle
-    class Retry,Errors infraStyle
-    class LLM externalStyle
-```
+The turn-by-turn data flow (streaming, tool extraction/execution, steering and follow-up polling, event emission) is documented in [agent-loop/README.md](agent-loop/README.md).
 
 ---
 
 ## Workspace Crate Dependencies
 
-This diagram shows how the eight workspace crates and their internal modules depend on each other.
+Crate-level dependency graph for all sixteen crates plus `xtask` (dashed = optional / feature-gated). Module-level detail lives in the per-subsystem docs linked above.
 
 ```mermaid
 flowchart TB
-    subgraph CoreCrate["📦 swink-agent (core)"]
-        subgraph FoundationLayer["🏗️ Foundation"]
-            types["types.rs<br/>AgentMessage, ContentBlock,<br/>ModelSpec, AgentResult, Usage"]
-            error["error.rs<br/>AgentError,<br/>ContextWindowOverflow,<br/>ModelThrottled, StreamError"]
-        end
+    core["swink-agent (core)"]
+    adapters["swink-agent-adapters"]
+    auth["swink-agent-auth"]
+    artifacts["swink-agent-artifacts"]
+    macros["swink-agent-macros"]
+    mcp["swink-agent-mcp"]
+    memory["swink-agent-memory"]
+    local_llm["swink-agent-local-llm"]
+    patterns["swink-agent-patterns"]
+    policies["swink-agent-policies"]
+    plugin_web["swink-agent-plugin-web"]
+    eval["swink-agent-eval"]
+    eval_judges["swink-agent-eval-judges"]
+    evolve["swink-agent-evolve"]
+    rpc["swink-agent-rpc<br/>(swink-agentd binary)"]
+    tui["swink-agent-tui<br/>(binary)"]
+    xtask["xtask<br/>(build tooling, no runtime deps)"]
 
-        subgraph CoreLayer["⚙️ Core Abstractions"]
-            tool["tool.rs<br/>AgentTool trait,<br/>AgentToolResult,<br/>argument validation"]
-            stream["stream.rs<br/>StreamFn trait,<br/>StreamOptions,<br/>AssistantMessageEvent,<br/>AssistantMessageDelta"]
-            retry["retry.rs<br/>RetryStrategy trait,<br/>default implementation"]
-        end
-
-        subgraph ImplLayer["🔧 Implementations"]
-            context["context.rs<br/>sliding_window,<br/>overflow-aware pruning"]
-            builtintools["tools/<br/>BashTool, ReadFileTool,<br/>WriteFileTool<br/>(feature-gated)"]
-            tool_mw["tool_middleware.rs<br/>ToolMiddleware"]
-            stream_mw["stream_middleware.rs<br/>StreamMiddleware"]
-            sub_agent["sub_agent.rs<br/>SubAgent (multi-agent tool)"]
-        end
-
-        subgraph CatalogLayer["📋 Catalogs & Registries"]
-            catalog["model_catalog.rs<br/>ModelCatalog, PresetCatalog,<br/>ProviderCatalog (TOML-driven)"]
-            presets["model_presets.rs<br/>ModelConnection,<br/>ModelConnections"]
-            registry_mod["registry.rs<br/>AgentRegistry,<br/>AgentId, AgentRef"]
-            messaging_mod["messaging.rs<br/>AgentMailbox, send_to"]
-            policy["policy.rs<br/>PolicySlots (PreTurn, PreDispatch,<br/>PostTurn, PostLoop)"]
-        end
-
-        subgraph ExecutionLayer["🔄 Execution"]
-            loop_["loop_/ (module)<br/>mod.rs · stream.rs<br/>tool_dispatch.rs · turn.rs"]
-        end
-
-        subgraph APILayer["📦 Public API"]
-            agent["agent.rs<br/>Agent struct,<br/>AgentOptions"]
-            display_mod["display.rs<br/>CoreDisplayMessage,<br/>IntoDisplayMessages"]
-            msg_provider["message_provider.rs<br/>MessageProvider trait,<br/>ChannelMessageProvider"]
-            event_fwd["event_forwarder.rs<br/>EventForwarderFn"]
-            lib["lib.rs<br/>public re-exports"]
-        end
-    end
-
-    subgraph AdaptersCrate["🔌 swink-agent-adapters"]
-        adapters_lib["lib.rs<br/>re-exports"]
-        anthropic["anthropic.rs<br/>AnthropicStreamFn,<br/>SSE + thinking blocks"]
-        azure["azure.rs<br/>AzureStreamFn,<br/>SSE"]
-        bedrock["bedrock.rs<br/>BedrockStreamFn,<br/>SSE + AWS SigV4"]
-        google["google.rs<br/>GeminiStreamFn,<br/>SSE"]
-        mistral["mistral.rs<br/>MistralStreamFn,<br/>SSE"]
-        ollama["ollama.rs<br/>OllamaStreamFn,<br/>NDJSON streaming"]
-        openai["openai.rs<br/>OpenAiStreamFn,<br/>SSE, multi-provider"]
-        xai["xai.rs<br/>XAiStreamFn,<br/>SSE"]
-        proxy["proxy.rs<br/>ProxyStreamFn,<br/>SSE delta reconstruction"]
-        convert["convert.rs<br/>MessageConverter trait"]
-        classify_mod["classify.rs<br/>HttpErrorClassifier"]
-        remote_presets_mod["remote_presets.rs<br/>Catalog-driven connections"]
-    end
-
-    subgraph LocalLLMCrate["🧠 swink-agent-local-llm"]
-        local_lib["lib.rs<br/>re-exports"]
-        local_model["model.rs<br/>LocalModel,<br/>SmolLM3-3B (GGUF Q4_K_M)"]
-        local_stream["stream.rs<br/>LocalStreamFn"]
-        local_embedding["embedding.rs<br/>EmbeddingModel,<br/>EmbeddingGemma-300M"]
-        local_preset["preset.rs<br/>default_local_connection"]
-        local_convert["convert.rs<br/>message conversion"]
-        local_progress["progress.rs<br/>ProgressCallbackFn"]
-    end
-
-    subgraph MemoryCrate["🧠 swink-agent-memory"]
-        mem_lib["lib.rs<br/>re-exports"]
-        mem_store["store.rs<br/>SessionStore trait"]
-        mem_jsonl["jsonl.rs<br/>JsonlSessionStore,<br/>JSONL persistence"]
-        mem_meta["meta.rs<br/>SessionMeta"]
-        mem_compact["compaction.rs<br/>SummarizingCompactor,<br/>summary injection"]
-    end
-
-    subgraph EvalCrate["📊 swink-agent-eval"]
-        eval_lib["lib.rs<br/>re-exports"]
-        eval_trajectory["trajectory.rs<br/>TrajectoryCollector,<br/>AgentEvent → Invocation"]
-        eval_evaluator["evaluator.rs<br/>Evaluator trait,<br/>EvaluatorRegistry"]
-        eval_runner["runner.rs<br/>EvalRunner,<br/>parallel runs + cache"]
-        eval_prompt["prompt/<br/>PromptTemplateRegistry,<br/>versioned templates"]
-        eval_judge["judge.rs<br/>JudgeRegistry,<br/>dispatch_judge"]
-        eval_evals["evaluators/<br/>quality, safety, rag,<br/>agent, code, simple,<br/>structured, multimodal"]
-        eval_sim["simulation/ + generation/<br/>ActorSimulator,<br/>ToolSimulator,<br/>ExperimentGenerator"]
-        eval_trace["trace/ + telemetry.rs<br/>TraceProvider,<br/>mappers, emitters"]
-        eval_report["report/ + bin/<br/>console/json/markdown/html,<br/>langsmith, swink-eval CLI"]
-        eval_gate["gate.rs<br/>GateConfig, check_gate,<br/>CI/CD gating"]
-        eval_audit["audit.rs<br/>AuditedInvocation,<br/>SHA-256 hash chain"]
-        eval_store["store.rs<br/>EvalStore trait,<br/>FsEvalStore"]
-    end
-
-    subgraph EvalJudgesCrate["🧑‍⚖️ swink-agent-eval-judges"]
-        judges_lib["lib.rs<br/>re-exports"]
-        judges_client["client.rs<br/>retry, batching,<br/>blocking wrappers"]
-        judges_providers["anthropic.rs, openai.rs,<br/>bedrock.rs, gemini.rs,<br/>mistral.rs, azure.rs,<br/>xai.rs, ollama.rs, proxy.rs"]
-    end
-
-    subgraph PoliciesCrate["🛡️ swink-agent-policies"]
-        policies_lib["lib.rs<br/>re-exports"]
-        policies_core["Core policies<br/>Budget, MaxTurns, DenyList,<br/>Sandbox, LoopDetection,<br/>Checkpoint"]
-        policies_app["App policies<br/>PromptInjectionGuard,<br/>PiiRedactor, ContentFilter,<br/>AuditLogger"]
-    end
-
-    subgraph TUICrate["🖥️ swink-agent-tui"]
-        tui_main["main.rs<br/>env var config,<br/>provider selection"]
-        tui_app["app.rs<br/>event loop, layout"]
-        tui_creds["credentials.rs<br/>keychain integration"]
-        tui_session["session.rs<br/>re-exports from memory"]
-        tui_wizard["wizard.rs<br/>first-run setup"]
-    end
-
-    types --> tool
-    types --> stream
-    types --> retry
-    error --> tool
-    error --> loop_
-    tool --> loop_
-    stream --> loop_
-    retry --> loop_
-    loop_ --> agent
-    agent --> lib
-    loop_ --> lib
-    types --> lib
-
-    stream -->|"StreamFn trait"| anthropic
-    stream -->|"StreamFn trait"| azure
-    stream -->|"StreamFn trait"| bedrock
-    stream -->|"StreamFn trait"| google
-    stream -->|"StreamFn trait"| mistral
-    stream -->|"StreamFn trait"| ollama
-    stream -->|"StreamFn trait"| openai
-    stream -->|"StreamFn trait"| xai
-    stream -->|"StreamFn trait"| proxy
-    stream -->|"StreamFn trait"| local_stream
-    anthropic --> adapters_lib
-    azure --> adapters_lib
-    bedrock --> adapters_lib
-    google --> adapters_lib
-    mistral --> adapters_lib
-    ollama --> adapters_lib
-    openai --> adapters_lib
-    xai --> adapters_lib
-    proxy --> adapters_lib
-    classify_mod --> adapters_lib
-    remote_presets_mod --> adapters_lib
-    convert --> ollama
-    convert --> openai
-
-    local_stream --> local_lib
-    local_model --> local_lib
-    local_embedding --> local_lib
-    local_preset --> local_lib
-    local_convert --> local_stream
-
-    types -->|"core types"| mem_store
-    types -->|"core types"| mem_compact
-    context -->|"sliding_window"| mem_compact
-    mem_store --> mem_jsonl
-    mem_meta --> mem_jsonl
-    mem_jsonl --> mem_lib
-    mem_compact --> mem_lib
-
-    lib -->|"swink-agent dep"| eval_trajectory
-    lib -->|"swink-agent dep"| eval_runner
-    eval_trajectory --> eval_evaluator
-    eval_evaluator --> eval_builtins
-    eval_runner --> eval_trajectory
-    eval_runner --> eval_evaluator
-    eval_builtins --> eval_lib
-    eval_evaluator --> eval_lib
-    eval_runner --> eval_lib
-    eval_store --> eval_lib
-
-    lib -->|"swink-agent dep"| policies_lib
-    policies_core --> policies_lib
-    policies_app --> policies_lib
-
-    lib -->|"swink-agent dep"| tui_main
-    adapters_lib -->|"adapters dep"| tui_main
-    local_lib -->|"local-llm dep"| tui_main
-    mem_lib -->|"memory dep"| tui_session
-    tui_main --> tui_app
-
-    classDef foundationStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
-    classDef coreStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
-    classDef implStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
-    classDef execStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
-    classDef apiStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
-    classDef adapterStyle fill:#c8e6c9,stroke:#388e3c,stroke-width:2px,color:#000
-    classDef localStyle fill:#ffcc80,stroke:#e65100,stroke-width:2px,color:#000
-    classDef memoryStyle fill:#ce93d8,stroke:#7b1fa2,stroke-width:2px,color:#000
-    classDef evalStyle fill:#a5d6a7,stroke:#2e7d32,stroke-width:2px,color:#000
-    classDef tuiStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
-    classDef catalogStyle fill:#fff9c4,stroke:#f9a825,stroke-width:2px,color:#000
-    classDef policiesStyle fill:#ffcdd2,stroke:#c62828,stroke-width:2px,color:#000
-
-    class types,error foundationStyle
-    class tool,stream,retry coreStyle
-    class context,builtintools,tool_mw,stream_mw,sub_agent implStyle
-    class catalog,presets,registry_mod,messaging_mod,policy catalogStyle
-    class loop_ execStyle
-    class agent,display_mod,msg_provider,event_fwd,lib apiStyle
-    class adapters_lib,anthropic,azure,bedrock,google,mistral,ollama,openai,xai,proxy,convert,classify_mod,remote_presets_mod adapterStyle
-    class local_lib,local_model,local_stream,local_embedding,local_preset,local_convert,local_progress localStyle
-    class mem_lib,mem_store,mem_jsonl,mem_meta,mem_compact memoryStyle
-    class eval_lib,eval_trajectory,eval_evaluator,eval_runner,eval_builtins,eval_gate,eval_audit,eval_store evalStyle
-    class tui_main,tui_app,tui_creds,tui_session,tui_wizard tuiStyle
-    class policies_lib,policies_core,policies_app policiesStyle
+    adapters --> core
+    adapters -.->|"azure feature"| auth
+    auth --> core
+    artifacts --> core
+    macros --> core
+    mcp --> core
+    memory --> core
+    local_llm --> core
+    patterns --> core
+    policies --> core
+    plugin_web --> core
+    eval --> core
+    eval --> policies
+    eval_judges --> eval
+    eval_judges -.->|"provider features"| adapters
+    evolve --> core
+    evolve --> eval
+    rpc --> core
+    rpc -.->|"cli feature"| adapters
+    tui --> core
+    tui --> memory
+    tui -.->|"adapters feature"| adapters
+    tui -.->|"local feature"| local_llm
 ```
 
 ---
 
 ## Design Decisions
 
-**Library, not a service.** The harness is a crate, not a daemon. There are no HTTP ports, no config files, no CLI. Callers link it as a dependency and own the runtime.
+**Library, not a service.** The core harness is a crate, not a daemon — no HTTP ports, no config files, no CLI. Callers link it as a dependency and own the runtime. For out-of-process callers, the optional `swink-agent-rpc` crate layers a Unix-socket JSON-RPC 2.0 service (and the `swink-agentd` binary) on top without changing the core.
 
 **StreamFn is the only provider boundary.** All LLM communication flows through a single trait. Direct providers, proxies, mock implementations for testing, local on-device models, and future transports all satisfy the same interface. The harness never holds an API key or SDK client. Nine built-in remote implementations ship in the adapters crate: `AnthropicStreamFn`, `AzureStreamFn`, `BedrockStreamFn`, `GeminiStreamFn`, `MistralStreamFn`, `OllamaStreamFn`, `OpenAiStreamFn`, `ProxyStreamFn`, and `XAiStreamFn`. A tenth implementation, `LocalStreamFn`, ships in the local-llm crate for on-device inference.
 
@@ -566,7 +162,7 @@ flowchart TB
 
 **Policies control loop behavior.** Four configurable policy slots (`PreTurn`, `PreDispatch`, `PostTurn`, `PostLoop`) replace the previous scattered hooks (`LoopPolicy`, `BudgetGuard`, `PostTurnHook`, `ToolValidator`, `ToolCallTransformer`). Each slot accepts a `Vec` of policy implementations evaluated in order. Empty policy vecs mean anything goes — zero overhead when unused.
 
-**Policies are a separate crate.** Shared reusable policy implementations live in `swink-agent-policies`, keeping them optional and independently feature-gated. The crate depends only on `swink-agent` public API — no internal imports. Six core policies (`BudgetPolicy`, `CheckpointPolicy`, `ToolDenyListPolicy`, `LoopDetectionPolicy`, `MaxTurnsPolicy`, `SandboxPolicy`) handle loop governance; four application policies (`PromptInjectionGuard`, `PiiRedactor`, `ContentFilter`, `AuditLogger`) address content safety and audit. Plugin crates can also define crate-local policies against the same trait surface. Each policy in `swink-agent-policies` is behind its own feature flag (`budget`, `max-turns`, `deny-list`, `sandbox`, `loop-detection`, `checkpoint`, `prompt-guard`, `pii`, `content-filter`, `audit`), with `default = ["all"]`.
+**Policies are a separate crate.** Shared reusable policy implementations live in `swink-agent-policies`, keeping them optional and independently feature-gated. The crate depends only on `swink-agent` public API — no internal imports. Six core policies (`BudgetPolicy`, `CheckpointPolicy`, `ToolDenyListPolicy`, `LoopDetectionPolicy`, `MaxTurnsPolicy`, `SandboxPolicy`) handle loop governance; five application policies (`PromptInjectionGuard`, `PiiRedactor`, `ContentFilter`, `AuditLogger`, `MemoryNudgePolicy`) address content safety, audit, and save-worthy content detection — eleven policies total. Plugin crates can also define crate-local policies against the same trait surface. Each policy in `swink-agent-policies` is behind its own feature flag (`budget`, `max-turns`, `deny-list`, `sandbox`, `loop-detection`, `checkpoint`, `prompt-guard`, `pii`, `content-filter`, `audit`, `memory-nudge`), with `default = ["all"]`.
 
 **Middleware wraps both tools and streams.** `ToolMiddleware` intercepts `execute()` on any `AgentTool`, and `StreamMiddleware` intercepts the output stream from any `StreamFn`. Both follow the decorator pattern — callers compose them without touching inner implementations. This enables cross-cutting concerns like logging, metrics, and access control.
 
@@ -576,96 +172,26 @@ flowchart TB
 
 **Concurrency is scoped to tool execution.** Tool calls within a single turn run concurrently via `tokio::spawn`. Everything else — turns, steering polls, follow-up polls — is sequential. This makes the loop easy to reason about without sacrificing the main performance win of parallel tool execution.
 
-**Memory is a separate crate.** Session persistence and context compaction strategies live in `swink-agent-memory`, keeping storage dependencies (filesystem, future vector stores) out of the core. The memory crate consumes core's extension hooks (`TransformContextFn`, `AsyncContextTransformer`, `ConvertToLlmFn`) without modifying core internals. `TransformContextFn` is the synchronous closure-based hook; `AsyncContextTransformer` is a public trait (exported from `src/lib.rs`) that enables async context rewriting, useful when compaction requires LLM calls (e.g., summarization). See `memory/docs/architecture/` for the compaction architecture. Advanced memory research (RAG, explicit memory tools) lives in a separate repository.
+**Memory is a separate crate.** Session persistence and context compaction strategies live in `swink-agent-memory`, keeping storage dependencies (filesystem, future vector stores) out of the core. The memory crate consumes core's extension hooks (`ContextTransformer`, `AsyncContextTransformer`, `ConvertToLlmFn`) without modifying core internals. `ContextTransformer` (`src/context_transformer.rs`) is the synchronous trait — configured as `Option<Arc<dyn ContextTransformer>>` on `AgentLoopConfig`, with a blanket impl so bare `Fn(&mut Vec<AgentMessage>, bool)` closures still satisfy it; `AsyncContextTransformer` is the async counterpart that enables async context rewriting, useful when compaction requires LLM calls (e.g., summarization). See `memory/docs/architecture/` for the compaction architecture. Advanced memory research (RAG, explicit memory tools) lives in a separate repository.
 
 **Evaluation is a separate subsystem.** The evaluation framework lives primarily in `swink-agent-eval`, with provider-specific judge clients split into `swink-agent-eval-judges` so the default eval crate can stay provider-agnostic and feature-gated. `swink-agent-eval` consumes the `AgentEvent` stream via `TrajectoryCollector`, then layers versioned prompt templates, judge-backed/deterministic evaluators, simulation/generation, trace ingestion, reporting, telemetry, and the `swink-eval` CLI on top of the same public core types. Full `Invocation` traces and persisted `EvalSetResult` artifacts support rerendering, gating, and comparative analysis across models, prompts, and configurations.
 
 **TUI is a separate crate.** The terminal interface is a library crate with an associated binary that depends on the core library and memory crate, with adapter and local-LLM support enabled through its own feature flags rather than the root crate. This keeps the core harness free of terminal dependencies and allows the TUI to evolve independently. The TUI consumes the same public API that any other application would use.
 
+**Self-improvement is a separate crate.** `swink-agent-evolve` runs a closed-loop optimization cycle over prompts and tool schemas — baseline evaluation → diagnosis → mutation → re-evaluation → acceptance gating → versioned persistence — building on `swink-agent-eval` without adding optimization machinery to the eval crate itself.
+
+**The daemon is optional.** `swink-agent-rpc` exposes an `Agent` over a Unix-domain socket via newline-delimited JSON-RPC 2.0. The protocol is bidirectional: the server streams `AgentEvent` notifications and sends `tool.approve` requests while the client drives turns via `prompt` requests. The `swink-agentd` binary ships behind the crate's `cli` feature.
+
 **xtask is a workspace member.** The `xtask` crate provides developer workflow commands (e.g., `cargo xtask verify-catalog`) without adding dev-only dependencies to the core crates.
 
 ## TUI Architecture
 
-The TUI is a separate binary crate (`swink-agent-tui`) that always depends on `swink-agent` (core) and `swink-agent-memory`, enables the remote adapters through its `cli`/`adapters` features, and enables local inference through its optional `local` feature. The default TUI feature set wires in Anthropic, OpenAI, Ollama, and proxy adapters; `full` adds local-llm support. It includes a first-run setup wizard for API key configuration, session persistence (via the memory crate's `SessionStore` trait), and credential management via the system keychain.
+The TUI is a separate binary crate (`swink-agent-tui`) that always depends on `swink-agent` (core) and `swink-agent-memory`, enables the remote adapters through its `cli`/`adapters` features, and enables local inference through its optional `local` feature. The default TUI feature set wires in Anthropic, OpenAI, Ollama, and proxy adapters; `full` adds local-llm support. It includes a first-run setup wizard for API key configuration, session persistence (via the memory crate's `SessionStore` trait), and credential management via the system keychain (`tui/src/credentials.rs`) — this is LLM provider API key storage, unrelated to the `swink-agent-auth` crate's in-memory tool-credential system described above.
 
 ### Provider Configuration
 
-The TUI selects its LLM provider via environment variables in priority order: Proxy > OpenAI > Anthropic > Ollama. API keys can also be stored in the system keychain via the `#key` command or the first-run setup wizard.
+The TUI selects its LLM provider via environment variables in priority order: Proxy > OpenAI > Anthropic > Ollama. API keys can also be stored in the system keychain via the `#key` command or the first-run setup wizard. The full environment-variable reference lives in [`tui/README.md`](../../tui/README.md).
 
-| Variable | Default | Description |
-|---|---|---|
-| `LLM_BASE_URL` | _(unset)_ | SSE proxy endpoint — highest priority if set |
-| `LLM_API_KEY` | _(empty)_ | Bearer token for the proxy |
-| `LLM_MODEL` | `claude-sonnet-4-20250514` | Model identifier for the proxy |
-| `OPENAI_API_KEY` | _(unset)_ | OpenAI API key (or keychain) |
-| `OPENAI_BASE_URL` | `https://api.openai.com` | OpenAI-compatible endpoint |
-| `OPENAI_MODEL` | `gpt-4o` | OpenAI model name |
-| `ANTHROPIC_API_KEY` | _(unset)_ | Anthropic API key (or keychain) |
-| `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Anthropic endpoint |
-| `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Anthropic model name |
-| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL (default fallback) |
-| `OLLAMA_MODEL` | `llama3.2` | Ollama model name |
-| `LLM_SYSTEM_PROMPT` | `You are a helpful assistant.` | System prompt (shared across all providers) |
+### Event Loop and Components
 
-### Component Model
-
-The TUI uses a component-based architecture where each UI element is a stateful widget rendered via `ratatui`. The component tree is:
-
-```
-App
-├── Conversation View (scrollable message history)
-│   ├── User Message Block
-│   ├── Assistant Message Block (with streaming)
-│   │   ├── Text Content (markdown rendered)
-│   │   ├── Thinking Block (dimmed)
-│   │   └── Tool Call Block
-│   └── Tool Result Block
-├── Input Editor (multi-line text composition)
-├── Tool Panel (active tool executions)
-└── Status Bar (model, usage, state)
-```
-
-### Event Loop
-
-The TUI runs a dual event loop:
-
-1. **Terminal events** — `crossterm` delivers keyboard, mouse, and resize events. These are dispatched to the focused component for input handling.
-2. **Agent events** — The TUI subscribes to `AgentEvent` from the harness via `Agent::subscribe`. Events arrive on a channel and trigger UI state updates.
-
-Both event sources are multiplexed via `tokio::select!` in the main render loop.
-
-### Data Flow
-
-```mermaid
-flowchart LR
-    subgraph Terminal["🖥️ Terminal"]
-        Stdin["stdin<br/>(keyboard, mouse)"]
-        Stdout["stdout<br/>(rendered frames)"]
-    end
-
-    subgraph TUI["TUI App"]
-        EventLoop["Event Loop<br/>(tokio::select!)"]
-        State["App State<br/>(messages, focus, scroll)"]
-        Renderer["ratatui Renderer"]
-    end
-
-    subgraph Harness["Swink Agent"]
-        Agent["Agent"]
-        Events["AgentEvent Stream"]
-    end
-
-    Stdin -->|"crossterm events"| EventLoop
-    EventLoop -->|"update"| State
-    State -->|"render"| Renderer
-    Renderer -->|"draw"| Stdout
-    EventLoop -->|"prompt / abort"| Agent
-    Events -->|"subscribe"| EventLoop
-
-    classDef termStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
-    classDef tuiStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
-    classDef harnessStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
-
-    class Stdin,Stdout termStyle
-    class EventLoop,State,Renderer tuiStyle
-    class Agent,Events harnessStyle
-```
+The TUI runs a dual event loop multiplexed via `tokio::select!`: `crossterm` terminal events (keyboard, mouse, resize) are dispatched to the focused component, while `AgentEvent` values from `Agent::subscribe` arrive on a channel and trigger UI state updates. Each UI element (conversation view, input editor, tool panel, status bar, help panel, diff view) is a stateful widget rendered via `ratatui`; the component inventory is documented in [`tui/README.md`](../../tui/README.md).

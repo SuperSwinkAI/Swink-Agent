@@ -1158,6 +1158,7 @@ fn cancelled_event(message: impl Into<String>) -> AssistantMessageEvent {
         error_message: message.into(),
         usage: None,
         error_kind: None,
+        retry_after: None,
     }
 }
 
@@ -1498,6 +1499,25 @@ mod tests {
             ..Default::default()
         });
         assert!(!thinking_enabled_for_model(&model));
+    }
+
+    #[test]
+    fn catalog_local_thinking_model_thinks_by_default() {
+        let preset = swink_agent::model_catalog()
+            .preset("local", "gemma4_e2b")
+            .expect("gemma4_e2b must exist in the model catalog");
+        let model = preset.model_spec();
+
+        assert!(
+            thinking_enabled_for_model(&model),
+            "catalog-built thinking-capable local models must think by default"
+        );
+
+        let disabled = model.with_thinking_level(ThinkingLevel::Off);
+        assert!(
+            !thinking_enabled_for_model(&disabled),
+            "explicitly setting ThinkingLevel::Off must disable thinking"
+        );
     }
 
     #[test]
@@ -1896,6 +1916,7 @@ mod tests {
                 error_message,
                 usage,
                 error_kind,
+                retry_after: _,
             } => {
                 assert_eq!(stop_reason, StopReason::Aborted);
                 assert_eq!(error_message, "local inference cancelled");

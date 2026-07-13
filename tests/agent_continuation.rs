@@ -408,6 +408,7 @@ async fn session_id_forwarding() {
                         stop_reason: StopReason::Error,
                         error_message: "no more responses".to_string(),
                         error_kind: None,
+                        retry_after: None,
                         usage: None,
                     }]
                 } else {

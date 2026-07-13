@@ -216,7 +216,7 @@ A developer adopting `swink-agent-eval` wants CI scaffolding and a thin command-
 
 - **FR-007**: The system MUST provide a `JudgePromptTemplate` trait exposing an explicit version identifier and a render method that produces a prompt string from a context value.
 - **FR-008**: Templates MUST support named variable substitution. Missing or misspelled variables MUST produce a deterministic error at template construction or evaluator construction time — never silent runtime substitution of an empty string.
-- **FR-009**: The system MUST ship a built-in registry of templates organized into families (quality, safety, RAG, agent, multimodal, code, structured).
+- **FR-009**: The system MUST ship a built-in registry of templates organized into families (quality, safety, RAG, agent, multimodal, code, structured). (`PromptFamily::Structured` exists as a reserved enum variant in `eval/src/prompt/mod.rs` but has no backing `templates::structured` module and is not wired into `PromptTemplateRegistry::builtin()` — the `structured` family is declared, not yet registered or implemented.)
 - **FR-010**: Every evaluator MUST support per-instance overrides for prompt template, few-shot examples, system prompt, output schema, and a use-reasoning flag without requiring a code change to the evaluator.
 - **FR-011**: Every LLM-judge result MUST record the prompt template version used so historical comparisons can distinguish score drift caused by template changes from score drift caused by model or prompt content.
 
@@ -256,7 +256,7 @@ A developer adopting `swink-agent-eval` wants CI scaffolding and a thin command-
 - **FR-031**: The system MUST provide a `TraceProvider` trait plus an always-available `OtelInMemoryTraceProvider`, with feature-gated concrete providers for OTLP-HTTP, Langfuse, OpenSearch, and CloudWatch.
 - **FR-032**: The system MUST provide session mappers for OpenInference, LangChain-OTel, and the OTel GenAI semantic conventions. The GenAI mapper MUST accept a `GenAIConventionVersion` enum supporting at least v1.27, v1.30, and "experimental".
 - **FR-033**: The system MUST provide an `EvaluationLevel` enum (TOOL / TRACE / SESSION) and a `TraceExtractor` that yields the appropriate granularity of input to each evaluator family.
-- **FR-034**: The system MUST provide a `SwarmExtractor` and `GraphExtractor` that consume the output types from specs 040 and 039 respectively and produce input suitable for `InteractionsEvaluator`.
+- **FR-034**: The system MUST provide a `SwarmExtractor` and `GraphExtractor` that consume the output types from specs 040 and 039 respectively and produce input suitable for `InteractionsEvaluator`. (See dated Addendum below — the shipped extractors are heuristic proxies over `Invocation`/`TurnRecord`, not literal consumers of typed 039/040 output types.)
 - **FR-035**: The system MUST provide an `EvalsTelemetry` configuration that emits OTel spans for eval runs — one per case, one per evaluator as a child — with standardized attributes including case id, eval set id, evaluator name, prompt version, score, and verdict.
 
 **Runner upgrades (scope item 8)**
@@ -374,6 +374,14 @@ A developer adopting `swink-agent-eval` wants CI scaffolding and a thin command-
 - `num_runs` averaging is arithmetic mean; a future spec may add median, trimmed mean, or percentile reductions if real-world judge variance warrants them.
 - The CLI and workflow templates target teams that use GitHub Actions. Support for other CI systems (GitLab, CircleCI, etc.) is a future enhancement; the core library surface is CI-agnostic so third parties can write their own templates.
 - LangSmith integration pushes results over their HTTP API. The integration uses a token-based auth model and does not require any LangSmith-side project preconfiguration beyond project creation.
+
+## Addendum: FR-034 Interaction Extractors Are Heuristic Proxies, Not Typed Consumers (2026-07-06)
+
+`SwarmExtractor` and `GraphExtractor` shipped as specified, in `eval/src/trace/extractor.rs`, and both produce `ExtractedInput::Session` cohorts that `InteractionsEvaluator` can score — that part of FR-034 and FR-015 is delivered. `InteractionsEvaluator` itself is implemented (`eval/src/evaluators/agent.rs`) and `EvalCase::expected_interactions` is not dead code — it gates the evaluator's applicability criterion and feeds the `interactions_v0` prompt template (`eval/src/prompt/templates/agent.rs`).
+
+What did not ship as literally specified: neither extractor takes a real dependency on spec-039's `PipelineOutput` or spec-040's typed handoff/transfer output. The `eval` crate has no Cargo dependency on the `patterns` crate (spec 039) or a swarm/handoff crate (spec 040). `GraphExtractor`'s own doc comment explains why: it groups turns by a heuristic proxy (`Invocation::turns[].assistant_message.model_id`) instead, citing SC-009 (keeping the eval crate's default dependency graph tight) as the reason a direct typed dependency was avoided. `SwarmExtractor` similarly detects handoffs by matching a configurable tool name (default `transfer_to_agent`) rather than consuming a typed spec-040 event.
+
+Tracked as future work: a typed interaction-graph consumption path that reads spec-039/040 output types directly, if the dependency-graph cost is judged acceptable against SC-009.
 
 ## Dependencies
 

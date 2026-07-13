@@ -479,6 +479,7 @@ async fn live_gemma4_tool_call() {
 
 #[tokio::test]
 #[ignore = "hits live Ollama instance — requires `ollama pull gemma4:e2b`"]
+#[allow(clippy::too_many_lines)]
 async fn live_gemma4_multi_turn() {
     if !should_run_test(TestRuntimeRequirements::new().with_gpu(TestGpu::Any)) {
         return;

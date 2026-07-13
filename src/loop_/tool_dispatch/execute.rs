@@ -277,6 +277,31 @@ pub(super) async fn dispatch_single_tool(
                 transfer_flag_clone.store(true, std::sync::atomic::Ordering::SeqCst);
             }
 
+            // Built-in artifact tools (e.g. `SaveArtifactTool`) signal a successful
+            // save via a well-known `details` payload rather than a dedicated
+            // `AgentToolResult` field, so this stays additive for every other tool.
+            #[cfg(feature = "artifact-store")]
+            {
+                if !is_error
+                    && let Some(saved) = result.details.get("artifact_saved")
+                    && let (Some(session_id), Some(name), Some(version)) = (
+                        saved.get("session_id").and_then(serde_json::Value::as_str),
+                        saved.get("name").and_then(serde_json::Value::as_str),
+                        saved.get("version").and_then(serde_json::Value::as_u64),
+                    )
+                {
+                    let _ = emit(
+                        &tx_clone,
+                        AgentEvent::ArtifactSaved {
+                            session_id: session_id.to_string(),
+                            name: name.to_string(),
+                            version: u32::try_from(version).unwrap_or(u32::MAX),
+                        },
+                    )
+                    .await;
+                }
+            }
+
             let _ = emit(
                 &tx_clone,
                 AgentEvent::ToolExecutionEnd {
@@ -332,7 +357,7 @@ async fn resolve_credential(
     })?;
 
     let resolve_future = cred_resolver.resolve(&auth_config.credential_key);
-    let credential = tokio::time::timeout(std::time::Duration::from_secs(30), resolve_future)
+    let credential = tokio::time::timeout(config.credential_timeout, resolve_future)
         .await
         .map_err(|_| crate::credential::CredentialError::Timeout {
             key: auth_config.credential_key.clone(),

@@ -171,7 +171,7 @@ A developer awaits the agent becoming idle using `wait_for_idle()`. This is usef
 - **FR-014**: The public API module MUST re-export all public types so consumers never reach into submodules.
 - **FR-015**: `set_model()` MUST look up the model in `available_models` (registered at construction via `with_available_models()`) and swap both the `ModelSpec` and `StreamFn` when found. If the model is not in `available_models`, only the `ModelSpec` is updated.
 - **FR-016**: The system MUST provide `set_model_with_stream(model, stream_fn)` for swapping to models not registered in `available_models`.
-- **FR-017**: Model swaps MUST emit a `ModelCycled` event with old and new model specs.
+- **FR-017**: Model swaps MUST emit a `ModelCycled` event with old and new model specs when the new model differs from the current one; if the new model is equal to the current one, no event is emitted (src/agent/mutation.rs). [2026-07-06]
 - **FR-018**: Model swaps MUST take effect on the next turn, not mid-turn.
 - **FR-019**: `wait_for_idle()` MUST return immediately if the agent is not running, and MUST resolve when the current run finishes.
 - **FR-020**: `wait_for_idle()` MUST be safe to call from multiple tasks concurrently — all waiters are notified when the agent becomes idle.

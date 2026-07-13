@@ -6,95 +6,97 @@
 
 ### ArtifactStore
 
+The real trait (`src/artifact.rs`) is hand-written with boxed futures rather than
+`#[async_trait]` — there is no `async_trait` dependency anywhere in this crate.
+Each method takes an explicit `'a` lifetime tied to `&'a self` and its `&'a str`
+arguments, and returns the `ArtifactFuture<'a, T>` type alias
+(`Pin<Box<dyn Future<Output = Result<T, ArtifactError>> + Send + 'a>>`). This is
+what makes the trait object-safe (see T076): `Arc<dyn ArtifactStore>` is used
+throughout, e.g. by the built-in tools.
+
 ```rust
+/// Boxed future returned by artifact store operations.
+pub type ArtifactFuture<'a, T> =
+    Pin<Box<dyn Future<Output = Result<T, ArtifactError>> + Send + 'a>>;
+
 /// Pluggable storage backend for session-attached versioned artifacts.
 ///
 /// All methods are scoped by session ID. Implementations must be safe for
 /// concurrent use from multiple tools within the same agent.
-#[async_trait]
 pub trait ArtifactStore: Send + Sync {
     /// Save content as a new version of the named artifact.
     ///
     /// Returns the version record on success. Version numbers are
     /// monotonically increasing per artifact per session, starting at 1.
-    ///
-    /// # Errors
-    /// - `ArtifactError::InvalidName` if the name fails validation.
-    /// - `ArtifactError::Storage` on I/O failure.
-    async fn save(
-        &self,
-        session_id: &str,
-        name: &str,
+    fn save<'a>(
+        &'a self,
+        session_id: &'a str,
+        name: &'a str,
         data: ArtifactData,
-    ) -> Result<ArtifactVersion, ArtifactError>;
+    ) -> ArtifactFuture<'a, ArtifactVersion>;
 
     /// Load the latest version of the named artifact.
     ///
     /// Returns `None` if the artifact does not exist.
-    async fn load(
-        &self,
-        session_id: &str,
-        name: &str,
-    ) -> Result<Option<(ArtifactData, ArtifactVersion)>, ArtifactError>;
+    fn load<'a>(
+        &'a self,
+        session_id: &'a str,
+        name: &'a str,
+    ) -> ArtifactFuture<'a, Option<(ArtifactData, ArtifactVersion)>>;
 
     /// Load a specific version of the named artifact.
     ///
     /// Returns `None` if the artifact or version does not exist.
-    async fn load_version(
-        &self,
-        session_id: &str,
-        name: &str,
+    fn load_version<'a>(
+        &'a self,
+        session_id: &'a str,
+        name: &'a str,
         version: u32,
-    ) -> Result<Option<(ArtifactData, ArtifactVersion)>, ArtifactError>;
+    ) -> ArtifactFuture<'a, Option<(ArtifactData, ArtifactVersion)>>;
 
     /// List metadata for all artifacts in a session.
     ///
     /// Returns an empty vec if the session has no artifacts.
-    async fn list(
-        &self,
-        session_id: &str,
-    ) -> Result<Vec<ArtifactMeta>, ArtifactError>;
+    fn list<'a>(&'a self, session_id: &'a str) -> ArtifactFuture<'a, Vec<ArtifactMeta>>;
 
     /// Delete all versions of the named artifact.
     ///
     /// Succeeds silently if the artifact does not exist (idempotent).
-    async fn delete(
-        &self,
-        session_id: &str,
-        name: &str,
-    ) -> Result<(), ArtifactError>;
+    fn delete<'a>(&'a self, session_id: &'a str, name: &'a str) -> ArtifactFuture<'a, ()>;
 }
 ```
 
 ### StreamingArtifactStore (extension trait)
 
 ```rust
+/// A boxed byte stream used by `StreamingArtifactStore`.
+pub type ArtifactByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, ArtifactError>> + Send>>;
+
 /// Extension trait for artifact stores that support streaming I/O.
 ///
 /// Implementing this trait is optional. The base `ArtifactStore` trait
 /// uses `Vec<u8>` for all content operations.
-#[async_trait]
 pub trait StreamingArtifactStore: ArtifactStore {
     /// Save content from a byte stream as a new version.
-    async fn save_stream(
-        &self,
-        session_id: &str,
-        name: &str,
+    fn save_stream<'a>(
+        &'a self,
+        session_id: &'a str,
+        name: &'a str,
         content_type: String,
         metadata: HashMap<String, String>,
-        stream: Pin<Box<dyn Stream<Item = Result<Bytes, ArtifactError>> + Send>>,
-    ) -> Result<ArtifactVersion, ArtifactError>;
+        stream: ArtifactByteStream,
+    ) -> ArtifactFuture<'a, ArtifactVersion>;
 
     /// Load an artifact version as a byte stream.
     ///
     /// If `version` is `None`, loads the latest version.
     /// Returns `None` if the artifact or version does not exist.
-    async fn load_stream(
-        &self,
-        session_id: &str,
-        name: &str,
+    fn load_stream<'a>(
+        &'a self,
+        session_id: &'a str,
+        name: &'a str,
         version: Option<u32>,
-    ) -> Result<Option<Pin<Box<dyn Stream<Item = Result<Bytes, ArtifactError>> + Send>>>, ArtifactError>;
+    ) -> ArtifactFuture<'a, Option<ArtifactByteStream>>;
 }
 ```
 
@@ -235,7 +237,7 @@ impl ListArtifactsTool {
 
 ```rust
 /// Create all built-in artifact tools.
-pub fn artifact_tools(store: Arc<dyn ArtifactStore>) -> Vec<Box<dyn AgentTool>>;
+pub fn artifact_tools(store: Arc<dyn ArtifactStore>) -> Vec<Arc<dyn AgentTool>>;
 ```
 
 ## Re-exports (swink-agent lib.rs)

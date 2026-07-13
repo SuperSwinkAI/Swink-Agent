@@ -496,6 +496,7 @@ fn process_oai_chunk_with_options(
                     error_message: "Mistral reported finish_reason=error".to_string(),
                     usage: state.usage.clone(),
                     error_kind: None,
+                    retry_after: None,
                 });
                 return;
             }

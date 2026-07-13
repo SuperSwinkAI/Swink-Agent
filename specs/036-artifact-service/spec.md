@@ -115,7 +115,7 @@ A library consumer wants to remove artifacts that are no longer needed — eithe
 
 ## Clarifications
 
-**Internal types in public surface**: The `swink-agent-artifacts` crate exposes `MetaFile`, `VersionRecord`, and the `storage_err()` helper as `pub` items to satisfy Rust visibility requirements. These are implementation details of the storage layer and are not part of the stable consumer API — consumers interact via the `ArtifactStore` and `StreamingArtifactStore` traits only.
+**Internal types are not part of the public surface**: `MetaFile`, `VersionRecord`, and the `storage_err()` helper are declared `pub` inside `artifacts/src/fs_store.rs`, but that module itself is private (`mod fs_store;` in `artifacts/src/lib.rs`, not `pub mod`). The `pub` visibility only satisfies intra-crate access from sibling modules (e.g. tests); none of these three items are reachable from outside the `swink-agent-artifacts` crate. Consumers interact via the `ArtifactStore` and `StreamingArtifactStore` traits (and the re-exported `FileArtifactStore`/`InMemoryArtifactStore` types) only.
 
 ### Session 2026-04-02
 
@@ -142,7 +142,7 @@ A library consumer wants to remove artifacts that are no longer needed — eithe
 - **FR-009**: The `ArtifactStore` trait methods MUST be asynchronous and the trait MUST require `Send + Sync` bounds to support concurrent tool execution and multi-agent scenarios.
 - **FR-010**: A built-in filesystem-backed implementation MUST be provided that stores artifacts as files organized by session ID and artifact name, with version-numbered filenames and a metadata sidecar file.
 - **FR-011**: The filesystem implementation MUST handle concurrent access safely — concurrent saves to the same artifact MUST produce sequential version numbers without data corruption.
-- **FR-012**: The artifact store MUST be injectable into the agent via configuration, similar to how session stores are configured. If no artifact store is configured, artifact functionality is unavailable but the agent operates normally.
+- **FR-012**: The artifact store MUST be injectable into the agent's tool set. The shipped pattern is `artifact_tools(store: Arc<dyn ArtifactStore>) -> Vec<Arc<dyn AgentTool>>` (each built-in tool captures the store at construction) combined with `AgentOptions::with_tools()` — there is no dedicated `artifact_store` field on `AgentOptions`/`AgentLoopConfig`. If no artifact store is configured (i.e. the artifact tools are not added), artifact functionality is unavailable but the agent operates normally.
 - **FR-013**: Built-in artifact tools (save, load, list) MUST be provided that allow the LLM to manage artifacts during a conversation. These tools MUST be feature-gated independently from the core artifact store trait. Tools MUST capture `Arc<dyn ArtifactStore>` at construction time rather than receiving it via the tool execution context.
 - **FR-018**: An `InMemoryArtifactStore` implementation MUST be provided in the artifacts crate, always available (not feature-gated), for use in tests and lightweight scenarios.
 - **FR-019**: Built-in artifact store implementations (`FileArtifactStore`, `InMemoryArtifactStore`) MUST emit `tracing` spans and events for diagnostic observability. Tracing is NOT a requirement of the `ArtifactStore` trait itself.

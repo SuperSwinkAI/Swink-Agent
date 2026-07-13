@@ -296,6 +296,7 @@ fn parse_sse_stream(
                         error_message: "operation cancelled".to_owned(),
                         usage: None,
                         error_kind: None,
+                        retry_after: None,
                     }
                 }
                 item = sse.next() => {
@@ -498,6 +499,7 @@ fn convert_sse_event(event: SseEventData) -> AssistantMessageEvent {
             error_message,
             usage,
             error_kind,
+            retry_after: None,
         },
     }
 }
@@ -660,6 +662,7 @@ mod tests {
                 error_message,
                 usage,
                 error_kind,
+                retry_after: _,
             } => {
                 assert_eq!(stop_reason, StopReason::Error);
                 assert_eq!(error_message, "boom");
@@ -727,6 +730,7 @@ mod tests {
             error_message: "operation cancelled".to_owned(),
             usage: None,
             error_kind: None,
+            retry_after: None,
         };
         match event {
             AssistantMessageEvent::Error { stop_reason, .. } => {
@@ -750,6 +754,7 @@ mod tests {
             error_message: "test".to_owned(),
             usage: None,
             error_kind: None,
+            retry_after: None,
         };
         assert!(is_terminal_event(&error));
 
@@ -860,6 +865,7 @@ mod tests {
                             error_message: "cancelled".to_owned(),
                             usage: None,
                             error_kind: None,
+                            retry_after: None,
                         }, (sse, token, true)))
                     }
                     item = sse.next() => {

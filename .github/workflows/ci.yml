@@ -83,7 +83,7 @@ jobs:
 
       - run: cargo binstall --no-confirm --force cargo-hack
 
-      # Each-feature check (excludes local-llm: metal/accelerate/mkl need macOS)
+      # Each-feature check (excludes local-llm: metal/cuda/cudnn/vulkan all need GPU toolchains unavailable on ubuntu-latest)
       - name: cargo hack (each feature)
         run: cargo hack check --workspace --each-feature --no-dev-deps --exclude swink-agent-local-llm
 

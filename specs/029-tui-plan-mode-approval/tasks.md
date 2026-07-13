@@ -3,7 +3,7 @@
 **Input**: Design documents from `/specs/029-tui-plan-mode-approval/`
 **Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, quickstart.md
 
-**Tests**: Tests are included per user story. Unit tests in the respective source modules; integration tests in `tui/src/app/tests.rs`.
+**Tests**: Tests are included per user story. Unit tests in the respective source modules; integration tests in `tui/src/app/tests/` [corrected: `tests.rs` was split into `tests/{mod,approval,helpers,input_ui,persistence,plan_mode,tool_blocks,agent_bridge}.rs`].
 
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
 
@@ -63,11 +63,11 @@
 
 > **NOTE: Write tests FIRST, ensure they FAIL before implementation.**
 
-- [x] T010 [P] [US1] Test `approval_mode_default_is_smart` in `tui/src/app/tests.rs`: construct `App`, verify `app.approval_mode == ApprovalMode::Smart` (FR-001, FR-002)
-- [x] T011 [P] [US1] Test `smart_mode_auto_approves_readonly_tool` in `tui/src/app/tests.rs`: set Smart mode, simulate tool call with `requires_approval() == false`, verify no pending approval prompt appears (FR-001)
-- [x] T012 [P] [US1] Test `smart_mode_prompts_for_write_tool` in `tui/src/app/tests.rs`: set Smart mode, simulate tool call with `requires_approval() == true`, verify `pending_approval` is `Some` (FR-001, FR-004)
-- [x] T013 [P] [US1] Test `enabled_mode_prompts_for_all_tools` in `tui/src/app/tests.rs`: set Enabled mode, simulate read-only tool call, verify approval prompt appears (FR-001)
-- [x] T014 [P] [US1] Test `bypassed_mode_auto_approves_all` in `tui/src/app/tests.rs`: set Bypassed mode, simulate write tool call, verify no approval prompt (FR-001)
+- [x] T010 [P] [US1] Test `approval_mode_default_is_smart` in `tui/src/app/tests/approval.rs` [corrected from `tests.rs`]: construct `App`, verify `app.approval_mode == ApprovalMode::Smart` (FR-001, FR-002)
+- [x] T011 [P] [US1] Test `smart_mode_auto_approves_readonly_tool` in `tui/src/app/tests/approval.rs` [corrected from `tests.rs`; actual test fn is `smart_mode_auto_approves_untrusted_readonly_tool`]: set Smart mode, simulate tool call with `requires_approval() == false`, verify no pending approval prompt appears (FR-001)
+- [x] T012 [P] [US1] Test `smart_mode_prompts_for_write_tool` in `tui/src/app/tests/approval.rs` [corrected from `tests.rs`]: set Smart mode, simulate tool call with `requires_approval() == true`, verify `pending_approval` is `Some` (FR-001, FR-004)
+- [x] T013 [P] [US1] Test `enabled_mode_prompts_for_all_tools` in `tui/src/app/tests/approval.rs` [corrected from `tests.rs`]: set Enabled mode, simulate read-only tool call, verify approval prompt appears (FR-001)
+- [x] T014 [P] [US1] Test `bypassed_mode_auto_approves_all` in `tui/src/app/tests/approval.rs` [corrected from `tests.rs`]: set Bypassed mode, simulate write tool call, verify no approval prompt (FR-001)
 - [x] T015 [P] [US1] Test `approve_command_switches_modes` in `tui/src/commands.rs` tests: `execute_command("#approve on")` → `SetApprovalMode(On)`, `"#approve smart"` → `SetApprovalMode(Smart)`, `"#approve off"` → `SetApprovalMode(Off)` (FR-003)
 
 ### Implementation for User Story 1
@@ -90,15 +90,15 @@
 
 > **NOTE: Write tests FIRST, ensure they FAIL before implementation.**
 
-- [x] T019 [P] [US2] Test `trust_follow_up_triggers_after_approval_in_smart_mode` in `tui/src/app/tests.rs`: approve a tool via `y` in Smart mode, verify `trust_follow_up` is `Some` with correct `tool_name` (FR-006)
-- [x] T020 [P] [US2] Test `trust_follow_up_not_triggered_in_enabled_mode` in `tui/src/app/tests.rs`: approve a tool via `y` in Enabled mode, verify `trust_follow_up` is `None` (FR-006)
-- [x] T021 [P] [US2] Test `trust_follow_up_not_triggered_in_bypassed_mode` in `tui/src/app/tests.rs`: Bypassed mode auto-approves, verify `trust_follow_up` is `None` (FR-006)
-- [x] T022 [P] [US2] Test `trust_follow_up_y_adds_to_session_trusted` in `tui/src/app/tests.rs`: set `trust_follow_up` for "bash", press `y`, verify "bash" in `session_trusted_tools` and `trust_follow_up` is `None` (FR-006)
-- [x] T023 [P] [US2] Test `trust_follow_up_n_does_not_trust` in `tui/src/app/tests.rs`: set `trust_follow_up` for "bash", press `n`, verify "bash" NOT in `session_trusted_tools` and `trust_follow_up` is `None` (FR-006)
-- [x] T024 [P] [US2] Test `trust_follow_up_timeout_clears` in `tui/src/app/tests.rs`: set `trust_follow_up` with expired `expires_at`, call `tick()`, verify `trust_follow_up` is `None` (FR-006: 3-second auto-dismiss)
-- [x] T025 [P] [US2] Test `trusted_tool_auto_approves_in_smart_mode` in `tui/src/app/tests.rs`: add tool to `session_trusted_tools`, trigger tool call in Smart mode, verify auto-approved (no pending approval) (FR-006)
-- [x] T026 [P] [US2] Test `trusted_tool_still_prompts_in_enabled_mode` in `tui/src/app/tests.rs`: add tool to `session_trusted_tools`, switch to Enabled mode, trigger tool call, verify approval prompt appears (trust only applies in Smart mode) (FR-006)
-- [x] T027 [P] [US2] Test `session_trust_not_persisted` in `tui/src/app/tests.rs`: construct new `App`, verify `session_trusted_tools` is empty (FR-007)
+- [x] T019 [P] [US2] Test `trust_follow_up_triggers_after_approval_in_smart_mode` in `tui/src/app/tests/approval.rs` [corrected from `tests.rs`]: approve a tool via `y` in Smart mode, verify `trust_follow_up` is `Some` with correct `tool_name` (FR-006)
+- [x] T020 [P] [US2] Test `trust_follow_up_not_triggered_in_enabled_mode` in `tui/src/app/tests/approval.rs` [corrected from `tests.rs`]: approve a tool via `y` in Enabled mode, verify `trust_follow_up` is `None` (FR-006)
+- [x] T021 [P] [US2] Test `trust_follow_up_not_triggered_in_bypassed_mode` in `tui/src/app/tests/approval.rs` [corrected from `tests.rs`]: Bypassed mode auto-approves, verify `trust_follow_up` is `None` (FR-006)
+- [x] T022 [P] [US2] Test `trust_follow_up_y_adds_to_session_trusted` in `tui/src/app/tests/approval.rs` [corrected from `tests.rs`]: set `trust_follow_up` for "bash", press `y`, verify "bash" in `session_trusted_tools` and `trust_follow_up` is `None` (FR-006)
+- [x] T023 [P] [US2] Test `trust_follow_up_n_does_not_trust` in `tui/src/app/tests/approval.rs` [corrected from `tests.rs`]: set `trust_follow_up` for "bash", press `n`, verify "bash" NOT in `session_trusted_tools` and `trust_follow_up` is `None` (FR-006)
+- [x] T024 [P] [US2] Test `trust_follow_up_timeout_clears` in `tui/src/app/tests/approval.rs` [corrected from `tests.rs`]: set `trust_follow_up` with expired `expires_at`, call `tick()`, verify `trust_follow_up` is `None` (FR-006: 3-second auto-dismiss)
+- [x] T025 [P] [US2] Test `trusted_tool_auto_approves_in_smart_mode` in `tui/src/app/tests/approval.rs` [corrected from `tests.rs`]: add tool to `session_trusted_tools`, trigger tool call in Smart mode, verify auto-approved (no pending approval) (FR-006)
+- [x] T026 [P] [US2] Test `trusted_tool_still_prompts_in_enabled_mode` in `tui/src/app/tests/approval.rs` [corrected from `tests.rs`]: add tool to `session_trusted_tools`, switch to Enabled mode, trigger tool call, verify approval prompt appears (trust only applies in Smart mode) (FR-006)
+- [x] T027 [P] [US2] Test `session_trust_not_persisted` in `tui/src/app/tests/approval.rs` [corrected from `tests.rs`]: construct new `App`, verify `session_trusted_tools` is empty (FR-007)
 
 ### Implementation for User Story 2
 
@@ -121,15 +121,15 @@
 
 > **NOTE: Write tests FIRST, ensure they FAIL before implementation.**
 
-- [x] T032 [P] [US3] Test `plan_toggle_enters_plan_mode` in `tui/src/app/tests.rs`: call `toggle_operating_mode()` from Execute mode, verify `operating_mode == OperatingMode::Plan` (FR-008)
-- [x] T033 [P] [US3] Test `plan_toggle_shows_approval_prompt` in `tui/src/app/tests.rs`: enter plan mode, call `toggle_operating_mode()` again, verify `pending_plan_approval == true` and `operating_mode` is still `Plan` (FR-011)
-- [x] T034 [P] [US3] Test `plan_approval_y_exits_plan_and_sends_messages` in `tui/src/app/tests.rs`: enter plan mode, add assistant messages with `plan_mode: true`, set `pending_plan_approval = true`, call `approve_plan()`, verify `operating_mode == Execute`, `pending_plan_approval == false`, and plan messages were sent to agent (FR-011, FR-012)
-- [x] T035 [P] [US3] Test `plan_approval_n_stays_in_plan` in `tui/src/app/tests.rs`: enter plan mode, set `pending_plan_approval = true`, call `reject_plan()`, verify `operating_mode == Plan` and `pending_plan_approval == false` (FR-011)
-- [x] T036 [P] [US3] Test `plan_approval_empty_plan_skips_send` in `tui/src/app/tests.rs`: enter plan mode with no assistant messages, approve plan, verify no message sent to agent but mode still transitions to Execute (FR-012)
-- [x] T037 [P] [US3] Test `plan_toggle_ignored_while_agent_running` in `tui/src/app/tests.rs`: set `status = AgentStatus::Running`, press Shift+Tab, verify `operating_mode` unchanged (FR-015)
-- [x] T038 [P] [US3] Test `plan_messages_concatenated_with_separator` in `tui/src/app/tests.rs`: enter plan mode, add 3 assistant messages ("step 1", "step 2", "step 3"), approve plan, verify sent message contains all 3 messages joined by `\n\n---\n\n` (FR-012)
-- [x] T039 [P] [US3] Test `plan_mode_only_collects_assistant_messages` in `tui/src/app/tests.rs`: enter plan mode, add user message, assistant message, tool result message (all with `plan_mode: true`), approve plan, verify only assistant message content is included in sent message (FR-012)
-- [x] T040 [P] [US3] Test `plan_badge_shown_in_plan_mode` in `tui/src/app/tests.rs`: enter plan mode, verify status bar contains "PLAN" badge (test through App state, not rendering) (FR-010)
+- [x] T032 [P] [US3] Test `plan_toggle_enters_plan_mode` in `tui/src/app/tests/plan_mode.rs` [corrected from `tests.rs`]: call `toggle_operating_mode()` from Execute mode, verify `operating_mode == OperatingMode::Plan` (FR-008)
+- [x] T033 [P] [US3] Test `plan_toggle_shows_approval_prompt` in `tui/src/app/tests/plan_mode.rs` [corrected from `tests.rs`]: enter plan mode, call `toggle_operating_mode()` again, verify `pending_plan_approval == true` and `operating_mode` is still `Plan` (FR-011)
+- [x] T034 [P] [US3] Test `plan_approval_y_exits_plan_and_sends_messages` in `tui/src/app/tests/plan_mode.rs` [corrected from `tests.rs`]: enter plan mode, add assistant messages with `plan_mode: true`, set `pending_plan_approval = true`, call `approve_plan()`, verify `operating_mode == Execute`, `pending_plan_approval == false`, and plan messages were sent to agent (FR-011, FR-012)
+- [x] T035 [P] [US3] Test `plan_approval_n_stays_in_plan` in `tui/src/app/tests/plan_mode.rs` [corrected from `tests.rs`]: enter plan mode, set `pending_plan_approval = true`, call `reject_plan()`, verify `operating_mode == Plan` and `pending_plan_approval == false` (FR-011)
+- [x] T036 [P] [US3] Test `plan_approval_empty_plan_skips_send` in `tui/src/app/tests/plan_mode.rs` [corrected from `tests.rs`]: enter plan mode with no assistant messages, approve plan, verify no message sent to agent but mode still transitions to Execute (FR-012)
+- [x] T037 [P] [US3] Test `plan_toggle_ignored_while_agent_running` in `tui/src/app/tests/plan_mode.rs` [corrected from `tests.rs`]: set `status = AgentStatus::Running`, press Shift+Tab, verify `operating_mode` unchanged (FR-015)
+- [x] T038 [P] [US3] Test `plan_messages_concatenated_with_separator` in `tui/src/app/tests/plan_mode.rs` [corrected from `tests.rs`]: enter plan mode, add 3 assistant messages ("step 1", "step 2", "step 3"), approve plan, verify sent message contains all 3 messages joined by `\n\n---\n\n` (FR-012)
+- [x] T039 [P] [US3] Test `plan_mode_only_collects_assistant_messages` in `tui/src/app/tests/plan_mode.rs` [corrected from `tests.rs`]: enter plan mode, add user message, assistant message, tool result message (all with `plan_mode: true`), approve plan, verify only assistant message content is included in sent message (FR-012)
+- [x] T040 [P] [US3] Test `plan_badge_shown_in_plan_mode` in `tui/src/app/tests/plan_mode.rs` [corrected from `tests.rs`]: enter plan mode, verify status bar contains "PLAN" badge (test through App state, not rendering) (FR-010)
 
 ### Implementation for User Story 3
 
@@ -155,14 +155,14 @@
 > **NOTE: Write tests FIRST, ensure they FAIL before implementation.**
 
 - [x] T047 [P] [US4] Test `requires_approval_default_is_false` in `src/tool.rs` tests: create a mock tool using default `requires_approval()`, verify it returns `false`
-- [x] T048 [P] [US4] Test `tool_with_requires_approval_true_prompts_in_smart` in `tui/src/app/tests.rs`: register tool with `requires_approval() == true`, trigger in Smart mode, verify approval prompt
-- [x] T049 [P] [US4] Test `tool_with_requires_approval_false_auto_approves_in_smart` in `tui/src/app/tests.rs`: register tool with `requires_approval() == false`, trigger in Smart mode, verify auto-approved
-- [x] T050 [P] [US4] Test `enabled_mode_ignores_classification` in `tui/src/app/tests.rs`: register read-only tool (`requires_approval() == false`), switch to Enabled mode, trigger tool, verify approval prompt shown regardless
-- [x] T051 [P] [US4] Test `bypassed_mode_ignores_classification` in `tui/src/app/tests.rs`: register write tool (`requires_approval() == true`), switch to Bypassed mode, trigger tool, verify auto-approved regardless
+- [x] T048 [P] [US4] Test `tool_with_requires_approval_true_prompts_in_smart` in `tui/src/app/tests/approval.rs` [corrected from `tests.rs`; corresponds to actual test `tool_with_requires_approval_true`]: register tool with `requires_approval() == true`, trigger in Smart mode, verify approval prompt
+- [x] T049 [P] [US4] Test `tool_with_requires_approval_false_auto_approves_in_smart` in `tui/src/app/tests/approval.rs` [corrected from `tests.rs`; corresponds to actual test `requires_approval_default_is_false`]: register tool with `requires_approval() == false`, trigger in Smart mode, verify auto-approved
+- [x] T050 [P] [US4] Test `enabled_mode_ignores_classification` in `tui/src/app/tests/approval.rs` [corrected from `tests.rs`]: register read-only tool (`requires_approval() == false`), switch to Enabled mode, trigger tool, verify approval prompt shown regardless
+- [x] T051 [P] [US4] Test `bypassed_mode_ignores_classification` in `tui/src/app/tests/approval.rs` [corrected from `tests.rs`]: register write tool (`requires_approval() == true`), switch to Bypassed mode, trigger tool, verify auto-approved regardless
 
 ### Implementation for User Story 4
 
-- [x] T052 [US4] Verify existing `requires_approval()` trait method on `AgentTool` in `src/tool.rs` (line ~125) returns `false` by default. Confirm Smart mode dispatch in `src/loop_/tool_dispatch.rs` (line ~88-104) checks this method to decide approval. No changes expected — verify existing behavior matches FR-005.
+- [x] T052 [US4] Verify existing `requires_approval()` trait method on `AgentTool` in `src/tool.rs` (line ~125) returns `false` by default. Confirm Smart mode dispatch in `src/loop_/tool_dispatch/preprocess.rs` (line ~205-225) [corrected: `tool_dispatch.rs` was split into `src/loop_/tool_dispatch/{collect,execute,mod,preprocess,shared}.rs`] checks this method to decide approval. No changes expected — verify existing behavior matches FR-005.
 
 **Checkpoint**: US4 complete — tool classification drives approval decisions
 
@@ -180,8 +180,8 @@
 
 - [x] T053 [P] [US2] Test `untrust_specific_tool_command` in `tui/src/commands.rs` tests: `execute_command("#approve untrust bash")` → `UntrustTool("bash")` (FR-014)
 - [x] T054 [P] [US2] Test `untrust_all_command` in `tui/src/commands.rs` tests: `execute_command("#approve untrust")` → `UntrustAll` (FR-014)
-- [x] T055 [P] [US2] Test `untrust_specific_removes_from_set` in `tui/src/app/tests.rs`: add "bash" and "write_file" to `session_trusted_tools`, handle `UntrustTool("bash")`, verify "bash" removed and "write_file" remains (FR-014)
-- [x] T056 [P] [US2] Test `untrust_all_clears_set` in `tui/src/app/tests.rs`: add multiple tools to `session_trusted_tools`, handle `UntrustAll`, verify set is empty (FR-014)
+- [x] T055 [P] [US2] Test `untrust_specific_removes_from_set` in `tui/src/app/tests/approval.rs` [corrected from `tests.rs`]: add "bash" and "write_file" to `session_trusted_tools`, handle `UntrustTool("bash")`, verify "bash" removed and "write_file" remains (FR-014)
+- [x] T056 [P] [US2] Test `untrust_all_clears_set` in `tui/src/app/tests/approval.rs` [corrected from `tests.rs`]: add multiple tools to `session_trusted_tools`, handle `UntrustAll`, verify set is empty (FR-014)
 
 ### Implementation for User Story 2 Supplement
 
@@ -200,10 +200,10 @@
 
 ### Tests for Edge Cases
 
-- [x] T061 [P] Test `plan_toggle_during_plan_approval_ignored` in `tui/src/app/tests.rs`: while `pending_plan_approval == true`, press Shift+Tab, verify state unchanged (don't start a new toggle while approval is pending)
-- [x] T062 [P] Test `concurrent_plan_and_tool_approval` in `tui/src/app/tests.rs`: verify that `pending_plan_approval` and `pending_approval` (tool) cannot both be active simultaneously — plan approval takes precedence in key handling
-- [x] T063 [P] Test `trust_follow_up_cleared_on_new_approval` in `tui/src/app/tests.rs`: while trust follow-up is active, a new tool approval arrives → trust follow-up is cleared in favor of the new approval prompt
-- [x] T064 [P] Test `plan_mode_removes_write_tools` in `tui/src/app/tests.rs`: verify `enter_plan_mode()` saves and removes tools with `requires_approval() == true` from agent's tool set
+- [x] T061 [P] Test `plan_toggle_during_plan_approval_ignored` in `tui/src/app/tests/plan_mode.rs` [corrected from `tests.rs`]: while `pending_plan_approval == true`, press Shift+Tab, verify state unchanged (don't start a new toggle while approval is pending)
+- [x] T062 [P] Test `concurrent_plan_and_tool_approval` in `tui/src/app/tests/approval.rs` [corrected from `tests.rs`; actual test fn is `concurrent_plan_and_tool_approval_plan_takes_precedence`]: verify that `pending_plan_approval` and `pending_approval` (tool) cannot both be active simultaneously — plan approval takes precedence in key handling
+- [x] T063 [P] Test `trust_follow_up_cleared_on_new_approval` in `tui/src/app/tests/approval.rs` [corrected from `tests.rs`]: while trust follow-up is active, a new tool approval arrives → trust follow-up is cleared in favor of the new approval prompt
+- [x] T064 [P] Test `plan_mode_removes_write_tools` in `tui/src/app/tests/plan_mode.rs` [corrected from `tests.rs`]: verify `enter_plan_mode()` saves and removes tools with `requires_approval() == true` from agent's tool set
 
 ### Implementation for Edge Cases
 

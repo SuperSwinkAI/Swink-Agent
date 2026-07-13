@@ -41,7 +41,7 @@ A developer sends a conversation with tool definitions to the Azure OpenAI deplo
 
 ### User Story 3 - Route Requests to Azure Deployments (Priority: P2)
 
-A developer configures the Azure adapter with a resource endpoint and deployment name rather than a generic base URL. The adapter constructs the correct Azure v1 GA URL path that includes the deployment name. This deployment-oriented routing is distinct from standard OpenAI routing, where the model is specified in the request body.
+A developer configures the Azure adapter with a base URL that already encodes the resource endpoint and deployment path (e.g., `https://my-resource.openai.azure.com/openai/deployments/my-deployment`) rather than a generic OpenAI base URL. This deployment-oriented routing is distinct from standard OpenAI routing, where the model is specified in the request body.
 
 **Why this priority**: Deployment routing is what distinguishes Azure from standard OpenAI, but the streaming protocol itself is similar.
 
@@ -49,7 +49,7 @@ A developer configures the Azure adapter with a resource endpoint and deployment
 
 **Acceptance Scenarios**:
 
-1. **Given** a resource endpoint and deployment name, **When** a request is made, **Then** the URL includes the deployment name in the path.
+1. **Given** a base URL that encodes the resource endpoint and deployment name, **When** a request is made, **Then** the URL includes the deployment name in the path.
 2. **Given** Azure API key credentials, **When** a request is made, **Then** the `api-key` header is set.
 3. **Given** Azure AD credentials, **When** a request is made, **Then** a Bearer token is acquired and sent in the `Authorization` header.
 

@@ -64,7 +64,10 @@ tui/src/
 │   ├── event_loop.rs                # Key handling for plan approval + trust follow-up
 │   ├── agent_bridge.rs              # Plan approval flow, plan message concatenation
 │   ├── lifecycle.rs                 # Trust follow-up timeout, new field init
-│   └── tests.rs                     # New tests
+│   └── tests/                       # New tests [corrected: tests.rs split into a directory]
+│       ├── mod.rs, helpers.rs
+│       ├── approval.rs, plan_mode.rs
+│       └── input_ui.rs, persistence.rs, tool_blocks.rs, agent_bridge.rs
 ├── commands.rs                      # #approve untrust command
 └── ui/
     └── tool_panel.rs                # Render plan approval + trust follow-up prompts

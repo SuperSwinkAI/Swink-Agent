@@ -126,8 +126,8 @@ Shared utility functions providing convenience constructors.
 | AC 23 | Structured output with schema | `ac_structured.rs` | `structured_output_with_schema` |
 | AC 24 | Schema enforcement | `ac_structured.rs` | `schema_enforcement_rejects_invalid` |
 | AC 25 | Proxy stream reconstruction | `ac_structured.rs` | `proxy_stream_reconstruction` |
-| AC 26 | Role-based border colors | `ac_tui.rs` | `role_based_border_colors` |
-| AC 27 | Inline diff rendering | `ac_tui.rs` | `inline_diff_color_coding` |
-| AC 28 | Context gauge thresholds | `ac_tui.rs` | `context_gauge_color_thresholds` |
-| AC 29 | Plan mode restricts write tools | `ac_tui.rs` | `plan_mode_restricts_write_tools` |
-| AC 30 | Approval mode classification | `ac_tui.rs` | `approval_mode_classifies_tools` |
+| AC 26 | Role-based border colors | `tui/tests/ac_tui.rs` | **Corrected 2026-07-06**: no matching test found — `tui/tests/ac_tui.rs` has no role/border-color test under any name |
+| AC 27 | Inline diff rendering | `tui/tests/ac_tui.rs` | **Corrected 2026-07-06**: `display_message_diff_data_defaults_to_none` is the closest real test, but it only checks the default is `None` — it does not test diff color-coding |
+| AC 28 | Context gauge thresholds | `tui/tests/ac_tui.rs` | **Corrected 2026-07-06**: `context_gauge_threshold_math` |
+| AC 29 | Plan mode restricts write tools | `tui/tests/ac_tui.rs` | **Corrected 2026-07-06**: `plan_mode_message_flag` is the closest real test, but it only checks a message flag — it does not test tool-restriction enforcement |
+| AC 30 | Approval mode classification | `tui/tests/ac_tui.rs` | **Corrected 2026-07-06**: no exact match found — closest real tests are `approval_mode_variants_are_distinct`, `approval_mode_reflects_installed_agent`, and `smart_mode_trust_semantics` |

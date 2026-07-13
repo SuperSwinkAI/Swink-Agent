@@ -1,6 +1,6 @@
 > **Archived** — All phases complete as of 2026-03-14. Kept for historical reference.
 
-> **ARCHIVED (2026-03-14)** — This document describes the initial v0.1 vision. The project has expanded significantly to v0.4.1 with 8 workspace crates (including `swink-agent-policies`). See `SPECIFICATION_TRACKER.md` for current state.
+> **ARCHIVED (2026-03-14)** — This document describes the initial v0.1 vision. The project has expanded significantly to v0.4.1 with ~~8 workspace crates (including `swink-agent-policies`)~~ — crate count is stale here too; see `SPECIFICATION_TRACKER.md` / `HLD.md` for the current 17-crate workspace.
 
 ---
 
@@ -383,7 +383,7 @@ No `unsafe` code. No global mutable state.
 
 ## 15. Crate Structure
 
-The project is a 6-crate Cargo workspace:
+~~The project is a 6-crate Cargo workspace~~ — crate count is stale; see `SPECIFICATION_TRACKER.md` / `HLD.md` for the current 17-crate workspace:
 
 ```
 swink-agent/              Workspace root + core library
@@ -623,7 +623,7 @@ Extends the existing binary approval system (`#approve on` / `#approve off`) wit
 | 19 | Tool execution panel shows active tools and their results |
 | 20 | TUI adapts layout to terminal resize events |
 | 21 | Inline diff view renders file modifications as syntax-highlighted unified diffs |
-| ~~22~~ | ~~Inline diff view switches to side-by-side layout when terminal width exceeds the configured threshold~~ — planned, not yet implemented |
+| 22 | Inline diff view switches to side-by-side layout when terminal width exceeds the configured threshold — shipped (see `TUI_PHASES.md` T5.1) |
 | 23 | Context window progress bar displays estimated fill percentage with green/yellow/red color transitions |
 | 24 | External editor opens `$EDITOR`, suspends the TUI, and submits the file content on close |
 | 25 | External editor treats an empty file on close as cancellation — no message is sent |

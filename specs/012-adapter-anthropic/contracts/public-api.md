@@ -71,7 +71,7 @@ impl StreamFn for AnthropicStreamFn {
 | Event | When | Key Fields |
 |-------|------|------------|
 | `Done` | `message_stop` SSE event | `stop_reason`, `usage`, `cost` |
-| `Error` | HTTP error, SSE error event, or unexpected stream end | `stop_reason`, `error_message` |
+| `Error` | HTTP error, SSE error event, or unexpected stream end | `stop_reason`, `error_message`, `retry_after` (HTTP errors only; see below) |
 
 ---
 
@@ -86,6 +86,10 @@ impl StreamFn for AnthropicStreamFn {
 | 400-499 (other) | `error()` | No |
 | 500-599 (other) | `error_network()` | Yes |
 | Connection failure | `error_network()` | Yes |
+
+### Retry-After Propagation (FR-006)
+
+For any non-2xx HTTP response, the adapter reads the `Retry-After` header (before consuming the body) via `classify::parse_retry_after` and attaches the result to the classified event via `classify::with_retry_after`, populating `AssistantMessageEvent::Error.retry_after: Option<std::time::Duration>`. Both the delay-seconds form (`"30"`) and the HTTP-date form (`"Wed, 21 Oct 2026 07:28:00 GMT"`) are supported; `None` when the header is absent or unparseable. Mid-stream SSE `error` events (which arrive after the HTTP response already succeeded) always carry `retry_after: None` — there are no HTTP headers to read at that point.
 
 ---
 

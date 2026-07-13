@@ -60,6 +60,7 @@ fn overflow_error_events() -> Vec<AssistantMessageEvent> {
         stop_reason: StopReason::Error,
         error_message: "context_length_exceeded: too many tokens".to_string(),
         error_kind: None,
+        retry_after: None,
         usage: None,
     }]
 }

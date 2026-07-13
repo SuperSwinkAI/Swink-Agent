@@ -144,7 +144,11 @@ impl OllamaStreamFn {
     pub fn new(base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
-            client: crate::base::adapter_http_client(),
+            // Local inference: model cold-load into VRAM (or a huge-prompt
+            // prefill) can sit silent well past the default 120s idle read
+            // timeout before the first streamed byte — see the regression
+            // caveat on issue #920. Use the generous local client instead.
+            client: crate::base::local_adapter_http_client(),
         }
     }
 }
@@ -410,6 +414,7 @@ fn parse_ndjson_stream(
                         error_message: "operation cancelled".to_string(),
                         usage: None,
                         error_kind: None,
+                        retry_after: None,
                     });
                     done = true;
                     Some((events, (lines, token, state, done, false)))

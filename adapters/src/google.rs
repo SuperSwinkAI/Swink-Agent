@@ -676,6 +676,7 @@ fn parse_sse_stream(
                     error_message: "Google request cancelled".to_string(),
                     usage: None,
                     error_kind: None,
+                    retry_after: None,
                 },
                 true,
             )
@@ -851,6 +852,7 @@ fn terminal_error_for_finish_reason(finish_reason: &str) -> Option<AssistantMess
                 error_message: message,
                 usage: None,
                 error_kind: None,
+                retry_after: None,
             })
         }
         _ => None,

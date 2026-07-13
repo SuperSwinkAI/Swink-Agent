@@ -7,6 +7,8 @@
 
 **TDD Note**: Per constitution principle II (Test-Driven Development), test tasks within each phase MUST be executed before their corresponding implementation tasks, regardless of task ID ordering. Write tests first, verify they fail, then implement.
 
+**Stale-path note (2026-07-06)**: Phases 1-12 below reference `src/policies/*.rs` and `src/loop_/tool_dispatch.rs`, which were accurate at the time these tasks were written and executed. Commit `3a4d54d` (part of the 032-policy-recipes-crate consolidation) later relocated every built-in policy out of core into the `policies/` workspace crate (`policies/src/*.rs`, with a `lib.rs` re-export root rather than the `mod.rs` these tasks describe), and `src/loop_/tool_dispatch.rs` was subsequently split into the `src/loop_/tool_dispatch/` module directory (`mod.rs`, `collect.rs`, `execute.rs`, `preprocess.rs`, `shared.rs`). Neither path exists at the locations named below anymore; see the Phase 13/14 tasks (which correctly use `policies/src/*.rs`) and 032's spec.md/plan.md addenda for the current layout.
+
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: Can run in parallel (different files, no dependencies)
@@ -23,7 +25,7 @@
 - [x] T002 Create `src/policies/mod.rs` with module-level doc comment and `#[forbid(unsafe_code)]`; declare submodules: `budget`, `max_turns`, `sandbox`, `deny_list`, `checkpoint`, `loop_detection`
 - [x] T003 [P] Create empty stub files: `src/policies/budget.rs`, `src/policies/max_turns.rs`, `src/policies/sandbox.rs`, `src/policies/deny_list.rs`, `src/policies/checkpoint.rs`, `src/policies/loop_detection.rs`
 - [x] T004 Declare `mod policy;` and `mod policies;` in `src/lib.rs`; add placeholder re-exports
-- [x] T005 Create `tests/policy_slots.rs` integration test file with a `mod common;` import
+- [x] T005 Create `tests/policy_slots.rs` integration test file with a `mod common;` import — **[2026-07-06 audit: this file was never actually created during 031/032 implementation, despite T020/T024/T025/T033/T040/T045/T050/T051/T053-T056 below claiming named tests within it. A real `tests/policy_slots.rs` was finally created 2026-07-06, scoped to the gap that audit found — `PostTurnPolicy`/`PostLoopPolicy` exercised through the public `AgentOptions`/`Agent` builder API, which had zero coverage. It does not contain the built-in-policy scenarios described below; each task's note points to where equivalent coverage actually lives, if any.]**
 
 ---
 
@@ -65,7 +67,7 @@
 ### Tests
 
 - [x] T019 [P] [US1] Write unit tests in `src/policies/budget.rs` `#[cfg(test)]`: `name_returns_budget`, `no_limits_returns_continue`, `cost_exceeded_returns_stop`, `cost_not_exceeded_returns_continue`, `token_exceeded_returns_stop`, `boundary_value_at_limit`
-- [x] T020 [P] [US1] Write integration test in `tests/policy_slots.rs`: `budget_policy_stops_loop` — run a multi-turn agent with BudgetPolicy, verify loop stops and emits AgentEnd
+- [x] T020 [P] [US1] Write integration test in `tests/policy_slots.rs`: `budget_policy_stops_loop` — run a multi-turn agent with BudgetPolicy, verify loop stops and emits AgentEnd — **[never landed under this name; BudgetPolicy relocated to the `policies/` crate in the 032 consolidation — equivalent coverage: `policies/tests/policy_integration.rs::cost_cap_stops_agent`]**
 
 ### Implementation
 
@@ -85,8 +87,8 @@
 
 ### Tests
 
-- [x] T024 [P] [US3] Write integration test in `tests/policy_slots.rs`: `budget_stops_before_max_turns` — BudgetPolicy + MaxTurnsPolicy in pre_turn_policies, verify budget fires first
-- [x] T025 [P] [US3] Write integration test: `max_turns_stops_when_budget_ok` — same policies but budget not reached, verify max turns fires
+- [x] T024 [P] [US3] Write integration test in `tests/policy_slots.rs`: `budget_stops_before_max_turns` — BudgetPolicy + MaxTurnsPolicy in pre_turn_policies, verify budget fires first — **[never landed under this name; closest current equivalent is `policies/tests/policy_integration.rs::composed_policies_apply_all`, which composes BudgetPolicy + MaxTurnsPolicy but does not isolate a budget-fires-first assertion]**
+- [x] T025 [P] [US3] Write integration test: `max_turns_stops_when_budget_ok` — same policies but budget not reached, verify max turns fires — **[never landed under this name; see `policies/tests/policy_integration.rs::max_turns_limits_agent_loop` for standalone MaxTurnsPolicy coverage — no test isolates the "budget ok, max-turns fires" stacking scenario specifically]**
 - [x] T026 [P] [US3] Write unit test for MaxTurnsPolicy in `src/policies/max_turns.rs` `#[cfg(test)]`: `stops_at_max`, `continues_below_max`, `boundary_at_max`
 
 ### Implementation
@@ -110,7 +112,7 @@
 
 - [x] T031 [P] [US2] Write unit tests in `src/policies/deny_list.rs` `#[cfg(test)]`: `denies_listed_tool`, `allows_unlisted_tool`, `empty_deny_list_allows_all`
 - [x] T032 [P] [US2] Write unit tests in `src/policies/sandbox.rs` `#[cfg(test)]`: `rejects_path_outside_root`, `allows_path_inside_root`, `handles_path_traversal_attack`, `only_checks_configured_fields`, `custom_path_fields`
-- [x] T033 [P] [US2] Write integration test in `tests/policy_slots.rs`: `deny_list_skips_tool_call` — agent with ToolDenyListPolicy, verify denied tool gets Skip error result, other tools execute
+- [x] T033 [P] [US2] Write integration test in `tests/policy_slots.rs`: `deny_list_skips_tool_call` — agent with ToolDenyListPolicy, verify denied tool gets Skip error result, other tools execute — **[never landed; ToolDenyListPolicy has unit-level coverage only — `policies/src/deny_list.rs` `#[cfg(test)]` (`denies_listed_tool`, `allows_unlisted_tool`, `empty_deny_list_allows_all`) — no full-agent-loop integration test exists]**
 
 ### Implementation
 
@@ -133,7 +135,7 @@
 ### Tests
 
 - [x] T039 [P] [US4] Write unit tests in `src/policies/checkpoint.rs` `#[cfg(test)]`: `name_returns_checkpoint`, `evaluate_returns_continue` (CheckpointPolicy always continues — persistence is a side effect)
-- [x] T040 [P] [US4] Write integration test in `tests/policy_slots.rs`: `checkpoint_policy_saves_after_each_turn` — mock CheckpointStore, verify save called N times for N turns
+- [x] T040 [P] [US4] Write integration test in `tests/policy_slots.rs`: `checkpoint_policy_saves_after_each_turn` — mock CheckpointStore, verify save called N times for N turns — **[never landed; CheckpointPolicy has unit-level coverage only — `policies/src/checkpoint.rs` `#[cfg(test)]` (`checkpoint_roundtrip_save_load`, `checkpoint_contains_message_history`, etc.) — no full-agent-loop integration test counting saves-per-turn exists]**
 
 ### Implementation
 
@@ -154,7 +156,7 @@
 ### Tests
 
 - [x] T044 [P] [US5] Write unit tests in `src/policies/loop_detection.rs` `#[cfg(test)]`: `no_repeat_returns_continue`, `repeat_within_lookback_returns_stop`, `repeat_with_steering_returns_inject`, `different_args_not_detected`, `lookback_window_respected`
-- [x] T045 [P] [US5] Write integration test in `tests/policy_slots.rs`: `loop_detection_stops_on_repeat` — agent that repeats same tool call, verify loop stops
+- [x] T045 [P] [US5] Write integration test in `tests/policy_slots.rs`: `loop_detection_stops_on_repeat` — agent that repeats same tool call, verify loop stops — **[never landed; LoopDetectionPolicy has unit-level coverage only — `policies/src/loop_detection.rs` `#[cfg(test)]` (`repeat_within_lookback_returns_stop`, `repeat_with_steering_returns_inject`, etc.) — no full-agent-loop integration test exists]**
 
 ### Implementation
 
@@ -175,8 +177,8 @@
 
 ### Tests
 
-- [x] T050 [P] [US6] Write integration test in `tests/policy_slots.rs`: `custom_policy_receives_correct_context` — custom policy records PolicyContext fields, verify turn_index, usage, cost are accurate
-- [x] T051 [P] [US6] Write integration test: `custom_pre_dispatch_policy_mutates_arguments` — custom policy modifies arguments, verify tool receives modified args
+- [x] T050 [P] [US6] Write integration test in `tests/policy_slots.rs`: `custom_policy_receives_correct_context` — custom policy records PolicyContext fields, verify turn_index, usage, cost are accurate — **[never landed under this name; equivalent coverage added 2026-07-06 in `tests/policy_slots.rs::post_turn_policy_fires_via_public_builder_and_observes_turn_context` and `::post_loop_policy_observes_final_accumulated_state`]**
+- [x] T051 [P] [US6] Write integration test: `custom_pre_dispatch_policy_mutates_arguments` — custom policy modifies arguments, verify tool receives modified args — **[never landed; equivalent argument-mutation coverage exists only at the `src/policy.rs` unit level (`argument_mutation_visible_to_next_policy`) — no integration test through the public builder/full tool-dispatch pipeline exists]**
 
 ### Implementation
 
@@ -192,10 +194,10 @@
 
 ### Tests
 
-- [x] T053 Write integration test in `tests/policy_slots.rs`: `empty_policies_no_restrictions` — agent with empty vecs behaves identically to old agent with no hooks (SC-002)
-- [x] T054 [P] Write integration test: `pre_dispatch_stop_aborts_batch` — PreDispatch returns Stop on tool 2 of 3, verify no tools execute
-- [x] T055 [P] Write integration test: `post_turn_inject_continues_inner_loop` — PostTurn returns Inject, verify inner loop continues with injected messages
-- [x] T056 [P] Write integration test: `post_loop_policy_can_stop_outer_loop` — PostLoop returns Stop, verify loop exits before follow-up poll
+- [x] T053 Write integration test in `tests/policy_slots.rs`: `empty_policies_no_restrictions` — agent with empty vecs behaves identically to old agent with no hooks (SC-002) — **[never landed under this name; implicitly covered by every existing integration test that constructs `AgentOptions` without policies — no dedicated SC-002 regression test exists]**
+- [x] T054 [P] Write integration test: `pre_dispatch_stop_aborts_batch` — PreDispatch returns Stop on tool 2 of 3, verify no tools execute — **[never landed under this name; equivalent core-level coverage is unit-only — `src/policy.rs::pre_dispatch_stop_short_circuits` — not a full-batch, multi-tool-call integration test]**
+- [x] T055 [P] Write integration test: `post_turn_inject_continues_inner_loop` — PostTurn returns Inject, verify inner loop continues with injected messages — **[never landed under this name; equivalent added 2026-07-06 in `tests/policy_slots.rs::post_turn_policy_inject_replaces_committed_assistant_message`, which verifies Inject's message-replacement effect — the distinct "continues inner loop with injected messages" claim in this task's description remains uncovered]**
+- [x] T056 [P] Write integration test: `post_loop_policy_can_stop_outer_loop` — PostLoop returns Stop, verify loop exits before follow-up poll — **[never landed under this name; equivalent added 2026-07-06 in `tests/policy_slots.rs::post_turn_stop_short_circuits_before_post_loop_runs`, which demonstrates PostTurn::Stop pre-empting PostLoop entirely — a PostLoop-itself-returns-Stop scenario remains uncovered]**
 
 ### Implementation
 

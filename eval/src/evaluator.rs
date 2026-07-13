@@ -2,12 +2,14 @@
 
 use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::pin::Pin;
 use std::sync::Arc;
 
 use tokio::runtime::{Handle, RuntimeFlavor};
 #[cfg(feature = "judge-core")]
 use tokio_util::sync::CancellationToken;
 
+use crate::aggregator::{Aggregator, Average};
 use crate::error::EvalError;
 use crate::judge::JudgeClient;
 use crate::score::Score;
@@ -26,6 +28,40 @@ pub trait Evaluator: Send + Sync {
     ///
     /// Returns `None` if this evaluator is not applicable to the given case.
     fn evaluate(&self, case: &EvalCase, invocation: &Invocation) -> Option<EvalMetricResult>;
+
+    /// Async counterpart to [`Self::evaluate`] (spec 043 FR-048).
+    ///
+    /// Returns a boxed future rather than being declared `async fn` so the
+    /// trait stays dyn-compatible — [`EvaluatorRegistry`] stores evaluators as
+    /// `Arc<dyn Evaluator>`, and native `async fn`s in traits cannot be called
+    /// through a trait object. The default implementation wraps the blocking
+    /// [`Self::evaluate`] in an already-ready future: every built-in evaluator
+    /// is either pure CPU work or a judge-backed evaluator that already drives
+    /// its own async dispatch synchronously via `crate::evaluators::block_on`,
+    /// so there is no blocking work left to offload with
+    /// `tokio::task::spawn_blocking` here. Evaluators with genuinely
+    /// long-running non-blocking async work should override this method
+    /// directly instead of routing through `evaluate`.
+    fn evaluate_async<'a>(
+        &'a self,
+        case: &'a EvalCase,
+        invocation: &'a Invocation,
+    ) -> Pin<Box<dyn Future<Output = Option<EvalMetricResult>> + Send + 'a>> {
+        Box::pin(async move { self.evaluate(case, invocation) })
+    }
+
+    /// [`Aggregator`] used to reduce multiple same-evaluator samples (e.g.
+    /// repeated [`EvalRunner::with_num_runs`](crate::EvalRunner::with_num_runs)
+    /// iterations) into one composite score (FR-022/FR-023).
+    ///
+    /// Defaults to the arithmetic-mean [`Average`] aggregator. Judge-backed
+    /// evaluators that carry a `JudgeEvaluatorConfig` override this to return
+    /// `config.effective_aggregator()`, so a caller-supplied
+    /// `with_aggregator(...)` override (or a family default such as the
+    /// safety family's `AllPass`) is honored here too.
+    fn aggregator(&self) -> Arc<dyn Aggregator> {
+        Arc::new(Average)
+    }
 }
 
 /// Blanket implementation for named closure pairs.
@@ -130,6 +166,27 @@ impl EvaluatorRegistry {
         registry
             .register(crate::semantic_tool_parameter::SemanticToolParameterEvaluator::new(client));
         registry
+    }
+
+    /// Look up the [`Aggregator`] configured for a registered evaluator by
+    /// name (FR-022/FR-023).
+    ///
+    /// Used by the runner to combine `num_runs` samples of the same
+    /// evaluator into one composite score, honoring each evaluator's own
+    /// [`Evaluator::aggregator`] (family default or caller override) instead
+    /// of a single hard-coded reduction for every evaluator. Falls back to
+    /// [`Average`] when `name` isn't registered — this should not happen in
+    /// practice since callers only look up names already present in a prior
+    /// [`Self::evaluate`] result.
+    #[must_use]
+    pub(crate) fn aggregator_for(&self, name: &str) -> Arc<dyn Aggregator> {
+        self.evaluators
+            .iter()
+            .find(|evaluator| evaluator.name() == name)
+            .map_or_else(
+                || Arc::new(Average) as Arc<dyn Aggregator>,
+                |evaluator| evaluator.aggregator(),
+            )
     }
 
     /// Borrow the registered [`JudgeClient`], if any.
@@ -362,6 +419,66 @@ mod tests {
     use super::*;
 
     use crate::testing::MockJudge;
+    use crate::types::BudgetConstraints;
+    use swink_agent::{Cost, ModelSpec, StopReason, Usage};
+
+    fn case_with_budget(budget: BudgetConstraints) -> EvalCase {
+        EvalCase {
+            id: "c1".into(),
+            name: "C1".into(),
+            description: None,
+            system_prompt: "sp".into(),
+            user_messages: vec!["hi".into()],
+            expected_trajectory: None,
+            expected_response: None,
+            expected_assertion: None,
+            expected_interactions: None,
+            few_shot_examples: vec![],
+            budget: Some(budget),
+            evaluators: vec![],
+            metadata: serde_json::Value::Null,
+            attachments: vec![],
+            session_id: None,
+            expected_environment_state: None,
+            expected_tool_intent: None,
+            semantic_tool_selection: false,
+            state_capture: None,
+        }
+    }
+
+    fn empty_invocation() -> Invocation {
+        Invocation {
+            turns: vec![],
+            total_usage: Usage::default(),
+            total_cost: Cost::default(),
+            total_duration: std::time::Duration::from_secs(0),
+            final_response: None,
+            stop_reason: StopReason::Stop,
+            model: ModelSpec::new("test", "test-model"),
+        }
+    }
+
+    /// FR-048: the default `evaluate_async` must reproduce whatever the
+    /// blocking `evaluate` returns, for an evaluator that doesn't override it.
+    #[tokio::test]
+    async fn evaluate_async_default_matches_blocking_evaluate() {
+        let evaluator = crate::budget::BudgetEvaluator;
+        let case = case_with_budget(BudgetConstraints {
+            max_cost: Some(1.0),
+            max_input: None,
+            max_output: None,
+            max_turns: None,
+        });
+        let invocation = empty_invocation();
+
+        let sync_result = evaluator.evaluate(&case, &invocation);
+        let async_result = evaluator.evaluate_async(&case, &invocation).await;
+
+        assert_eq!(
+            sync_result.map(|r| r.score.value),
+            async_result.map(|r| r.score.value)
+        );
+    }
 
     #[test]
     fn with_defaults_has_no_judge() {

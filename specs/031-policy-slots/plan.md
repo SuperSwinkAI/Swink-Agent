@@ -56,8 +56,9 @@ specs/031-policy-slots/
 ```text
 src/
 ├── policy.rs                    # NEW: PolicyVerdict, PreDispatchVerdict, PolicyContext,
-│                                #      ToolPolicyContext, TurnPolicyContext, slot traits,
-│                                #      slot runner (run_policies / run_pre_dispatch_policies)
+│                                #      ToolDispatchContext (named ToolPolicyContext in
+│                                #      earlier drafts — corrected 2026-07-06), TurnPolicyContext,
+│                                #      slot traits, slot runner (run_policies / run_pre_dispatch_policies)
 ├── policies/
 │   ├── mod.rs                   # NEW: re-exports all built-in policies
 │   ├── budget.rs                # NEW: BudgetPolicy (PreTurnPolicy)
@@ -90,6 +91,8 @@ tests/
 ```
 
 **Structure Decision**: All policy infrastructure lives in the core `swink-agent` crate. Traits and runner in `src/policy.rs` (single file — estimated ~200 lines). Built-in implementations in `src/policies/` directory (one file per policy). No new crates needed.
+
+**Addendum (2026-07-06)**: The "no new crates needed" decision above was later superseded. Commit `3a4d54d` moved all six built-in policies (`BudgetPolicy`, `MaxTurnsPolicy`, `ToolDenyListPolicy`, `SandboxPolicy`, `LoopDetectionPolicy`, `CheckpointPolicy`) out of core's `src/policies/` and into the `swink-agent-policies` workspace crate introduced by 032-policy-recipes-crate, alongside that spec's own four application-level policies. Only the trait definitions and slot runner (`src/policy.rs`) remain in core; `src/policies/` no longer exists. See 032's spec.md/plan.md addenda for the current 11-feature layout.
 
 ## Phase 13: PolicyContext Messages Extension (032 Prerequisite)
 

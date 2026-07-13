@@ -263,6 +263,7 @@ fn cancelled_event(message: &'static str) -> AssistantMessageEvent {
         error_message: message.to_string(),
         usage: None,
         error_kind: None,
+        retry_after: None,
     }
 }
 
@@ -886,6 +887,15 @@ fn build_request(context: &AgentContext, options: &StreamOptions) -> BedrockRequ
     }
 }
 
+/// Convert harness messages to Bedrock message format.
+///
+/// This function uses a bespoke conversion instead of the shared
+/// [`MessageConverter`](super::convert::MessageConverter) trait because
+/// the Bedrock Converse API requires the system prompt as a separate
+/// top-level field rather than as a message (handled by the caller in
+/// [`build_request`]) and represents tool use/results as typed content
+/// blocks (`toolUse`/`toolResult`) distinct from Anthropic's or OpenAI's
+/// wire formats.
 fn convert_messages(messages: &[AgentMessage]) -> Vec<BedrockMessage> {
     let mut result = Vec::new();
     for message in messages {

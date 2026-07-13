@@ -5,11 +5,11 @@
 - Architecture: [../architecture/HLD.md](../architecture/HLD.md) — Component diagram, data flow, dependency graph
 - Constitution: [../../.specify/memory/constitution.md](../../.specify/memory/constitution.md)
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
-- Eval Roadmap: [EVAL.md](EVAL.md)
+- Eval Roadmap: [../architecture/eval/README.md](../architecture/eval/README.md) — see the "Not yet implemented" section
 
-**Current Focus:** 42 specs total — 42/42 have plans, 42/42 have tasks, 39/42 complete. Phase 0–8 done (including memory crate 021, Azure/xAI adapters). Phase 3: 9/10 complete (019-bedrock at 56%). Phase 9: 3/5 complete (038-mcp, 039-patterns, and 040-transfer/handoff done), 036 at 18%, 037 at 44%. Phase 10: 041 folded into spec 022, 042 (web browse plugin) complete. Next: finish bedrock adapter (019), continue artifact service (036) and plugin system (037).
+**Current Focus:** 44 specs total (001–040, 042–045; 041 folded into 022) — 44/44 have plans and tasks, 44/44 complete. Phases 0–11 done, including all provider adapters (Phase 3: 10/10 — Bedrock 019 is complete). **023 eval-trajectory-matching** closed 2026-07-06 at 108/108: the Phase 13 BudgetGuard→BudgetPolicy migration was verified implemented and its remaining checkboxes (T080–T091, T093, T094) confirmed against the workspace-wide clippy/test battery. **045 agent RPC service** closed 2026-07-06 at 35/35 after T035's manual quickstart validation (socket 0600, initialize handshake, streamed prompt events against a live provider, SIGTERM cleanup).
 
-> **Numbering System:** Spec numbers (001–040) are sequential identifiers that
+> **Numbering System:** Spec numbers (001–045) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
 > as priorities shift.
 
@@ -107,7 +107,7 @@ primitives, and loop governance — capabilities that enhance the core engine.
 **Goal:** LLM provider adapters — shared infrastructure and one adapter per
 provider. Each adapter implements StreamFn for its provider's streaming protocol.
 
-**Status:** 10/10 specs planned, 10/10 have tasks, 9/10 complete, 10/10 specs defined
+**Status:** 10/10 specs planned, 10/10 have tasks, 10/10 complete, 10/10 specs defined
 
 ### Implementation Checklist
 
@@ -151,10 +151,10 @@ provider. Each adapter implements StreamFn for its provider's streaming protocol
   - Branch: `018-adapter-mistral`
   - Status: Complete (42/42 tasks, merged to main)
   - Depends on: 3.1
-- [ ] **3.9** Adapter: AWS Bedrock — BedrockStreamFn, SSE, AWS SigV4 signing (§15.1)
+- [x] **3.9** Adapter: AWS Bedrock — BedrockStreamFn, SSE, AWS SigV4 signing (§15.1)
   - Spec: `specs/019-adapter-bedrock/spec.md`
   - Branch: `019-adapter-bedrock`
-  - Status: In Progress (23/41 tasks, 56%)
+  - Status: Complete (41/41 tasks)
   - Depends on: 3.1
 - [x] **3.10** Adapter: Proxy — ProxyStreamFn, SSE, bearer auth, typed delta events (§7.4, §15.1)
   - Spec: `specs/020-adapter-proxy/spec.md`
@@ -187,10 +187,10 @@ evaluation — each depends only on the core library.
   - Branch: `022-local-llm-crate`
   - Status: Complete (58/58 tasks, merged to main)
   - Depends on: 0.3
-- [x] **4.3** Eval: Trajectory & Matching — TrajectoryCollector, TrajectoryMatcher, EfficiencyEvaluator, ResponseCriteria
+- [ ] **4.3** Eval: Trajectory & Matching — TrajectoryCollector, TrajectoryMatcher, EfficiencyEvaluator, ResponseCriteria
   - Spec: `specs/023-eval-trajectory-matching/spec.md`
   - Branch: `023-eval-trajectory-matching`
-  - Status: Complete (40/40 tasks, merged to main)
+  - Status: Complete (108/108 tasks) — original 40-task scope shipped and merged; the 2026-04-21 scope expansion (Phase 13 BudgetGuard→BudgetPolicy migration) was verified implemented and closed 2026-07-06
   - Depends on: 1.1
 - [x] **4.4** Eval: Runner, Scoring & Governance — EvalRunner, EvaluatorRegistry, FsEvalStore, CI/CD gating, audit trails
   - Spec: `specs/024-eval-runner-governance/spec.md`
@@ -313,19 +313,19 @@ credential management — cross-cutting infrastructure for production readiness.
 orchestration patterns, and agent-to-agent handoff — capabilities that make the
 agent framework composable and extensible for production use cases.
 
-**Status:** 5/5 specs planned, 5/5 have tasks, 3/5 complete, 5/5 specs defined
+**Status:** 5/5 specs planned, 5/5 have tasks, 5/5 complete, 5/5 specs defined
 
-### Implementation Checklist
+<!-- 036 and 037 were previously listed as "In Progress" (18%/44%); reconciled 2026-07-06 against specs/spec-status.md and both features' tasks.md (81/81 and 47/47 tasks checked off respectively) — both are complete. -->
 
-- [ ] **9.1** Artifact Service — Versioned artifact storage, filesystem + in-memory backends, session-independent persistence
+- [x] **9.1** Artifact Service — Versioned artifact storage, filesystem + in-memory backends, session-independent persistence
   - Spec: `specs/036-artifact-service/spec.md`
   - Branch: `036-artifact-service`
-  - Status: In Progress (15/81 tasks, 18%)
+  - Status: Complete (81/81 tasks, merged to main)
   - Depends on: 0.2, 2.2
-- [ ] **9.2** Plugin System — Plugin trait, bundled policy/tool/event registration, priority-ordered composition
+- [x] **9.2** Plugin System — Plugin trait, bundled policy/tool/event registration, priority-ordered composition
   - Spec: `specs/037-plugin-system/spec.md`
   - Branch: `037-plugin-system`
-  - Status: In Progress (21/47 tasks, 44%)
+  - Status: Complete (47/47 tasks, merged to main)
   - Depends on: 7.1, 2.2
 - [x] **9.3** MCP Integration — MCP server connections (stdio/SSE), tool discovery, namespaced registration, policy integration
   - Spec: `specs/038-mcp-integration/spec.md`
@@ -364,6 +364,48 @@ After their respective dependencies are met, 9.1 (Artifact Service), 9.2 (Plugin
   - Branch: `042-web-browse-plugin`
   - Status: Complete (merged to main)
   - Depends on: 9.2
+
+---
+
+## Phase 11: Evals Advanced & Agent Services (Draft)
+
+**Goal:** Advanced evaluation features, an eval-driven self-improvement loop,
+and a headless JSON-RPC agent service — the next wave of work after the core
+library, adapters, and TUI.
+
+**Status:** 3/3 specs planned, 3/3 have tasks, 3/3 complete (043, 044, 045)
+
+### Implementation Checklist
+
+- [x] **11.1** Evals: Advanced Features — extends the eval framework beyond spec 023/024
+  - Spec: `specs/043-evals-adv-features/spec.md`
+  - Branch: `043-evals-adv-features`
+  - Status: Complete (181/181 tasks, merged to integration)
+  - Depends on: 4.3, 4.4
+- [x] **11.2** Eval-Driven Self-Improvement Loop — new `evolve/` crate
+  - Spec: `specs/044-self-improvement-loop/spec.md`
+  - Branch: `044-self-improvement-loop`
+  - Status: Complete (77/77 tasks, merged to integration)
+  - Depends on: 11.1
+- [x] **11.3** JSON-RPC Agent Service — new `rpc/` crate + `swink-agentd` daemon
+  - Spec: `specs/045-agent-rpc-service/spec.md`
+  - Branch: `045-agent-rpc-service`
+  - Status: Complete (35/35 tasks; T035 manual quickstart validation performed 2026-07-06)
+  - Depends on: 1.2
+
+---
+
+## Known Backlog / Not Yet Implemented
+
+Live items that are not covered by an open spec above:
+
+- **TUI per-hunk approve/reject (was TUI_PHASES.md T5.2)** — each changed hunk
+  in the inline diff view becomes an independent y/n/a decision point; approved
+  hunks are applied, rejected hunks are reverted and reported back to the agent
+  as a tool result. (PRD §16; side-by-side diff layout T5.1 already shipped.)
+- **TUI provider selection priority** — Proxy > OpenAI > Anthropic > Local >
+  Ollama; the authoritative priority table lives in
+  [getting_started.md](../getting_started.md) (pointer only, not backlog).
 
 ---
 
@@ -482,10 +524,10 @@ graph TD
     style I fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style J fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style K fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
-    style L fill:#eab308,color:#000,stroke:#ca8a04,stroke-width:2px
+    style L fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style M fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style N fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
-    style O fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
+    style O fill:#eab308,color:#000,stroke:#ca8a04,stroke-width:2px
     style P fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style Q fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style R fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
@@ -498,8 +540,8 @@ graph TD
     style Y fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style Z fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style AA fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
-    style AB fill:#eab308,color:#000,stroke:#ca8a04,stroke-width:2px
-    style AC fill:#eab308,color:#000,stroke:#ca8a04,stroke-width:2px
+    style AB fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
+    style AC fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style AD fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style AE fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style AF fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px

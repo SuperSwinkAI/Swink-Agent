@@ -52,6 +52,41 @@ impl Evaluator for SequenceEvaluator {
     }
 }
 
+/// Same shape as [`SequenceEvaluator`] but overrides [`Evaluator::aggregator`]
+/// to `AllPass`, mirroring the safety family (FR-022/FR-023).
+struct AllPassSequenceEvaluator {
+    name: &'static str,
+    seq: Mutex<VecDeque<f64>>,
+}
+
+impl AllPassSequenceEvaluator {
+    fn new(name: &'static str, sequence: Vec<f64>) -> Self {
+        Self {
+            name,
+            seq: Mutex::new(sequence.into_iter().collect()),
+        }
+    }
+}
+
+impl Evaluator for AllPassSequenceEvaluator {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn evaluate(&self, _c: &EvalCase, _i: &Invocation) -> Option<EvalMetricResult> {
+        let v = self.seq.lock().unwrap().pop_front().unwrap_or(0.0);
+        Some(EvalMetricResult {
+            evaluator_name: self.name.to_string(),
+            score: Score::new(v, 0.5),
+            details: None,
+        })
+    }
+
+    fn aggregator(&self) -> Arc<dyn swink_agent_eval::Aggregator> {
+        Arc::new(swink_agent_eval::AllPass)
+    }
+}
+
 struct CallCountingEvaluator {
     calls: Arc<AtomicUsize>,
 }
@@ -146,6 +181,7 @@ impl JudgeClient for RunnerCancellingJudge {
                 pass: true,
                 reason: Some("would pass without runner cancellation".to_string()),
                 label: None,
+                cost: None,
             })
         })
     }
@@ -198,6 +234,27 @@ async fn num_runs_three_yields_samples_with_variance() {
     assert!(details.contains("mean=0.5"), "{details}");
     assert!(details.contains("std_dev=0.4"), "{details}");
     assert!((metric.score.value - 0.5).abs() < 1e-6);
+}
+
+/// FR-022/FR-023: `num_runs` aggregation must consult the evaluator's own
+/// aggregator instead of always averaging. The mean of `[1.0, 1.0, 0.0]` is
+/// `0.667`, which would pass a `0.5` threshold — but `AllPass` must fail
+/// because one of the three runs failed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn num_runs_honors_evaluator_aggregator_override() {
+    let mut registry = EvaluatorRegistry::new();
+    registry.register(AllPassSequenceEvaluator::new(
+        "allpass_seq",
+        vec![1.0, 1.0, 0.0],
+    ));
+    let result = EvalRunner::new(registry)
+        .with_num_runs(3)
+        .run_set(&single_case_set(), &CountingFactory::new())
+        .await
+        .unwrap();
+
+    let metric = &result.case_results[0].metric_results[0];
+    assert_eq!(metric.score.verdict(), swink_agent_eval::Verdict::Fail);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

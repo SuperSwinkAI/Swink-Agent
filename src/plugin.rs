@@ -89,6 +89,32 @@ pub trait Plugin: Send + Sync {
     }
 }
 
+// ─── Shared plugin-collection invariants ───────────────────────────────────
+//
+// [`PluginRegistry`] and [`AgentOptions`](crate::agent_options::AgentOptions)
+// both maintain a `Vec<Arc<dyn Plugin>>` with the same two invariants:
+// dedup-by-name (last registration wins) and priority-descending ordering
+// (stable, so insertion order breaks ties). These two functions are the
+// single source of truth for both call sites so the invariants can't drift.
+
+/// Insert `plugin` into `plugins`, replacing any existing entry with the same
+/// name (last-registration-wins) and logging a warning when that happens.
+pub(crate) fn dedup_insert_plugin(plugins: &mut Vec<Arc<dyn Plugin>>, plugin: Arc<dyn Plugin>) {
+    let name = plugin.name().to_owned();
+    if let Some(pos) = plugins.iter().position(|p| p.name() == name) {
+        warn!(plugin = %name, "replacing duplicate plugin");
+        plugins[pos] = plugin;
+    } else {
+        plugins.push(plugin);
+    }
+}
+
+/// Sort key for priority-descending, stable ordering (highest priority first,
+/// insertion order preserved for ties).
+pub(crate) fn priority_desc(plugin: &Arc<dyn Plugin>) -> std::cmp::Reverse<i32> {
+    std::cmp::Reverse(plugin.priority())
+}
+
 // ─── PluginRegistry ────────────────────────────────────────────────────────
 
 /// A collection of plugins with deduplication and priority-based ordering.
@@ -110,13 +136,7 @@ impl PluginRegistry {
     /// Register a plugin. If a plugin with the same name already exists,
     /// it is replaced and a warning is logged.
     pub fn register(&mut self, plugin: Arc<dyn Plugin>) {
-        let name = plugin.name().to_owned();
-        if let Some(pos) = self.plugins.iter().position(|p| p.name() == name) {
-            warn!(plugin = %name, "replacing duplicate plugin");
-            self.plugins[pos] = plugin;
-        } else {
-            self.plugins.push(plugin);
-        }
+        dedup_insert_plugin(&mut self.plugins, plugin);
     }
 
     /// Remove a plugin by name. No-op if not found (idempotent).
@@ -132,7 +152,7 @@ impl PluginRegistry {
     /// All plugins sorted by priority (highest first, stable sort).
     pub fn list(&self) -> Vec<&Arc<dyn Plugin>> {
         let mut sorted: Vec<_> = self.plugins.iter().collect();
-        sorted.sort_by_key(|p| std::cmp::Reverse(p.priority()));
+        sorted.sort_by_key(|p| priority_desc(p));
         sorted
     }
 

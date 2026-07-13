@@ -32,7 +32,8 @@ Pure-Rust library for LLM-powered agentic loops. Provider-agnostic core with plu
 | tokio | 1 | Async runtime |
 | serde / serde_json | 1 | Serialization |
 | reqwest | 0.13 | HTTP |
-| schemars / jsonschema | 1 | JSON schema |
+| schemars | 1 | JSON schema derivation |
+| jsonschema | 0.46 | JSON schema validation |
 | ratatui / crossterm | 0.30 / 0.29 | TUI |
 | llama-cpp-2 | latest | Local LLM (llama.cpp) |
 | rmcp | latest | MCP SDK |
@@ -113,7 +114,7 @@ See crate-specific `AGENTS.md` files for per-module details. Cross-cutting invar
 
 ## Feature Gates
 
-- `builtin-tools` (default) — `BashTool`, `ReadFileTool`, `WriteFileTool`.
+- `builtin-tools` (default) — `BashTool`, `EditFileTool`, `ReadFileTool`, `WriteFileTool`.
 - `testkit` — `testing` module. Not default; add as dev-dep feature.
 - `plugins` — `plugin` module. Not default.
 - Root crate cannot re-export adapters/local-llm/TUI (cyclic dep). Consumers depend on sub-crates directly.

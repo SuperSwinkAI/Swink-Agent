@@ -29,6 +29,19 @@ pub enum TurnEndReason {
     Transfer,
 }
 
+// ─── TransferRejectionReason ─────────────────────────────────────────────────
+
+/// Why a transfer signal was rejected by the transfer-chain safety check.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransferRejectionReason {
+    /// The target agent already appears in the transfer chain.
+    Circular,
+    /// The transfer chain has reached its configured maximum depth.
+    MaxDepthExceeded,
+}
+
 // ─── AgentEvent ──────────────────────────────────────────────────────────────
 
 /// Fine-grained lifecycle event emitted by the agent loop.
@@ -192,6 +205,20 @@ pub enum AgentEvent {
     /// with `TurnEndReason::Transfer`.
     TransferInitiated {
         signal: crate::transfer::TransferSignal,
+    },
+
+    /// Emitted when a tool signals a transfer that the transfer-chain safety
+    /// check rejects (circular reference or max-depth exceeded).
+    ///
+    /// The rejected tool result is rewritten to an error in place so the LLM
+    /// sees the rejection; the turn continues rather than terminating.
+    TransferRejected {
+        /// The agent that attempted the transfer.
+        source_agent: String,
+        /// The agent that was the intended transfer target.
+        target_agent: String,
+        /// Why the transfer was rejected.
+        reason: TransferRejectionReason,
     },
 
     /// A custom event emitted via [`Agent::emit`](crate::Agent::emit).

@@ -210,6 +210,9 @@ fn anthropic_stream<'a>(
         let status = response.status();
         if !status.is_success() {
             let code = status.as_u16();
+            // Read before the body is consumed below — Retry-After (FR-006)
+            // is only present on the response headers, not the SSE/JSON body.
+            let retry_after = crate::classify::parse_retry_after(response.headers());
             let body = match crate::base::read_error_body_or_cancelled(
                 response,
                 &cancellation_token,
@@ -223,7 +226,7 @@ fn anthropic_stream<'a>(
                         .left_stream();
                 }
             };
-            warn!(status = code, "Anthropic HTTP error");
+            warn!(status = code, ?retry_after, "Anthropic HTTP error");
             // Anthropic-specific: 529 (overloaded) and 504 (gateway timeout)
             // are retryable network errors.
             let event = crate::classify::error_event_from_status_with_overrides(
@@ -235,6 +238,7 @@ fn anthropic_stream<'a>(
                     (504, crate::classify::HttpErrorKind::Network),
                 ],
             );
+            let event = crate::classify::with_retry_after(event, retry_after);
             return stream::iter(Vec::from(crate::base::pre_stream_error(event))).left_stream();
         }
 

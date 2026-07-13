@@ -69,6 +69,7 @@ fn verdict(score: f64) -> JudgeVerdict {
         pass: true,
         reason: Some("ok".into()),
         label: None,
+        cost: None,
     }
 }
 

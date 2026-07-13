@@ -9,7 +9,10 @@
 //! * [`retry_with_cancel`] runs an async factory under that builder while
 //!   racing each attempt against a [`CancellationToken`], so cancellation
 //!   surfaces as [`JudgeError::Other`] rather than waiting out the backoff
-//!   schedule.
+//!   schedule. Every dispatch attempt and retry decision is logged via
+//!   `tracing` (`debug!`/`warn!`) — attempt number and the classified
+//!   [`JudgeError`], never the prompt or response body — so this single
+//!   choke point instruments every provider client in this crate.
 //! * [`BatchedJudgeClient`] wraps a [`JudgeClient`] and exposes a
 //!   [`BatchedJudgeClient::judge_batch`] convenience that dispatches up to
 //!   `batch_size` prompts. Providers that do not support native batching fall
@@ -19,11 +22,13 @@
 
 use std::future::Future;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use backon::{ExponentialBuilder, Retryable};
 use tokio::runtime::{Builder, Handle, RuntimeFlavor};
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, warn};
 
 use swink_agent_eval::judge::{JudgeClient, JudgeError, JudgeVerdict, MAX_BATCH_SIZE, RetryPolicy};
 
@@ -66,25 +71,45 @@ pub async fn retry_with_cancel<Fut, Factory, Retry>(
     policy: &RetryPolicy,
     cancel: &CancellationToken,
     should_retry: Retry,
-    factory: Factory,
+    mut factory: Factory,
 ) -> Result<JudgeVerdict, JudgeError>
 where
-    Factory: FnMut() -> Fut,
-    Fut: Future<Output = Result<JudgeVerdict, JudgeError>>,
-    Retry: Fn(&JudgeError) -> bool,
+    Factory: FnMut() -> Fut + Send,
+    Fut: Future<Output = Result<JudgeVerdict, JudgeError>> + Send,
+    Retry: Fn(&JudgeError) -> bool + Send + Sync,
 {
     if cancel.is_cancelled() {
+        debug!("judge dispatch skipped: cancellation observed before first attempt");
         return Err(JudgeError::Other("cancelled".to_string()));
     }
 
     let builder = build_retry(policy);
+    let attempt = AtomicUsize::new(0);
     // Wrap the Retry driver in an async block so `tokio::select!` can
-    // race it against cancellation uniformly.
-    let driver = async move { factory.retry(builder).when(should_retry).await };
+    // race it against cancellation uniformly. The inner closure logs each
+    // dispatch attempt; `when` logs the resulting error and whether backon
+    // will retry it — never the prompt or response body.
+    let driver = async move {
+        (move || {
+            let n = attempt.fetch_add(1, Ordering::SeqCst) + 1;
+            debug!(attempt = n, "dispatching judge request");
+            factory()
+        })
+        .retry(builder)
+        .when(|err: &JudgeError| {
+            let retryable = should_retry(err);
+            warn!(error = %err, retryable, "judge request failed");
+            retryable
+        })
+        .await
+    };
 
     tokio::select! {
         biased;
-        () = cancel.cancelled() => Err(JudgeError::Other("cancelled".to_string())),
+        () = cancel.cancelled() => {
+            debug!("judge dispatch cancelled mid-flight");
+            Err(JudgeError::Other("cancelled".to_string()))
+        },
         res = driver => res,
     }
 }
@@ -288,6 +313,7 @@ pub fn parse_verdict_text(text: &str) -> Result<JudgeVerdict, JudgeError> {
         pass,
         reason,
         label,
+        cost: None,
     })
 }
 
@@ -322,6 +348,7 @@ mod tests {
                     pass: true,
                     reason: None,
                     label: None,
+                    cost: None,
                 })
             })
         }
@@ -356,6 +383,7 @@ mod tests {
                 pass: true,
                 reason: Some("ok".to_string()),
                 label: None,
+                cost: None,
             })
         })
         .expect("blocking helper should build its own runtime");
@@ -378,6 +406,7 @@ mod tests {
                     pass: true,
                     reason: None,
                     label: None,
+                    cost: None,
                 })
             })
             .expect("current-thread runtime should delegate to an owned runtime")
@@ -431,6 +460,7 @@ mod tests {
                 pass: true,
                 reason: None,
                 label: None,
+                cost: None,
             })
         })
         .await;

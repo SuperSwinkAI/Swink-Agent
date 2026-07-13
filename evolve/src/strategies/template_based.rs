@@ -69,7 +69,7 @@ impl MutationStrategy for TemplateBased {
     fn mutate(
         &self,
         target: &str,
-        context: &MutationContext,
+        context: &MutationContext<'_>,
     ) -> Result<Vec<Candidate>, MutationError> {
         let component = context.weak_point.component.clone();
         let mut candidates: Vec<Candidate> = self

@@ -200,11 +200,26 @@ impl AgentFactory for NullAgentFactory {
     ) -> Result<(Agent, CancellationToken), EvalError> {
         let response = null_response_for_case(case);
         let stream_fn = Arc::new(NullStreamFn::new(response));
-        let options = AgentOptions::new_simple(
+        let mut options = AgentOptions::new_simple(
             case.system_prompt.clone(),
             ModelSpec::new("swink-eval", "null-agent"),
             stream_fn,
         );
+
+        // Enforce the case's declared budget in real time (spec 023 T086),
+        // mirroring `eval/tests/budget.rs`'s `PolicyAwareFactory` so the CLI
+        // doesn't just score budget violations after the fact via
+        // `BudgetEvaluator` — it stops the run when the case sets a budget.
+        if let Some(budget) = &case.budget {
+            let (budget_policy, max_turns_policy) = budget.to_policies();
+            if let Some(policy) = budget_policy {
+                options = options.with_pre_turn_policy(policy);
+            }
+            if let Some(policy) = max_turns_policy {
+                options = options.with_pre_turn_policy(policy);
+            }
+        }
+
         Ok((Agent::new(options), CancellationToken::new()))
     }
 

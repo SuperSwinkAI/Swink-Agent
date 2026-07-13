@@ -7,7 +7,7 @@
 ```toml
 # In your Cargo.toml
 [dependencies]
-swink-agent = "0.4"
+swink-agent = "0.9"
 swink-agent-mcp = "0.1"
 ```
 
@@ -40,7 +40,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     mcp.connect_all().await?;
 
     // Build agent with MCP tools
-    let mut options = AgentOptions::new();
+    // AgentOptions::new(system_prompt, model, stream_fn, convert_to_llm) — see
+    // specs/040-agent-transfer-handoff/quickstart.md for a fully worked call,
+    // or use AgentOptions::new_simple(system_prompt, model, stream_fn).
+    let mut options = AgentOptions::new(/* ... */);
     for tool in mcp.tools() {
         options.tools.push(tool);
     }

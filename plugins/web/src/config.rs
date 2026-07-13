@@ -1,3 +1,4 @@
+use std::fmt;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -13,7 +14,7 @@ pub enum SearchProviderKind {
 }
 
 /// Configuration for the web plugin.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct WebPluginConfig {
     pub search_provider_kind: SearchProviderKind,
     pub brave_api_key: Option<String>,
@@ -32,6 +33,36 @@ pub struct WebPluginConfig {
     pub viewport_height: u32,
     pub sanitizer_enabled: bool,
     pub user_agent: String,
+}
+
+impl fmt::Debug for WebPluginConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WebPluginConfig")
+            .field("search_provider_kind", &self.search_provider_kind)
+            .field(
+                "brave_api_key",
+                &self.brave_api_key.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field(
+                "tavily_api_key",
+                &self.tavily_api_key.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("domain_allowlist", &self.domain_allowlist)
+            .field("domain_denylist", &self.domain_denylist)
+            .field("block_private_ips", &self.block_private_ips)
+            .field("rate_limit_rpm", &self.rate_limit_rpm)
+            .field("max_content_length", &self.max_content_length)
+            .field("max_redirects", &self.max_redirects)
+            .field("max_search_results", &self.max_search_results)
+            .field("playwright_path", &self.playwright_path)
+            .field("screenshot_timeout", &self.screenshot_timeout)
+            .field("request_timeout", &self.request_timeout)
+            .field("viewport_width", &self.viewport_width)
+            .field("viewport_height", &self.viewport_height)
+            .field("sanitizer_enabled", &self.sanitizer_enabled)
+            .field("user_agent", &self.user_agent)
+            .finish()
+    }
 }
 
 impl Default for WebPluginConfig {
@@ -239,5 +270,21 @@ mod tests {
         assert_eq!(config.screenshot_timeout, Duration::from_secs(30));
         assert_eq!(config.domain_allowlist, vec!["example.com"]);
         assert_eq!(config.domain_denylist, vec!["evil.com"]);
+    }
+
+    #[test]
+    fn debug_output_redacts_search_provider_api_keys() {
+        const BRAVE_SECRET: &str = "brave-super-secret-token";
+        const TAVILY_SECRET: &str = "tavily-super-secret-token";
+        let config = WebPluginConfigBuilder::new()
+            .with_brave_api_key(BRAVE_SECRET)
+            .with_tavily_api_key(TAVILY_SECRET)
+            .build();
+
+        let debug = format!("{config:?}");
+
+        assert!(!debug.contains(BRAVE_SECRET), "brave key leaked: {debug}");
+        assert!(!debug.contains(TAVILY_SECRET), "tavily key leaked: {debug}");
+        assert_eq!(debug.matches("[REDACTED]").count(), 2, "{debug}");
     }
 }

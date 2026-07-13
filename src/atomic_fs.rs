@@ -88,6 +88,16 @@ where
             writer.flush()?;
         }
         tmp_file.as_file().sync_all()?;
+        // Preserve an existing target's permissions: NamedTempFile creates
+        // 0600-mode files on Unix, so persisting over e.g. a 0755 script would
+        // otherwise silently strip its executable/group/world bits. NEW files
+        // (no existing target) intentionally keep tempfile's private 0600
+        // default — the only new-file creators are internal data stores where
+        // private-by-default is fine. Cross-platform: on Windows this clones
+        // the readonly flag.
+        if let Ok(existing) = std::fs::metadata(target) {
+            tmp_file.as_file().set_permissions(existing.permissions())?;
+        }
         tmp_file.persist(target).map_err(|err| err.error)?;
         #[cfg(unix)]
         sync_parent_dir(parent)?;
@@ -183,6 +193,22 @@ mod tests {
         // File should contain one complete writer's output (no corruption).
         let content = fs::read_to_string(&target).unwrap();
         assert!(content.starts_with("writer-"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_preserves_existing_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("script.sh");
+        fs::write(&target, "#!/bin/sh\necho old\n").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+
+        atomic_write_bytes(&target, b"#!/bin/sh\necho new\n").unwrap();
+
+        let mode = fs::metadata(&target).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o755);
     }
 
     #[cfg(windows)]

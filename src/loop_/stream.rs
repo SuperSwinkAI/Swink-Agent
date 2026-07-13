@@ -232,13 +232,14 @@ async fn stream_with_retry_single(
         };
 
         // Handle error events
-        if let Some((stop_reason, error_message, _usage, error_kind)) = had_error {
+        if let Some((stop_reason, error_message, _usage, error_kind, retry_after)) = had_error {
             let retry_result = handle_stream_error(
                 model,
                 config,
                 stop_reason,
                 &error_message,
                 error_kind,
+                retry_after,
                 attempt,
             );
             match retry_result {
@@ -304,17 +305,22 @@ enum StreamErrorAction {
     },
 }
 
+/// Error captured from a stream attempt: stop reason, message, usage,
+/// error kind, and the provider's retry-after hint (if any).
+type StreamErrorInfo = (
+    StopReason,
+    String,
+    Option<crate::types::Usage>,
+    Option<crate::stream::StreamErrorKind>,
+    Option<std::time::Duration>,
+);
+
 /// Result of streaming a single attempt from the provider.
 enum StreamAttemptResult {
     /// Events were collected successfully (may include an error event).
     Collected {
         events: Vec<AssistantMessageEvent>,
-        error: Option<(
-            StopReason,
-            String,
-            Option<crate::types::Usage>,
-            Option<crate::stream::StreamErrorKind>,
-        )>,
+        error: Option<StreamErrorInfo>,
     },
     /// Early exit due to cancellation or channel close.
     EarlyExit {
@@ -344,12 +350,7 @@ async fn stream_single_attempt(
     );
 
     let mut events: Vec<AssistantMessageEvent> = Vec::new();
-    let mut had_error: Option<(
-        StopReason,
-        String,
-        Option<crate::types::Usage>,
-        Option<crate::stream::StreamErrorKind>,
-    )> = None;
+    let mut had_error: Option<StreamErrorInfo> = None;
 
     loop {
         let event = tokio::select! {
@@ -379,6 +380,7 @@ async fn stream_single_attempt(
             error_message,
             usage,
             error_kind,
+            retry_after,
         } = &event
         {
             had_error = Some((
@@ -386,6 +388,7 @@ async fn stream_single_attempt(
                 error_message.clone(),
                 usage.clone(),
                 *error_kind,
+                *retry_after,
             ));
         }
 
@@ -451,12 +454,14 @@ async fn emit_delta_event(
 }
 
 /// Handle a stream error: classify it, check retryability, return action.
+#[allow(clippy::too_many_arguments)]
 fn handle_stream_error(
     model: &ModelSpec,
     config: &Arc<AgentLoopConfig>,
     stop_reason: StopReason,
     error_message: &str,
     error_kind: Option<crate::stream::StreamErrorKind>,
+    retry_after: Option<std::time::Duration>,
     attempt: u32,
 ) -> StreamErrorAction {
     let harness_error = classify_stream_error(error_message, stop_reason, error_kind);
@@ -506,10 +511,18 @@ fn handle_stream_error(
         };
     }
 
-    // Check if retryable — RetryStrategy is the sole decision point
+    // Check if retryable — RetryStrategy is the sole decision point.
+    // A provider-supplied Retry-After hint takes precedence over the
+    // strategy's computed backoff (the provider knows its own limits).
     if !retry_strategy_consulted && config.retry_strategy.should_retry(&harness_error, attempt) {
-        let delay = config.retry_strategy.delay(attempt);
-        warn!(attempt, ?delay, error = %harness_error, "retrying after transient error");
+        let delay = retry_after.unwrap_or_else(|| config.retry_strategy.delay(attempt));
+        warn!(
+            attempt,
+            ?delay,
+            provider_hint = retry_after.is_some(),
+            error = %harness_error,
+            "retrying after transient error"
+        );
         return StreamErrorAction::Retry {
             delay,
             cache_miss_prior_prefix_len: None,

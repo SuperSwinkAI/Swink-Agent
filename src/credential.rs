@@ -215,6 +215,22 @@ pub enum CredentialError {
         /// The credential key.
         key: String,
     },
+
+    /// The interactive `OAuth2` authorization code flow failed (handler
+    /// error, or the code-for-token exchange was rejected).
+    AuthorizationFailed {
+        /// The credential key that was being authorized.
+        key: String,
+        /// Human-readable reason (no secrets).
+        reason: String,
+    },
+
+    /// The user did not complete the interactive authorization flow within
+    /// the configured timeout (FR-020, default 5 minutes).
+    AuthorizationTimeout {
+        /// The credential key that was being authorized.
+        key: String,
+    },
 }
 
 impl fmt::Debug for CredentialError {
@@ -251,6 +267,15 @@ impl fmt::Debug for CredentialError {
                 .debug_struct("CredentialError::Timeout")
                 .field("key", key)
                 .finish(),
+            Self::AuthorizationFailed { key, reason } => f
+                .debug_struct("CredentialError::AuthorizationFailed")
+                .field("key", key)
+                .field("reason", reason)
+                .finish(),
+            Self::AuthorizationTimeout { key } => f
+                .debug_struct("CredentialError::AuthorizationTimeout")
+                .field("key", key)
+                .finish(),
         }
     }
 }
@@ -275,6 +300,12 @@ impl std::fmt::Display for CredentialError {
             // user-facing `Display` output stays generic.
             Self::StoreError(_) => f.write_str("credential store error"),
             Self::Timeout { key } => write!(f, "credential resolution timed out for {key}"),
+            Self::AuthorizationFailed { key, reason } => {
+                write!(f, "authorization failed for {key}: {reason}")
+            }
+            Self::AuthorizationTimeout { key } => {
+                write!(f, "authorization timed out for {key}")
+            }
         }
     }
 }
@@ -310,6 +341,11 @@ impl Clone for CredentialError {
                 Self::StoreError(Box::new(std::io::Error::other(error.to_string())))
             }
             Self::Timeout { key } => Self::Timeout { key: key.clone() },
+            Self::AuthorizationFailed { key, reason } => Self::AuthorizationFailed {
+                key: key.clone(),
+                reason: reason.clone(),
+            },
+            Self::AuthorizationTimeout { key } => Self::AuthorizationTimeout { key: key.clone() },
         }
     }
 }
@@ -343,6 +379,27 @@ pub trait CredentialResolver: Send + Sync {
     /// Resolve a credential by key. Returns the minimal secret value
     /// needed for the authenticated request.
     fn resolve(&self, key: &str) -> CredentialFuture<'_, ResolvedCredential>;
+}
+
+// ─── AuthorizationHandler trait ─────────────────────────────────────────────
+
+/// Pluggable callback for initiating interactive `OAuth2` authorization code
+/// flows (FR-010).
+///
+/// Implementations typically open a browser to `auth_url` and listen for the
+/// provider's redirect on a local callback server, returning the resulting
+/// authorization code. `state` is the CSRF token the resolver generated for
+/// this attempt; implementations that run their own callback listener should
+/// verify the redirect's `state` query parameter matches before trusting the
+/// `code`.
+///
+/// When no handler is configured, a missing credential resolves to
+/// [`CredentialError::NotFound`] instead of attempting interactive
+/// authorization (FR-011).
+pub trait AuthorizationHandler: Send + Sync {
+    /// Present the authorization URL to the user and return the resulting
+    /// authorization code.
+    fn authorize(&self, auth_url: &str, state: &str) -> CredentialFuture<'_, String>;
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -433,6 +490,13 @@ mod tests {
                 actual: CredentialType::ApiKey,
             },
             CredentialError::Timeout {
+                key: "my-key".into(),
+            },
+            CredentialError::AuthorizationFailed {
+                key: "my-key".into(),
+                reason: "user denied access".into(),
+            },
+            CredentialError::AuthorizationTimeout {
                 key: "my-key".into(),
             },
         ];
@@ -559,5 +623,53 @@ mod tests {
         let debug = format!("{resolved:?}");
         assert!(!debug.contains("my-secret"), "Debug leaks secret");
         assert!(debug.contains("[REDACTED]"));
+    }
+
+    // T057/T058: new US4 error variants carry no secrets and surface the key
+    // for diagnostics, matching the existing CredentialError hygiene pattern.
+    #[test]
+    fn authorization_failed_display_and_debug_contain_no_secrets() {
+        let err = CredentialError::AuthorizationFailed {
+            key: "google-calendar".into(),
+            reason: "token endpoint rejected code: HTTP 400 (invalid_grant)".into(),
+        };
+        let display = format!("{err}");
+        let debug = format!("{err:?}");
+        assert!(display.contains("google-calendar"));
+        assert!(debug.contains("google-calendar"));
+        assert!(!display.contains("access_token"));
+        assert!(!debug.contains("access_token"));
+    }
+
+    #[test]
+    fn authorization_timeout_display_and_debug_contain_key() {
+        let err = CredentialError::AuthorizationTimeout {
+            key: "google-calendar".into(),
+        };
+        assert!(format!("{err}").contains("google-calendar"));
+        assert!(format!("{err:?}").contains("google-calendar"));
+    }
+
+    #[test]
+    // The clone is the behavior under test, not an accident.
+    #[allow(clippy::redundant_clone)]
+    fn authorization_error_clone_preserves_fields() {
+        let failed = CredentialError::AuthorizationFailed {
+            key: "k".into(),
+            reason: "denied".into(),
+        };
+        match failed.clone() {
+            CredentialError::AuthorizationFailed { key, reason } => {
+                assert_eq!(key, "k");
+                assert_eq!(reason, "denied");
+            }
+            other => panic!("expected AuthorizationFailed, got {other:?}"),
+        }
+
+        let timed_out = CredentialError::AuthorizationTimeout { key: "k".into() };
+        match timed_out.clone() {
+            CredentialError::AuthorizationTimeout { key } => assert_eq!(key, "k"),
+            other => panic!("expected AuthorizationTimeout, got {other:?}"),
+        }
     }
 }

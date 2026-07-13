@@ -261,6 +261,8 @@ pub struct Agent {
     session_state: Arc<std::sync::RwLock<crate::SessionState>>,
     /// Optional credential resolver for tool authentication.
     credential_resolver: Option<Arc<dyn crate::credential::CredentialResolver>>,
+    /// Timeout applied around a credential resolver's `resolve()` call.
+    credential_timeout: std::time::Duration,
     /// Optional context caching configuration.
     cache_config: Option<crate::context_cache::CacheConfig>,
     /// Optional dynamic system prompt.
@@ -361,6 +363,7 @@ impl Agent {
                 options.session_state.unwrap_or_default(),
             )),
             credential_resolver: options.credential_resolver,
+            credential_timeout: options.credential_timeout,
             cache_config: options.cache_config,
             dynamic_system_prompt: options.dynamic_system_prompt.map(Arc::from),
             loop_active: Arc::new(AtomicBool::new(false)),
@@ -458,9 +461,9 @@ impl std::fmt::Debug for Agent {
 #[cfg(feature = "plugins")]
 fn merge_plugin_contributions(mut options: AgentOptions) -> AgentOptions {
     // Sort plugins by priority descending (stable sort preserves insertion order for ties).
-    options
-        .plugins
-        .sort_by_key(|p| std::cmp::Reverse(p.priority()));
+    // Shared with `PluginRegistry::list()` via `crate::plugin::priority_desc` so the two
+    // collections can never drift on ordering semantics.
+    options.plugins.sort_by_key(crate::plugin::priority_desc);
 
     let mut plugin_pre_turn: Vec<Arc<dyn crate::policy::PreTurnPolicy>> = Vec::new();
     let mut plugin_pre_dispatch: Vec<Arc<dyn crate::policy::PreDispatchPolicy>> = Vec::new();

@@ -702,6 +702,7 @@ pub fn error_events(
         error_message: message.to_string(),
         usage: None,
         error_kind,
+        retry_after: None,
     }]
 }
 
@@ -714,6 +715,7 @@ pub fn abort_events(message: &str) -> Vec<AssistantMessageEvent> {
         error_message: message.to_string(),
         usage: None,
         error_kind: None,
+        retry_after: None,
     }]
 }
 
@@ -807,6 +809,7 @@ pub fn default_exhausted_fallback() -> Vec<AssistantMessageEvent> {
         error_message: "no more scripted responses".to_string(),
         usage: None,
         error_kind: None,
+        retry_after: None,
     }]
 }
 
@@ -1186,6 +1189,7 @@ pub fn event_variant_name(event: &AgentEvent) -> String {
         #[cfg(feature = "artifact-store")]
         AgentEvent::ArtifactSaved { .. } => "ArtifactSaved".into(),
         AgentEvent::TransferInitiated { .. } => "TransferInitiated".into(),
+        AgentEvent::TransferRejected { .. } => "TransferRejected".into(),
     }
 }
 
