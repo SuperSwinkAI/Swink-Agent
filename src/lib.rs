@@ -122,8 +122,9 @@ pub use message_provider::{
 pub use messaging::{AgentMailbox, send_to};
 pub use metrics::{MetricsCollector, MetricsFuture, ToolExecMetrics, TurnMetrics};
 pub use model_catalog::{
-    ApiVersion, AuthMode, CatalogPreset, ModelCatalog, PresetCapability, PresetCatalog,
-    PresetStatus, ProviderCatalog, ProviderKind, calculate_cost, model_catalog,
+    ApiVersion, AuthMode, CatalogPreset, DEFAULT_PRICING_STALENESS_DAYS, ModelCatalog,
+    PRICING_STALENESS_ENV_VAR, PresetCapability, PresetCatalog, PresetStatus, PricingStaleness,
+    ProviderCatalog, ProviderKind, calculate_cost, model_catalog, pricing_staleness,
 };
 pub use model_presets::{ModelConnection, ModelConnections, ModelConnectionsBuilder};
 pub use noop_tool::NoopTool;

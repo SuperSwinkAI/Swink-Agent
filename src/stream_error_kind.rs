@@ -18,4 +18,13 @@ pub enum StreamErrorKind {
     Network,
     /// Provider safety/content filter blocked the response.
     ContentFiltered,
+    /// The provider has retired/decommissioned the requested model.
+    ///
+    /// Typically an HTTP 400/404/410 with a provider-specific error code
+    /// (e.g. OpenAI's `model_not_found`). Distinct from the adapters crate's
+    /// client-side `UnknownModelId` ("not in our compiled catalog"): this is
+    /// the provider saying it no longer serves the model. Consumers can look
+    /// up a replacement via the model catalog's deprecation metadata
+    /// ([`PresetStatus::Deprecated`](crate::PresetStatus)).
+    ModelRetired,
 }

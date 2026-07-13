@@ -185,12 +185,25 @@ Three Gemma 4 presets added under the `local` provider for Ollama-based inferenc
 
 `smollm3_3b` demoted to `group = "legacy"`, `include_by_default = false`. These presets target Ollama (not local-llm/llama.cpp), so they omit `repo_id`/`filename`. The `thinking` capability enables the Ollama `think` request field via the adapter.
 
-## Addendum: Model Deprecation & Pricing Staleness (2026-07-06)
+## Addendum: Model Deprecation & Pricing Staleness (2026-07-12)
 
-The catalog is compiled in at build time (Assumptions, above) and this spec's own Assumptions section already anticipates a `deprecated` status ("Preset status indicates whether the model is generally available, in preview, or deprecated") — but `PresetStatus` (`src/model_catalog.rs`) currently implements only `Ga` and `Preview`. There is no runtime handling for two related staleness scenarios: a provider retiring a model out from under a compiled catalog entry, and the compiled pricing table drifting from the provider's current published prices. Tracked in [#1064](https://github.com/SuperSwinkAI/Swink-Agent/issues/1064).
+Closes the gap between the Assumptions section ("generally available, in preview, or deprecated") and the implemented `PresetStatus`, and adds a runtime staleness signal for the compiled-in pricing table (issue #1064).
 
-Proposed shape:
+### Deprecated preset status
 
-- Add a `PresetStatus::Deprecated { replacement_model_id: Option<String> }` variant so a still-listed-but-retired preset can point callers at its replacement.
-- Add a structured error signal (surfaced through the same `error_kind`/`StreamErrorKind` mechanism being hardened by [#1063](https://github.com/SuperSwinkAI/Swink-Agent/issues/1063)) for provider responses indicating the requested model has been retired — distinct from `remote_presets.rs`'s existing `UnknownModelId`, which is a client-side "not in our compiled catalog" error rather than a provider-side retirement.
-- Add a pricing-staleness warning (e.g. a compiled catalog timestamp compared against a configurable threshold, logged at agent construction) so operators know their compiled pricing may no longer match the provider's published rates. Runtime pricing *updates* remain out of scope per this spec's existing Edge Cases — this addendum only adds a *warning*, not a live-refresh mechanism.
+`PresetStatus` gains a `Deprecated { replacement_model_id: Option<String> }` variant. Deprecated presets stay listed so lookups and historical cost calculation keep working; `replacement_model_id` points consumers at the successor when known. Existing string statuses (`status = "ga"` / `"preview"`) are unchanged; the deprecated form uses TOML's table syntax:
+
+```toml
+[providers.presets.status.deprecated]
+replacement_model_id = "gpt-5.4"
+```
+
+Convenience accessors: `PresetStatus::is_deprecated()`, `CatalogPreset::is_deprecated()`, `CatalogPreset::replacement_model_id()`.
+
+### Provider-side retirement signal
+
+A new `StreamErrorKind::ModelRetired` (constructor `AssistantMessageEvent::error_model_retired`) classifies provider responses that indicate a retired/decommissioned model — typically HTTP 400/404/410 with a provider error code such as OpenAI's `model_not_found`. The shared adapter helper `adapters::classify::is_model_retired_response(status, body)` performs the heuristic and `error_event_from_status*` applies it automatically for otherwise-unclassified 400/404/410 responses. The agent loop maps the kind to `AgentError::ModelRetired { message }` (non-retryable). This is distinct from the adapters crate's client-side `RemoteModelConnectionError::UnknownModelId` ("not in our compiled catalog").
+
+### Pricing staleness warning
+
+The catalog TOML carries a top-level `pricing_as_of = "YYYY-MM-DD"` date recording when the pricing columns were last verified against provider price pages. At agent construction, a once-per-process `tracing::warn!` fires when the table is older than a threshold — `SWINK_PRICING_STALENESS_DAYS` (default `DEFAULT_PRICING_STALENESS_DAYS = 180`). Programmatic access: `pricing_staleness(threshold_days)` and `ModelCatalog::pricing_staleness_at(today, threshold_days)`, returning a `PricingStaleness { as_of, age_days, threshold_days }`. Runtime pricing *updates* remain out of scope; this only makes staleness visible. `calculate_cost()` also logs at debug level when a model id is not found in the catalog (still returning zero cost).

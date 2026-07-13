@@ -13,11 +13,12 @@ readme = "README.md"
 [features]
 default = ["all"]
 full = ["all"]
-all = ["budget", "max-turns", "deny-list", "sandbox", "loop-detection", "checkpoint", "prompt-guard", "pii", "content-filter", "audit", "memory-nudge"]
+all = ["budget", "max-turns", "deny-list", "sandbox", "recommended", "loop-detection", "checkpoint", "prompt-guard", "pii", "content-filter", "audit", "memory-nudge"]
 budget = []
 max-turns = []
 deny-list = []
 sandbox = ["serde_json"]
+recommended = ["budget", "max-turns", "deny-list", "sandbox", "serde_json"]
 loop-detection = ["serde_json"]
 checkpoint = ["dep:tokio"]
 prompt-guard = ["regex"]
@@ -46,7 +47,7 @@ tokio-util = { workspace = true }
 
 [[example]]
 name = "with_policies"
-required-features = ["budget", "max-turns", "deny-list", "loop-detection"]
+required-features = ["budget", "max-turns", "deny-list", "loop-detection", "recommended"]
 
 [lints]
 workspace = true

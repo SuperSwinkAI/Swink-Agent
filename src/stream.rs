@@ -259,6 +259,22 @@ impl AssistantMessageEvent {
         }
     }
 
+    /// Create a model-retired error event.
+    ///
+    /// Sets [`StreamErrorKind::ModelRetired`] so the agent loop can surface
+    /// a user-legible "model has been retired" signal instead of a generic
+    /// unclassified error. Adapters use this when a provider error response
+    /// indicates the requested model has been retired/decommissioned.
+    pub fn error_model_retired(message: impl Into<String>) -> Self {
+        Self::Error {
+            stop_reason: StopReason::Error,
+            error_message: message.into(),
+            usage: None,
+            error_kind: Some(StreamErrorKind::ModelRetired),
+            retry_after: None,
+        }
+    }
+
     /// Build a complete single-text-block response event sequence.
     ///
     /// Useful for testing and mock `StreamFn` implementations. Returns the
@@ -981,6 +997,22 @@ mod tests {
             } => {
                 assert_eq!(error_kind, Some(StreamErrorKind::ContentFiltered));
                 assert_eq!(error_message, "blocked by safety filter");
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn error_model_retired_constructor_sets_kind() {
+        let event = AssistantMessageEvent::error_model_retired("model gpt-4-32k has been retired");
+        match event {
+            AssistantMessageEvent::Error {
+                error_kind,
+                error_message,
+                ..
+            } => {
+                assert_eq!(error_kind, Some(StreamErrorKind::ModelRetired));
+                assert_eq!(error_message, "model gpt-4-32k has been retired");
             }
             other => panic!("expected Error, got {other:?}"),
         }

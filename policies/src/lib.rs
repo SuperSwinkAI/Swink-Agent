@@ -12,6 +12,10 @@
 //! - **`sandbox`**: `SandboxPolicy` — restricts file paths to an allowed root directory
 //! - **`loop-detection`**: `LoopDetectionPolicy` — detects repeated tool call patterns
 //! - **`checkpoint`**: `CheckpointPolicy` — persists agent state after each turn
+//! - **`recommended`**: `RecommendedPolicies` — one-call preset bundling the four
+//!   production guardrails (budget, max-turns, sandbox, deny-list), plus
+//!   `verify_production_guardrails` / `assert_production_guardrails` contract
+//!   helpers for embedder test suites
 //!
 //! ## Application policies
 //!
@@ -54,6 +58,13 @@ pub use loop_detection::{LoopDetectionAction, LoopDetectionPolicy};
 mod checkpoint;
 #[cfg(feature = "checkpoint")]
 pub use checkpoint::CheckpointPolicy;
+
+#[cfg(feature = "recommended")]
+mod recommended;
+#[cfg(feature = "recommended")]
+pub use recommended::{
+    RecommendedPolicies, assert_production_guardrails, verify_production_guardrails,
+};
 
 // ── Application policies ────────────────────────────────────────────────────
 
