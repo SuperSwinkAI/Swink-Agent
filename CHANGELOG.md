@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-13
+
 ### Added — per-request serving-options seam
 
 - **`ServingOptions`** on `StreamOptions.serving` — a provider-agnostic surface for local/self-hosted serving knobs: `context_length`, `top_p`, `keep_alive`, and an `extra` passthrough map (`BTreeMap<String, serde_json::Value>`). Typed fields win over colliding `extra` keys; the default leaves request bodies unchanged.
@@ -16,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Notes
 
-- Additive but breaking for downstream code that constructs `StreamOptions` or `StreamOptionsConfig` with exhaustive struct literals — add `serving: ServingOptions::default()` or use `..Default::default()`.
+- Additive but breaking for downstream code that constructs `StreamOptions` or `StreamOptionsConfig` with exhaustive struct literals — add `serving: ServingOptions::default()` or use `..Default::default()`. This is the 0.11.0 version driver (`cargo semver-checks`: `constructible_struct_adds_field`).
 
 ## [0.10.0] - 2026-07-12
 
