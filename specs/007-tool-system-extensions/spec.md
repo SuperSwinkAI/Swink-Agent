@@ -50,7 +50,7 @@ A developer registers a tool validator that inspects tool calls after transforma
 
 1. **Given** a registered validator, **When** a tool call passes validation, **Then** the tool executes normally.
 2. **Given** a registered validator, **When** a tool call fails validation, **Then** an error result is returned without calling execute.
-3. **Given** the dispatch pipeline, **When** a tool call is processed, **Then** the order is: transformer → validator → schema validation → execute.
+3. **Given** the dispatch pipeline, **When** a tool call is processed, **Then** the order is: transformer → validator → schema validation → execute. [Superseded 2026-07-06 — see Supersession Notice above: current order is PreDispatch policies (replacing transformer + validator) → Approval gate → Schema validation → Execute.]
 
 ---
 
@@ -269,7 +269,7 @@ A tool provides rich context to the approval UI by implementing an optional `app
 
 - **SC-001**: Tool call transformers correctly rewrite arguments before they reach validation or execution.
 - **SC-002**: Tool validators correctly reject invalid calls without invoking execute.
-- **SC-003**: The dispatch pipeline enforces the correct order: approval → transformer → validator → schema → execute.
+- **SC-003**: The dispatch pipeline enforces the correct order: approval → transformer → validator → schema → execute. [Superseded 2026-07-06 — see Supersession Notice above: current order is PreDispatch policies (replacing transformer + validator) → Approval gate → Schema validation → Execute.]
 - **SC-004**: Tool middleware wraps execution without altering the tool's identity (name, description, schema).
 - **SC-005**: Execution policies correctly control concurrency: concurrent runs in parallel, sequential runs in order.
 - **SC-006**: Closure-based tools implement the tool trait and execute correctly when invoked.

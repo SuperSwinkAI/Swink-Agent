@@ -20,56 +20,59 @@ cargo build --workspace
 
 This compiles all workspace crates: core library, adapters, local-llm, memory, eval, and TUI. First build pulls dependencies and takes a few minutes.
 
-`swink-agent-local-llm` currently builds `llama-cpp-sys-2`, which runs `bindgen` during compilation. Install LLVM/libclang before running workspace-wide commands; if the build reports `Unable to find libclang`, set `LIBCLANG_PATH` to the LLVM directory that contains the shared library (`bin` on Windows).
+Workspace builds need LLVM/libclang (for `swink-agent-local-llm`) — see [getting_started.md](getting_started.md#build) if the build reports `Unable to find libclang`.
 
 ## 3. Run the Local Validation Gate
 
 Verify the same local validation sequence required for PRs before connecting to live APIs:
 
 ```bash
-cargo fmt --all --check
-cargo clippy --workspace -- -D warnings
-cargo test --workspace
-cargo build --workspace
-cargo test --workspace --features testkit
-cargo test -p swink-agent --no-default-features
-cargo adapters-no-default-features
-cargo local-llm-no-default-features
-cargo workspace-no-default-features
-cargo eval-no-default-features
-cargo eval-advanced-no-default-features
-cargo publish --workspace --dry-run --locked --allow-dirty
+just validate
 ```
 
-`just validate` and `just check` run this exact command set.
+`cargo test --workspace` is the default-feature workspace test baseline, not
+the full local gate. `just validate` is the canonical source of truth and also
+runs the `testkit` workspace tests, core plugin regression tests, no-default
+feature sentinels, formatting, clippy, build, and package preflight. `just
+check` is a backward-compatible alias for the same gate.
 
 These validation commands intentionally do not load `.env`; they should not
 inherit provider API keys or cloud credentials. Live-provider tests load
 credentials from the environment only when you run those tests explicitly.
 
+## 3a. Run Local Coverage
+
+The repository includes a root `tarpaulin.toml` for local coverage runs. Install
+`cargo-tarpaulin` once, then run:
+
+```bash
+cargo install cargo-tarpaulin
+just coverage
+```
+
+Reports are written under `target/tarpaulin/`. Coverage is not part of
+`just validate`; run it explicitly when working on coverage gaps or test
+hardening.
+
 ## 4. Get API Keys
 
-You need at least one provider key. Set up whichever providers you want to test.
+You need at least one provider. For remote providers, create a key in the console and set the env var(s) in `.env`:
 
-### Anthropic (Claude)
+| Provider | Console | Env var(s) |
+|---|---|---|
+| Anthropic | https://console.anthropic.com/ | `ANTHROPIC_API_KEY` |
+| OpenAI | https://platform.openai.com/api-keys | `OPENAI_API_KEY` |
+| Google Gemini | https://aistudio.google.com/ | `GEMINI_API_KEY` |
+| Azure OpenAI | https://portal.azure.com/ | `AZURE_API_KEY`, `AZURE_BASE_URL` (deployment endpoint) |
+| xAI (Grok) | https://console.x.ai/ | `XAI_API_KEY` |
+| Mistral | https://console.mistral.ai/ | `MISTRAL_API_KEY` |
+| AWS Bedrock | — (AWS credentials) | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, optionally `AWS_SESSION_TOKEN` |
 
-1. Go to https://console.anthropic.com/
-2. Sign up or log in
-3. Navigate to **API Keys** in the left sidebar
-4. Click **Create Key**, give it a name, copy the key (`sk-ant-...`)
-5. Anthropic offers a free trial tier; paid plans at https://console.anthropic.com/settings/plans
-
-### OpenAI (GPT-4o)
-
-1. Go to https://platform.openai.com/
-2. Sign up or log in
-3. Navigate to **API Keys** (https://platform.openai.com/api-keys)
-4. Click **Create new secret key**, copy the key (`sk-...`)
-5. Requires a payment method; see pricing at https://openai.com/api/pricing/
+Bedrock: set `AWS_REGION` to a region with Bedrock access (e.g. `us-east-1`) and ensure your IAM role has `bedrock:InvokeModelWithResponseStream` permission.
 
 ### Ollama (Local, Free)
 
-No API key needed. Install and pull a model:
+No API key, no account, no cost. Install and pull a model:
 
 ```bash
 # macOS
@@ -84,56 +87,14 @@ ollama serve
 ollama pull llama3.2
 ```
 
-Ollama runs entirely on your machine — no account, no API key, no cost.
-
 ### Local On-Device (swink-agent-local-llm)
 
-No API key needed. Models are lazily downloaded from HuggingFace on first use and cached in `~/.cache/huggingface/hub/`.
-
-Build prerequisite: local-LLM compilation currently requires LLVM/libclang because `llama-cpp-sys-2` uses `bindgen`. On Windows, the usual fix is installing LLVM and setting `LIBCLANG_PATH` to something like `C:\Program Files\LLVM\bin` before running `cargo build/test/clippy --workspace`.
+No API key needed. Models are lazily downloaded from HuggingFace on first use and cached in `~/.cache/huggingface/hub/`:
 
 - **SmolLM3-3B** (GGUF Q4_K_M, ~1.92 GB) — text generation, tool use, reasoning
 - **EmbeddingGemma-300M** (<200 MB) — text vectorization/embeddings
 
 Context is capped at 8192 tokens by default; override with the `LOCAL_CONTEXT_LENGTH` env var. First run downloads ~2.1 GB of model weights.
-
-```rust
-use swink_agent_local_llm::default_local_connection;
-
-let local_connection = default_local_connection()?;
-```
-
-### Google Gemini
-
-1. Go to https://aistudio.google.com/
-2. Sign up or log in
-3. Navigate to **API Keys**
-4. Create a key, copy it
-
-### Azure OpenAI
-
-1. Go to https://portal.azure.com/
-2. Create an Azure OpenAI resource
-3. Deploy a model and note the endpoint URL
-4. Copy the API key from the resource's **Keys and Endpoint** section
-
-### xAI (Grok)
-
-1. Go to https://console.x.ai/
-2. Sign up or log in
-3. Navigate to **API Keys**, create and copy a key
-
-### Mistral
-
-1. Go to https://console.mistral.ai/
-2. Sign up or log in
-3. Navigate to **API Keys**, create and copy a key
-
-### AWS Bedrock
-
-1. Configure AWS credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and optionally `AWS_SESSION_TOKEN`)
-2. Set `AWS_REGION` to a region with Bedrock access (e.g. `us-east-1`)
-3. Ensure your IAM role has `bedrock:InvokeModelWithResponseStream` permission
 
 ## 5. Configure Environment
 
@@ -155,7 +116,7 @@ OPENAI_API_KEY=sk-your-key-here
 # OLLAMA_MODEL=llama3.2
 ```
 
-Leave variables commented out to skip that provider. The TUI auto-selects by priority: Proxy > OpenAI > Anthropic > Ollama.
+Leave variables commented out to skip that provider. The TUI auto-selects by priority — see the [provider priority table](getting_started.md#configure-a-provider).
 
 ## 6. Launch the TUI
 

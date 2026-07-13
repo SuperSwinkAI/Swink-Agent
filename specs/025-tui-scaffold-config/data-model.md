@@ -119,7 +119,7 @@ Static provider configuration for credential resolution.
 | `description` | `&'static str` | Short provider description |
 | `requires_key` | `bool` | Whether the provider needs an API key |
 
-**Instances**: Ollama (no key), OpenAI, Anthropic, Custom Proxy, Local (no key).
+**Instances**: Four entries — Ollama (no key), OpenAI, Anthropic, Custom Proxy. [Corrected: `providers()` returns 4 entries, confirmed by the `providers_returns_four_entries` test asserting `p.len() == 4`. Local-LLM support is handled separately behind its own feature flag, not as a 5th `ProviderInfo` entry in this list.]
 
 ---
 

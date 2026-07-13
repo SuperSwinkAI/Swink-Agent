@@ -19,16 +19,18 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use common::{
-    default_exhausted_fallback, default_model, next_response, text_only_events, user_msg,
+    default_exhausted_fallback, default_model, error_events, next_response, text_only_events,
+    user_msg,
 };
 use futures::Stream;
 use futures::stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AssistantMessageEvent, CacheConfig,
-    CacheState, ContentBlock, DefaultRetryStrategy, LlmMessage, MessageProvider, ModelSpec,
-    SlidingWindowTransformer, StopReason, StreamFn, StreamOptions, UserMessage, agent_loop,
+    AgentContext, AgentError, AgentEvent, AgentLoopConfig, AgentMessage, AssistantMessageEvent,
+    CacheConfig, CacheState, ContentBlock, DefaultRetryStrategy, LlmMessage, MessageProvider,
+    ModelSpec, RetryStrategy, SlidingWindowTransformer, StopReason, StreamFn, StreamOptions,
+    UserMessage, agent_loop,
 };
 
 // ─── Capturing stream that records the hint carried by each leading message ──
@@ -72,41 +74,30 @@ fn default_convert_to_llm() -> ConvertToLlmBoxed {
 }
 
 fn base_config(stream_fn: Arc<dyn StreamFn>, cache_config: Option<CacheConfig>) -> AgentLoopConfig {
-    AgentLoopConfig {
-        agent_name: None,
-        transfer_chain: None,
-        model: default_model(),
-        stream_options: StreamOptions::default(),
-        retry_strategy: Box::new(
-            DefaultRetryStrategy::default()
-                .with_jitter(false)
-                .with_base_delay(Duration::from_millis(1)),
-        ),
-        stream_fn,
-        tools: vec![],
-        convert_to_llm: default_convert_to_llm(),
-        transform_context: None,
-        get_api_key: None,
-        message_provider: None,
-        pending_message_snapshot: Arc::default(),
-        loop_context_snapshot: Arc::default(),
-        approve_tool: None,
-        approval_mode: swink_agent::ApprovalMode::default(),
-        pre_turn_policies: vec![],
-        pre_dispatch_policies: vec![],
-        post_turn_policies: vec![],
-        post_loop_policies: vec![],
-        async_transform_context: None,
-        metrics_collector: None,
-        fallback: None,
-        tool_execution_policy: swink_agent::ToolExecutionPolicy::default(),
-        session_state: std::sync::Arc::new(
-            std::sync::RwLock::new(swink_agent::SessionState::new()),
-        ),
-        credential_resolver: None,
-        cache_config,
-        cache_state: std::sync::Mutex::new(CacheState::default()),
-        dynamic_system_prompt: None,
+    let mut config = AgentLoopConfig::new(default_model(), stream_fn, default_convert_to_llm());
+    config.retry_strategy = Box::new(
+        DefaultRetryStrategy::default()
+            .with_jitter(false)
+            .with_base_delay(Duration::from_millis(1)),
+    );
+    config.cache_config = cache_config;
+    config.cache_state = std::sync::Mutex::new(CacheState::default());
+    config
+}
+
+struct RetryCacheMissOnce;
+
+impl RetryStrategy for RetryCacheMissOnce {
+    fn should_retry(&self, error: &AgentError, attempt: u32) -> bool {
+        matches!(error, AgentError::CacheMiss) && attempt < 2
+    }
+
+    fn delay(&self, _attempt: u32) -> Duration {
+        Duration::from_millis(0)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -244,6 +235,61 @@ async fn cached_prefix_len_tracked_after_first_turn() {
         transformer.cached_prefix_len() > 0,
         "sliding-window transformer should have received a non-zero cached prefix, got {}",
         transformer.cached_prefix_len()
+    );
+}
+
+#[tokio::test]
+async fn cache_miss_retry_rewrites_read_hint_to_write() {
+    let stream_fn = Arc::new(CaptureHintsStreamFn {
+        responses: Mutex::new(vec![
+            text_only_events("first"),
+            error_events("provider cache miss", None),
+            text_only_events("second"),
+        ]),
+        per_call_hints: Arc::new(Mutex::new(Vec::new())),
+    });
+    let captured = Arc::clone(&stream_fn.per_call_hints);
+
+    let cache_config = CacheConfig::new(Duration::from_mins(5), 10, 3);
+    let mut config = base_config(stream_fn.clone() as Arc<dyn StreamFn>, Some(cache_config));
+    config.retry_strategy = Box::new(RetryCacheMissOnce);
+    config.message_provider = Some(Arc::new(OneShotFollowUp {
+        msg: Mutex::new(Some(user_msg("follow-up question"))),
+    }));
+
+    let events = collect_events(agent_loop(
+        vec![sized_user_msg("prompt", 50)],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    let per_call = captured.lock().unwrap().clone();
+    assert_eq!(
+        per_call.len(),
+        3,
+        "expected turn 1, turn 2 cache-miss attempt, and turn 2 retry"
+    );
+
+    match &per_call[0][0] {
+        Some(swink_agent::CacheHint::Write { .. }) => {}
+        other => panic!("turn 1 should establish the cache with Write, got {other:?}"),
+    }
+    match &per_call[1][0] {
+        Some(swink_agent::CacheHint::Read) => {}
+        other => panic!("turn 2 first attempt should read the cache, got {other:?}"),
+    }
+    match &per_call[2][0] {
+        Some(swink_agent::CacheHint::Write { .. }) => {}
+        other => panic!("cache-miss retry must refresh the cache with Write, got {other:?}"),
+    }
+
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::AgentEnd { .. })),
+        "agent loop should complete after the cache-miss retry"
     );
 }
 

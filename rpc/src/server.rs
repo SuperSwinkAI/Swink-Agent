@@ -2,7 +2,6 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use swink_agent::AgentOptions;
 
@@ -62,7 +61,7 @@ impl AgentServer {
         }
     }
 
-    /// Start the accept loop, running until Ctrl-C.
+    /// Start the accept loop, running until Ctrl-C or SIGTERM.
     ///
     /// # Errors
     ///
@@ -82,12 +81,19 @@ impl AgentServer {
         info!("swink-agentd listening on {}", self.path.display());
         let _cleanup = SocketCleanup(self.path.clone());
 
-        let session_active = Arc::new(AtomicBool::new(false));
+        let session_active = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let shutdown = Arc::new(Notify::new());
         let shutdown2 = Arc::clone(&shutdown);
 
         tokio::spawn(async move {
-            let _ = tokio::signal::ctrl_c().await;
+            use tokio::signal::unix::{SignalKind, signal};
+
+            let mut sigterm =
+                signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = sigterm.recv() => {}
+            }
             info!("shutdown signal received");
             shutdown2.notify_waiters();
         });
@@ -119,6 +125,9 @@ impl AgentServer {
     /// Not available on this platform.
     #[cfg(not(unix))]
     pub async fn serve(self) -> std::io::Result<()> {
+        let Self { path, factory } = self;
+        drop((path, factory));
+        std::future::ready(()).await;
         Err(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
             "Unix socket transport requires a Unix host",
@@ -143,9 +152,11 @@ impl Drop for SocketCleanup {
 #[cfg(unix)]
 async fn handle_connection(
     stream: tokio::net::UnixStream,
-    session_active: Arc<AtomicBool>,
+    session_active: Arc<std::sync::atomic::AtomicBool>,
     factory: Arc<dyn Fn() -> AgentOptions + Send + Sync>,
 ) {
+    use std::sync::atomic::Ordering;
+
     use tracing::{info, warn};
 
     // Peer credential check: only allow connections from the same effective user.
@@ -190,14 +201,14 @@ async fn handle_connection(
 
 // ─── Session ──────────────────────────────────────────────────────────────────
 
-#[cfg(unix)]
+#[cfg(any(unix, test))]
 async fn run_session(
     peer: &mut crate::jsonrpc::JsonRpcPeer,
     factory: &(dyn Fn() -> AgentOptions + Send + Sync),
 ) -> Result<(), crate::jsonrpc::RpcError> {
     use crate::dto::{
         InitializedParams, PROTOCOL_VERSION, ServerInfo, ToolApprovalDto, ToolApprovalRequestDto,
-        method,
+        method, parse_initialize_params,
     };
     use crate::jsonrpc::{IncomingMessage, RpcError};
     use swink_agent::{Agent, ToolApproval};
@@ -205,7 +216,8 @@ async fn run_session(
 
     // Handshake: await `initialize` notification.
     match peer.recv_incoming().await {
-        Some(IncomingMessage::Notification { method: m, .. }) if m == method::INITIALIZE => {
+        Some(IncomingMessage::Notification { method: m, params }) if m == method::INITIALIZE => {
+            parse_initialize_params(params)?;
             debug!("received initialize");
         }
         Some(other) => {
@@ -269,7 +281,11 @@ async fn run_session(
                         .respond_ok(id, crate::dto::PromptResult { turn_id })?;
                 }
                 Err(e) => {
+                    let end_session = e.code == RpcError::DISCONNECTED;
                     peer.sender().respond_err(id, e)?;
+                    if end_session {
+                        break;
+                    }
                 }
             },
             Some(IncomingMessage::Request { id, method: m, .. }) => {
@@ -285,7 +301,7 @@ async fn run_session(
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, test))]
 async fn run_prompt(
     peer: &mut crate::jsonrpc::JsonRpcPeer,
     agent: &mut swink_agent::Agent,
@@ -378,4 +394,554 @@ fn peer_uid(stream: &tokio::net::UnixStream) -> std::io::Result<u32> {
 fn peer_uid(_stream: &tokio::net::UnixStream) -> std::io::Result<u32> {
     tracing::warn!("peer credential check not supported on this Unix variant; allowing connection");
     Ok(effective_uid())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::ErrorKind;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use swink_agent::{AgentEvent, AgentOptions, AgentTool, StreamFn};
+    use tokio::io::duplex;
+
+    use super::*;
+    use crate::dto::{
+        ClientInfo, InitializeParams, PROTOCOL_VERSION, PromptParams, PromptResult,
+        ToolApprovalDto, ToolApprovalRequestDto, method,
+    };
+    use crate::jsonrpc::{IncomingMessage, JsonRpcPeer};
+
+    fn make_peer_pair() -> (JsonRpcPeer, JsonRpcPeer) {
+        let (client_read, server_write) = duplex(8192);
+        let (server_read, client_write) = duplex(8192);
+        (
+            JsonRpcPeer::new(client_read, client_write),
+            JsonRpcPeer::new(server_read, server_write),
+        )
+    }
+
+    fn test_agent_options(response: &'static str) -> AgentOptions {
+        let stream_fn: Arc<dyn StreamFn> = Arc::new(
+            swink_agent::testing::SimpleMockStreamFn::from_text(response),
+        );
+        AgentOptions::new(
+            "test system",
+            swink_agent::testing::default_model(),
+            stream_fn,
+            swink_agent::testing::default_convert,
+        )
+    }
+
+    fn approval_blocking_agent_options() -> AgentOptions {
+        let stream_fn: Arc<dyn StreamFn> = Arc::new(swink_agent::testing::MockStreamFn::new(vec![
+            swink_agent::testing::tool_call_events("call-1", "blocked_tool", r"{}"),
+        ]));
+        let tool = Arc::new(
+            swink_agent::testing::MockTool::new("blocked_tool").with_requires_approval(true),
+        );
+
+        AgentOptions::new(
+            "test system",
+            swink_agent::testing::default_model(),
+            stream_fn,
+            swink_agent::testing::default_convert,
+        )
+        .with_tools(vec![tool as Arc<dyn AgentTool>])
+    }
+
+    #[test]
+    fn bind_rejects_existing_socket_path_without_force() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("swink.sock");
+        std::fs::write(&path, b"stale socket placeholder").unwrap();
+
+        let err = match AgentServer::bind(&path, || test_agent_options("unused")) {
+            Ok(_) => panic!("bind should reject existing socket path"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.kind(), ErrorKind::AlreadyExists);
+        assert!(
+            err.to_string().contains("remove it or pass --force"),
+            "unexpected bind error: {err}"
+        );
+        assert!(
+            path.exists(),
+            "bind without force must not remove the existing path"
+        );
+    }
+
+    #[test]
+    fn bind_force_removes_existing_stale_socket_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("swink.sock");
+        std::fs::write(&path, b"stale socket placeholder").unwrap();
+
+        let _server = AgentServer::bind_force(&path, || test_agent_options("unused"));
+
+        assert!(
+            !path.exists(),
+            "bind_force should remove a stale socket path before serving"
+        );
+    }
+
+    async fn initialize(peer: &mut JsonRpcPeer) {
+        peer.sender()
+            .notify(
+                method::INITIALIZE,
+                &InitializeParams {
+                    protocol_version: PROTOCOL_VERSION.into(),
+                    client: ClientInfo {
+                        name: "test-client".into(),
+                        version: "0.1.0".into(),
+                    },
+                },
+            )
+            .await
+            .unwrap();
+
+        let Some(IncomingMessage::Notification { method: m, .. }) = peer.recv_incoming().await
+        else {
+            panic!("expected initialized notification");
+        };
+        assert_eq!(m, method::INITIALIZED);
+    }
+
+    #[tokio::test]
+    async fn run_session_streams_prompt_events_and_turn_response() {
+        let (mut client, mut server) = make_peer_pair();
+
+        let server_task = tokio::spawn(async move {
+            run_session(&mut server, &|| test_agent_options("hello from rpc server"))
+                .await
+                .unwrap();
+        });
+
+        initialize(&mut client).await;
+
+        let sender = client.sender();
+        let params = PromptParams {
+            text: "hello rpc".into(),
+            session_id: None,
+        };
+        let prompt = sender.request::<_, PromptResult>(method::PROMPT, &params);
+        let mut prompt = std::pin::pin!(prompt);
+        let mut events = Vec::new();
+        let result = loop {
+            tokio::select! {
+                result = &mut prompt => {
+                    let result = result.unwrap();
+                    while let Some(incoming) = client.try_recv_incoming() {
+                        collect_agent_event(incoming, &mut events);
+                    }
+                    break result;
+                }
+                incoming = client.recv_incoming() => {
+                    let incoming = incoming.expect("server should stay connected while prompt runs");
+                    collect_agent_event(incoming, &mut events);
+                }
+            }
+        };
+
+        assert!(!result.turn_id.is_empty());
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, AgentEvent::TurnStart)),
+            "server should stream turn lifecycle events"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, AgentEvent::MessageEnd { message } if message
+                    .content
+                    .iter()
+                    .any(|block| matches!(block, swink_agent::ContentBlock::Text { text } if text == "hello from rpc server")))),
+            "server should stream the assistant response body"
+        );
+
+        client
+            .sender()
+            .notify(method::SHUTDOWN, &serde_json::Value::Null)
+            .await
+            .unwrap();
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_session_rejects_invalid_prompt_params_without_ending_session() {
+        let (mut client, mut server) = make_peer_pair();
+
+        let server_task = tokio::spawn(async move {
+            run_session(&mut server, &|| test_agent_options("valid follow-up"))
+                .await
+                .unwrap();
+        });
+
+        initialize(&mut client).await;
+
+        let sender = client.sender();
+        let err = sender
+            .request::<_, PromptResult>(
+                method::PROMPT,
+                &serde_json::json!({
+                    "session_id": "missing-text"
+                }),
+            )
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.code, crate::jsonrpc::RpcError::INVALID_REQUEST);
+        assert!(
+            err.message.contains("missing or invalid prompt params"),
+            "unexpected prompt error: {}",
+            err.message
+        );
+
+        let params = PromptParams {
+            text: "recover after invalid params".into(),
+            session_id: None,
+        };
+        let prompt = sender.request::<_, PromptResult>(method::PROMPT, &params);
+        let mut prompt = std::pin::pin!(prompt);
+        let mut events = Vec::new();
+        let result = loop {
+            tokio::select! {
+                result = &mut prompt => {
+                    let result = result.unwrap();
+                    while let Some(incoming) = client.try_recv_incoming() {
+                        collect_agent_event(incoming, &mut events);
+                    }
+                    break result;
+                }
+                incoming = client.recv_incoming() => {
+                    let incoming = incoming.expect("server should stay connected after rejecting invalid prompt");
+                    collect_agent_event(incoming, &mut events);
+                }
+            }
+        };
+
+        assert!(!result.turn_id.is_empty());
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                AgentEvent::MessageEnd { message } if message
+                    .content
+                    .iter()
+                    .any(|block| matches!(block, swink_agent::ContentBlock::Text { text } if text == "valid follow-up"))
+            )),
+            "server should continue serving valid prompts after an invalid request"
+        );
+
+        client
+            .sender()
+            .notify(method::SHUTDOWN, &serde_json::Value::Null)
+            .await
+            .unwrap();
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_session_rejects_unknown_requests_without_ending_session() {
+        let (mut client, mut server) = make_peer_pair();
+
+        let server_task = tokio::spawn(async move {
+            run_session(&mut server, &|| test_agent_options("unused"))
+                .await
+                .unwrap();
+        });
+
+        initialize(&mut client).await;
+
+        let sender = client.sender();
+        let err = sender
+            .request::<_, serde_json::Value>("rpc.unknown", &serde_json::json!({}))
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.code, crate::jsonrpc::RpcError::METHOD_NOT_FOUND);
+        assert_eq!(err.message, "method not found: rpc.unknown");
+
+        sender
+            .notify(method::SHUTDOWN, &serde_json::Value::Null)
+            .await
+            .unwrap();
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_session_ignores_idle_cancel_without_ending_session() {
+        let (mut client, mut server) = make_peer_pair();
+
+        let server_task = tokio::spawn(async move {
+            run_session(&mut server, &|| test_agent_options("after idle cancel"))
+                .await
+                .unwrap();
+        });
+
+        initialize(&mut client).await;
+
+        let sender = client.sender();
+        sender
+            .notify(method::CANCEL, &serde_json::Value::Null)
+            .await
+            .unwrap();
+
+        let params = PromptParams {
+            text: "still accepts prompts".into(),
+            session_id: None,
+        };
+        let prompt = sender.request::<_, PromptResult>(method::PROMPT, &params);
+        let mut prompt = std::pin::pin!(prompt);
+        let mut events = Vec::new();
+        let result = loop {
+            tokio::select! {
+                result = &mut prompt => {
+                    let result = result.unwrap();
+                    while let Some(incoming) = client.try_recv_incoming() {
+                        collect_agent_event(incoming, &mut events);
+                    }
+                    break result;
+                }
+                incoming = client.recv_incoming() => {
+                    let incoming = incoming.expect("server should stay connected after idle cancel");
+                    collect_agent_event(incoming, &mut events);
+                }
+            }
+        };
+
+        assert!(!result.turn_id.is_empty());
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                AgentEvent::MessageEnd { message } if message
+                    .content
+                    .iter()
+                    .any(|block| matches!(block, swink_agent::ContentBlock::Text { text } if text == "after idle cancel"))
+            )),
+            "server should keep serving prompts after an idle cancel notification"
+        );
+
+        sender
+            .notify(method::SHUTDOWN, &serde_json::Value::Null)
+            .await
+            .unwrap();
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_session_shutdown_during_prompt_ends_session() {
+        let (mut client, mut server) = make_peer_pair();
+
+        let server_task = tokio::spawn(async move {
+            run_session(&mut server, &|| approval_blocking_agent_options())
+                .await
+                .unwrap();
+        });
+
+        initialize(&mut client).await;
+
+        let sender = client.sender();
+        let params = PromptParams {
+            text: "start a long prompt".into(),
+            session_id: None,
+        };
+        let prompt_sender = sender.clone();
+        let prompt_task = tokio::spawn(async move {
+            prompt_sender
+                .request::<_, PromptResult>(method::PROMPT, &params)
+                .await
+        });
+        let mut prompt_task = std::pin::pin!(prompt_task);
+
+        loop {
+            tokio::select! {
+                result = &mut prompt_task => {
+                    panic!("prompt resolved before tool approval request: {result:?}");
+                }
+                incoming = client.recv_incoming() => {
+                    match incoming.expect("server should request approval before shutdown") {
+                        IncomingMessage::Request { method: m, .. } if m == method::TOOL_APPROVE => break,
+                        IncomingMessage::Notification { method: m, .. } if m == method::AGENT_EVENT => {}
+                        other => panic!("unexpected message while awaiting tool approval: {other:?}"),
+                    }
+                }
+            }
+        }
+
+        sender
+            .notify(method::SHUTDOWN, &serde_json::Value::Null)
+            .await
+            .unwrap();
+
+        let err = prompt_task.await.unwrap().unwrap_err();
+        assert_eq!(err.code, crate::jsonrpc::RpcError::DISCONNECTED);
+
+        tokio::time::timeout(Duration::from_secs(1), server_task)
+            .await
+            .expect("shutdown during a prompt should end the session")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_session_round_trips_tool_approval_during_prompt() {
+        let (mut client, mut server) = make_peer_pair();
+        let stream_fn: Arc<dyn StreamFn> = Arc::new(swink_agent::testing::MockStreamFn::new(vec![
+            swink_agent::testing::tool_call_events(
+                "call-1",
+                "dangerous_tool",
+                r#"{"path":"/tmp/example"}"#,
+            ),
+            swink_agent::testing::text_only_events("done after approval"),
+        ]));
+        let tool = Arc::new(
+            swink_agent::testing::MockTool::new("dangerous_tool").with_requires_approval(true),
+        );
+        let executed_tool = Arc::clone(&tool);
+
+        let server_task = tokio::spawn(async move {
+            let factory = || {
+                AgentOptions::new(
+                    "test system",
+                    swink_agent::testing::default_model(),
+                    Arc::clone(&stream_fn),
+                    swink_agent::testing::default_convert,
+                )
+                .with_tools(vec![Arc::clone(&tool) as Arc<dyn AgentTool>])
+            };
+
+            run_session(&mut server, &factory).await.unwrap();
+        });
+
+        initialize(&mut client).await;
+
+        let sender = client.sender();
+        let params = PromptParams {
+            text: "run approved tool".into(),
+            session_id: None,
+        };
+        let prompt = sender.request::<_, PromptResult>(method::PROMPT, &params);
+        let mut prompt = std::pin::pin!(prompt);
+        let mut events = Vec::new();
+        let mut approvals = 0;
+        let result = loop {
+            tokio::select! {
+                result = &mut prompt => {
+                    let result = result.unwrap();
+                    while let Some(incoming) = client.try_recv_incoming() {
+                        handle_prompt_incoming(incoming, &sender, &mut events, &mut approvals);
+                    }
+                    break result;
+                }
+                incoming = client.recv_incoming() => {
+                    let incoming = incoming.expect("server should stay connected while prompt runs");
+                    handle_prompt_incoming(incoming, &sender, &mut events, &mut approvals);
+                }
+            }
+        };
+
+        assert!(!result.turn_id.is_empty());
+        assert_eq!(approvals, 1);
+        assert!(executed_tool.was_executed());
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                AgentEvent::ToolApprovalResolved { approved, .. } if *approved
+            )),
+            "server should continue the turn after receiving approval"
+        );
+
+        client
+            .sender()
+            .notify(method::SHUTDOWN, &serde_json::Value::Null)
+            .await
+            .unwrap();
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_session_rejects_protocol_version_mismatch() {
+        let (mut client, mut server) = make_peer_pair();
+
+        let server_task = tokio::spawn(async move {
+            run_session(&mut server, &|| test_agent_options("unused"))
+                .await
+                .unwrap_err()
+        });
+
+        client
+            .sender()
+            .notify(
+                method::INITIALIZE,
+                &InitializeParams {
+                    protocol_version: "0.9".into(),
+                    client: ClientInfo::default(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let err = server_task.await.unwrap();
+        assert_eq!(err.code, crate::jsonrpc::RpcError::PROTOCOL_MISMATCH);
+        assert!(client.try_recv_incoming().is_none());
+    }
+
+    fn collect_agent_event(incoming: IncomingMessage, events: &mut Vec<AgentEvent>) {
+        let IncomingMessage::Notification { method: m, params } = incoming else {
+            panic!("unexpected request while collecting prompt events");
+        };
+        assert_eq!(m, method::AGENT_EVENT);
+        let event = serde_json::from_value(params.expect("agent.event should carry params"))
+            .expect("agent.event should deserialize");
+        events.push(event);
+    }
+
+    fn handle_prompt_incoming(
+        incoming: IncomingMessage,
+        sender: &crate::jsonrpc::PeerSender,
+        events: &mut Vec<AgentEvent>,
+        approvals: &mut usize,
+    ) {
+        match incoming {
+            IncomingMessage::Notification { method: m, params } => {
+                assert_eq!(m, method::AGENT_EVENT);
+                let event =
+                    serde_json::from_value(params.expect("agent.event should carry params"))
+                        .expect("agent.event should deserialize");
+                events.push(event);
+            }
+            IncomingMessage::Request {
+                id,
+                method: m,
+                params,
+            } => {
+                assert_eq!(m, method::TOOL_APPROVE);
+                let request: ToolApprovalRequestDto =
+                    serde_json::from_value(params.expect("tool.approve should carry params"))
+                        .expect("tool.approve params should deserialize");
+                assert_eq!(request.id, "call-1");
+                assert_eq!(request.name, "dangerous_tool");
+                assert_eq!(request.arguments["path"], "/tmp/example");
+                assert!(request.requires_approval);
+
+                *approvals += 1;
+                sender.respond_ok(id, ToolApprovalDto::Approved).unwrap();
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    #[tokio::test]
+    async fn serve_reports_unix_transport_unavailable_on_non_unix_hosts() {
+        let server = AgentServer::bind_force("unused.sock", || test_agent_options("unused"));
+
+        let err = server.serve().await.unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+        assert!(
+            err.to_string().contains("Unix socket transport"),
+            "unexpected error message: {err}"
+        );
+    }
 }

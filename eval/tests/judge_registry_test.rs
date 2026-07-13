@@ -208,5 +208,6 @@ fn verdict(score: f64, pass: bool, reason: &str) -> JudgeVerdict {
         pass,
         reason: Some(reason.to_string()),
         label: None,
+        cost: None,
     }
 }

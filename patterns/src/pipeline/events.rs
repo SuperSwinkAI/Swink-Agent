@@ -44,14 +44,73 @@ pub enum PipelineEvent {
 
 impl PipelineEvent {
     /// Convert this event to an [`Emission`] for integration with `AgentEvent::Custom`.
+    ///
+    /// The payload carries the fields each variant holds (pipeline ID, step
+    /// info, duration, usage, or error message) so consumers subscribing via
+    /// `AgentEvent::Custom` don't just see a bare event name.
     pub fn to_emission(&self) -> Emission {
-        let kind = match self {
-            Self::Started { .. } => "pipeline.started",
-            Self::StepStarted { .. } => "pipeline.step_started",
-            Self::StepCompleted { .. } => "pipeline.step_completed",
-            Self::Completed { .. } => "pipeline.completed",
-            Self::Failed { .. } => "pipeline.failed",
+        let (kind, payload) = match self {
+            Self::Started {
+                pipeline_id,
+                pipeline_name,
+            } => (
+                "pipeline.started",
+                serde_json::json!({
+                    "pipeline_id": pipeline_id.to_string(),
+                    "pipeline_name": pipeline_name,
+                }),
+            ),
+            Self::StepStarted {
+                pipeline_id,
+                step_index,
+                agent_name,
+            } => (
+                "pipeline.step_started",
+                serde_json::json!({
+                    "pipeline_id": pipeline_id.to_string(),
+                    "step_index": step_index,
+                    "agent_name": agent_name,
+                }),
+            ),
+            Self::StepCompleted {
+                pipeline_id,
+                step_index,
+                agent_name,
+                duration,
+                usage,
+            } => (
+                "pipeline.step_completed",
+                serde_json::json!({
+                    "pipeline_id": pipeline_id.to_string(),
+                    "step_index": step_index,
+                    "agent_name": agent_name,
+                    "duration_ms": duration.as_millis() as u64,
+                    "usage": usage,
+                }),
+            ),
+            Self::Completed {
+                pipeline_id,
+                total_duration,
+                total_usage,
+            } => (
+                "pipeline.completed",
+                serde_json::json!({
+                    "pipeline_id": pipeline_id.to_string(),
+                    "total_duration_ms": total_duration.as_millis() as u64,
+                    "total_usage": total_usage,
+                }),
+            ),
+            Self::Failed {
+                pipeline_id,
+                error_message,
+            } => (
+                "pipeline.failed",
+                serde_json::json!({
+                    "pipeline_id": pipeline_id.to_string(),
+                    "error_message": error_message,
+                }),
+            ),
         };
-        Emission::new(kind, serde_json::Value::Null)
+        Emission::new(kind, payload)
     }
 }

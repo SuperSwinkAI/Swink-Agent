@@ -12,10 +12,9 @@
 use std::collections::HashMap;
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+use tempfile::NamedTempFile;
 
 // ── public API ───────────────────────────────────────────────────────
 
@@ -76,49 +75,34 @@ where
             "target path has no parent directory",
         )
     })?;
-    let file_name = target.file_name().and_then(|s| s.to_str()).ok_or_else(|| {
+    target.file_name().and_then(|s| s.to_str()).ok_or_else(|| {
         io::Error::new(io::ErrorKind::InvalidInput, "target path has no file name")
     })?;
 
-    // Unique per write attempt: pid + monotonic counter. Two overlapping
-    // rewrites of the same target inside one process must not share a temp
-    // path, or they would truncate/rename each other's files.
-    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    let tmp_path = parent.join(format!(".{file_name}.tmp.{}.{seq}", std::process::id()));
-
-    let result: io::Result<()> = (|| {
-        // `create_new` guarantees we never clobber a pre-existing temp file
-        // from another writer that happened to pick the same path.
-        let file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp_path)?;
+    (|| {
+        let tmp_file = NamedTempFile::new_in(parent)?;
         {
-            let mut writer = BufWriter::new(&file);
+            let file = tmp_file.as_file();
+            let mut writer = BufWriter::new(file);
             contents_fn(&mut writer)?;
             writer.flush()?;
         }
-        file.sync_all()?;
-        drop(file);
-        rename_replacing(&tmp_path, target)?;
+        tmp_file.as_file().sync_all()?;
+        // Preserve an existing target's permissions: NamedTempFile creates
+        // 0600-mode files on Unix, so persisting over e.g. a 0755 script would
+        // otherwise silently strip its executable/group/world bits. NEW files
+        // (no existing target) intentionally keep tempfile's private 0600
+        // default — the only new-file creators are internal data stores where
+        // private-by-default is fine. Cross-platform: on Windows this clones
+        // the readonly flag.
+        if let Ok(existing) = std::fs::metadata(target) {
+            tmp_file.as_file().set_permissions(existing.permissions())?;
+        }
+        tmp_file.persist(target).map_err(|err| err.error)?;
         #[cfg(unix)]
         sync_parent_dir(parent)?;
         Ok(())
-    })();
-
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp_path);
-    }
-    result
-}
-
-/// Rename `from` to `to`, replacing `to` if it already exists.
-///
-/// Keep the replacement to a single rename operation. The previous
-/// delete-then-rename Windows path could lose both files if the process or
-/// host crashed in the gap between those two syscalls.
-fn rename_replacing(from: &Path, to: &Path) -> io::Result<()> {
-    std::fs::rename(from, to)
+    })()
 }
 
 #[cfg(unix)]
@@ -209,6 +193,22 @@ mod tests {
         // File should contain one complete writer's output (no corruption).
         let content = fs::read_to_string(&target).unwrap();
         assert!(content.starts_with("writer-"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_preserves_existing_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("script.sh");
+        fs::write(&target, "#!/bin/sh\necho old\n").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+
+        atomic_write_bytes(&target, b"#!/bin/sh\necho new\n").unwrap();
+
+        let mode = fs::metadata(&target).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o755);
     }
 
     #[cfg(windows)]

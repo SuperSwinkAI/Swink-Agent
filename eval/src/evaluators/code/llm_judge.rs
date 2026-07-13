@@ -126,4 +126,8 @@ impl Evaluator for CodeLlmJudgeEvaluator {
 
         Some(finish_metric_result(self.name.to_string(), outcome))
     }
+
+    fn aggregator(&self) -> Arc<dyn crate::aggregator::Aggregator> {
+        self.config.effective_aggregator()
+    }
 }

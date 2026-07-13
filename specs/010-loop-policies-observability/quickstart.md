@@ -286,7 +286,7 @@ Add the `otel` feature to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-swink-agent = { version = "0.4", features = ["otel"] }
+swink-agent = { version = "0.9", features = ["otel"] }
 ```
 
 Set up the OTel subscriber layer:
@@ -295,8 +295,9 @@ Set up the OTel subscriber layer:
 use tracing_subscriber::prelude::*;
 use swink_agent::otel::{OtelInitConfig, init_otel_layer};
 
-// Quick setup: OTLP exporter to localhost:4317
-let otel_layer = init_otel_layer(OtelInitConfig::default());
+// Quick setup: OTLP exporter to localhost:4317.
+// Returns Err(OtelInitError) if the OTLP exporter fails to build.
+let otel_layer = init_otel_layer(OtelInitConfig::default())?;
 tracing_subscriber::registry()
     .with(otel_layer)
     .init();
@@ -316,7 +317,7 @@ let config = OtelInitConfig {
     service_name: "my-agent-service".into(),
     endpoint: Some("https://otel-collector.example.com:4317".into()),
 };
-let otel_layer = init_otel_layer(config);
+let otel_layer = init_otel_layer(config)?;
 ```
 
 ### OTel + console logging together
@@ -326,7 +327,7 @@ use tracing_subscriber::prelude::*;
 use swink_agent::otel::{OtelInitConfig, init_otel_layer};
 
 tracing_subscriber::registry()
-    .with(init_otel_layer(OtelInitConfig::default()))
+    .with(init_otel_layer(OtelInitConfig::default())?)
     .with(tracing_subscriber::fmt::layer())  // also log to stderr
     .init();
 ```

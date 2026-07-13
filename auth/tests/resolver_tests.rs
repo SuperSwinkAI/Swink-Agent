@@ -1,11 +1,15 @@
-//! Tests for DefaultCredentialResolver (T030-T031, T037-T043, T044, T046, T056, T063, T065).
+//! Tests for DefaultCredentialResolver (T030-T031, T037-T043, T044, T046, T056,
+//! T062, T063, T065).
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
-use swink_agent::{Credential, CredentialError, CredentialResolver, ResolvedCredential};
-use swink_agent_auth::{DefaultCredentialResolver, InMemoryCredentialStore};
+use swink_agent::{
+    AuthorizationHandler, Credential, CredentialError, CredentialFuture, CredentialResolver,
+    CredentialStore, ResolvedCredential,
+};
+use swink_agent_auth::{AuthorizationConfig, DefaultCredentialResolver, InMemoryCredentialStore};
 
 // ── US1: API Key Resolution ────────────────────────────────────────────────
 
@@ -269,5 +273,94 @@ async fn expired_no_refresh_no_handler_returns_expired() {
     match err {
         CredentialError::Expired { key } => assert_eq!(key, "service"),
         other => panic!("expected Expired, got {other:?}"),
+    }
+}
+
+// ── US4: authorization edge cases ──────────────────────────────────────────
+
+struct UnusedHandler;
+
+impl AuthorizationHandler for UnusedHandler {
+    fn authorize(&self, _auth_url: &str, _state: &str) -> CredentialFuture<'_, String> {
+        Box::pin(
+            async move { unreachable!("handler should not be invoked without a matching config") },
+        )
+    }
+}
+
+// Handler configured, but no AuthorizationConfig registered for the key:
+// behaves exactly as if no handler were configured (FR-011).
+#[tokio::test]
+async fn missing_credential_handler_without_config_returns_not_found() {
+    let store: Arc<dyn swink_agent::CredentialStore> = Arc::new(InMemoryCredentialStore::empty());
+    let resolver =
+        DefaultCredentialResolver::new(store).with_authorization_handler(Arc::new(UnusedHandler));
+
+    let err = resolver.resolve("missing").await.unwrap_err();
+    match err {
+        CredentialError::NotFound { key } => assert_eq!(key, "missing"),
+        other => panic!("expected NotFound, got {other:?}"),
+    }
+}
+
+/// A `CredentialStore` whose `get()` never completes, used to exercise the
+/// resolver-level resolution timeout (T062, FR-014) independent of any
+/// timeout applied above the resolver (e.g. dispatch-layer
+/// `AgentOptions::with_credential_timeout`).
+struct HangingStore;
+
+impl CredentialStore for HangingStore {
+    fn get(&self, _key: &str) -> CredentialFuture<'_, Option<Credential>> {
+        Box::pin(async move {
+            std::future::pending::<()>().await;
+            unreachable!("hanging store never completes")
+        })
+    }
+
+    fn set(&self, _key: &str, _credential: Credential) -> CredentialFuture<'_, ()> {
+        Box::pin(std::future::ready(Ok(())))
+    }
+
+    fn delete(&self, _key: &str) -> CredentialFuture<'_, ()> {
+        Box::pin(std::future::ready(Ok(())))
+    }
+}
+
+// T062: a resolver-level `with_timeout` bounds the non-interactive
+// resolution path even when the store itself never responds.
+#[tokio::test]
+async fn with_timeout_bounds_store_lookup() {
+    let store: Arc<dyn swink_agent::CredentialStore> = Arc::new(HangingStore);
+    let resolver = DefaultCredentialResolver::new(store).with_timeout(Duration::from_millis(50));
+
+    let err = resolver.resolve("any-key").await.unwrap_err();
+    match err {
+        CredentialError::Timeout { key } => assert_eq!(key, "any-key"),
+        other => panic!("expected Timeout, got {other:?}"),
+    }
+}
+
+// T054 negative case: no AuthorizationConfig means the interactive flow
+// never starts, so with_authorization_timeout's short window doesn't matter.
+#[tokio::test]
+async fn with_authorization_config_required_alongside_handler() {
+    let store: Arc<dyn swink_agent::CredentialStore> = Arc::new(InMemoryCredentialStore::empty());
+    let config = AuthorizationConfig {
+        authorization_endpoint: "https://accounts.example.com/o/authorize".to_string(),
+        token_url: "https://accounts.example.com/token".to_string(),
+        client_id: "client".to_string(),
+        client_secret: None,
+        redirect_uri: "http://localhost:8080/callback".to_string(),
+        scopes: vec![],
+    };
+    // Config registered for a DIFFERENT key than the one being resolved.
+    let resolver = DefaultCredentialResolver::new(store)
+        .with_authorization_handler(Arc::new(UnusedHandler))
+        .with_authorization_config("other-key", config);
+
+    let err = resolver.resolve("missing").await.unwrap_err();
+    match err {
+        CredentialError::NotFound { key } => assert_eq!(key, "missing"),
+        other => panic!("expected NotFound, got {other:?}"),
     }
 }

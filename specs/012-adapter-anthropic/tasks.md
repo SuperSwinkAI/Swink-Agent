@@ -178,8 +178,12 @@
 - [x] T057 [US4] Implement HTTP error classification in `anthropic_stream()` — inline match on status code mapping to `AssistantMessageEvent` error constructors per the error classification contract
 - [x] T058 [US4] Implement connection error handling in `send_request()` — map `reqwest::Error` to `error_network()` event
 - [x] T059 [US4] Implement SSE `error` event handling in `process_sse_event()` — finalize open blocks, extract error message from JSON, emit error event
+- [x] T059a [US4] Add `retry_after: Option<std::time::Duration>` field to `AssistantMessageEvent::Error` (`src/stream.rs`) and update all constructors and construction/match sites workspace-wide (FR-006; was previously dropped — no code read response headers and the event had no field to carry the timing)
+- [x] T059b [US4] Implement `classify::parse_retry_after` / `parse_retry_after_value` (delay-seconds and HTTP-date forms) and `classify::with_retry_after` in `adapters/src/classify.rs`, with unit tests
+- [x] T059c [US4] Wire retry-after header parsing into `anthropic_stream()`'s HTTP error path (`adapters/src/anthropic.rs`) — read `Retry-After` before consuming the response body, attach via `with_retry_after`
+- [x] T059d [US4] Extend `adapters/tests/anthropic.rs` 429 coverage — add `anthropic_http_429_with_retry_after_header` asserting the hint is populated, and assert `None` on the existing header-less 429 test
 
-**Checkpoint**: User Story 4 complete — all Anthropic error conditions map to correct agent error types for retry strategy decisions
+**Checkpoint**: User Story 4 complete — all Anthropic error conditions map to correct agent error types for retry strategy decisions. FR-006 (retry-after propagation) is implemented for HTTP-level errors; the agent loop's `RetryStrategy` does not yet consume the hint (see spec.md addendum) — that consumption is tracked as follow-up work outside this adapter's scope.
 
 ---
 

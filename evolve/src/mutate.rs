@@ -1,3 +1,4 @@
+use crate::config::CycleBudget;
 use crate::diagnose::TargetComponent;
 use crate::diagnose::WeakPoint;
 use serde::{Deserialize, Serialize};
@@ -7,7 +8,7 @@ use thiserror::Error;
 
 /// Context passed to each mutation strategy.
 #[derive(Debug, Clone)]
-pub struct MutationContext {
+pub struct MutationContext<'a> {
     pub weak_point: WeakPoint,
     /// Failing trajectory traces from baseline evaluation.
     pub failing_traces: Vec<Invocation>,
@@ -16,6 +17,10 @@ pub struct MutationContext {
     /// Seed for deterministic strategies.
     pub seed: Option<u64>,
     pub max_candidates: usize,
+    /// Shared cycle budget (FR-012). `LlmGuided` records each judge
+    /// invocation — and its cost, when the judge populates one — against
+    /// this. `None` in contexts built without a budget (e.g. some tests).
+    pub budget: Option<&'a CycleBudget>,
 }
 
 /// Errors that a mutation strategy can return.
@@ -70,7 +75,7 @@ pub trait MutationStrategy: Send + Sync {
     fn mutate(
         &self,
         target: &str,
-        context: &MutationContext,
+        context: &MutationContext<'_>,
     ) -> Result<Vec<Candidate>, MutationError>;
 }
 

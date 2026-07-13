@@ -27,7 +27,10 @@ pub use mutate::{Candidate, MutationContext, MutationError, MutationStrategy, de
 pub use strategies::{Ablation, LlmGuided, TemplateBased};
 
 // Evaluation & gating
-pub use evaluate::CandidateResult;
+pub use evaluate::{
+    CandidateResult, DescriptionOverrideTool, MutatingAgentFactory, TOOL_DESCRIPTION_OVERRIDE_KEY,
+    ToolDescriptionOverride, apply_tool_description_override,
+};
 pub use gate::{AcceptanceGate, AcceptanceResult, AcceptanceVerdict};
 
 // Core runner

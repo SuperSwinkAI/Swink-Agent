@@ -1,6 +1,6 @@
 # Agent Context
 
-**Source files:** `src/context.rs` (sliding window compaction), `src/types.rs`, `src/context_transformer.rs`
+**Source files:** `src/context.rs` (sliding window compaction), `src/types/`, `src/context_transformer.rs`, `src/async_context_transformer.rs`
 **Related:** [PRD §5](../../planning/PRD.md#5-agent-context)
 
 The agent context is the immutable snapshot passed into each loop turn. It contains the system prompt, the current message history, and the list of available tools. The loop never mutates a context in place — each turn produces a new snapshot.
@@ -23,12 +23,14 @@ flowchart TB
     end
 
     subgraph Consumers["Consumers"]
-        TransformCtx["transform_context<br/>Fn(&amp;mut Vec&lt;AgentMessage&gt;, bool)"]
+        AsyncTransformCtx["async_transform_context<br/>AsyncContextTransformer trait (async)<br/>runs BEFORE the sync transform"]
+        TransformCtx["transform_context<br/>ContextTransformer trait (sync)<br/>transform(&amp;mut Vec&lt;AgentMessage&gt;, bool)<br/>→ Option&lt;CompactionReport&gt;"]
         ConvertLlm["convert_to_llm<br/>Fn(&amp;AgentMessage) → Option&lt;LlmMessage&gt;"]
         StreamFn["StreamFn<br/>receives &amp;AgentContext"]
     end
 
-    LoopState -->|"transform_context called with<br/>(&amp;mut context_messages, overflow_signal)"| TransformCtx
+    LoopState -->|"(&amp;mut context_messages, overflow_signal)"| AsyncTransformCtx
+    AsyncTransformCtx --> TransformCtx
     TransformCtx --> ConvertLlm
     ConvertLlm -->|"LlmMessages built"| AgentContext
     AgentContext --> StreamFn
@@ -40,7 +42,7 @@ flowchart TB
 
     class SP,Msgs,Tools fieldStyle
     class CtxMsgs,Overflow stateStyle
-    class TransformCtx,ConvertLlm,StreamFn consumerStyle
+    class AsyncTransformCtx,TransformCtx,ConvertLlm,StreamFn consumerStyle
 ```
 
 ---
@@ -61,6 +63,7 @@ Message transformation and LLM conversion happen *before* either context is cons
 ```mermaid
 sequenceDiagram
     participant State as LoopState
+    participant AsyncTransform as async_transform_context
     participant Transform as transform_context
     participant Convert as convert_to_llm
     participant InitCtx as AgentContext (initial)
@@ -69,8 +72,11 @@ sequenceDiagram
 
     Note over State: — Turn N begins —
 
-    State->>Transform: &mut context_messages, overflow_signal
-    Note over Transform: may prune / reorder / inject tokens<br/>(synchronous — not async)
+    State->>AsyncTransform: &mut context_messages, overflow_signal
+    Note over AsyncTransform: async I/O allowed — summary fetching,<br/>RAG retrieval, database lookups<br/>(AsyncContextTransformer, if configured)
+
+    AsyncTransform->>Transform: &mut context_messages, overflow_signal
+    Note over Transform: may prune / reorder / inject tokens<br/>(ContextTransformer — synchronous)
 
     Note over State: overflow_signal reset to false
 
@@ -92,32 +98,17 @@ sequenceDiagram
 
 ### L3 — Overflow Signal
 
-The overflow signal is managed internally in `LoopState` — it is **not** a field on `AgentContext`. It is passed as a plain `bool` parameter to the `transform_context` hook.
+The overflow signal is managed internally in `LoopState` — it is **not** a field on `AgentContext`. It is passed as a plain `bool` parameter to both transformer traits.
 
 - When a `ContextWindowOverflow` error is detected, the loop sets `LoopState.overflow_signal = true` and continues to the next inner-loop iteration.
-- At the start of the next turn, `transform_context(&mut context_messages, overflow_signal)` is called. Because `overflow_signal` is `true`, the hook can apply more aggressive pruning (e.g., dropping older tool results, summarising earlier turns).
-- Immediately after the call, `overflow_signal` is reset to `false` — the signal is consumed in a single turn.
-- The signal never flows through `AgentContext`; it exists only in `LoopState` and is passed directly to the hook.
+- At the start of the next turn, the transformers are called with `overflow = true`, so they can apply more aggressive pruning (e.g., dropping older tool results, summarising earlier turns).
+- Immediately after, `overflow_signal` is reset to `false` — the signal is consumed in a single turn.
+- The signal never flows through `AgentContext`; it exists only in `LoopState` and is passed directly to the transformers.
 
-```mermaid
-sequenceDiagram
-    participant RunLoop as run_turn
-    participant State as LoopState
-    participant Transform as transform_context
-
-    Note over RunLoop: Turn fails with ContextWindowOverflow
-    RunLoop->>State: overflow_signal = true
-
-    Note over RunLoop: inner loop continues
-    State->>Transform: &mut context_messages, overflow_signal = true
-    Note over Transform: aggressive pruning applied (sync call)
-
-    Transform->>State: overflow_signal reset to false
-    Note over State: subsequent turns see overflow_signal = false
-```
+How the overflow interacts with the surrounding turn/retry machinery is shown in the [agent-loop README](../agent-loop/README.md).
 
 ---
 
 ## Related: Memory Crate
 
-The `swink-agent-memory` crate builds on the `transform_context` hook to provide higher-level compaction strategies. `SummarizingCompactor` wraps `sliding_window` and injects pre-computed summaries of dropped messages after the anchor. See [`memory/docs/architecture/`](../../../memory/docs/architecture/README.md) for the multi-layer memory vision.
+The `swink-agent-memory` crate builds on the `ContextTransformer` / `AsyncContextTransformer` hooks to provide higher-level compaction strategies. `SummarizingCompactor` wraps `sliding_window` and injects pre-computed summaries of dropped messages after the anchor. See [`memory/docs/architecture/`](../../../memory/docs/architecture/README.md) for the multi-layer memory vision.

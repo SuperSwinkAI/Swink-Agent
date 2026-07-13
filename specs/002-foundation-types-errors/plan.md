@@ -76,6 +76,8 @@ tests/
 └── custom_message_test.rs # Custom message wrap, store, downcast
 ```
 
+**Current layout note [2026-07-06]**: The tree above reflects the original plan; actual layout differs. `src/types.rs` is now a directory `src/types/` (`mod.rs`, `model.rs`, `custom_message.rs`, `message_codec.rs`) — `AgentContext` is defined at `src/types/mod.rs:315`, `ModelSpec`/`ThinkingLevel` at `src/types/model.rs`, and `AgentResult` at `src/types/mod.rs:261`. There is no standalone `src/model_spec.rs` or `src/result.rs`; those types live in `src/types/`. `src/context.rs` exists but holds token-counting/compaction utilities (`TokenCounter`, compaction), not `AgentContext`. The planned test filenames were also never created as such — the actual files are `tests/types.rs`, `tests/error.rs`, `tests/message_provider.rs`, and `tests/stream_accumulate_errors.rs`.
+
 **Structure Decision**: All types live in the core crate (`swink-agent`)
 under `src/`. Each concern gets its own file per the one-concern-per-file
 convention. Tests live in `tests/` as integration tests to verify the

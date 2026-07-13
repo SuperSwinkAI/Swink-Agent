@@ -185,3 +185,231 @@ fn extract_array_ids(json: &Value, array_key: &str, id_key: &str) -> HashSet<Str
         })
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
+    use serde_json::json;
+
+    use crate::catalog::{ProviderEndpoint, VerifyTask};
+
+    fn task(model_id: &str) -> VerifyTask {
+        VerifyTask {
+            provider_key: "provider".to_owned(),
+            preset_id: model_id.to_owned(),
+            preset_display: model_id.to_owned(),
+            model_id: model_id.to_owned(),
+            endpoint: ProviderEndpoint::Skipped { reason: "test" },
+        }
+    }
+
+    #[tokio::test]
+    async fn verify_all_groups_skipped_tasks_and_sorts_rows() {
+        let tasks = vec![
+            VerifyTask {
+                provider_key: "zeta".to_owned(),
+                preset_id: "second".to_owned(),
+                preset_display: "Second".to_owned(),
+                model_id: "zeta-second".to_owned(),
+                endpoint: ProviderEndpoint::Skipped {
+                    reason: "missing credential",
+                },
+            },
+            VerifyTask {
+                provider_key: "alpha".to_owned(),
+                preset_id: "first".to_owned(),
+                preset_display: "First".to_owned(),
+                model_id: "alpha-first".to_owned(),
+                endpoint: ProviderEndpoint::Skipped {
+                    reason: "local provider",
+                },
+            },
+            VerifyTask {
+                provider_key: "zeta".to_owned(),
+                preset_id: "first".to_owned(),
+                preset_display: "First".to_owned(),
+                model_id: "zeta-first".to_owned(),
+                endpoint: ProviderEndpoint::Skipped {
+                    reason: "missing credential",
+                },
+            },
+        ];
+
+        let rows = super::verify_all(tasks).await;
+
+        let ordered_keys: Vec<_> = rows
+            .iter()
+            .map(|row| (row.task.provider_key.as_str(), row.task.preset_id.as_str()))
+            .collect();
+        assert_eq!(
+            ordered_keys,
+            vec![("alpha", "first"), ("zeta", "first"), ("zeta", "second")]
+        );
+        assert!(matches!(
+            rows[0].result,
+            super::PresetResult::Skipped {
+                reason: "local provider"
+            }
+        ));
+        assert!(matches!(
+            rows[1].result,
+            super::PresetResult::Skipped {
+                reason: "missing credential"
+            }
+        ));
+        assert!(matches!(
+            rows[2].result,
+            super::PresetResult::Skipped {
+                reason: "missing credential"
+            }
+        ));
+    }
+
+    #[test]
+    fn check_membership_marks_known_models_as_passes() {
+        let ids = HashSet::from(["known-model".to_owned()]);
+        let rows = super::check_membership(vec![task("known-model"), task("missing-model")], &ids);
+
+        assert!(matches!(rows[0].result, super::PresetResult::Pass));
+        assert!(matches!(
+            rows[1].result,
+            super::PresetResult::Fail { available_count: 1 }
+        ));
+    }
+
+    #[test]
+    fn error_rows_preserve_task_context() {
+        let rows = super::error_rows(vec![task("model-a"), task("model-b")], "HTTP 500");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].task.model_id, "model-a");
+        assert!(matches!(
+            &rows[0].result,
+            super::PresetResult::NetworkError { error } if error == "HTTP 500"
+        ));
+        assert_eq!(rows[1].task.model_id, "model-b");
+    }
+
+    #[test]
+    fn extract_array_ids_ignores_missing_or_non_string_ids() {
+        let json = json!({
+            "data": [
+                { "id": "model-a" },
+                { "id": 42 },
+                { "name": "model-b" }
+            ]
+        });
+
+        let ids = super::extract_array_ids(&json, "data", "id");
+
+        assert_eq!(ids, HashSet::from(["model-a".to_owned()]));
+    }
+
+    #[tokio::test]
+    async fn fetch_anthropic_models_sends_required_headers_and_extracts_ids() {
+        let server = TestHttpServer::new(vec![r#"{"data":[{"id":"claude-a"},{"id":"claude-b"}]}"#]);
+
+        let url = format!("{}/v1/models", server.base_url());
+        let ids = super::fetch_anthropic_models(&reqwest::Client::new(), &url, "test-key")
+            .await
+            .expect("anthropic model list should parse");
+        let requests = server.join();
+
+        assert_eq!(
+            ids,
+            HashSet::from(["claude-a".to_owned(), "claude-b".to_owned()])
+        );
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("GET /v1/models HTTP/1.1"));
+        assert!(requests[0].contains("x-api-key: test-key"));
+        assert!(requests[0].contains("anthropic-version: 2023-06-01"));
+    }
+
+    #[tokio::test]
+    async fn fetch_openai_models_sends_bearer_header_and_extracts_ids() {
+        let server = TestHttpServer::new(vec![r#"{"data":[{"id":"gpt-a"},{"id":"gpt-b"}]}"#]);
+
+        let url = format!("{}/v1/models", server.base_url());
+        let ids = super::fetch_openai_models(&reqwest::Client::new(), &url, "test-key")
+            .await
+            .expect("openai-compatible model list should parse");
+        let requests = server.join();
+
+        assert_eq!(ids, HashSet::from(["gpt-a".to_owned(), "gpt-b".to_owned()]));
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("GET /v1/models HTTP/1.1"));
+        assert!(requests[0].contains("authorization: Bearer test-key"));
+    }
+
+    #[tokio::test]
+    async fn fetch_google_models_paginates_and_normalizes_model_names() {
+        let server = TestHttpServer::new(vec![
+            r#"{"models":[{"name":"models/gemini-a"},{"name":"raw-model"}],"nextPageToken":"next-page"}"#,
+            r#"{"models":[{"name":"models/gemini-b"}]}"#,
+        ]);
+
+        let url = format!("{}/v1beta/models", server.base_url());
+        let ids = super::fetch_google_models(&reqwest::Client::new(), &url, "test-key")
+            .await
+            .expect("google model list should parse");
+        let requests = server.join();
+
+        assert_eq!(
+            ids,
+            HashSet::from([
+                "gemini-a".to_owned(),
+                "raw-model".to_owned(),
+                "gemini-b".to_owned(),
+            ])
+        );
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].starts_with("GET /v1beta/models HTTP/1.1"));
+        assert!(requests[0].contains("x-goog-api-key: test-key"));
+        assert!(requests[1].starts_with("GET /v1beta/models?pageToken=next-page HTTP/1.1"));
+    }
+
+    struct TestHttpServer {
+        addr: std::net::SocketAddr,
+        handle: thread::JoinHandle<Vec<String>>,
+    }
+
+    impl TestHttpServer {
+        fn new(responses: Vec<&'static str>) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
+            let addr = listener.local_addr().expect("test server should have addr");
+            let handle = thread::spawn(move || {
+                let mut requests = Vec::new();
+                for response in responses {
+                    let (mut stream, _) = listener.accept().expect("request should connect");
+                    let mut buffer = [0_u8; 4096];
+                    let len = stream.read(&mut buffer).expect("request should read");
+                    requests.push(String::from_utf8_lossy(&buffer[..len]).into_owned());
+
+                    let http = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                        response.len(),
+                        response
+                    );
+                    stream
+                        .write_all(http.as_bytes())
+                        .expect("response should write");
+                }
+                requests
+            });
+
+            Self { addr, handle }
+        }
+
+        fn base_url(&self) -> String {
+            format!("http://{}", self.addr)
+        }
+
+        fn join(self) -> Vec<String> {
+            self.handle.join().expect("test server should finish")
+        }
+    }
+}

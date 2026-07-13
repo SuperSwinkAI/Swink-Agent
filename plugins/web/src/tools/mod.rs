@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::domain::DomainFilter;
+use crate::playwright::PlaywrightError;
 use crate::policy::ContentSanitizerPolicy;
 
 pub use extract::ExtractTool;
@@ -75,6 +76,68 @@ fn validate_url_against_filter(
     Ok(())
 }
 
+fn reset_bridge_after_ambiguous_playwright_error<T>(
+    bridge: &mut Option<T>,
+    error: &PlaywrightError,
+) {
+    if matches!(error, PlaywrightError::Timeout(_)) {
+        *bridge = None;
+    }
+}
+
+/// Shared tracing-capture support for tests that assert on FR-016 log
+/// fields (URL/query, status, size, latency) emitted by the web tools.
+#[cfg(test)]
+pub(crate) mod log_capture {
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
+
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone, Default)]
+    pub(crate) struct SharedLogBuffer(Arc<Mutex<Vec<u8>>>);
+
+    impl SharedLogBuffer {
+        pub(crate) fn contents(&self) -> String {
+            String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+        }
+    }
+
+    pub(crate) struct SharedLogWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for SharedLogWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for SharedLogBuffer {
+        type Writer = SharedLogWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            SharedLogWriter(Arc::clone(&self.0))
+        }
+    }
+
+    /// Install a capturing subscriber as the default for the current thread.
+    /// Dropping the returned guard restores the previous default.
+    pub(crate) fn capture(buffer: SharedLogBuffer) -> tracing::subscriber::DefaultGuard {
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .without_time()
+            // No ANSI escapes: tests assert on plain `key=value` substrings.
+            .with_ansi(false)
+            .with_writer(buffer)
+            .finish();
+        tracing::subscriber::set_default(subscriber)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::future::pending;
@@ -87,10 +150,11 @@ mod tests {
     use url::Url;
 
     use crate::domain::DomainFilter;
+    use crate::playwright::PlaywrightError;
 
     use super::{
-        OperationOutcome, await_with_cancellation, sanitize_web_tool_text,
-        validate_url_against_filter,
+        OperationOutcome, await_with_cancellation, reset_bridge_after_ambiguous_playwright_error,
+        sanitize_web_tool_text, validate_url_against_filter,
     };
 
     #[tokio::test]
@@ -105,12 +169,12 @@ mod tests {
         assert!(matches!(outcome, OperationOutcome::Cancelled));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn await_with_cancellation_returns_timed_out_for_slow_operations() {
         let outcome = await_with_cancellation(
             &CancellationToken::new(),
             Duration::from_millis(10),
-            tokio::time::sleep(Duration::from_millis(50)),
+            pending::<()>(),
         )
         .await;
 
@@ -155,5 +219,29 @@ mod tests {
 
         assert!(error.contains("Redirect URL blocked by domain filter"));
         assert!(error.contains("evil.com"));
+    }
+
+    #[test]
+    fn playwright_internal_timeout_resets_cached_bridge() {
+        let mut bridge = Some(());
+
+        reset_bridge_after_ambiguous_playwright_error(
+            &mut bridge,
+            &PlaywrightError::Timeout(Duration::from_millis(10)),
+        );
+
+        assert!(bridge.is_none());
+    }
+
+    #[test]
+    fn ordinary_playwright_errors_keep_cached_bridge() {
+        let mut bridge = Some(());
+
+        reset_bridge_after_ambiguous_playwright_error(
+            &mut bridge,
+            &PlaywrightError::BridgeError("navigation failed".to_owned()),
+        );
+
+        assert!(bridge.is_some());
     }
 }

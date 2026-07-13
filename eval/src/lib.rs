@@ -136,6 +136,7 @@ pub use prompt::{
 pub use report::HtmlReporter;
 pub use report::{
     ConsoleReporter, JsonReporter, MarkdownReporter, Reporter, ReporterError, ReporterOutput,
+    decode_result_json,
 };
 #[cfg(feature = "langsmith")]
 pub use report::{LangSmithExportError, LangSmithExporter};
@@ -160,10 +161,10 @@ pub use training::{
 pub use trajectory::TrajectoryCollector;
 pub use types::{
     Assertion, AssertionKind, Attachment, AttachmentError, BudgetConstraints, CASE_NAMESPACE,
-    CaseFingerprint, EnvironmentState, EvalCase, EvalCaseResult, EvalMetricResult, EvalSet,
-    EvalSetResult, EvalSummary, ExpectedToolCall, FewShotExample, InteractionExpectation,
-    Invocation, MaterializedAttachment, RecordedToolCall, ResponseCriteria, StateCapture,
-    ToolIntent, TurnRecord, validate_eval_case, validate_eval_set,
+    CacheFingerprint, CaseFingerprint, EnvironmentState, EvalCase, EvalCaseResult,
+    EvalMetricResult, EvalSet, EvalSetResult, EvalSummary, ExpectedToolCall, FewShotExample,
+    InteractionExpectation, Invocation, MaterializedAttachment, RecordedToolCall, ResponseCriteria,
+    StateCapture, ToolIntent, TurnRecord, validate_eval_case, validate_eval_set,
 };
 pub use url_filter::{DefaultUrlFilter, UrlFilter};
 #[cfg(feature = "yaml")]

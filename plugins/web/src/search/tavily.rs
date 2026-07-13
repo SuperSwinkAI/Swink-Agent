@@ -1,3 +1,5 @@
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 use super::{SearchError, SearchProvider, SearchResult};
@@ -5,7 +7,6 @@ use super::{SearchError, SearchProvider, SearchResult};
 /// Tavily Search API provider.
 ///
 /// Requires a Tavily API key.
-#[derive(Debug)]
 pub struct TavilyProvider {
     pub(crate) api_key: String,
     pub(crate) client: reqwest::Client,
@@ -14,6 +15,15 @@ pub struct TavilyProvider {
 impl TavilyProvider {
     pub fn new(api_key: String, client: reqwest::Client) -> Self {
         Self { api_key, client }
+    }
+}
+
+impl fmt::Debug for TavilyProvider {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TavilyProvider")
+            .field("api_key", &"[REDACTED]")
+            .field("client", &self.client)
+            .finish()
     }
 }
 
@@ -112,5 +122,21 @@ impl SearchProvider for TavilyProvider {
 
             Ok(results)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TavilyProvider;
+
+    #[test]
+    fn debug_output_redacts_api_key() {
+        const SECRET: &str = "tavily-super-secret-token";
+        let provider = TavilyProvider::new(SECRET.to_string(), reqwest::Client::new());
+
+        let debug = format!("{provider:?}");
+
+        assert!(!debug.contains(SECRET), "api key leaked: {debug}");
+        assert!(debug.contains("[REDACTED]"), "{debug}");
     }
 }

@@ -11,11 +11,11 @@ The codebase already implements significant infrastructure for this feature. Thi
 
 | Capability | Location | Status |
 |---|---|---|
-| `ApprovalMode` enum (Enabled/Smart/Bypassed) | `src/loop_/mod.rs:239-249` | Complete |
+| `ApprovalMode` enum (Enabled/Smart/Bypassed) | `src/tool.rs:385-394` [corrected: was `src/loop_/mod.rs:239-249`] | Complete |
 | `requires_approval()` trait method (default false) | `src/tool.rs:125` | Complete |
 | `ToolApproval` enum (Approved/Rejected/ApprovedWith) | `src/tool.rs:200-207` | Complete |
 | `ToolApprovalRequest` struct | `src/tool.rs:213-234` | Complete |
-| Tool dispatch approval gate (Smart mode logic) | `src/loop_/tool_dispatch.rs:88-104` | Complete |
+| Tool dispatch approval gate (Smart mode logic) | `src/loop_/tool_dispatch/preprocess.rs:205-225` [corrected: `tool_dispatch.rs` was split into `src/loop_/tool_dispatch/{collect,execute,mod,preprocess,shared}.rs`; the approval gate lives in `preprocess.rs`] | Complete |
 | `approve_tool` callback in `AgentLoopConfig` | `src/loop_/mod.rs:222` | Complete |
 | `agent.enter_plan_mode()` / `exit_plan_mode()` | `src/agent.rs:437-464` | Complete |
 | TUI `OperatingMode` enum (Execute/Plan) | `tui/src/app/state.rs` | Complete |

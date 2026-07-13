@@ -1,0 +1,5 @@
+error: ToolSchema requires named fields
+ --> tests/ui/fail/derive_tuple_struct.rs:5:8
+  |
+5 | struct Params(String);
+  |        ^^^^^^

@@ -13,7 +13,6 @@ impl ToolPanel {
     pub fn end_tool(&mut self, id: &str, is_error: bool);
     pub fn set_awaiting_approval(&mut self, id: &str, name: &str, arguments: &Value);
     pub fn resolve_approval(&mut self, id: &str, approved: bool);
-    pub const fn has_pending_approval(&self) -> bool;
     pub fn tick(&mut self);              // Advance spinner, prune stale entries
     pub const fn is_visible(&self) -> bool;
     pub fn height(&self) -> u16;         // 0 when hidden, 2-10 when visible

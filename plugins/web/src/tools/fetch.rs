@@ -1,16 +1,16 @@
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use swink_agent::{AgentTool, AgentToolResult, ToolFuture};
 use tokio_util::sync::CancellationToken;
-use tracing::warn;
+use tracing::{info, warn};
 use url::Url;
 
 use crate::content::{extract_readable_content, is_html_content_type, truncate_content};
-use crate::domain::DomainFilter;
+use crate::domain::{DomainFilter, ResolvedHost};
 use crate::policy::ContentSanitizerPolicy;
-use crate::tools::{sanitize_web_tool_text, validate_url_against_filter};
+use crate::tools::sanitize_web_tool_text;
 
 /// Tool for fetching and reading web pages.
 ///
@@ -24,17 +24,20 @@ pub struct FetchTool {
     domain_filter: Option<DomainFilter>,
     max_redirects: usize,
     sanitizer: Option<ContentSanitizerPolicy>,
+    user_agent: Option<String>,
     schema: Value,
 }
 
 impl FetchTool {
-    /// Create a new `FetchTool` with the given HTTP client, content length limit,
-    /// and request timeout.
-    pub fn new(
-        client: reqwest::Client,
-        max_content_length: usize,
-        request_timeout: Duration,
-    ) -> Self {
+    /// Create a new `FetchTool` with the given content length limit and
+    /// request timeout.
+    ///
+    /// The tool always builds its own no-redirect HTTP clients internally:
+    /// fetch redirects must be observed and validated by this tool before any
+    /// follow-up request is sent, so callers cannot supply a pre-configured
+    /// client. Use [`FetchTool::with_user_agent`] to set the `User-Agent`
+    /// header on every request the tool makes.
+    pub fn new(max_content_length: usize, request_timeout: Duration) -> Self {
         let schema = serde_json::json!({
             "type": "object",
             "properties": {
@@ -46,14 +49,42 @@ impl FetchTool {
             "required": ["url"]
         });
         Self {
-            client,
+            client: Self::build_no_redirect_client(request_timeout, None),
             max_content_length,
             request_timeout,
-            domain_filter: None,
+            domain_filter: Some(DomainFilter::blocking_private_ips()),
             max_redirects: 10,
             sanitizer: Some(ContentSanitizerPolicy::new()),
+            user_agent: None,
             schema,
         }
+    }
+
+    fn build_no_redirect_client(
+        request_timeout: Duration,
+        user_agent: Option<&str>,
+    ) -> reqwest::Client {
+        let mut builder = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(request_timeout);
+        if let Some(user_agent) = user_agent {
+            builder = builder.user_agent(user_agent);
+        }
+        builder
+            .build()
+            .expect("building no-redirect fetch HTTP client should not fail")
+    }
+
+    /// Set the `User-Agent` header sent with every fetch request.
+    ///
+    /// Applies to both the fallback client and the DNS-pinned per-request
+    /// clients built for SSRF protection.
+    #[must_use]
+    pub fn with_user_agent(mut self, user_agent: impl Into<String>) -> Self {
+        let user_agent = user_agent.into();
+        self.client = Self::build_no_redirect_client(self.request_timeout, Some(&user_agent));
+        self.user_agent = Some(user_agent);
+        self
     }
 
     /// Re-validate initial and redirect targets inside the tool.
@@ -116,10 +147,10 @@ impl FetchTool {
             } else {
                 "Redirect"
             };
-            validate_url_against_filter(self.domain_filter.as_ref(), &current_url, phase)?;
+            let resolved_host = self.validate_url_for_fetch(&current_url, phase)?;
+            let client = self.client_for_request(resolved_host)?;
 
-            let request = self
-                .client
+            let request = client
                 .get(current_url.clone())
                 .timeout(self.request_timeout);
 
@@ -159,6 +190,40 @@ impl FetchTool {
             self.max_redirects
         ))
     }
+
+    fn validate_url_for_fetch(
+        &self,
+        url: &Url,
+        phase: &str,
+    ) -> Result<Option<ResolvedHost>, String> {
+        let Some(filter) = self.domain_filter.as_ref() else {
+            return Ok(None);
+        };
+
+        filter
+            .validate_and_resolve(url)
+            .map_err(|error| format!("{phase} URL blocked by domain filter: {error}"))
+    }
+
+    fn client_for_request(
+        &self,
+        resolved_host: Option<ResolvedHost>,
+    ) -> Result<reqwest::Client, String> {
+        let Some(resolved_host) = resolved_host else {
+            return Ok(self.client.clone());
+        };
+
+        let mut builder = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(self.request_timeout)
+            .resolve(&resolved_host.host, resolved_host.addr);
+        if let Some(user_agent) = self.user_agent.as_deref() {
+            builder = builder.user_agent(user_agent);
+        }
+        builder
+            .build()
+            .map_err(|error| format!("Failed to build pinned HTTP client: {error}"))
+    }
 }
 
 impl AgentTool for FetchTool {
@@ -179,6 +244,9 @@ impl AgentTool for FetchTool {
         &self.schema
     }
 
+    // One linear request flow (validate → fetch → redirect checks → cap →
+    // sanitize); splitting it would scatter the security checks across helpers.
+    #[allow(clippy::too_many_lines)]
     fn execute(
         &self,
         _tool_call_id: &str,
@@ -211,16 +279,34 @@ impl AgentTool for FetchTool {
                 }
             }
 
+            // FR-016: every web request must log its target, status, size, and
+            // latency. The timer starts here, right before network I/O begins.
+            let start = Instant::now();
+
             let (mut response, final_url) = match self
                 .send_get_following_checked_redirects(parsed_url, &cancellation_token)
                 .await
             {
                 Ok(result) => result,
-                Err(error) => return AgentToolResult::error(error),
+                Err(error) => {
+                    warn!(
+                        url = %url_str,
+                        latency_ms = start.elapsed().as_millis(),
+                        error = %error,
+                        "web fetch request failed"
+                    );
+                    return AgentToolResult::error(error);
+                }
             };
 
             let status = response.status();
             if !status.is_success() {
+                warn!(
+                    url = %final_url,
+                    status = status.as_u16(),
+                    latency_ms = start.elapsed().as_millis(),
+                    "web fetch returned non-success status"
+                );
                 return AgentToolResult::error(format!(
                     "HTTP {}: {}",
                     status.as_u16(),
@@ -237,6 +323,13 @@ impl AgentTool for FetchTool {
                 .to_string();
 
             if !is_html_content_type(&content_type) {
+                info!(
+                    url = %final_url,
+                    status = status.as_u16(),
+                    content_type = %content_type,
+                    latency_ms = start.elapsed().as_millis(),
+                    "web fetch returned non-HTML content type"
+                );
                 return AgentToolResult::text(format!(
                     "This URL points to a {content_type} resource. \
                      Only HTML pages can be fetched and extracted."
@@ -253,14 +346,31 @@ impl AgentTool for FetchTool {
             .await
             {
                 Ok(body) => body,
-                Err(error) => return AgentToolResult::error(error),
+                Err(error) => {
+                    warn!(
+                        url = %final_url,
+                        status = status.as_u16(),
+                        latency_ms = start.elapsed().as_millis(),
+                        error = %error,
+                        "web fetch body read failed"
+                    );
+                    return AgentToolResult::error(error);
+                }
             };
+            let size_bytes = bytes.len();
 
             // Extract readable content.
             let fetched = match extract_readable_content(&bytes, &final_url) {
                 Ok(f) => f,
                 Err(e) => {
-                    warn!("Content extraction failed for {final_url}: {e}");
+                    warn!(
+                        url = %final_url,
+                        status = status.as_u16(),
+                        size_bytes,
+                        latency_ms = start.elapsed().as_millis(),
+                        error = %e,
+                        "web fetch content extraction failed"
+                    );
                     return AgentToolResult::error(format!("Content extraction failed: {e}"));
                 }
             };
@@ -283,6 +393,15 @@ impl AgentTool for FetchTool {
 
             let output = sanitize_web_tool_text("web_fetch", output, self.sanitizer.as_ref());
 
+            info!(
+                url = %final_url,
+                status = status.as_u16(),
+                size_bytes,
+                truncated,
+                latency_ms = start.elapsed().as_millis(),
+                "web fetch completed"
+            );
+
             AgentToolResult::text(output)
         })
     }
@@ -296,12 +415,20 @@ mod tests {
     use serde_json::json;
     use swink_agent::{AgentTool, SessionState};
     use tokio_util::sync::CancellationToken;
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use crate::domain::DomainFilter;
+    use crate::domain::{DomainFilter, ResolvedHost};
+    use crate::tools::log_capture::{SharedLogBuffer, capture};
 
     use super::FetchTool;
+
+    fn localhost_filter() -> DomainFilter {
+        DomainFilter {
+            block_private_ips: false,
+            ..Default::default()
+        }
+    }
 
     #[tokio::test]
     async fn execute_returns_readable_content_for_html_under_cap() {
@@ -324,7 +451,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let tool = FetchTool::new(reqwest::Client::new(), 4_096, Duration::from_secs(5));
+        let tool = FetchTool::new(4_096, Duration::from_secs(5))
+            .with_domain_filter(localhost_filter(), 10);
         let state = Arc::new(RwLock::new(SessionState::default()));
         let result = tool
             .execute(
@@ -358,7 +486,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let tool = FetchTool::new(reqwest::Client::new(), 512, Duration::from_secs(5));
+        let tool =
+            FetchTool::new(512, Duration::from_secs(5)).with_domain_filter(localhost_filter(), 10);
         let state = Arc::new(RwLock::new(SessionState::default()));
         let result = tool
             .execute(
@@ -398,7 +527,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let tool = FetchTool::new(reqwest::Client::new(), 4_096, Duration::from_secs(5));
+        let tool = FetchTool::new(4_096, Duration::from_secs(5))
+            .with_domain_filter(localhost_filter(), 10);
         let state = Arc::new(RwLock::new(SessionState::default()));
         let result = tool
             .execute(
@@ -439,7 +569,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let tool = FetchTool::new(reqwest::Client::new(), 4_096, Duration::from_secs(5))
+        let tool = FetchTool::new(4_096, Duration::from_secs(5))
+            .with_domain_filter(localhost_filter(), 10)
             .with_sanitizer_enabled(false);
         let state = Arc::new(RwLock::new(SessionState::default()));
         let result = tool
@@ -470,17 +601,12 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .unwrap();
         let filter = DomainFilter {
             denylist: vec!["evil.com".to_string()],
             block_private_ips: false,
             ..Default::default()
         };
-        let tool =
-            FetchTool::new(client, 4_096, Duration::from_secs(5)).with_domain_filter(filter, 10);
+        let tool = FetchTool::new(4_096, Duration::from_secs(5)).with_domain_filter(filter, 10);
         let state = Arc::new(RwLock::new(SessionState::default()));
         let result = tool
             .execute(
@@ -497,6 +623,27 @@ mod tests {
         let text = format!("{:?}", result.content);
         assert!(text.contains("Redirect URL blocked by domain filter"));
         assert!(text.contains("evil.com"));
+    }
+
+    #[tokio::test]
+    async fn direct_constructor_blocks_private_ips_by_default() {
+        let tool = FetchTool::new(4_096, Duration::from_secs(5));
+        let state = Arc::new(RwLock::new(SessionState::default()));
+        let result = tool
+            .execute(
+                "call-private",
+                json!({ "url": "http://127.0.0.1/private" }),
+                CancellationToken::new(),
+                None,
+                state,
+                None,
+            )
+            .await;
+
+        assert!(result.is_error);
+        let text = format!("{:?}", result.content);
+        assert!(text.contains("Initial URL blocked by domain filter"));
+        assert!(text.contains("private/internal IP"));
     }
 
     #[tokio::test]
@@ -524,16 +671,11 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .unwrap();
         let filter = DomainFilter {
             block_private_ips: false,
             ..Default::default()
         };
-        let tool =
-            FetchTool::new(client, 4_096, Duration::from_secs(5)).with_domain_filter(filter, 10);
+        let tool = FetchTool::new(4_096, Duration::from_secs(5)).with_domain_filter(filter, 10);
         let state = Arc::new(RwLock::new(SessionState::default()));
         let result = tool
             .execute(
@@ -550,5 +692,220 @@ mod tests {
         let text = format!("{:?}", result.content);
         assert!(text.contains("Redirected"));
         assert!(text.contains("Redirected page content should be extracted"));
+    }
+
+    #[tokio::test]
+    async fn execute_never_follows_redirects_automatically() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/redirect"))
+            .respond_with(ResponseTemplate::new(302).insert_header("Location", "/private"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/private"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r"<!DOCTYPE html>
+                    <html>
+                    <body>
+                        <article>
+                            <p>Redirect target should not be fetched automatically.</p>
+                        </article>
+                    </body>
+                    </html>",
+                "text/html; charset=utf-8",
+            ))
+            .mount(&server)
+            .await;
+
+        let filter = DomainFilter {
+            block_private_ips: false,
+            ..Default::default()
+        };
+        let tool = FetchTool::new(4_096, Duration::from_secs(5)).with_domain_filter(filter, 0);
+        let state = Arc::new(RwLock::new(SessionState::default()));
+        let result = tool
+            .execute(
+                "call-7",
+                json!({ "url": format!("{}/redirect", server.uri()) }),
+                CancellationToken::new(),
+                None,
+                state,
+                None,
+            )
+            .await;
+
+        assert!(result.is_error);
+        let text = format!("{:?}", result.content);
+        assert!(text.contains("Too many redirects while fetching URL; limit is 0"));
+
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].url.path(), "/redirect");
+    }
+
+    #[tokio::test]
+    async fn execute_sends_configured_user_agent_header() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/article"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r"<!DOCTYPE html>
+                        <html>
+                        <head><title>UA Test</title></head>
+                        <body>
+                            <article>
+                                <p>Content served only when the User-Agent matcher passes.</p>
+                            </article>
+                        </body>
+                        </html>",
+                "text/html; charset=utf-8",
+            ))
+            .mount(&server)
+            .await;
+
+        let tool = FetchTool::new(4_096, Duration::from_secs(5))
+            .with_domain_filter(localhost_filter(), 10)
+            .with_user_agent("SwinkAgent/0.5-test");
+        let state = Arc::new(RwLock::new(SessionState::default()));
+        let result = tool
+            .execute(
+                "call-ua",
+                json!({ "url": format!("{}/article", server.uri()) }),
+                CancellationToken::new(),
+                None,
+                state,
+                None,
+            )
+            .await;
+
+        assert!(!result.is_error, "fetch failed: {:?}", result.content);
+
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 1);
+        let user_agent = received[0]
+            .headers
+            .get("user-agent")
+            .and_then(|value| value.to_str().ok());
+        assert_eq!(user_agent, Some("SwinkAgent/0.5-test"));
+    }
+
+    #[tokio::test]
+    async fn execute_logs_url_status_size_and_latency_on_success() {
+        // FR-016: web requests must log target URL, HTTP status, response
+        // size, and latency for debugging and auditing.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/article"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r"<!DOCTYPE html>
+                        <html>
+                        <head><title>Log Test</title></head>
+                        <body>
+                            <article><p>Content for the FR-016 logging test.</p></article>
+                        </body>
+                        </html>",
+                "text/html; charset=utf-8",
+            ))
+            .mount(&server)
+            .await;
+
+        let logs = SharedLogBuffer::default();
+        let _guard = capture(logs.clone());
+
+        let tool = FetchTool::new(4_096, Duration::from_secs(5))
+            .with_domain_filter(localhost_filter(), 10);
+        let state = Arc::new(RwLock::new(SessionState::default()));
+        let result = tool
+            .execute(
+                "call-log",
+                json!({ "url": format!("{}/article", server.uri()) }),
+                CancellationToken::new(),
+                None,
+                state,
+                None,
+            )
+            .await;
+
+        assert!(!result.is_error);
+        let log_output = logs.contents();
+        assert!(
+            log_output.contains("web fetch completed"),
+            "missing completion log: {log_output}"
+        );
+        assert!(log_output.contains("status=200"), "{log_output}");
+        assert!(log_output.contains("size_bytes="), "{log_output}");
+        assert!(log_output.contains("latency_ms="), "{log_output}");
+        assert!(log_output.contains(&server.uri()), "{log_output}");
+    }
+
+    #[tokio::test]
+    async fn execute_logs_status_and_latency_on_http_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/missing"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let logs = SharedLogBuffer::default();
+        let _guard = capture(logs.clone());
+
+        let tool = FetchTool::new(4_096, Duration::from_secs(5))
+            .with_domain_filter(localhost_filter(), 10);
+        let state = Arc::new(RwLock::new(SessionState::default()));
+        let result = tool
+            .execute(
+                "call-log-err",
+                json!({ "url": format!("{}/missing", server.uri()) }),
+                CancellationToken::new(),
+                None,
+                state,
+                None,
+            )
+            .await;
+
+        assert!(result.is_error);
+        let log_output = logs.contents();
+        assert!(
+            log_output.contains("web fetch returned non-success status"),
+            "missing error log: {log_output}"
+        );
+        assert!(log_output.contains("status=404"), "{log_output}");
+        assert!(log_output.contains("latency_ms="), "{log_output}");
+    }
+
+    #[tokio::test]
+    async fn pinned_client_sends_configured_user_agent_header() {
+        // The DNS-pinned per-request client is only built for non-IP-literal
+        // hosts, so exercise `client_for_request` directly with a fabricated
+        // hostname pinned to the loopback mock server.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/ua"))
+            .and(header("user-agent", "SwinkAgent/0.5-test"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let tool =
+            FetchTool::new(4_096, Duration::from_secs(5)).with_user_agent("SwinkAgent/0.5-test");
+        let addr = *server.address();
+        let client = tool
+            .client_for_request(Some(ResolvedHost {
+                host: "pinned.test".to_string(),
+                addr,
+            }))
+            .unwrap();
+
+        let response = client
+            .get(format!("http://pinned.test:{}/ua", addr.port()))
+            .send()
+            .await
+            .unwrap();
+
+        // The mock only matches when the pinned client sent the configured
+        // User-Agent; a missing/incorrect header yields wiremock's 404.
+        assert_eq!(response.status(), 200);
     }
 }

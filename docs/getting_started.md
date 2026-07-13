@@ -61,7 +61,7 @@ Keys can also be stored in the OS keychain instead of env vars — the first-run
 |---|---|
 | `ANTHROPIC_API_KEY` | — |
 | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` |
-| `ANTHROPIC_MODEL` | `claude-sonnet-4-6` |
+| `ANTHROPIC_MODEL` | catalog default (resolved at runtime) |
 
 **OpenAI**
 
@@ -69,7 +69,7 @@ Keys can also be stored in the OS keychain instead of env vars — the first-run
 |---|---|
 | `OPENAI_API_KEY` | — |
 | `OPENAI_BASE_URL` | `https://api.openai.com` |
-| `OPENAI_MODEL` | `gpt-4o` |
+| `OPENAI_MODEL` | catalog default (resolved at runtime) |
 
 **Custom SSE Proxy**
 
@@ -77,7 +77,7 @@ Keys can also be stored in the OS keychain instead of env vars — the first-run
 |---|---|
 | `LLM_BASE_URL` | — |
 | `LLM_API_KEY` | — |
-| `LLM_MODEL` | `claude-sonnet-4-6` |
+| `LLM_MODEL` | `claude-sonnet-4-20250514` |
 
 **Ollama**
 
@@ -122,7 +122,8 @@ On first launch with no keys configured, the setup wizard walks you through prov
 | `#save` / `#load <id>` | Session persistence |
 | `#keys` | Show configured providers |
 | `#key <provider> <key>` | Store an API key in the OS keychain |
-| `/thinking <level>` | Set thinking depth (off/minimal/low/medium/high) |
+| `#approve [on|off|smart]` | Configure tool approval; smart auto-approves read-only and trusted tools |
+| `/thinking <level>` | Set thinking depth (off/minimal/low/medium/high/extra-high) |
 | `/system <prompt>` | Set system prompt |
 | `/reset` | Reset conversation |
 
@@ -152,9 +153,9 @@ let id = agent.subscribe(|event| { /* handle AgentEvent */ });
 let result = agent.prompt_async(messages).await?;
 ```
 
-## Add Production Guardrails
+### Add Production Guardrails
 
-By default the library runs anything-goes — no policy slots are populated. If your embedding runs agents autonomously, wire the recommended guardrail set from `swink-agent-policies` (feature `recommended`) before shipping:
+The snippet above runs with **no policies** — the library default is anything-goes (see [Policy Guardrails](policy-overview.md)). That's fine for a demo or a test, but any agent running unattended in production should wire the recommended guardrail set from `swink-agent-policies` (feature `recommended`) before shipping:
 
 ```rust
 use swink_agent_policies::{RecommendedPolicies, assert_production_guardrails};
@@ -171,18 +172,23 @@ let options = RecommendedPolicies::builder()
 assert_production_guardrails(&options, "bash");
 ```
 
-See [Policy Guardrails](policy-overview.md) for the full checkpoint model and the other available policies.
+See [Policy Guardrails: Recommended Production Policy Set](policy-overview.md#recommended-production-policy-set) for the full rationale, the checkpoint model, and the other available policies.
 
 ## Tests
 
 ```bash
-cargo test --workspace          # all tests
+cargo test --workspace          # default-feature workspace test baseline
+cargo test --workspace --features testkit  # includes core testkit-gated integration tests
 cargo test -p swink-agent     # core library only
 ```
+
+For the full local validation gate, including formatting, clippy, feature-gate
+sentinels, plugin regressions, and package preflight, run `just validate`.
 
 ## Further Reading
 
 - [Architecture (HLD)](architecture/HLD.md)
-- [Product Requirements](planning/PRD.md)
+- [Specification Tracker](planning/SPECIFICATION_TRACKER.md) — current project state, feature-by-feature
+- [Product Requirements (archived v0.1)](planning/PRD.md) — historical; superseded by the Specification Tracker above
 - [TUI Architecture](architecture/tui/README.md)
 - [Implementation Phases](planning/IMPLEMENTATION_PHASES.md)

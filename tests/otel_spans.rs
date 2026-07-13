@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use futures::stream::StreamExt;
 use opentelemetry::trace::TracerProvider as _;
-use opentelemetry_sdk::trace::{InMemorySpanExporterBuilder, SdkTracerProvider};
+use opentelemetry_sdk::trace::{InMemorySpanExporterBuilder, SdkTracerProvider, SpanData};
 
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::prelude::*;
@@ -21,8 +21,8 @@ use common::{MockStreamFn, MockTool, default_model, text_only_events, tool_call_
 use opentelemetry::trace::Status as OtelStatus;
 use swink_agent::{
     AgentEvent, AgentLoopConfig, AgentMessage, AssistantMessageEvent, ContentBlock,
-    DefaultRetryStrategy, LlmMessage, ModelFallback, ModelSpec, StopReason, StreamFn,
-    StreamOptions, UserMessage, agent_loop,
+    DefaultRetryStrategy, LlmMessage, ModelFallback, ModelSpec, StopReason, StreamFn, UserMessage,
+    agent_loop,
 };
 
 type ConvertToLlmBoxed = Box<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + Sync>;
@@ -32,40 +32,13 @@ fn default_convert_to_llm() -> ConvertToLlmBoxed {
 }
 
 fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
-    AgentLoopConfig {
-        agent_name: None,
-        transfer_chain: None,
-        model: default_model(),
-        stream_options: StreamOptions::default(),
-        retry_strategy: Box::new(
-            DefaultRetryStrategy::default()
-                .with_jitter(false)
-                .with_base_delay(Duration::from_millis(1)),
-        ),
-        stream_fn,
-        tools: vec![],
-        convert_to_llm: default_convert_to_llm(),
-        transform_context: None,
-        get_api_key: None,
-        message_provider: None,
-        pending_message_snapshot: Arc::default(),
-        loop_context_snapshot: Arc::default(),
-        approve_tool: None,
-        approval_mode: swink_agent::ApprovalMode::default(),
-        pre_turn_policies: vec![],
-        pre_dispatch_policies: vec![],
-        post_turn_policies: vec![],
-        post_loop_policies: vec![],
-        async_transform_context: None,
-        metrics_collector: None,
-        fallback: None,
-        tool_execution_policy: swink_agent::ToolExecutionPolicy::default(),
-        session_state: Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
-        credential_resolver: None,
-        cache_config: None,
-        cache_state: std::sync::Mutex::new(swink_agent::CacheState::default()),
-        dynamic_system_prompt: None,
-    }
+    let mut config = AgentLoopConfig::new(default_model(), stream_fn, default_convert_to_llm());
+    config.retry_strategy = Box::new(
+        DefaultRetryStrategy::default()
+            .with_jitter(false)
+            .with_base_delay(Duration::from_millis(1)),
+    );
+    config
 }
 
 fn user_msg(text: &str) -> AgentMessage {
@@ -95,6 +68,26 @@ fn setup_otel_tracing() -> (
     (exporter, guard)
 }
 
+async fn collect_finished_spans_until<F>(
+    exporter: &opentelemetry_sdk::trace::InMemorySpanExporter,
+    is_ready: F,
+) -> Vec<SpanData>
+where
+    F: Fn(&[SpanData]) -> bool,
+{
+    let mut spans = Vec::new();
+
+    for _ in 0..16 {
+        spans = exporter.get_finished_spans().unwrap();
+        if is_ready(&spans) {
+            return spans;
+        }
+        tokio::task::yield_now().await;
+    }
+
+    spans
+}
+
 #[tokio::test]
 async fn otel_span_hierarchy() {
     let (exporter, _guard) = setup_otel_tracing();
@@ -110,10 +103,12 @@ async fn otel_span_hierarchy() {
     );
     let _events: Vec<AgentEvent> = stream.collect().await;
 
-    // Small delay for the simple exporter to flush.
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    let spans = exporter.get_finished_spans().unwrap();
+    let spans = collect_finished_spans_until(&exporter, |spans| {
+        spans.iter().any(|s| s.name == "agent.run")
+            && spans.iter().any(|s| s.name == "agent.turn")
+            && spans.iter().any(|s| s.name == "agent.llm_call")
+    })
+    .await;
     let span_names: Vec<&str> = spans.iter().map(|s| s.name.as_ref()).collect();
 
     assert!(
@@ -161,9 +156,11 @@ async fn otel_span_attributes() {
     );
     let _events: Vec<AgentEvent> = stream.collect().await;
 
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    let spans = exporter.get_finished_spans().unwrap();
+    let spans = collect_finished_spans_until(&exporter, |spans| {
+        spans.iter().any(|s| s.name == "agent.turn")
+            && spans.iter().any(|s| s.name == "agent.llm_call")
+    })
+    .await;
 
     // Check agent.turn has turn_index attribute
     let turn_span = spans.iter().find(|s| s.name == "agent.turn").unwrap();
@@ -212,9 +209,10 @@ async fn otel_tool_spans() {
     );
     let _events: Vec<AgentEvent> = stream.collect().await;
 
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    let spans = exporter.get_finished_spans().unwrap();
+    let spans = collect_finished_spans_until(&exporter, |spans| {
+        spans.iter().any(|s| s.name == "agent.tool")
+    })
+    .await;
     let span_names: Vec<&str> = spans.iter().map(|s| s.name.as_ref()).collect();
 
     assert!(
@@ -257,9 +255,7 @@ async fn otel_spans_exclude_content() {
     );
     let _events: Vec<AgentEvent> = stream.collect().await;
 
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    let spans = exporter.get_finished_spans().unwrap();
+    let spans = collect_finished_spans_until(&exporter, |spans| !spans.is_empty()).await;
 
     // Verify no span contains prompt text, tool arguments, or tool results
     for span in &spans {
@@ -313,10 +309,8 @@ async fn otel_coexists_with_metrics_collector() {
     );
     let _events: Vec<AgentEvent> = stream.collect().await;
 
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
     // OTel exporter received spans
-    let spans = exporter.get_finished_spans().unwrap();
+    let spans = collect_finished_spans_until(&exporter, |spans| !spans.is_empty()).await;
     assert!(
         !spans.is_empty(),
         "OTel exporter should have received spans"
@@ -340,6 +334,7 @@ async fn otel_model_fallback_spans() {
             stop_reason: StopReason::Error,
             error_message: "rate limit exceeded 429".to_string(),
             error_kind: None,
+            retry_after: None,
             usage: None,
         },
     ]]));
@@ -369,9 +364,10 @@ async fn otel_model_fallback_spans() {
     );
     let _events: Vec<AgentEvent> = stream.collect().await;
 
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    let spans = exporter.get_finished_spans().unwrap();
+    let spans = collect_finished_spans_until(&exporter, |spans| {
+        spans.iter().filter(|s| s.name == "agent.llm_call").count() == 2
+    })
+    .await;
 
     // Should have two agent.llm_call spans — one for primary (failed) and one for fallback.
     let llm_spans: Vec<_> = spans

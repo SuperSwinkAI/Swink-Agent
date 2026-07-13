@@ -41,6 +41,22 @@ fn assert_invalid_data_storage_error(err: swink_agent::ArtifactError, expected_s
     );
 }
 
+#[tokio::test]
+async fn dyn_artifact_store_round_trips_file_artifacts() {
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let store: Arc<dyn ArtifactStore> = Arc::new(FileArtifactStore::new(tmpdir.path()));
+
+    store
+        .save("s1", "report.md", text_data("hello"))
+        .await
+        .unwrap();
+    let (data, version) = store.load("s1", "report.md").await.unwrap().unwrap();
+
+    assert_eq!(data.content, b"hello");
+    assert_eq!(version.name, "report.md");
+    assert_eq!(version.version, 1);
+}
+
 // T035: fs_save_and_load_round_trip
 #[tokio::test]
 async fn fs_save_and_load_round_trip() {
@@ -241,6 +257,72 @@ async fn fs_load_version_returns_invalid_data_for_orphaned_version_file() {
 }
 
 #[tokio::test]
+async fn fs_load_latest_returns_invalid_data_for_orphaned_version_file_without_meta() {
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let store = FileArtifactStore::new(tmpdir.path());
+
+    let artifact_dir = tmpdir.path().join("sess-orphan-latest").join("report.md");
+    tokio::fs::create_dir_all(&artifact_dir)
+        .await
+        .expect("artifact directory should be creatable");
+    tokio::fs::write(artifact_dir.join("v1.bin"), b"orphan")
+        .await
+        .expect("orphaned content file should be creatable");
+
+    let err = store
+        .load("sess-orphan-latest", "report.md")
+        .await
+        .expect_err("orphaned latest content should be surfaced as corruption");
+    assert_invalid_data_storage_error(err, "without metadata membership");
+}
+
+#[tokio::test]
+async fn fs_list_returns_invalid_data_for_orphaned_version_file_without_meta() {
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let store = FileArtifactStore::new(tmpdir.path());
+
+    let artifact_dir = tmpdir.path().join("sess-orphan-list").join("report.md");
+    tokio::fs::create_dir_all(&artifact_dir)
+        .await
+        .expect("artifact directory should be creatable");
+    tokio::fs::write(artifact_dir.join("v1.bin"), b"orphan")
+        .await
+        .expect("orphaned content file should be creatable");
+
+    let err = store
+        .list("sess-orphan-list")
+        .await
+        .expect_err("orphaned listed content should be surfaced as corruption");
+    assert_invalid_data_storage_error(err, "without metadata membership");
+}
+
+#[tokio::test]
+async fn fs_list_returns_invalid_data_when_metadata_references_missing_content() {
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let store = FileArtifactStore::new(tmpdir.path());
+
+    store
+        .save("sess-missing-list", "report.md", text_data("v1"))
+        .await
+        .expect("save should succeed");
+
+    let content_path = tmpdir
+        .path()
+        .join("sess-missing-list")
+        .join("report.md")
+        .join("v1.bin");
+    tokio::fs::remove_file(&content_path)
+        .await
+        .expect("content file should be removable");
+
+    let err = store
+        .list("sess-missing-list")
+        .await
+        .expect_err("metadata without content should be surfaced as corruption");
+    assert_invalid_data_storage_error(err, "metadata references missing content");
+}
+
+#[tokio::test]
 async fn fs_save_refuses_to_overwrite_orphaned_next_version_file() {
     let tmpdir = tempfile::TempDir::new().unwrap();
     let store = FileArtifactStore::new(tmpdir.path());
@@ -266,6 +348,32 @@ async fn fs_save_refuses_to_overwrite_orphaned_next_version_file() {
         .await
         .expect("orphaned content should remain for diagnosis");
     assert_eq!(orphan, b"orphan");
+}
+
+#[tokio::test]
+async fn fs_save_refuses_to_advance_when_metadata_references_missing_content() {
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let store = FileArtifactStore::new(tmpdir.path());
+
+    store
+        .save("sess-missing-save", "report.md", text_data("v1"))
+        .await
+        .expect("initial save should succeed");
+
+    let artifact_dir = tmpdir.path().join("sess-missing-save").join("report.md");
+    tokio::fs::remove_file(artifact_dir.join("v1.bin"))
+        .await
+        .expect("content file should be removable");
+
+    let err = store
+        .save("sess-missing-save", "report.md", text_data("v2"))
+        .await
+        .expect_err("save should fail instead of compounding corrupt metadata");
+    assert_invalid_data_storage_error(err, "metadata references missing content");
+    assert!(
+        !artifact_dir.join("v2.bin").exists(),
+        "new content file must not be allocated while existing metadata is corrupt"
+    );
 }
 
 #[tokio::test]

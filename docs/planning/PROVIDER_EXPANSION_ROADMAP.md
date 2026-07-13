@@ -5,7 +5,7 @@
 - [HLD](../architecture/HLD.md)
 - [Streaming Architecture](../architecture/streaming/README.md)
 
-**Status:** Draft planning document
+**Status:** Live provider backlog — open items: Groq, Together, Fireworks, OpenRouter. Shipped providers are summarized in one line each under "Shipped Providers" below.
 
 **Goal:** Expand provider coverage in a way that maximizes user value early, keeps the adapter surface coherent, and reuses the shared model catalog instead of proliferating one-off integrations.
 
@@ -26,24 +26,33 @@ That means we should land the easiest, highest-leverage provider additions first
 
 The repo already has:
 
-- Native adapters:
+- Native adapters (all shipped):
   - Anthropic
   - OpenAI-compatible
   - Google Gemini
   - Ollama
   - Proxy
-- Catalog-backed preset groups:
-  - Anthropic
-  - OpenAI
-  - Google
-  - Local SmolLM3-3B
+  - Azure OpenAI (spec 016)
+  - xAI / Grok (spec 017)
+  - Mistral (spec 018)
+  - AWS Bedrock (spec 019)
+- Catalog-backed preset groups: Anthropic, OpenAI, Google, Azure, xAI, Mistral, Bedrock, Cohere (compatibility-API preset pack), Local SmolLM3-3B
 
-This makes the next wave of work naturally split into two tracks:
+The remaining wave of work is all **preset-first providers** — providers that
+ride on the existing OpenAI-compatible stream adapter and only need preset
+packs plus provider-specific environment handling.
 
-- **Track A: preset-first providers**
-  Providers that can likely ride on the existing OpenAI-compatible stream adapter
-- **Track B: native adapter providers**
-  Providers with distinct protocol/auth/request semantics that deserve first-class adapters
+---
+
+## Shipped Providers
+
+These were formerly Tier 2/3 tasks in this document; each is done and needs no further roadmap tracking:
+
+- **Cohere** — shipped as a compatibility-API preset pack; catalog preset exists.
+- **Azure OpenAI / AI Foundry** — shipped as a native adapter (spec 016, `specs/016-adapter-azure/`).
+- **xAI / Grok** — shipped as a native adapter (spec 017, `specs/017-adapter-xai/`).
+- **Mistral** — shipped as a native adapter (spec 018, `specs/018-adapter-mistral/`).
+- **AWS Bedrock** — shipped as a native Converse/ConverseStream adapter with SigV4 signing (spec 019, `specs/019-adapter-bedrock/`).
 
 ---
 
@@ -146,129 +155,6 @@ These should be treated as the first ordered tasks because they have the best ea
 
 ---
 
-## Tier 2 — Moderate Effort, Strong Demand
-
-These are still attractive, but they need more provider-specific thought than simple preset packs.
-
-### Task 5 — Cohere support
-
-**Why here**
-- Popular enough to matter
-- Has a compatibility path, but may also merit native handling later for Cohere-specific behavior
-- Good candidate for a two-step rollout
-
-**Recommended approach**
-- Phase 1: preset pack on compatibility API if tool streaming maps cleanly
-- Phase 2: revisit whether a native Cohere adapter is worth it
-
-**Expected work**
-- Add `cohere` provider section and preset groups
-- Add `COHERE_API_KEY` and `COHERE_BASE_URL`
-- Add compatibility-path tests for streaming and tool use
-
-**Suggested preset groups**
-- `command`
-- `reasoning`
-
-**Official references**
-- [Cohere compatibility API](https://docs.cohere.com/docs/compatibility-api)
-- [Cohere Command A Reasoning](https://docs.cohere.com/docs/command-a-reasoning)
-
-### Task 6 — Azure OpenAI / Azure AI Foundry adapter
-
-**Why here**
-- Very common in enterprise environments
-- Higher implementation complexity because deployment naming and endpoint semantics differ from plain OpenAI
-- Deserves a clearer native integration rather than being hidden behind generic base URLs
-
-**Expected work**
-- Add an `azure` provider section to the catalog
-- Model presets should carry deployment-oriented metadata, not just raw model IDs
-- Add a native adapter or a provider-specific wrapper around the OpenAI transport
-- Add `.env.example` entries for endpoint, API key, deployment, and API version
-
-**Suggested preset groups**
-- `gpt`
-- `o_series`
-- `azure_hosted_open_models` if relevant later
-
-**Official references**
-- [Azure AI Foundry inference overview](https://learn.microsoft.com/en-us/azure/ai-foundry/model-inference/overview)
-- [Azure AI Foundry inference how-to](https://learn.microsoft.com/en-us/azure/ai-foundry/model-inference/how-to/inference)
-
----
-
-## Tier 3 — Native Adapter Investments
-
-These are likely worth doing, but they should come after the easy wins above unless there is a specific product reason to prioritize them.
-
-### Task 7 — xAI / Grok native adapter
-
-**Why**
-- Strong user interest
-- Growing importance for coding/reasoning use cases
-- Worth supporting natively if the OpenAI-compatible route is incomplete or lossy
-
-**Expected work**
-- Add `xai` provider section and Grok preset groups
-- Implement native auth/request/stream handling if needed
-- Add live tests for text and tool use
-
-**Suggested preset groups**
-- `grok_reasoning`
-- `grok_fast`
-
-**Official references**
-- [xAI docs](https://docs.x.ai/docs)
-- [xAI models](https://docs.x.ai/docs/models/)
-
-### Task 8 — Mistral native adapter
-
-**Why**
-- Important independent provider
-- Strong open-model and enterprise relevance
-- Clean long-term addition to the adapter set
-
-**Expected work**
-- Add `mistral` provider section and grouped presets
-- Implement native streaming and tool-calling support
-- Add `.env.example` support and live ignored tests
-
-**Suggested preset groups**
-- `codestral`
-- `magistral`
-- `mistral_large`
-- `mistral_small`
-
-**Official references**
-- [Mistral models](https://docs.mistral.ai/getting-started/models)
-
-### Task 9 — AWS Bedrock native adapter
-
-**Why**
-- Very important for enterprise adoption
-- Supports many underlying model families
-- Higher complexity due to AWS auth/signing and Converse API semantics
-
-**Expected work**
-- Add `bedrock` provider section
-- Decide whether presets should be grouped by Bedrock model family or upstream provider
-- Implement native Converse / ConverseStream adapter
-- Add environment and credential-chain documentation
-
-**Suggested preset groups**
-- `anthropic`
-- `meta`
-- `amazon`
-- `mistral`
-- `ai21`
-
-**Official references**
-- [Bedrock supported conversation models](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-supported-models-features.html)
-- [Bedrock APIs overview](https://docs.aws.amazon.com/bedrock/latest/userguide/apis.html)
-
----
-
 ## Task Ordering Summary
 
 Use this as the default execution order unless product priorities change:
@@ -277,11 +163,8 @@ Use this as the default execution order unless product priorities change:
 2. Together preset pack
 3. Fireworks preset pack
 4. OpenRouter preset pack
-5. Cohere support
-6. Azure OpenAI / Foundry adapter
-7. xAI / Grok native adapter
-8. Mistral native adapter
-9. AWS Bedrock native adapter
+
+(Former tasks 5–9 — Cohere, Azure, xAI, Mistral, Bedrock — have all shipped; see "Shipped Providers" above.)
 
 ---
 
@@ -336,4 +219,4 @@ The best next concrete milestone is a **Preset Expansion Sprint**:
 - Fireworks
 - OpenRouter
 
-That sprint should produce the biggest user-visible increase in provider coverage for the least engineering cost, while the heavier native adapters can be scheduled as follow-on milestones.
+That sprint should produce the biggest user-visible increase in provider coverage for the least engineering cost. The heavier native adapters (Azure, xAI, Mistral, Bedrock) have already shipped, so this preset sprint is the entire remaining backlog.
