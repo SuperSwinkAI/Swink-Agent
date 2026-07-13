@@ -16,8 +16,8 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use swink_agent::{
     AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessage,
-    AssistantMessageEvent, ContentBlock, LlmMessage, ModelSpec, StopReason, StreamFn,
-    StreamOptions, ToolResultMessage, UserMessage,
+    AssistantMessageEvent, ContentBlock, LlmMessage, ModelSpec, StopReason, StreamErrorKind,
+    StreamFn, StreamOptions, ToolResultMessage, UserMessage,
 };
 use swink_agent_adapters::MistralStreamFn;
 
