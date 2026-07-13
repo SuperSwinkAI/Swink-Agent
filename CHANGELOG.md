@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-12
+
+### Added — model deprecation & pricing staleness (#1064)
+
+- **`PresetStatus::Deprecated { replacement_model_id }`** — the compiled model catalog can now mark a still-listed preset as deprecated and point consumers at its replacement (TOML table syntax; existing `status = "ga"`/`"preview"` entries unchanged). Adds `PresetStatus::is_deprecated()`, `CatalogPreset::is_deprecated()`/`replacement_model_id()`.
+- **`StreamErrorKind::ModelRetired`** and **`AssistantMessageEvent::error_model_retired()`** — a structured signal for provider responses indicating a retired/decommissioned model (HTTP 400/404/410 with provider wording), classified via `adapters::classify::is_model_retired_response`. The agent loop maps it to the non-retryable `AgentError::ModelRetired`.
+- **Pricing staleness warning** — the catalog carries a `pricing_as_of` date; `Agent::new` emits a once-per-process warning when the compiled pricing is older than `SWINK_PRICING_STALENESS_DAYS` (default 180). Adds `pricing_staleness()` / `ModelCatalog::pricing_staleness_at()`.
+
+### Added — production guardrail preset (#1065)
+
+- **`RecommendedPolicies`** builder in `swink-agent-policies` (feature `recommended`) — bundles `BudgetPolicy`, `MaxTurnsPolicy`, `SandboxPolicy`, and `ToolDenyListPolicy` with sensible production defaults and applies all four to `AgentOptions` in one call. The library default remains anything-goes.
+- **`verify_production_guardrails` / `assert_production_guardrails`** — integration-contract helpers that behaviorally probe each guardrail so trivial wiring fails the check.
+
 ### Added — spec 045 (JSON-RPC agent service)
 
 - **`swink-agent-rpc` crate** — new workspace crate exposing a `swink_agent::Agent` over a Unix-domain socket using JSON-RPC 2.0 / NDJSON.
@@ -19,6 +32,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - **`SocketTransport` stub** in `swink-agent-tui` — the `#[cfg(feature = "remote")]` stub that returned `TransportError::Unavailable` for all operations has been removed. Remote agent sessions are now provided by `swink-agent-rpc` + `swink-agentd`. The `remote` feature flag in `swink-agent-tui` has been removed. Closes #898.
+
+### Changed
+
+- **Structured stream-error classification is now primary (#1063).** All built-in adapters (Anthropic, OpenAI, Azure, xAI, Mistral, Bedrock, Google) construct a structured `StreamErrorKind` — notably `ContextWindowExceeded` and `ContentFiltered` — from provider-specific error codes/wording, rather than relying on the core loop's substring fallback (which now exists only for third-party `StreamFn` implementations).
+
+### Fixed
+
+- **JSONL session load tolerates a truncated/corrupt tail line (#1067).** A crash mid-append can leave a truncated multi-byte UTF-8 sequence in the final line; load now skips such a line with a warning and recovers the remaining messages instead of failing the whole load. The metadata line remains strict.
+- **`SessionStore` no-op state defaults now warn (#1066).** The default `save_state`/`load_state` implementations emit a once-per-process `tracing::warn!` so a store that hasn't implemented state persistence no longer silently drops session state. (These methods are planned to become required in a future major version.)
+- **Deterministic `swink-agent-plugin-web` log tests (#1082).** The `execute_logs_*` tests pinned to a current-thread runtime so the thread-local capture subscriber reliably observes the tool's completion log.
+
+### Notes
+
+- This is a **minor** release: `PresetStatus` gains a variant, `ModelCatalog` gains the `pricing_as_of` field, and `AgentError`/`StreamErrorKind` gain variants — all additive but breaking under Rust's exhaustive-match rules for downstream consumers.
+- **Dependencies:** `rmcp` 2.0 → 2.1; `crossbeam-epoch` bumped to 0.9.20 (RUSTSEC-2026-0204); patch-updates group; `crate-ci/typos` action.
 
 ## [0.9.0] - 2026-04-27
 
