@@ -104,6 +104,37 @@ pub fn is_context_overflow_message(message: &str) -> bool {
     PATTERNS.iter().any(|pattern| lower.contains(pattern))
 }
 
+/// Heuristically detect a provider "model retired/decommissioned" response.
+///
+/// Providers signal model retirement as HTTP 400/404/410 with a
+/// provider-specific error body: OpenAI returns a `model_not_found` code,
+/// Anthropic and Gemini return 404s naming the model, and retirement notices
+/// use wording like "decommissioned", "deprecated", or "no longer supported".
+/// Only status codes 400, 404, and 410 are considered; the body match is
+/// case-insensitive.
+///
+/// Note this intentionally also matches never-existed model ids — providers
+/// report retired and unknown models with the same error code, and both mean
+/// "this provider will not serve this model".
+#[must_use]
+pub fn is_model_retired_response(status: u16, body: &str) -> bool {
+    if !matches!(status, 400 | 404 | 410) {
+        return false;
+    }
+    let body = body.to_ascii_lowercase();
+    if body.contains("model_not_found") || body.contains("model_decommissioned") {
+        return true;
+    }
+    body.contains("model")
+        && (body.contains("decommission")
+            || body.contains("deprecated")
+            || body.contains("deprecation")
+            || body.contains("retired")
+            || body.contains("no longer supported")
+            || body.contains("not found")
+            || body.contains("does not exist"))
+}
+
 /// Convert an HTTP error response into an [`AssistantMessageEvent::Error`].
 ///
 /// Uses the default [`classify_http_status`] mapping. The `provider` label
@@ -115,6 +146,7 @@ pub fn is_context_overflow_message(message: &str) -> bool {
 /// - 408     → `error_network`
 /// - 429     → `error_throttled`
 /// - 5xx     → `error_network`
+/// - 400/404/410 matching [`is_model_retired_response`] → `error_model_retired`
 /// - other   → generic `error` (unclassified)
 #[must_use]
 pub fn error_event_from_status(status: u16, body: &str, provider: &str) -> AssistantMessageEvent {
@@ -151,6 +183,13 @@ pub fn error_event_from_status_with_overrides(
             "{provider} server error (HTTP {status}): {body}"
         )),
         None => {
+            // Model retirement/decommission responses get a structured kind
+            // so the loop can tell the user to switch models.
+            if is_model_retired_response(status, body) {
+                return AssistantMessageEvent::error_model_retired(format!(
+                    "{provider} model retired or unavailable (HTTP {status}): {body}"
+                ));
+            }
             // 4xx client errors that aren't auth/throttle get a generic error
             // (no StreamErrorKind), other codes get network classification.
             if (400..500).contains(&status) {
@@ -503,6 +542,79 @@ mod tests {
                 assert!(error_message.contains("Anthropic"));
                 assert!(error_message.contains("529"));
                 assert_eq!(error_kind, Some(swink_agent::StreamErrorKind::Network));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    // ─── Model retirement classification ─────────────────────────────────
+
+    #[test]
+    fn openai_model_not_found_code_is_model_retired() {
+        // OpenAI reports retired and unknown models with HTTP 404 and the
+        // `model_not_found` error code.
+        let body = r#"{"error":{"message":"The model `gpt-4-32k` has been deprecated","type":"invalid_request_error","code":"model_not_found"}}"#;
+        assert!(is_model_retired_response(404, body));
+        let event = error_event_from_status(404, body, "OpenAI");
+        match event {
+            AssistantMessageEvent::Error {
+                error_kind,
+                error_message,
+                ..
+            } => {
+                assert_eq!(error_kind, Some(swink_agent::StreamErrorKind::ModelRetired));
+                assert!(error_message.contains("OpenAI"));
+                assert!(error_message.contains("404"));
+                assert!(error_message.contains("gpt-4-32k"));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decommissioned_model_410_is_model_retired() {
+        let body = "The model claude-1 has been decommissioned";
+        assert!(is_model_retired_response(410, body));
+        let event = error_event_from_status(410, body, "Anthropic");
+        match event {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert_eq!(error_kind, Some(swink_agent::StreamErrorKind::ModelRetired));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn gemini_model_not_found_404_is_model_retired() {
+        let body = "models/gemini-1.0-pro is not found for API version v1beta";
+        assert!(is_model_retired_response(404, body));
+    }
+
+    #[test]
+    fn generic_400_body_is_not_model_retired() {
+        assert!(!is_model_retired_response(
+            400,
+            "missing required field: messages"
+        ));
+        let event = error_event_from_status(400, "bad request", "TestProvider");
+        match event {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert_eq!(error_kind, None, "generic 400 must stay unclassified");
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn model_retirement_wording_on_wrong_status_is_not_model_retired() {
+        // Classified statuses (auth/throttle/server) win over body heuristics.
+        let body = r#"{"error":{"code":"model_not_found"}}"#;
+        assert!(!is_model_retired_response(500, body));
+        assert!(!is_model_retired_response(401, body));
+        let event = error_event_from_status(401, body, "TestProvider");
+        match event {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert_eq!(error_kind, Some(swink_agent::StreamErrorKind::Auth));
             }
             other => panic!("expected Error, got {other:?}"),
         }

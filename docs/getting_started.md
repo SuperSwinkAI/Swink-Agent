@@ -155,19 +155,24 @@ let result = agent.prompt_async(messages).await?;
 
 ### Add Production Guardrails
 
-The snippet above runs with **no policies** — the library default is anything-goes (see [Policy Guardrails](policy-overview.md)). That's fine for a demo or a test, but any agent running unattended in production should wire at least budget, turn-count, sandbox, and tool-deny-list guardrails:
+The snippet above runs with **no policies** — the library default is anything-goes (see [Policy Guardrails](policy-overview.md)). That's fine for a demo or a test, but any agent running unattended in production should wire the recommended guardrail set from `swink-agent-policies` (feature `recommended`) before shipping:
 
 ```rust
-use swink_agent_policies::{BudgetPolicy, MaxTurnsPolicy, SandboxPolicy, ToolDenyListPolicy};
+use swink_agent_policies::{RecommendedPolicies, assert_production_guardrails};
 
-let options = AgentOptions::new(/* ... */)
-    .with_pre_turn_policy(BudgetPolicy::new().max_cost(10.0))
-    .with_pre_turn_policy(MaxTurnsPolicy::new(50))
-    .with_pre_dispatch_policy(SandboxPolicy::new("/var/lib/agent-workspace"))
-    .with_pre_dispatch_policy(ToolDenyListPolicy::new(["bash"]));
+let options = RecommendedPolicies::builder()
+    .max_cost(10.0)                       // budget cap in USD (default: 10.0)
+    .max_turns(50)                        // turn cap (default: 50)
+    .sandbox_root("/srv/agent-workspace") // file-tool root (default: cwd)
+    .deny_tools(["bash"])                 // blocked tools (default: ["bash"])
+    .apply(options);
+
+// In your test suite: fails if any of the four guardrails
+// (budget, max-turns, sandbox, deny-list) is missing or trivial.
+assert_production_guardrails(&options, "bash");
 ```
 
-See [Policy Guardrails: Recommended Production Policy Set](policy-overview.md#recommended-production-policy-set) for the full rationale. A bundled `RecommendedPolicies` preset is proposed in [#1065](https://github.com/SuperSwinkAI/Swink-Agent/issues/1065) — until it lands, wire these four policies by hand.
+See [Policy Guardrails: Recommended Production Policy Set](policy-overview.md#recommended-production-policy-set) for the full rationale, the checkpoint model, and the other available policies.
 
 ## Tests
 
