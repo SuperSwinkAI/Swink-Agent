@@ -63,6 +63,47 @@ pub fn classify_with_overrides(
     classify_http_status(code)
 }
 
+/// Check whether a provider error message matches a documented
+/// context-window-overflow wording.
+///
+/// Several providers report context overflow without a dedicated structured
+/// error code — only a generic error type (Anthropic `invalid_request_error`,
+/// Bedrock `validationException`, Google `INVALID_ARGUMENT`) plus a
+/// documented message. Built-in adapters call this helper *at the adapter
+/// edge*, scoped to the provider's error type, so the structured
+/// `StreamErrorKind::ContextWindowExceeded` is attached to the error event
+/// instead of leaving classification to the core loop's substring fallback
+/// (which exists only for third-party `StreamFn` implementations).
+#[must_use]
+pub fn is_context_overflow_message(message: &str) -> bool {
+    // Provider-documented wordings, lowercase.
+    const PATTERNS: &[&str] = &[
+        // Anthropic: "prompt is too long: 210510 tokens > 200000 maximum"
+        "prompt is too long",
+        // Anthropic / Bedrock: "input length and `max_tokens` exceed context limit"
+        "exceed context limit",
+        // Bedrock: "Input is too long for requested model."
+        "input is too long",
+        // Bedrock (Anthropic models): "too many input tokens"
+        "too many input tokens",
+        // OpenAI / Azure / Mistral: "This model's maximum context length is 128000 tokens..."
+        "maximum context length",
+        // OpenAI structured code, occasionally embedded in raw bodies
+        "context_length_exceeded",
+        "context length exceeded",
+        // OpenAI (newer models): "Your input exceeds the context window of this model"
+        "exceeds the context window",
+        // Google: "The input token count (32000) exceeds the maximum number of tokens allowed (30720)."
+        "exceeds the maximum number of tokens",
+        // Mistral: "Prompt contains 40960 tokens, too large for model with 32768 maximum context length"
+        "too large for model",
+        // xAI: "This model's maximum prompt length is 131072 but the request contains 200000 tokens."
+        "maximum prompt length",
+    ];
+    let lower = message.to_lowercase();
+    PATTERNS.iter().any(|pattern| lower.contains(pattern))
+}
+
 /// Heuristically detect a provider "model retired/decommissioned" response.
 ///
 /// Providers signal model retirement as HTTP 400/404/410 with a
@@ -228,6 +269,53 @@ pub fn parse_retry_after_value(value: &str) -> Option<Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn context_overflow_matches_documented_provider_wordings() {
+        // Anthropic
+        assert!(is_context_overflow_message(
+            "prompt is too long: 210510 tokens > 200000 maximum"
+        ));
+        assert!(is_context_overflow_message(
+            "input length and `max_tokens` exceed context limit: 199999 + 4096 > 200000"
+        ));
+        // Bedrock
+        assert!(is_context_overflow_message(
+            "Input is too long for requested model."
+        ));
+        assert!(is_context_overflow_message(
+            "too many input tokens for this model"
+        ));
+        // OpenAI / Azure
+        assert!(is_context_overflow_message(
+            "This model's maximum context length is 128000 tokens. However, your messages resulted in 131000 tokens."
+        ));
+        assert!(is_context_overflow_message(
+            "Your input exceeds the context window of this model."
+        ));
+        // Google
+        assert!(is_context_overflow_message(
+            "The input token count (32000) exceeds the maximum number of tokens allowed (30720)."
+        ));
+        // Mistral
+        assert!(is_context_overflow_message(
+            "Prompt contains 40960 tokens, too large for model with 32768 maximum context length"
+        ));
+        // xAI
+        assert!(is_context_overflow_message(
+            "This model's maximum prompt length is 131072 but the request contains 200000 tokens."
+        ));
+    }
+
+    #[test]
+    fn context_overflow_does_not_match_unrelated_messages() {
+        assert!(!is_context_overflow_message("invalid api key"));
+        assert!(!is_context_overflow_message(
+            "max_tokens: must be greater than 0"
+        ));
+        assert!(!is_context_overflow_message("rate limit exceeded"));
+        assert!(!is_context_overflow_message(""));
+    }
 
     #[test]
     fn classify_401_is_auth() {

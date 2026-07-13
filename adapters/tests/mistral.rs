@@ -16,14 +16,14 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use swink_agent::{
     AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessage,
-    AssistantMessageEvent, ContentBlock, LlmMessage, ModelSpec, StopReason, StreamFn,
-    StreamOptions, ToolResultMessage, UserMessage,
+    AssistantMessageEvent, ContentBlock, LlmMessage, ModelSpec, StopReason, StreamErrorKind,
+    StreamFn, StreamOptions, ToolResultMessage, UserMessage,
 };
 use swink_agent_adapters::MistralStreamFn;
 
 use common::{
-    event_name, extract_stop_reason, find_error_message, notify_on_request, sse_response,
-    test_context,
+    event_name, extract_stop_reason, find_error_kind, find_error_message, notify_on_request,
+    sse_response, test_context,
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -826,6 +826,33 @@ async fn http_500_server_error() {
 
     let err = find_error_message(&events).expect("expected error event");
     assert!(err.contains("server error"), "got: {err}");
+}
+
+#[tokio::test]
+async fn http_400_prompt_too_large_sets_context_overflow_kind() {
+    // Mistral uses a top-level error envelope (no nested "error" object) and
+    // reports context overflow only via the documented message wording.
+    let error_body = r#"{"object":"error","message":"Prompt contains 40960 tokens, too large for model with 32768 maximum context length","type":"invalid_request_error","param":null,"code":null}"#;
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(error_body))
+        .mount(&server)
+        .await;
+
+    let sf = MistralStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    assert_eq!(
+        find_error_kind(&events),
+        Some(Some(StreamErrorKind::ContextWindowExceeded)),
+        "expected structured ContextWindowExceeded, got: {events:?}"
+    );
+    let err = find_error_message(&events).expect("expected error event");
+    assert!(
+        err.contains("too large for model"),
+        "expected provider message preserved, got: {err}"
+    );
 }
 
 #[tokio::test]

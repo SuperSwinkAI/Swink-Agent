@@ -308,6 +308,12 @@ fn gemini_stream<'a>(
                 }
             };
             warn!(status = code, "Google Gemini HTTP error");
+            // Gemini reports context overflow as HTTP 400 INVALID_ARGUMENT
+            // with a documented message — classify it structurally before
+            // falling back to status-based mapping.
+            if let Some(event) = classify_google_error_body(code, &body) {
+                return stream::iter(crate::base::pre_stream_error(event)).left_stream();
+            }
             let event = crate::classify::error_event_from_status(code, &body, "Google");
             return stream::iter(crate::base::pre_stream_error(event)).left_stream();
         }
@@ -316,6 +322,30 @@ fn gemini_stream<'a>(
             .right_stream()
     })
     .flatten()
+}
+
+/// Classify a Google Gemini HTTP 400 error body.
+///
+/// Gemini reports context-window overflow as `INVALID_ARGUMENT` with a
+/// message like "The input token count (32000) exceeds the maximum number of
+/// tokens allowed (30720)." — the adapter matches the documented wording and
+/// attaches the structured `StreamErrorKind::ContextWindowExceeded`.
+///
+/// Returns `None` when the body doesn't identify a more specific condition,
+/// so the caller falls through to HTTP-status classification.
+fn classify_google_error_body(status: u16, body: &str) -> Option<AssistantMessageEvent> {
+    if status != 400 {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    let message = value
+        .pointer("/error/message")
+        .and_then(serde_json::Value::as_str)?;
+    crate::classify::is_context_overflow_message(message).then(|| {
+        AssistantMessageEvent::error_context_overflow(format!(
+            "Google context window exceeded: {message}"
+        ))
+    })
 }
 
 async fn send_request(

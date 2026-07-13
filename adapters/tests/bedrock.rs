@@ -159,6 +159,100 @@ async fn bedrock_text_response_maps_to_text_events() {
 }
 
 #[tokio::test]
+async fn bedrock_http_400_input_too_long_sets_context_overflow_kind() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/model/amazon.nova-pro-v1:0/converse-stream"))
+        .respond_with(
+            ResponseTemplate::new(400)
+                .set_body_string(r#"{"message":"Input is too long for requested model."}"#),
+        )
+        .mount(&server)
+        .await;
+
+    let stream_fn = BedrockStreamFn::new_with_base_url(
+        server.uri(),
+        "us-east-1",
+        "AKIDEXAMPLE",
+        "secret",
+        None,
+    );
+    let events = stream_fn
+        .stream(
+            &ModelSpec::new("bedrock", "amazon.nova-pro-v1:0"),
+            &AgentContext {
+                system_prompt: String::new(),
+                messages: Vec::new(),
+                tools: Vec::new(),
+            },
+            &StreamOptions::default(),
+            CancellationToken::new(),
+        )
+        .collect::<Vec<_>>()
+        .await;
+
+    assert!(
+        matches!(events.first(), Some(AssistantMessageEvent::Start)),
+        "pre-stream HTTP failures must start with Start: {events:?}"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AssistantMessageEvent::Error {
+                error_kind: Some(swink_agent::StreamErrorKind::ContextWindowExceeded),
+                ..
+            }
+        )),
+        "expected structured ContextWindowExceeded, got: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn bedrock_http_400_other_validation_error_has_no_kind() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/model/amazon.nova-pro-v1:0/converse-stream"))
+        .respond_with(
+            ResponseTemplate::new(400)
+                .set_body_string(r#"{"message":"The provided model identifier is invalid."}"#),
+        )
+        .mount(&server)
+        .await;
+
+    let stream_fn = BedrockStreamFn::new_with_base_url(
+        server.uri(),
+        "us-east-1",
+        "AKIDEXAMPLE",
+        "secret",
+        None,
+    );
+    let events = stream_fn
+        .stream(
+            &ModelSpec::new("bedrock", "amazon.nova-pro-v1:0"),
+            &AgentContext {
+                system_prompt: String::new(),
+                messages: Vec::new(),
+                tools: Vec::new(),
+            },
+            &StreamOptions::default(),
+            CancellationToken::new(),
+        )
+        .collect::<Vec<_>>()
+        .await;
+
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AssistantMessageEvent::Error {
+                error_kind: None,
+                ..
+            }
+        )),
+        "non-overflow 400 must stay unclassified, got: {events:?}"
+    );
+}
+
+#[tokio::test]
 async fn bedrock_pre_request_cancellation_is_aborted() {
     let token = CancellationToken::new();
     token.cancel();

@@ -9,12 +9,14 @@ use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use swink_agent::{AssistantMessageEvent, ModelSpec, StopReason, StreamFn, StreamOptions};
+use swink_agent::{
+    AssistantMessageEvent, ModelSpec, StopReason, StreamErrorKind, StreamFn, StreamOptions,
+};
 use swink_agent_adapters::AnthropicStreamFn;
 
 use common::{
-    event_name, extract_stop_reason, find_error_message, find_retry_after, notify_on_request,
-    sse_response, test_context,
+    event_name, extract_stop_reason, find_error_kind, find_error_message, find_retry_after,
+    notify_on_request, sse_response, test_context,
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -401,6 +403,160 @@ async fn anthropic_http_529() {
     assert!(
         err.contains("Overloaded"),
         "expected body content, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn anthropic_http_400_prompt_too_long_sets_context_overflow_kind() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(
+            r#"{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 210510 tokens > 200000 maximum"}}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    assert_eq!(
+        find_error_kind(&events),
+        Some(Some(StreamErrorKind::ContextWindowExceeded)),
+        "expected structured ContextWindowExceeded, got: {events:?}"
+    );
+    let err = find_error_message(&events).expect("expected error event");
+    assert!(
+        err.contains("prompt is too long"),
+        "expected provider message preserved, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn anthropic_http_400_other_invalid_request_has_no_kind() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(
+            r#"{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: must be greater than 0"}}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    assert_eq!(
+        find_error_kind(&events),
+        Some(None),
+        "non-overflow invalid_request must stay unclassified, got: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn anthropic_http_401_sets_auth_kind() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(401).set_body_string(
+            r#"{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    assert_eq!(find_error_kind(&events), Some(Some(StreamErrorKind::Auth)));
+}
+
+#[tokio::test]
+async fn anthropic_stream_error_prompt_too_long_sets_context_overflow_kind() {
+    let body = [
+        "event: message_start",
+        r#"data: {"type":"message_start","message":{"usage":{"input_tokens":25}}}"#,
+        "",
+        "event: error",
+        r#"data: {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 210510 tokens > 200000 maximum"}}"#,
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    assert_eq!(
+        find_error_kind(&events),
+        Some(Some(StreamErrorKind::ContextWindowExceeded)),
+        "expected structured ContextWindowExceeded, got: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn anthropic_stream_error_invalid_request_is_not_network() {
+    let body = [
+        "event: message_start",
+        r#"data: {"type":"message_start","message":{"usage":{"input_tokens":25}}}"#,
+        "",
+        "event: error",
+        r#"data: {"type":"error","error":{"type":"invalid_request_error","message":"messages: at least one message is required"}}"#,
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    // Deterministic client errors must not be classified as retryable Network.
+    assert_eq!(
+        find_error_kind(&events),
+        Some(None),
+        "invalid_request_error must stay unclassified, got: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn anthropic_stream_error_rate_limit_sets_throttled_kind() {
+    let body = [
+        "event: message_start",
+        r#"data: {"type":"message_start","message":{"usage":{"input_tokens":25}}}"#,
+        "",
+        "event: error",
+        r#"data: {"type":"error","error":{"type":"rate_limit_error","message":"Number of requests has exceeded your rate limit"}}"#,
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    assert_eq!(
+        find_error_kind(&events),
+        Some(Some(StreamErrorKind::Throttled))
     );
 }
 

@@ -16,7 +16,7 @@ use swink_agent::{
 };
 use swink_agent_adapters::GeminiStreamFn;
 
-use common::{event_name, find_error_message, sse_response, test_context};
+use common::{event_name, find_error_kind, find_error_message, sse_response, test_context};
 
 fn test_model() -> ModelSpec {
     ModelSpec::new("google", "gemini-3-flash-preview")
@@ -685,6 +685,51 @@ async fn google_http_401_maps_to_auth() {
     assert!(
         msg.contains("auth") || msg.contains("401"),
         "expected auth error, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn google_http_400_token_count_exceeded_sets_context_overflow_kind() {
+    let error_body = r#"{"error":{"code":400,"message":"The input token count (1194046) exceeds the maximum number of tokens allowed (1048576).","status":"INVALID_ARGUMENT"}}"#;
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(error_body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let events = collect_events(&stream_fn).await;
+
+    assert_eq!(
+        find_error_kind(&events),
+        Some(Some(StreamErrorKind::ContextWindowExceeded)),
+        "expected structured ContextWindowExceeded, got: {events:?}"
+    );
+    let msg = find_error_message(&events).expect("expected error event");
+    assert!(
+        msg.contains("exceeds the maximum number of tokens"),
+        "expected provider message preserved, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn google_http_400_other_invalid_argument_has_no_kind() {
+    let error_body = r#"{"error":{"code":400,"message":"Invalid JSON payload received.","status":"INVALID_ARGUMENT"}}"#;
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(error_body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let events = collect_events(&stream_fn).await;
+
+    assert_eq!(
+        find_error_kind(&events),
+        Some(None),
+        "non-overflow 400 must stay unclassified, got: {events:?}"
     );
 }
 
