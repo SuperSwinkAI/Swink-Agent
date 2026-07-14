@@ -318,6 +318,22 @@ pub async fn run_single_turn(
         return TurnOutcome::Return;
     };
 
+    // vi-b. Price the response from the model catalog when the adapter left
+    // `cost` at zero (issue #1100). Every built-in remote adapter reports
+    // `Usage` but emits `Cost::default()`; only the proxy adapter passes real
+    // billed cost through. Doing this here — rather than in each adapter —
+    // covers third-party `StreamFn` implementations too, and guarantees the
+    // priced cost is visible to accumulation, policies, metrics, the context
+    // history, and the `TurnEnd` event alike. Adapters that priced their own
+    // response keep precedence.
+    if crate::model_catalog::price_assistant_message(&mut assistant_message) {
+        debug!(
+            model_id = %assistant_message.model_id,
+            cost = assistant_message.cost.total,
+            "priced assistant message from model catalog (adapter reported no cost)"
+        );
+    }
+
     // Record OTel-compatible attributes on the turn span.
     turn_span.record(
         "agent.stop_reason",

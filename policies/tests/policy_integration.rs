@@ -5,7 +5,7 @@ mod common;
 use std::sync::Arc;
 
 use swink_agent::{
-    AgentOptions, AssistantMessageEvent, Cost, StopReason, StreamFn, SubAgent, Usage,
+    AgentOptions, AssistantMessageEvent, Cost, ModelSpec, StopReason, StreamFn, SubAgent, Usage,
 };
 use swink_agent_policies::{BudgetPolicy, MaxTurnsPolicy};
 
@@ -101,6 +101,136 @@ async fn cost_cap_stops_agent() {
 
     assert!(result.is_ok());
     assert!(tool.execution_count() <= 2);
+}
+
+/// Regression test for issue #1100.
+///
+/// Every built-in remote adapter reports token `Usage` but emits
+/// `Cost::default()` on assistant messages — only the proxy adapter passes
+/// real billed cost through. The loop used to accumulate that zero verbatim,
+/// so `BudgetPolicy::max_cost` never fired against any real provider. The loop
+/// now prices unpriced messages from the model catalog, so the ceiling engages.
+///
+/// The mock below mimics a real adapter exactly: real `Usage`, zero `Cost`.
+/// At $3.00/M input tokens for `claude-sonnet-4-6`, each turn costs $3.00, so
+/// a $5.00 ceiling must stop the loop before the third turn. Six responses are
+/// scripted, so stopping at two proves the budget — not script exhaustion —
+/// ended the run. Before the fix this ran all six.
+#[tokio::test]
+async fn cost_cap_stops_agent_when_adapter_reports_no_cost() {
+    let adapter_events_without_cost = |id: &str| -> Vec<AssistantMessageEvent> {
+        vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::ToolCallStart {
+                content_index: 0,
+                id: id.to_string(),
+                name: "mock_tool".to_string(),
+            },
+            AssistantMessageEvent::ToolCallDelta {
+                content_index: 0,
+                delta: "{}".to_string(),
+            },
+            AssistantMessageEvent::ToolCallEnd { content_index: 0 },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::ToolUse,
+                usage: Usage {
+                    input: 1_000_000,
+                    ..Usage::default()
+                },
+                // What every built-in remote adapter actually emits.
+                cost: Cost::default(),
+            },
+        ]
+    };
+
+    let responses = vec![
+        adapter_events_without_cost("c1"),
+        adapter_events_without_cost("c2"),
+        adapter_events_without_cost("c3"),
+        adapter_events_without_cost("c4"),
+        adapter_events_without_cost("c5"),
+        adapter_events_without_cost("c6"),
+    ];
+    let stream_fn: Arc<dyn StreamFn> = Arc::new(MockStreamFn::new(responses));
+    let tool = Arc::new(MockTool::new("mock_tool"));
+
+    // A model with catalog pricing: $3.00 per million input tokens.
+    let model = ModelSpec::new("anthropic", "claude-sonnet-4-6");
+    let options = AgentOptions::new_simple("test", model, stream_fn)
+        .with_tools(vec![tool.clone()])
+        .with_pre_turn_policy(BudgetPolicy::new().max_cost(5.0));
+
+    let mut agent = swink_agent::Agent::new(options);
+    let result = agent.prompt_text("go").await;
+
+    assert!(result.is_ok());
+    assert_eq!(
+        tool.execution_count(),
+        2,
+        "budget should stop the loop once accumulated cost ($6.00 after two \
+         turns) crosses the $5.00 ceiling; running longer means adapter-\
+         reported zero cost is still being accumulated verbatim (issue #1100)"
+    );
+}
+
+/// Companion to `cost_cap_stops_agent_when_adapter_reports_no_cost`: an adapter
+/// that prices its own response (as the proxy adapter does) keeps precedence
+/// over catalog pricing.
+#[tokio::test]
+async fn adapter_supplied_cost_takes_precedence_over_catalog_pricing() {
+    let events_with_adapter_cost = |id: &str| -> Vec<AssistantMessageEvent> {
+        vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::ToolCallStart {
+                content_index: 0,
+                id: id.to_string(),
+                name: "mock_tool".to_string(),
+            },
+            AssistantMessageEvent::ToolCallDelta {
+                content_index: 0,
+                delta: "{}".to_string(),
+            },
+            AssistantMessageEvent::ToolCallEnd { content_index: 0 },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::ToolUse,
+                // Catalog pricing for this usage would be $3.00/turn; the
+                // adapter says the call was billed at $1.00. The loop must
+                // trust the adapter, so the $5.00 ceiling takes five turns
+                // rather than two to trip.
+                usage: Usage {
+                    input: 1_000_000,
+                    ..Usage::default()
+                },
+                cost: Cost {
+                    input: 1.0,
+                    total: 1.0,
+                    ..Cost::default()
+                },
+            },
+        ]
+    };
+
+    let responses = (1..=8)
+        .map(|i| events_with_adapter_cost(&format!("c{i}")))
+        .collect();
+    let stream_fn: Arc<dyn StreamFn> = Arc::new(MockStreamFn::new(responses));
+    let tool = Arc::new(MockTool::new("mock_tool"));
+
+    let model = ModelSpec::new("anthropic", "claude-sonnet-4-6");
+    let options = AgentOptions::new_simple("test", model, stream_fn)
+        .with_tools(vec![tool.clone()])
+        .with_pre_turn_policy(BudgetPolicy::new().max_cost(5.0));
+
+    let mut agent = swink_agent::Agent::new(options);
+    let result = agent.prompt_text("go").await;
+
+    assert!(result.is_ok());
+    assert_eq!(
+        tool.execution_count(),
+        5,
+        "adapter-supplied cost ($1.00/turn) must win over catalog pricing \
+         ($3.00/turn), so the $5.00 ceiling trips on the sixth turn"
+    );
 }
 
 #[tokio::test]

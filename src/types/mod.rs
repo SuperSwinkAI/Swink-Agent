@@ -212,6 +212,23 @@ pub struct Cost {
     pub extra: HashMap<String, f64>,
 }
 
+impl Cost {
+    /// Returns `true` when every cost category — including [`Cost::extra`] — is zero.
+    ///
+    /// Used to detect an adapter that did not price its own response, so the
+    /// agent loop can fall back to catalog pricing via
+    /// [`price_assistant_message`](crate::price_assistant_message).
+    #[must_use]
+    pub fn is_zero(&self) -> bool {
+        self.input == 0.0
+            && self.output == 0.0
+            && self.cache_read == 0.0
+            && self.cache_write == 0.0
+            && self.total == 0.0
+            && self.extra.values().all(|v| *v == 0.0)
+    }
+}
+
 impl Add for Cost {
     type Output = Self;
 
