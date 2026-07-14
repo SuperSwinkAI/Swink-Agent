@@ -476,7 +476,14 @@ impl SetupWizard {
         }
     }
 
-    /// Test-only constructor that bypasses keychain lookups.
+    /// Test-only constructor that bypasses the keychain for both reads *and*
+    /// writes.
+    ///
+    /// Reads are skipped by assuming nothing is configured; writes go to
+    /// [`recording_store_credential`], never to `credentials::store_credential`.
+    /// Previously this wired the real writer, so any test that advanced to key
+    /// entry and pressed Enter performed a live keychain write (issue #1111).
+    /// Tests wanting a failing writer assign `store_credential_fn` themselves.
     #[cfg(test)]
     fn new_for_test() -> Self {
         let providers = credentials::providers();
@@ -489,9 +496,37 @@ impl SetupWizard {
             save_error: None,
             should_quit: false,
             should_continue: false,
-            store_credential_fn: credentials::store_credential,
+            store_credential_fn: recording_store_credential,
         }
     }
+}
+
+// Writes recorded by `recording_store_credential`, newest last.
+#[cfg(test)]
+thread_local! {
+    static RECORDED_WRITES: std::cell::RefCell<Vec<(String, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Test double for `credentials::store_credential`: records the write in a
+/// thread-local log and succeeds, without touching any keychain.
+///
+/// This is the default writer for [`SetupWizard::new_for_test`] (issue #1111).
+///
+/// The `Result` is load-bearing despite always being `Ok`: it must match the
+/// `store_credential_fn` pointer type, alongside the real writer and
+/// `failing_store_credential`.
+#[cfg(test)]
+#[allow(clippy::unnecessary_wraps)]
+fn recording_store_credential(provider_key: &str, secret: &str) -> Result<(), String> {
+    RECORDED_WRITES.with_borrow_mut(|w| w.push((provider_key.to_string(), secret.to_string())));
+    Ok(())
+}
+
+/// Drain everything [`recording_store_credential`] captured on this thread.
+#[cfg(test)]
+fn take_recorded_writes() -> Vec<(String, String)> {
+    RECORDED_WRITES.with_borrow_mut(std::mem::take)
 }
 
 #[cfg(test)]
@@ -671,6 +706,43 @@ mod tests {
 
         wizard.handle_key(key(KeyCode::Esc));
 
+        assert!(matches!(wizard.step, WizardStep::ProviderList));
+    }
+
+    /// Regression for #1111: `new_for_test` must default to a fake writer.
+    ///
+    /// The old default was `credentials::store_credential`, so this exact
+    /// sequence — the one most key-entry tests perform — issued a live keychain
+    /// write and blocked on macOS's SecurityAgent prompt. Asserting on the
+    /// recording fake proves the write was intercepted: a real write would
+    /// leave `take_recorded_writes()` empty.
+    #[test]
+    fn new_for_test_stores_keys_through_a_fake_not_the_real_keychain() {
+        let _ = take_recorded_writes(); // isolate from earlier tests on this thread
+        let mut wizard = SetupWizard::new_for_test();
+        let provider_index = wizard
+            .providers
+            .iter()
+            .position(|provider| provider.key_name == "openai")
+            .expect("openai provider should exist");
+        wizard.step = WizardStep::KeyEntry {
+            provider_index,
+            input: "sk-wizard-sentinel-1111".to_string(),
+            cursor: 22,
+        };
+
+        wizard.handle_key(key(KeyCode::Enter));
+
+        assert_eq!(
+            take_recorded_writes(),
+            vec![("openai".to_string(), "sk-wizard-sentinel-1111".to_string())],
+            "the wizard's default writer must be the recording fake; an empty log \
+             means the key went to the real keychain instead (issue #1111)"
+        );
+        assert!(
+            wizard.configured[provider_index],
+            "a successful fake store should still mark the provider configured"
+        );
         assert!(matches!(wizard.step, WizardStep::ProviderList));
     }
 
