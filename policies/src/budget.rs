@@ -32,7 +32,15 @@ impl BudgetPolicy {
         }
     }
 
-    /// Set the maximum total cost.
+    /// Set the maximum total cost, in USD.
+    ///
+    /// Cost is compared against the loop's accumulated cost. Most adapters do
+    /// not price their own responses; the agent loop fills those in from the
+    /// model catalog, so this ceiling is enforced for any model with catalog
+    /// pricing. Models with no catalog pricing (unknown or local models) accrue
+    /// zero cost and are therefore not constrained by this limit — use
+    /// [`max_input`](Self::max_input) / [`max_output`](Self::max_output) to cap
+    /// those.
     #[must_use]
     pub const fn max_cost(mut self, limit: f64) -> Self {
         self.max_cost = Some(limit);
