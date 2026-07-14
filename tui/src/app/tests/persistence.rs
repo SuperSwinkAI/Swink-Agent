@@ -400,3 +400,49 @@ async fn load_session_with_corrupted_saved_state_keeps_in_memory_state_and_repor
         "load failures should surface a user-visible system message"
     );
 }
+
+/// Regression for #1111: the `#key <provider> <api-key>` path must not reach
+/// the real OS keychain.
+///
+/// `App::store_key` calls `credentials::store_credential` directly — there is
+/// no `fn`-pointer seam here like the wizard has — so before #1111 this test
+/// (and every other App test that submitted a `#key` line) blocked forever
+/// inside `SecKeychainFindGenericPassword` waiting on macOS's SecurityAgent.
+/// It now resolves against the in-memory fake. Reaching the assertions at all
+/// is the substance of this test; see `credentials::tests` for the proof that
+/// the backend really is the fake.
+#[tokio::test]
+async fn hash_key_command_stores_through_the_fake_keychain() {
+    let mut app = App::new(TuiConfig::default());
+
+    app.store_key("openai", "sk-app-path-sentinel-1111");
+
+    assert!(
+        app.messages
+            .iter()
+            .any(|message| message.content.contains("API key stored for: openai")),
+        "store_key should report success via the fake backend, not fail or hang"
+    );
+    assert!(
+        !app.messages
+            .iter()
+            .any(|message| message.content.contains("Failed to store key")),
+        "the fake backend must not report a storage failure"
+    );
+}
+
+/// Regression for #1111: `#keys` (list) reads every provider's credential.
+/// That was one live keychain read per provider before the backend seam.
+#[tokio::test]
+async fn hash_keys_command_reads_through_the_fake_keychain() {
+    let mut app = App::new(TuiConfig::default());
+
+    app.list_keys();
+
+    assert!(
+        app.messages
+            .iter()
+            .any(|message| message.content.contains("Provider credentials:")),
+        "list_keys should render the provider table without touching the keychain"
+    );
+}
