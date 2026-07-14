@@ -14,6 +14,58 @@ Credential management and OAuth2 token refresh for [`swink-agent`](https://crate
 - OAuth2 helpers (`oauth2` module) — client-credentials and refresh-token grants over `reqwest`
 - Integrates with `swink-agent-adapters` (`azure` feature) to inject AAD bearer tokens into every request
 
+## Cargo features
+
+| Feature | Default | Provides |
+|---|---|---|
+| `keychain` | off | `KeychainCredentialStore` — persists credentials in the OS keychain |
+
+### `keychain`
+
+The in-memory store loses everything on exit, so an OAuth2 refresh token obtained
+in one run is gone by the next. Enable `keychain` to persist credentials in the
+platform secret store instead — macOS Keychain Services, Windows Credential
+Manager, or Linux/BSD Secret Service:
+
+```toml
+swink-agent-auth = { version = "0.11.0", features = ["keychain"] }
+```
+
+```rust,no_run
+use std::sync::Arc;
+use swink_agent::{Credential, CredentialStore};
+use swink_agent_auth::{DefaultCredentialResolver, KeychainCredentialStore};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let store = KeychainCredentialStore::new();
+    store
+        .set("github", Credential::ApiKey { key: "ghp_example".into() })
+        .await?;
+
+    // Survives a restart, so a refreshed OAuth2 token is still usable next run.
+    let resolver = Arc::new(DefaultCredentialResolver::new(Arc::new(store)));
+    Ok(())
+}
+```
+
+Notes:
+
+- **Opt-in only.** The framework never reads the keychain on its own — you
+  construct the store and pass it in. A default build does not depend on
+  `keyring` at all.
+- **Namespacing.** Entries are written under the `swink-agent-auth` service name.
+  Use `KeychainCredentialStore::with_service("my-app")` to isolate an
+  application's credentials from other `swink-agent` processes on the machine.
+- **Headless hosts.** A machine with no unlocked keyring (many CI containers, some
+  Linux servers) yields `CredentialError::StoreError`. Keep the in-memory store
+  for those deployments.
+- **Testing.** Substitute the `KeychainBackend` trait to test against a fake
+  instead of the real OS keychain.
+- **Blocking I/O.** Keychain calls can block — for example, macOS may prompt the
+  user — so every operation runs on `tokio::task::spawn_blocking`. A Tokio
+  runtime must be active.
+
 ## Quick Start
 
 ```toml

@@ -5447,6 +5447,7 @@ version = "0.11.0"
 dependencies = [
  "chrono",
  "futures",
+ "keyring",
  "pretty_assertions",
  "reqwest 0.13.4",
  "serde",

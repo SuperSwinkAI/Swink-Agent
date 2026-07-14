@@ -52,7 +52,9 @@ use tracing::warn;
 
 use swink_agent::{Agent, ToolApproval, ToolApprovalRequest};
 
-pub use app::{AgentStatus, App, DisplayMessage, MessageRole, OperatingMode, TrustFollowUp};
+pub use app::{
+    AgentStatus, App, DisplayMessage, HunkReview, MessageRole, OperatingMode, TrustFollowUp,
+};
 pub use config::TuiConfig;
 pub use error::TuiError;
 pub use session::JsonlSessionStore;
