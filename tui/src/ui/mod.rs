@@ -1,5 +1,6 @@
 //! UI layout and rendering.
 
+mod completion;
 pub mod conversation;
 pub mod diff;
 pub mod help_panel;
@@ -161,6 +162,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     };
     app.input
         .render(frame, input_area, app.focus == Focus::Input, status_hint);
+
+    // Render the @path completion popup over the conversation, above the input.
+    if let Some(completion) = &app.path_completion {
+        completion::render(frame, input_area, completion);
+    }
 
     // Render status bar
     status_bar::render(frame, app, status_area);

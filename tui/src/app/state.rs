@@ -13,6 +13,7 @@ use swink_agent::{
 };
 
 use crate::config::TuiConfig;
+use crate::extensions::PathCandidate;
 use crate::session::JsonlSessionStore;
 use crate::ui::conversation::ConversationView;
 use crate::ui::help_panel::HelpPanel;
@@ -181,6 +182,45 @@ pub struct TurnUsage {
     pub cost: f64,
 }
 
+/// Open `@path` completion popup.
+///
+/// Present only while a host-supplied provider has returned candidates for the
+/// mention under the cursor; `None` whenever the popup is closed.
+#[derive(Debug, Clone)]
+pub struct PathCompletion {
+    /// Candidates as the host returned them, in the host's order.
+    pub candidates: Vec<PathCandidate>,
+    /// Index of the highlighted candidate. Always in range.
+    pub selected: usize,
+    /// Byte offset of the `@` in the cursor's line, for splicing on accept.
+    pub(crate) start: usize,
+}
+
+impl PathCompletion {
+    /// The highlighted candidate.
+    #[must_use]
+    pub fn selected_candidate(&self) -> Option<&PathCandidate> {
+        self.candidates.get(self.selected)
+    }
+
+    /// Highlight the next candidate, wrapping to the first.
+    pub fn select_next(&mut self) {
+        if !self.candidates.is_empty() {
+            self.selected = (self.selected + 1) % self.candidates.len();
+        }
+    }
+
+    /// Highlight the previous candidate, wrapping to the last.
+    pub fn select_prev(&mut self) {
+        if !self.candidates.is_empty() {
+            self.selected = self
+                .selected
+                .checked_sub(1)
+                .unwrap_or(self.candidates.len() - 1);
+        }
+    }
+}
+
 /// Top-level application state.
 #[allow(clippy::struct_excessive_bools)]
 pub struct App {
@@ -285,6 +325,11 @@ pub struct App {
     pub(crate) steered_fade_ticks: u8,
     /// Active click-drag selection in the conversation viewport.
     pub(crate) selection: Option<Selection>,
-    /// Host-supplied extension points (custom commands).
+    /// Host-supplied extension points (custom commands, `@path` mention seams).
     pub(crate) extensions: crate::extensions::TuiExtensions,
+    /// Open `@path` completion popup, or `None` when closed.
+    ///
+    /// Only ever populated when a host registered a completion provider via
+    /// [`TuiExtensions::with_path_completions`](crate::TuiExtensions::with_path_completions).
+    pub path_completion: Option<PathCompletion>,
 }

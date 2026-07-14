@@ -18,6 +18,7 @@
 mod commands;
 mod editor;
 mod format;
+mod mentions;
 mod session;
 mod theme;
 mod ui;
@@ -54,16 +55,21 @@ use tracing::warn;
 use swink_agent::{Agent, ToolApproval, ToolApprovalRequest};
 
 pub use app::{
-    AgentStatus, App, DisplayMessage, MessageRole, OperatingMode, TrustFollowUp, TurnUsage,
+    AgentStatus, App, DisplayMessage, MessageRole, OperatingMode, PathCompletion, TrustFollowUp,
+    TurnUsage,
 };
 pub use config::TuiConfig;
 pub use error::TuiError;
-pub use extensions::{CustomCommandFn, CustomCommandOutcome, TuiExtensions};
+pub use extensions::{
+    CustomCommandFn, CustomCommandOutcome, MentionResolverFn, PathCandidate, PathCompletionFn,
+    TuiExtensions,
+};
+pub use mentions::{PathMention, parse_mentions};
 pub use session::JsonlSessionStore;
 pub use swink_agent::{ApprovalMode, ModelRates, PricingTable};
 pub use transport::{InProcessTransport, TransportError, TuiTransport, UserInput};
 pub use ui::conversation::ConversationView;
-pub use ui::input::InputEditor;
+pub use ui::input::{InputEditor, MentionQuery};
 pub use ui::markdown::markdown_to_lines;
 pub use ui::syntax::highlight_code;
 

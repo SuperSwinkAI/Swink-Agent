@@ -9,8 +9,8 @@ mod state;
 mod usage;
 
 pub use state::{
-    AgentStatus, App, DisplayMessage, Focus, MessageRole, OperatingMode, Selection, TrustFollowUp,
-    TurnUsage,
+    AgentStatus, App, DisplayMessage, Focus, MessageRole, OperatingMode, PathCompletion, Selection,
+    TrustFollowUp, TurnUsage,
 };
 
 type AppResult<T> = Result<T, Box<dyn std::error::Error>>;

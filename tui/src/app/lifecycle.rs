@@ -88,6 +88,7 @@ impl App {
             steered_fade_ticks: 0,
             selection: None,
             extensions: crate::extensions::TuiExtensions::new(),
+            path_completion: None,
         }
     }
 

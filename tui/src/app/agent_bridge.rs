@@ -14,12 +14,26 @@ use super::state::{AgentStatus, App, DisplayMessage, MessageRole, OperatingMode,
 
 impl App {
     pub(super) fn send_to_agent(&mut self, text: String) {
+        if self.agent.is_none() {
+            return;
+        }
+
+        // This is the *only* place `@path` mentions are expanded, and it runs
+        // once per submitted prompt — never while the user types (issue #1093).
+        // `text` stays raw from here on, so the conversation view and the
+        // queued-message overlay keep showing `@src/lib.rs` rather than the
+        // file content that goes to the model.
+        let outbound = self
+            .extensions
+            .resolve_mentions(&text)
+            .unwrap_or_else(|| text.clone());
+
         let Some(agent) = &mut self.agent else {
             return;
         };
 
         let user_message = AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text { text: text.clone() }],
+            content: vec![ContentBlock::Text { text: outbound }],
             timestamp: timestamp_now(),
             cache_hint: None,
         }));
