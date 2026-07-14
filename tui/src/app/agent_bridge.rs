@@ -10,7 +10,7 @@ use swink_agent::{
 };
 
 use super::render_helpers::timestamp_now;
-use super::state::{AgentStatus, App, DisplayMessage, MessageRole, OperatingMode};
+use super::state::{AgentStatus, App, DisplayMessage, MessageRole, OperatingMode, TurnUsage};
 
 impl App {
     pub(super) fn send_to_agent(&mut self, text: String) {
@@ -64,8 +64,51 @@ impl App {
         }
     }
 
+    /// Apply one [`AgentEvent`] to the app state.
+    ///
+    /// This is the only path by which agent activity reaches the TUI: the event
+    /// loop pumps the agent's stream through here, and everything the status bar
+    /// and `/usage` report — token counters, cost, per-turn breakdown, model
+    /// name, tool panel — is derived from it.
+    ///
+    /// It is public so a host can drive an [`App`] from a stubbed event stream
+    /// and assert on the result without a terminal, which is what a TUI smoke
+    /// test needs (issue #1084 §3).
+    ///
+    /// Costs arrive already priced: the agent loop fills in each assistant
+    /// message's [`Cost`](swink_agent::Cost) from operator-declared rates or the
+    /// model catalog before emitting it. Feeding a stubbed `MessageEnd` with a
+    /// zero cost therefore accumulates zero — set the cost on the stub to
+    /// exercise the display.
+    ///
+    /// # Example
+    /// ```rust
+    /// use swink_agent::{AgentEvent, AssistantMessage, Cost, StopReason, Usage};
+    /// use swink_agent_tui::{App, TuiConfig};
+    ///
+    /// let mut app = App::new(TuiConfig::default());
+    /// app.handle_agent_event(AgentEvent::MessageEnd {
+    ///     message: AssistantMessage {
+    ///         content: vec![],
+    ///         provider: "anthropic".to_string(),
+    ///         model_id: "claude-sonnet-4-6".to_string(),
+    ///         usage: Usage { input: 120, output: 45, ..Usage::default() },
+    ///         cost: Cost { total: 0.0042, ..Cost::default() },
+    ///         stop_reason: StopReason::Stop,
+    ///         error_message: None,
+    ///         error_kind: None,
+    ///         timestamp: 0,
+    ///         cache_hint: None,
+    ///     },
+    /// });
+    ///
+    /// assert_eq!(app.total_input_tokens, 120);
+    /// assert_eq!(app.total_output_tokens, 45);
+    /// assert!((app.total_cost - 0.0042).abs() < 1e-9);
+    /// assert_eq!(app.turn_usage.len(), 1);
+    /// ```
     #[allow(clippy::too_many_lines)]
-    pub(super) fn handle_agent_event(&mut self, event: AgentEvent) {
+    pub fn handle_agent_event(&mut self, event: AgentEvent) {
         if let Some(agent) = &mut self.agent {
             agent.handle_stream_event(&event);
         }
@@ -128,6 +171,7 @@ impl App {
                 self.total_input_tokens += message.usage.input;
                 self.total_output_tokens += message.usage.output;
                 self.total_cost += message.cost.total;
+                self.turn_usage.push(TurnUsage::from_message(&message));
                 self.context_tokens_used = message.usage.input;
                 self.model_name.clone_from(&message.model_id);
             }

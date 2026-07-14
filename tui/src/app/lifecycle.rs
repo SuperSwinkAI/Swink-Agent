@@ -52,6 +52,7 @@ impl App {
             total_input_tokens: 0,
             total_output_tokens: 0,
             total_cost: 0.0,
+            turn_usage: Vec::new(),
             session_start: Instant::now(),
             dirty: true,
             blink_on: true,
@@ -86,7 +87,31 @@ impl App {
             pending_steered: Vec::new(),
             steered_fade_ticks: 0,
             selection: None,
+            extensions: crate::extensions::TuiExtensions::new(),
         }
+    }
+
+    /// Install host-supplied extension points, replacing any already set.
+    ///
+    /// Consuming builder so it chains after `App::new(config)`, alongside
+    /// [`with_session_store`](Self::with_session_store). See
+    /// [`TuiExtensions`](crate::TuiExtensions) for what can be registered, and
+    /// [`launch_with_extensions`](crate::launch_with_extensions) for the
+    /// one-call path.
+    ///
+    /// # Example
+    /// ```rust
+    /// use swink_agent_tui::{App, CustomCommandOutcome, TuiConfig, TuiExtensions};
+    ///
+    /// let extensions = TuiExtensions::new().with_command("turns", |app, _args| {
+    ///     CustomCommandOutcome::Feedback(format!("{} turn(s)", app.turn_usage.len()))
+    /// });
+    /// let app = App::new(TuiConfig::default()).with_extensions(extensions);
+    /// ```
+    #[must_use]
+    pub fn with_extensions(mut self, extensions: crate::extensions::TuiExtensions) -> Self {
+        self.extensions = extensions;
+        self
     }
 
     /// Replace the session store and session ID assigned by [`App::new`].
@@ -131,6 +156,7 @@ impl App {
         self.total_input_tokens = 0;
         self.total_output_tokens = 0;
         self.total_cost = 0.0;
+        self.turn_usage.clear();
         self.context_tokens_used = 0;
         self.session_trusted_tools.clear();
         self.trust_follow_up = None;

@@ -503,6 +503,17 @@ impl App {
             return;
         }
 
+        // Host-registered commands are matched before the built-in table so an
+        // embedding binary can add commands — or shadow built-ins — without
+        // forking the crate (issue #1084 §2). This runs after the secret
+        // classification above so `#key` input never reaches a host handler.
+        if let Some((name, args)) = commands::split_command(&text)
+            && let Some(feedback) = self.extensions.dispatch(self, name, args)
+        {
+            self.push_system_message(feedback);
+            return;
+        }
+
         if self.status == AgentStatus::Running
             && Self::command_mutates_session_during_stream(&command)
         {
@@ -604,6 +615,11 @@ impl App {
             }
             CommandResult::TogglePlanMode => {
                 self.toggle_operating_mode();
+                return;
+            }
+            CommandResult::ShowUsage => {
+                let report = self.usage_report();
+                self.push_system_message(report);
                 return;
             }
             CommandResult::UntrustTool(name) => {

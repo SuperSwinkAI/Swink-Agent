@@ -318,19 +318,28 @@ pub async fn run_single_turn(
         return TurnOutcome::Return;
     };
 
-    // vi-b. Price the response from the model catalog when the adapter left
-    // `cost` at zero (issue #1100). Every built-in remote adapter reports
-    // `Usage` but emits `Cost::default()`; only the proxy adapter passes real
-    // billed cost through. Doing this here — rather than in each adapter —
-    // covers third-party `StreamFn` implementations too, and guarantees the
-    // priced cost is visible to accumulation, policies, metrics, the context
-    // history, and the `TurnEnd` event alike. Adapters that priced their own
-    // response keep precedence.
-    if crate::model_catalog::price_assistant_message(&mut assistant_message) {
+    // vi-b. Price the response when the adapter left `cost` at zero (issue
+    // #1100). Every built-in remote adapter reports `Usage` but emits
+    // `Cost::default()`; only the proxy adapter passes real billed cost
+    // through. Doing this in the loop — rather than in each adapter — covers
+    // third-party `StreamFn` implementations too, and guarantees the priced
+    // cost reaches accumulation, policies, metrics, the context history, and
+    // the `TurnEnd` event alike. Adapters that priced their own response keep
+    // precedence; after them, an operator-declared `CostCalculator` (issue
+    // #1084) outranks the compiled catalog.
+    //
+    // The main streaming path already priced this message in
+    // `finalize_stream_message`, so that `MessageEnd` consumers see real cost
+    // too; this call is idempotent (a non-zero cost is never overwritten) and
+    // catches the paths that bypass it — overflow recovery and abort messages.
+    if crate::model_catalog::price_assistant_message_with(
+        &mut assistant_message,
+        config.cost_calculator.as_deref(),
+    ) {
         debug!(
             model_id = %assistant_message.model_id,
             cost = assistant_message.cost.total,
-            "priced assistant message from model catalog (adapter reported no cost)"
+            "priced assistant message (adapter reported no cost)"
         );
     }
 

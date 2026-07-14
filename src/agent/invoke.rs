@@ -389,6 +389,7 @@ impl Agent {
         config
             .dynamic_system_prompt
             .clone_from(&self.dynamic_system_prompt);
+        config.cost_calculator = self.cost_calculator.as_ref().map(Arc::clone);
         config
     }
 }

@@ -48,6 +48,7 @@ pub mod pause_state;
 #[cfg(feature = "plugins")]
 pub(crate) mod plugin;
 pub(crate) mod policy;
+pub mod pricing;
 mod registry;
 mod retry;
 mod schema;
@@ -125,7 +126,7 @@ pub use model_catalog::{
     ApiVersion, AuthMode, CatalogPreset, DEFAULT_PRICING_STALENESS_DAYS, ModelCatalog,
     PRICING_STALENESS_ENV_VAR, PresetCapability, PresetCatalog, PresetStatus, PricingStaleness,
     ProviderCatalog, ProviderKind, calculate_cost, model_catalog, price_assistant_message,
-    pricing_staleness,
+    price_assistant_message_with, pricing_staleness,
 };
 pub use model_presets::{ModelConnection, ModelConnections, ModelConnectionsBuilder};
 pub use noop_tool::NoopTool;
@@ -135,6 +136,7 @@ pub use orchestrator::{
 };
 #[cfg(feature = "otel")]
 pub use otel::{OtelInitConfig, OtelInitError, init_otel_layer};
+pub use pricing::{CostCalculator, ModelRates, PricingTable};
 pub use registry::{AgentRef, AgentRegistry};
 pub use retry::{DefaultRetryStrategy, RetryStrategy};
 pub use schema::schema_for;

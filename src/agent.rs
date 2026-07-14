@@ -267,6 +267,9 @@ pub struct Agent {
     cache_config: Option<crate::context_cache::CacheConfig>,
     /// Optional dynamic system prompt.
     dynamic_system_prompt: Option<Arc<dyn Fn() -> String + Send + Sync>>,
+    /// Optional operator-declared cost calculator consulted before the compiled
+    /// model catalog when pricing assistant messages.
+    cost_calculator: Option<Arc<dyn crate::pricing::CostCalculator>>,
     /// Shared flag: true while a spawned loop task is active. Set to false by
     /// the `LoopGuardStream` wrapper on drop or by `collect_stream`/`AgentEnd`.
     /// Used by `check_not_running` and `wait_for_idle` as the ground truth for
@@ -369,6 +372,7 @@ impl Agent {
             credential_timeout: options.credential_timeout,
             cache_config: options.cache_config,
             dynamic_system_prompt: options.dynamic_system_prompt.map(Arc::from),
+            cost_calculator: options.cost_calculator,
             loop_active: Arc::new(AtomicBool::new(false)),
             loop_generation: Arc::new(AtomicU64::new(0)),
             #[cfg(feature = "plugins")]
