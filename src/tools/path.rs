@@ -232,6 +232,10 @@ async fn nearest_existing_ancestor(path: &Path) -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+    // Every test below is `#[cfg(unix)]` (they all build symlinks through
+    // `std::os::unix::fs`), so on Windows this module is empty and the glob
+    // import would be unused.
+    #[cfg(unix)]
     use super::*;
 
     #[cfg(unix)]
