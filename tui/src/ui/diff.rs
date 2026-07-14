@@ -43,6 +43,183 @@ impl DiffData {
     }
 }
 
+/// A contiguous region of change between the old and new content.
+///
+/// Ranges are half-open line indices into the respective `lines()` split.
+/// Hunks are separated by at least one unchanged (common) line, so the text
+/// between two hunks is identical in both versions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Hunk {
+    /// Start of the removed range in the old content (inclusive).
+    pub old_start: usize,
+    /// End of the removed range in the old content (exclusive).
+    pub old_end: usize,
+    /// Start of the added range in the new content (inclusive).
+    pub new_start: usize,
+    /// End of the added range in the new content (exclusive).
+    pub new_end: usize,
+}
+
+impl Hunk {
+    /// Number of lines removed by this hunk.
+    pub const fn removed_count(&self) -> usize {
+        self.old_end - self.old_start
+    }
+
+    /// Number of lines added by this hunk.
+    pub const fn added_count(&self) -> usize {
+        self.new_end - self.new_start
+    }
+}
+
+/// Split the change between `old_content` and `new_content` into hunks.
+///
+/// Each maximal run of non-common lines becomes one hunk. Returns an empty
+/// vector when the two versions are identical.
+pub fn compute_hunks(old_content: &str, new_content: &str) -> Vec<Hunk> {
+    let old_lines: Vec<&str> = old_content.lines().collect();
+    let new_lines: Vec<&str> = new_content.lines().collect();
+    let lcs = compute_lcs(&old_lines, &new_lines);
+
+    let mut hunks = Vec::new();
+    let mut old_idx = 0;
+    let mut new_idx = 0;
+    let mut lcs_idx = 0;
+
+    while old_idx < old_lines.len() || new_idx < new_lines.len() {
+        if lcs_idx < lcs.len() && old_idx == lcs[lcs_idx].0 && new_idx == lcs[lcs_idx].1 {
+            old_idx += 1;
+            new_idx += 1;
+            lcs_idx += 1;
+        } else {
+            let next_old = if lcs_idx < lcs.len() {
+                lcs[lcs_idx].0
+            } else {
+                old_lines.len()
+            };
+            let next_new = if lcs_idx < lcs.len() {
+                lcs[lcs_idx].1
+            } else {
+                new_lines.len()
+            };
+            hunks.push(Hunk {
+                old_start: old_idx,
+                old_end: next_old,
+                new_start: new_idx,
+                new_end: next_new,
+            });
+            old_idx = next_old;
+            new_idx = next_new;
+        }
+    }
+
+    hunks
+}
+
+/// Rebuild file content applying only the hunks marked approved.
+///
+/// `approved[i]` corresponds to `compute_hunks(old_content, new_content)[i]`.
+/// A rejected hunk keeps its original (old) lines; an approved hunk takes the
+/// new lines. Any index missing from `approved` is treated as **rejected**, so
+/// a truncated decision list can never apply a change the user did not accept.
+///
+/// Approving every hunk reproduces `new_content` byte-for-byte; rejecting every
+/// hunk reproduces `old_content` byte-for-byte.
+pub fn merge_hunks(old_content: &str, new_content: &str, approved: &[bool]) -> String {
+    let hunks = compute_hunks(old_content, new_content);
+    if hunks.is_empty() {
+        return new_content.to_string();
+    }
+
+    // Exact round-trips for the all-or-nothing cases, which also preserves
+    // trailing-newline and line-ending details the line split would drop.
+    if approved.len() == hunks.len() {
+        if approved.iter().all(|approved| *approved) {
+            return new_content.to_string();
+        }
+        if approved.iter().all(|approved| !*approved) {
+            return old_content.to_string();
+        }
+    }
+
+    let old_lines: Vec<&str> = old_content.lines().collect();
+    let new_lines: Vec<&str> = new_content.lines().collect();
+    let mut merged: Vec<&str> = Vec::new();
+    let mut old_cursor = 0;
+
+    for (index, hunk) in hunks.iter().enumerate() {
+        // Unchanged context between the previous hunk and this one.
+        merged.extend_from_slice(&old_lines[old_cursor..hunk.old_start]);
+        if approved.get(index).copied().unwrap_or(false) {
+            merged.extend_from_slice(&new_lines[hunk.new_start..hunk.new_end]);
+        } else {
+            merged.extend_from_slice(&old_lines[hunk.old_start..hunk.old_end]);
+        }
+        old_cursor = hunk.old_end;
+    }
+    merged.extend_from_slice(&old_lines[old_cursor..]);
+
+    let mut result = merged.join("\n");
+    if new_content.ends_with('\n') && !result.is_empty() {
+        result.push('\n');
+    }
+    result
+}
+
+/// Render a single hunk for per-hunk review, with a `[i/n]` progress header.
+pub fn render_hunk_lines(
+    diff: &DiffData,
+    hunk: &Hunk,
+    index: usize,
+    total: usize,
+    max_width: u16,
+) -> Vec<Line<'static>> {
+    let width = max_width as usize;
+    let mut lines = Vec::new();
+
+    lines.push(Line::from(vec![Span::styled(
+        format!(
+            " Hunk {}/{total} of {} (-{} +{})",
+            index + 1,
+            diff.path,
+            hunk.removed_count(),
+            hunk.added_count()
+        ),
+        Style::default()
+            .fg(theme::border_focused_color())
+            .add_modifier(Modifier::BOLD),
+    )]));
+
+    let old_lines: Vec<&str> = diff.old_content.lines().collect();
+    let new_lines: Vec<&str> = diff.new_content.lines().collect();
+
+    for line in &old_lines[hunk.old_start..hunk.old_end] {
+        let display = truncate_line(line, width.saturating_sub(4));
+        lines.push(Line::from(vec![Span::styled(
+            format!("  - {display}"),
+            Style::default().fg(theme::diff_remove_color()),
+        )]));
+    }
+    for line in &new_lines[hunk.new_start..hunk.new_end] {
+        let display = truncate_line(line, width.saturating_sub(4));
+        lines.push(Line::from(vec![Span::styled(
+            format!("  + {display}"),
+            Style::default().fg(theme::diff_add_color()),
+        )]));
+    }
+
+    if lines.len() > MAX_DIFF_LINES {
+        let truncated = lines.len() - MAX_DIFF_LINES;
+        lines.truncate(MAX_DIFF_LINES);
+        lines.push(Line::from(vec![Span::styled(
+            format!("  ... ({truncated} more lines)"),
+            Style::default().add_modifier(Modifier::DIM),
+        )]));
+    }
+
+    lines
+}
+
 /// Render a unified diff as styled terminal lines.
 pub fn render_diff_lines(diff: &DiffData, max_width: u16) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
@@ -451,6 +628,132 @@ mod tests {
                 .any(|s| s.style.fg == Some(Color::Red) || s.style.fg == Some(Color::Green))
         });
         assert!(!has_changes, "identical content should show no red/green");
+    }
+
+    #[test]
+    fn compute_hunks_identical_content_has_no_hunks() {
+        assert!(compute_hunks("a\nb\nc", "a\nb\nc").is_empty());
+    }
+
+    #[test]
+    fn compute_hunks_groups_separate_changes() {
+        // Two changed regions separated by an unchanged line.
+        let hunks = compute_hunks("a\nold1\nb\nold2\nc", "a\nnew1\nb\nnew2\nc");
+        assert_eq!(hunks.len(), 2, "expected two hunks, got {hunks:?}");
+        assert_eq!(hunks[0].removed_count(), 1);
+        assert_eq!(hunks[0].added_count(), 1);
+        assert_eq!(hunks[1].removed_count(), 1);
+        assert_eq!(hunks[1].added_count(), 1);
+    }
+
+    #[test]
+    fn compute_hunks_contiguous_change_is_one_hunk() {
+        let hunks = compute_hunks("a\nold1\nold2\nb", "a\nnew1\nnew2\nb");
+        assert_eq!(hunks.len(), 1, "expected one hunk, got {hunks:?}");
+        assert_eq!(hunks[0].removed_count(), 2);
+        assert_eq!(hunks[0].added_count(), 2);
+    }
+
+    #[test]
+    fn compute_hunks_handles_pure_insertion_and_deletion() {
+        let inserted = compute_hunks("a\nc", "a\nb\nc");
+        assert_eq!(inserted.len(), 1);
+        assert_eq!(inserted[0].removed_count(), 0);
+        assert_eq!(inserted[0].added_count(), 1);
+
+        let deleted = compute_hunks("a\nb\nc", "a\nc");
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(deleted[0].removed_count(), 1);
+        assert_eq!(deleted[0].added_count(), 0);
+    }
+
+    #[test]
+    fn merge_hunks_approving_all_reproduces_new_content() {
+        let old = "a\nold1\nb\nold2\nc\n";
+        let new = "a\nnew1\nb\nnew2\nc\n";
+        assert_eq!(merge_hunks(old, new, &[true, true]), new);
+    }
+
+    #[test]
+    fn merge_hunks_rejecting_all_reproduces_old_content() {
+        let old = "a\nold1\nb\nold2\nc\n";
+        let new = "a\nnew1\nb\nnew2\nc\n";
+        assert_eq!(merge_hunks(old, new, &[false, false]), old);
+    }
+
+    #[test]
+    fn merge_hunks_applies_only_approved_hunks() {
+        let old = "a\nold1\nb\nold2\nc\n";
+        let new = "a\nnew1\nb\nnew2\nc\n";
+        // Approve the first hunk, reject the second.
+        assert_eq!(
+            merge_hunks(old, new, &[true, false]),
+            "a\nnew1\nb\nold2\nc\n"
+        );
+        // And the mirror image.
+        assert_eq!(
+            merge_hunks(old, new, &[false, true]),
+            "a\nold1\nb\nnew2\nc\n"
+        );
+    }
+
+    #[test]
+    fn merge_hunks_applies_approved_insertion_and_keeps_rejected_deletion() {
+        let old = "keep\ndelete_me\ntail\n";
+        let new = "keep\ninserted\ntail\n";
+        let hunks = compute_hunks(old, new);
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(merge_hunks(old, new, &[false]), old);
+        assert_eq!(merge_hunks(old, new, &[true]), new);
+    }
+
+    #[test]
+    fn merge_hunks_missing_decisions_default_to_rejected() {
+        // A truncated decision list must never apply an unreviewed hunk.
+        let old = "a\nold1\nb\nold2\nc\n";
+        let new = "a\nnew1\nb\nnew2\nc\n";
+        assert_eq!(merge_hunks(old, new, &[true]), "a\nnew1\nb\nold2\nc\n");
+        assert_eq!(merge_hunks(old, new, &[]), old);
+    }
+
+    #[test]
+    fn merge_hunks_preserves_absent_trailing_newline() {
+        let old = "a\nold1\nb\nold2";
+        let new = "a\nnew1\nb\nnew2";
+        assert_eq!(merge_hunks(old, new, &[true, false]), "a\nnew1\nb\nold2");
+    }
+
+    #[test]
+    fn merge_hunks_identical_content_returns_new_content() {
+        assert_eq!(merge_hunks("a\nb\n", "a\nb\n", &[]), "a\nb\n");
+    }
+
+    #[test]
+    fn render_hunk_lines_shows_removals_additions_and_progress() {
+        let diff = DiffData {
+            path: "/tmp/test.rs".to_string(),
+            is_new_file: false,
+            old_content: "a\nold\nb".to_string(),
+            new_content: "a\nnew\nb".to_string(),
+        };
+        let hunks = compute_hunks(&diff.old_content, &diff.new_content);
+        let lines = render_hunk_lines(&diff, &hunks[0], 0, hunks.len(), 80);
+        let rendered = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered[0].contains("Hunk 1/1"),
+            "header should show progress: {rendered:?}"
+        );
+        assert!(rendered.iter().any(|line| line.contains("- old")));
+        assert!(rendered.iter().any(|line| line.contains("+ new")));
     }
 
     #[test]

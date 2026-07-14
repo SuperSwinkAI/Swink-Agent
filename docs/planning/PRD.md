@@ -551,6 +551,7 @@ When the agent modifies a file, the TUI displays the change as a syntax-highligh
 - Unified diff as the default view
 - Syntax highlighting uses the same `syntect` pipeline as code blocks
 - Diffs for new files show all lines as additions; diffs for deleted files show all lines as deletions
+- At a file-write approval prompt, the diff can be reviewed hunk by hunk: each hunk is applied or reverted independently, only approved hunks are written, and reverted hunks are reported back to the agent
 
 ### 16.7 Context Window Progress Bar
 
