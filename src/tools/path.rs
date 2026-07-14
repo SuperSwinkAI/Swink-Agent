@@ -90,6 +90,36 @@ pub(crate) async fn resolve_writable_path(
     }
 }
 
+/// Resolve a path for a **read-only preview** (e.g. building approval context),
+/// synchronously and without touching the filesystem for writes.
+///
+/// This is deliberately more conservative than [`resolve_writable_path`]: it
+/// fails closed to `None` on any ambiguity rather than returning an error,
+/// because callers use it only to enrich a preview. A `None` result means "no
+/// preview available", never "write is permitted".
+///
+/// The blocking `std::fs` calls are acceptable here because this runs on the
+/// approval path, which is already gated on human input.
+pub(crate) fn resolve_readable_path_blocking(
+    path: &str,
+    execution_root: Option<&Path>,
+) -> Option<PathBuf> {
+    let Some(root) = execution_root else {
+        return Some(Path::new(path).to_path_buf());
+    };
+
+    let root = std::fs::canonicalize(root).ok()?;
+    let candidate = candidate_path(path, &root).ok()?;
+
+    // The file may not exist yet (a brand-new file), in which case
+    // `canonicalize` fails. Fall back to the lexically normalized candidate,
+    // which `candidate_path` has already confined to the root.
+    match std::fs::canonicalize(&candidate) {
+        Ok(canonical) => canonical.starts_with(&root).then_some(canonical),
+        Err(_) => candidate.starts_with(&root).then_some(candidate),
+    }
+}
+
 /// Validate a dangling symlink at `candidate` (an lstat entry exists but the
 /// followed target does not). Writing through it would create the file at the
 /// link target, so the target must be provably inside `root`; otherwise the

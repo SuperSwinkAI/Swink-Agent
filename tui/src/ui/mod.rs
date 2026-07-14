@@ -15,7 +15,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
-use crate::app::{App, Focus};
+use crate::app::{App, Focus, HunkReview};
 use crate::ui::help_panel::MIN_CONV_WIDTH;
 
 /// Minimum terminal width for normal UI rendering.
@@ -59,10 +59,24 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         0
     };
 
+    // Per-hunk review overlay: sized to the current hunk plus borders and the
+    // key hint line, capped so it can never crowd out the conversation.
+    let hunk_height: u16 = app.hunk_review.as_ref().map_or(0, |review| {
+        let hunk_lines = review
+            .hunks
+            .get(review.cursor)
+            .map_or(1, |hunk| hunk.removed_count() + hunk.added_count() + 1);
+        let lines = u16::try_from(hunk_lines).unwrap_or(u16::MAX);
+        lines.saturating_add(3).clamp(5, 18)
+    });
+
     let mut constraints = vec![Constraint::Min(3)]; // Conversation view
 
     if tool_height > 0 {
         constraints.push(Constraint::Length(tool_height));
+    }
+    if hunk_height > 0 {
+        constraints.push(Constraint::Length(hunk_height));
     }
     if steered_height > 0 {
         constraints.push(Constraint::Length(steered_height));
@@ -98,6 +112,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Tool panel (conditional)
     let tool_area = if tool_height > 0 {
+        let area = chunks[idx];
+        idx += 1;
+        Some(area)
+    } else {
+        None
+    };
+
+    // Per-hunk review overlay (conditional)
+    let hunk_area = if hunk_height > 0 {
         let area = chunks[idx];
         idx += 1;
         Some(area)
@@ -143,8 +166,22 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Render tool panel
     if let Some(area) = tool_area {
         let trust_name = app.trust_follow_up.as_ref().map(|f| f.tool_name.as_str());
-        app.tool_panel
-            .render_with_prompts(frame, area, app.pending_plan_approval, trust_name);
+        // Only advertise `h` while the plain prompt is showing — once a review
+        // is open its own panel lists the keys.
+        let hunk_reviewable =
+            app.hunk_review.is_none() && app.pending_approval_has_reviewable_diff();
+        app.tool_panel.render_with_prompts(
+            frame,
+            area,
+            app.pending_plan_approval,
+            trust_name,
+            hunk_reviewable,
+        );
+    }
+
+    // Render per-hunk review overlay
+    if let Some((area, review)) = hunk_area.zip(app.hunk_review.as_ref()) {
+        render_hunk_review(frame, area, review);
     }
 
     // Render steered message overlay
@@ -164,6 +201,73 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Render status bar
     status_bar::render(frame, app, status_area);
+}
+
+/// Render the per-hunk review overlay: the hunk under the cursor plus the
+/// decision keys and a running tally of what has been accepted so far.
+fn render_hunk_review(frame: &mut Frame, area: ratatui::layout::Rect, review: &HunkReview) {
+    let total = review.hunks.len();
+    let approved = review
+        .decisions
+        .iter()
+        .filter(|decision| **decision == Some(true))
+        .count();
+    let rejected = review
+        .decisions
+        .iter()
+        .filter(|decision| **decision == Some(false))
+        .count();
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(Span::styled(
+            " Review Hunks ",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .border_style(Style::default().fg(Color::Yellow));
+
+    let mut lines: Vec<Line> = Vec::new();
+    if let Some(hunk) = review.hunks.get(review.cursor) {
+        lines.extend(diff::render_hunk_lines(
+            &review.diff,
+            hunk,
+            review.cursor,
+            total,
+            area.width.saturating_sub(2),
+        ));
+    }
+    lines.push(Line::from(vec![
+        Span::styled(
+            " [y]",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" apply  ", Style::default()),
+        Span::styled(
+            "[n]",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" revert  ", Style::default()),
+        Span::styled(
+            "[a]",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" apply all remaining  ", Style::default()),
+        Span::styled("[Esc]", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(" cancel", Style::default()),
+        Span::styled(
+            format!("   ({approved} applied, {rejected} reverted)"),
+            Style::default().add_modifier(Modifier::DIM),
+        ),
+    ]));
+
+    let paragraph = Paragraph::new(lines).block(block);
+    frame.render_widget(paragraph, area);
 }
 
 /// Render the queued-message overlay shown while steered messages are in flight

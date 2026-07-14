@@ -8,7 +8,8 @@ mod render_helpers;
 mod state;
 
 pub use state::{
-    AgentStatus, App, DisplayMessage, Focus, MessageRole, OperatingMode, Selection, TrustFollowUp,
+    AgentStatus, App, DisplayMessage, Focus, HunkReview, MessageRole, OperatingMode, Selection,
+    TrustFollowUp,
 };
 
 type AppResult<T> = Result<T, Box<dyn std::error::Error>>;
