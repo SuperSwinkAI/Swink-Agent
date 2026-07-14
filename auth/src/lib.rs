@@ -30,6 +30,6 @@ pub use in_memory::InMemoryCredentialStore;
 pub use keychain::{
     DEFAULT_SERVICE, KeychainBackend, KeychainCredentialStore, KeychainError, SystemKeychain,
 };
-pub use oauth2::AuthorizationConfig;
+pub use oauth2::{AuthorizationConfig, DeviceAuthorizationConfig};
 pub use resolver::DefaultCredentialResolver;
 pub use token_source::{ExpiringValue, SingleFlightTokenSource};

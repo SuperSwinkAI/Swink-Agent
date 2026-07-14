@@ -1,5 +1,6 @@
-//! Tests for OAuth2 refresh (T045, T047-T049, T064) and the interactive
-//! authorization flow (T054, T055, T057, T058).
+//! Tests for OAuth2 refresh (T045, T047-T049, T064), the interactive
+//! authorization flow (T054, T055, T057, T058), and the device authorization
+//! grant (RFC 8628, #1071).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -8,9 +9,12 @@ use std::time::Duration;
 use chrono::Utc;
 use swink_agent::{
     AuthorizationHandler, Credential, CredentialError, CredentialFuture, CredentialResolver,
-    CredentialStore, ResolvedCredential,
+    CredentialStore, DeviceCodeHandler, DeviceCodePrompt, ResolvedCredential,
 };
-use swink_agent_auth::{AuthorizationConfig, DefaultCredentialResolver, InMemoryCredentialStore};
+use swink_agent_auth::{
+    AuthorizationConfig, DefaultCredentialResolver, DeviceAuthorizationConfig,
+    InMemoryCredentialStore,
+};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -694,5 +698,288 @@ async fn concurrent_resolves_trigger_single_authorization() {
         calls.load(Ordering::SeqCst),
         1,
         "handler should be invoked exactly once for concurrent resolves"
+    );
+}
+
+// ─── Device authorization grant (RFC 8628) ──────────────────────────────────
+
+/// Records the prompt it was shown. The device flow's handler is
+/// display-only: it returns `()`, not a code.
+struct RecordingDeviceHandler {
+    captured: Arc<std::sync::Mutex<Option<DeviceCodePrompt>>>,
+}
+
+impl DeviceCodeHandler for RecordingDeviceHandler {
+    fn present(&self, prompt: &DeviceCodePrompt) -> CredentialFuture<'_, ()> {
+        *self.captured.lock().unwrap() = Some(prompt.clone());
+        Box::pin(async move { Ok(()) })
+    }
+}
+
+/// Fails when shown the prompt, simulating a UI that cannot display it.
+struct FailingDeviceHandler;
+
+impl DeviceCodeHandler for FailingDeviceHandler {
+    fn present(&self, _prompt: &DeviceCodePrompt) -> CredentialFuture<'_, ()> {
+        Box::pin(async move {
+            Err(CredentialError::AuthorizationFailed {
+                key: "device-key".into(),
+                reason: "no tty available".into(),
+            })
+        })
+    }
+}
+
+fn device_authorization_config(base_url: &str) -> DeviceAuthorizationConfig {
+    DeviceAuthorizationConfig {
+        device_authorization_endpoint: format!("{base_url}/device/code"),
+        token_url: format!("{base_url}/token"),
+        client_id: "device-client".to_string(),
+        client_secret: None,
+        scopes: vec!["calendar.readonly".to_string()],
+    }
+}
+
+/// Mount the device authorization endpoint. `interval: 1` keeps the
+/// resolver's real polling sleep short; the interval/back-off logic itself is
+/// covered by unit tests with an injected sleeper.
+async fn mount_device_code_endpoint(mock_server: &MockServer) {
+    Mock::given(method("POST"))
+        .and(path("/device/code"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "device_code": "device-secret-abc",
+            "user_code": "WDJB-MJHT",
+            "verification_uri": "https://auth.example.com/device",
+            "verification_uri_complete": "https://auth.example.com/device?user_code=WDJB-MJHT",
+            "expires_in": 600,
+            "interval": 1
+        })))
+        .mount(mock_server)
+        .await;
+}
+
+#[tokio::test]
+async fn missing_credential_with_device_handler_completes_flow_and_stores_credential() {
+    let mock_server = MockServer::start().await;
+    mount_device_code_endpoint(&mock_server).await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "device-access",
+            "refresh_token": "device-refresh",
+            "expires_in": 3600,
+            "token_type": "Bearer"
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let captured = Arc::new(std::sync::Mutex::new(None));
+    let handler = Arc::new(RecordingDeviceHandler {
+        captured: Arc::clone(&captured),
+    });
+
+    let inner = InMemoryCredentialStore::empty();
+    let store_handle: Arc<dyn CredentialStore> = Arc::new(inner);
+    let resolver = DefaultCredentialResolver::new(Arc::clone(&store_handle))
+        .with_device_code_handler(handler)
+        .with_device_authorization_config(
+            "device-key",
+            device_authorization_config(&mock_server.uri()),
+        );
+
+    let resolved = resolver.resolve("device-key").await.unwrap();
+    assert!(matches!(
+        resolved,
+        ResolvedCredential::OAuth2AccessToken(ref t) if t == "device-access"
+    ));
+
+    // The user-facing prompt reaches the handler intact.
+    let prompt = captured
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("handler not invoked");
+    assert_eq!(prompt.user_code, "WDJB-MJHT");
+    assert_eq!(prompt.verification_uri, "https://auth.example.com/device");
+    assert_eq!(
+        prompt.verification_uri_complete.as_deref(),
+        Some("https://auth.example.com/device?user_code=WDJB-MJHT")
+    );
+    assert_eq!(prompt.expires_in, Some(600));
+
+    // The issued tokens are persisted so later resolves hit the fast path.
+    match store_handle.get("device-key").await.unwrap() {
+        Some(Credential::OAuth2 {
+            access_token,
+            refresh_token,
+            client_id,
+            ..
+        }) => {
+            assert_eq!(access_token, "device-access");
+            assert_eq!(refresh_token.as_deref(), Some("device-refresh"));
+            assert_eq!(client_id, "device-client");
+        }
+        other => panic!("expected stored OAuth2 credential, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn device_flow_handler_error_aborts_before_polling() {
+    let mock_server = MockServer::start().await;
+    mount_device_code_endpoint(&mock_server).await;
+    // `expect(0)`: a handler that refuses to show the prompt must stop the
+    // flow before any token poll is issued.
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&mock_server)
+        .await;
+
+    let resolver = DefaultCredentialResolver::new(store(InMemoryCredentialStore::empty()))
+        .with_device_code_handler(Arc::new(FailingDeviceHandler))
+        .with_device_authorization_config(
+            "device-key",
+            device_authorization_config(&mock_server.uri()),
+        );
+
+    let err = resolver.resolve("device-key").await.unwrap_err();
+    match err {
+        CredentialError::AuthorizationFailed { reason, .. } => {
+            assert_eq!(reason, "no tty available");
+        }
+        other => panic!("expected AuthorizationFailed, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn device_flow_surfaces_access_denied_from_polling() {
+    let mock_server = MockServer::start().await;
+    mount_device_code_endpoint(&mock_server).await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "error": "access_denied"
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let resolver = DefaultCredentialResolver::new(store(InMemoryCredentialStore::empty()))
+        .with_device_code_handler(Arc::new(RecordingDeviceHandler {
+            captured: Arc::new(std::sync::Mutex::new(None)),
+        }))
+        .with_device_authorization_config(
+            "device-key",
+            device_authorization_config(&mock_server.uri()),
+        );
+
+    let err = resolver.resolve("device-key").await.unwrap_err();
+    match err {
+        CredentialError::AuthorizationFailed { key, reason } => {
+            assert_eq!(
+                key, "device-key",
+                "resolver must fill in the credential key"
+            );
+            assert!(
+                reason.contains("access_denied"),
+                "unexpected reason: {reason}"
+            );
+        }
+        other => panic!("expected AuthorizationFailed, got {other:?}"),
+    }
+}
+
+// FR-011 parity: a device-code handler without a matching config for the key
+// behaves exactly as if no handler were configured.
+#[tokio::test]
+async fn device_handler_without_config_for_key_returns_not_found() {
+    let mock_server = MockServer::start().await;
+    mount_device_code_endpoint(&mock_server).await;
+
+    let resolver = DefaultCredentialResolver::new(store(InMemoryCredentialStore::empty()))
+        .with_device_code_handler(Arc::new(RecordingDeviceHandler {
+            captured: Arc::new(std::sync::Mutex::new(None)),
+        }))
+        .with_device_authorization_config(
+            "other-key",
+            device_authorization_config(&mock_server.uri()),
+        );
+
+    let err = resolver.resolve("device-key").await.unwrap_err();
+    assert!(
+        matches!(err, CredentialError::NotFound { ref key } if key == "device-key"),
+        "expected NotFound, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn device_config_without_handler_returns_not_found() {
+    let mock_server = MockServer::start().await;
+
+    let resolver = DefaultCredentialResolver::new(store(InMemoryCredentialStore::empty()))
+        .with_device_authorization_config(
+            "device-key",
+            device_authorization_config(&mock_server.uri()),
+        );
+
+    let err = resolver.resolve("device-key").await.unwrap_err();
+    assert!(
+        matches!(err, CredentialError::NotFound { ref key } if key == "device-key"),
+        "expected NotFound, got {err:?}"
+    );
+}
+
+// A key configured for both flows keeps its pre-existing authorization-code
+// behavior; the device flow must not hijack it.
+#[tokio::test]
+async fn authorization_code_flow_takes_precedence_over_device_flow() {
+    let mock_server = MockServer::start().await;
+    // `expect(0)`: the device leg must never be reached for this key.
+    Mock::given(method("POST"))
+        .and(path("/device/code"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "code-flow-access",
+            "token_type": "Bearer"
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let token_url = format!("{}/token", mock_server.uri());
+    let captured_url = Arc::new(std::sync::Mutex::new(None));
+    let device_captured = Arc::new(std::sync::Mutex::new(None));
+
+    let resolver = DefaultCredentialResolver::new(store(InMemoryCredentialStore::empty()))
+        .with_authorization_handler(Arc::new(RecordingHandler {
+            captured_url: Arc::clone(&captured_url),
+            code: "auth-code".to_string(),
+        }))
+        .with_authorization_config("both-key", authorization_config(&token_url))
+        .with_device_code_handler(Arc::new(RecordingDeviceHandler {
+            captured: Arc::clone(&device_captured),
+        }))
+        .with_device_authorization_config(
+            "both-key",
+            device_authorization_config(&mock_server.uri()),
+        );
+
+    let resolved = resolver.resolve("both-key").await.unwrap();
+
+    assert!(matches!(
+        resolved,
+        ResolvedCredential::OAuth2AccessToken(ref t) if t == "code-flow-access"
+    ));
+    assert!(
+        captured_url.lock().unwrap().is_some(),
+        "authorization code handler should have run"
+    );
+    assert!(
+        device_captured.lock().unwrap().is_none(),
+        "device handler must not run when the code flow is configured"
     );
 }

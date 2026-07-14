@@ -11,10 +11,10 @@ use tracing::{debug, info};
 
 use swink_agent::{
     AuthorizationHandler, Credential, CredentialError, CredentialFuture, CredentialResolver,
-    CredentialStore, ResolvedCredential,
+    CredentialStore, DeviceCodeHandler, DeviceCodePrompt, ResolvedCredential,
 };
 
-use crate::oauth2::AuthorizationConfig;
+use crate::oauth2::{AuthorizationConfig, DeviceAuthorizationConfig};
 use crate::{ExpiringValue, SingleFlightTokenSource, oauth2};
 
 /// Default resolution timeout (FR-014): bounds the non-interactive
@@ -48,6 +48,11 @@ pub struct DefaultCredentialResolver {
     /// key with no entry here behaves as if no authorization handler were
     /// configured, even if `authorization_handler` is `Some`.
     authorization_configs: HashMap<String, AuthorizationConfig>,
+    device_code_handler: Option<Arc<dyn DeviceCodeHandler>>,
+    /// Per-key `OAuth2` client configuration for the device authorization
+    /// grant. Mirrors `authorization_configs`: a key with no entry here
+    /// behaves as if no device-code handler were configured.
+    device_authorization_configs: HashMap<String, DeviceAuthorizationConfig>,
     /// Bounds the non-interactive resolution path (FR-014, default 30s).
     timeout: Duration,
     /// Bounds the interactive authorization path (FR-020, default 5m).
@@ -65,6 +70,8 @@ impl DefaultCredentialResolver {
             refresh_sources: RwLock::new(HashMap::new()),
             authorization_handler: None,
             authorization_configs: HashMap::new(),
+            device_code_handler: None,
+            device_authorization_configs: HashMap::new(),
             timeout: DEFAULT_TIMEOUT,
             authorization_timeout: DEFAULT_AUTHORIZATION_TIMEOUT,
         }
@@ -110,6 +117,38 @@ impl DefaultCredentialResolver {
         config: AuthorizationConfig,
     ) -> Self {
         self.authorization_configs.insert(key.into(), config);
+        self
+    }
+
+    /// Set the device-code handler used to initiate `OAuth2` device
+    /// authorization grants (RFC 8628) for credential keys that have no
+    /// stored value.
+    ///
+    /// This is the headless counterpart to
+    /// [`with_authorization_handler`](Self::with_authorization_handler). If a
+    /// key is configured for *both* flows, the authorization code flow wins;
+    /// the device flow is only attempted for keys that have no
+    /// [`AuthorizationConfig`].
+    #[must_use]
+    pub fn with_device_code_handler(mut self, handler: Arc<dyn DeviceCodeHandler>) -> Self {
+        self.device_code_handler = Some(handler);
+        self
+    }
+
+    /// Register the `OAuth2` client configuration used to run a device
+    /// authorization grant for `key` when it has no stored credential.
+    ///
+    /// Required (alongside [`with_device_code_handler`](Self::with_device_code_handler))
+    /// for the device flow to trigger for `key`; without it, a missing
+    /// credential for `key` resolves to [`CredentialError::NotFound`] exactly
+    /// as if no handler were configured (FR-011).
+    #[must_use]
+    pub fn with_device_authorization_config(
+        mut self,
+        key: impl Into<String>,
+        config: DeviceAuthorizationConfig,
+    ) -> Self {
+        self.device_authorization_configs.insert(key.into(), config);
         self
     }
 
@@ -269,16 +308,41 @@ impl DefaultCredentialResolver {
         Some((Arc::clone(handler), config.clone()))
     }
 
+    /// Look up the registered per-key device-code inputs; the device-flow
+    /// analogue of [`authorization_inputs`](Self::authorization_inputs).
+    fn device_authorization_inputs(
+        &self,
+        key: &str,
+    ) -> Option<(Arc<dyn DeviceCodeHandler>, DeviceAuthorizationConfig)> {
+        let handler = self.device_code_handler.as_ref()?;
+        let config = self.device_authorization_configs.get(key)?;
+        Some((Arc::clone(handler), config.clone()))
+    }
+
+    /// Select the interactive flow to run for `key`, or `None` when neither
+    /// flow is fully configured (in which case the caller falls back to
+    /// `NotFound`, FR-011).
+    ///
+    /// The authorization code flow takes precedence: it predates the device
+    /// flow, so a key configured for both keeps its existing behavior.
+    fn authorization_flow(&self, key: &str) -> Option<AuthorizationFlow> {
+        if let Some((handler, config)) = self.authorization_inputs(key) {
+            return Some(AuthorizationFlow::AuthorizationCode(handler, config));
+        }
+        let (handler, config) = self.device_authorization_inputs(key)?;
+        Some(AuthorizationFlow::DeviceCode(handler, config))
+    }
+
     /// Handle a `NotFound` result from [`resolve_stored`](Self::resolve_stored)
-    /// by attempting the interactive `OAuth2` authorization flow (US4), if
-    /// configured for `key`. Concurrent calls for the same `key` are
-    /// deduplicated to a single handler invocation via the same
-    /// single-flight infrastructure used for token refresh.
+    /// by attempting an interactive `OAuth2` flow (US4) — authorization code
+    /// or device code — if configured for `key`. Concurrent calls for the
+    /// same `key` are deduplicated to a single handler invocation via the
+    /// same single-flight infrastructure used for token refresh.
     async fn resolve_via_authorization(
         &self,
         key: String,
     ) -> Result<ResolvedCredential, CredentialError> {
-        let Some((handler, config)) = self.authorization_inputs(&key) else {
+        let Some(flow) = self.authorization_flow(&key) else {
             return Err(CredentialError::NotFound { key });
         };
 
@@ -296,7 +360,7 @@ impl DefaultCredentialResolver {
             .get_or_refresh(move || async move {
                 let outcome = tokio::time::timeout(
                     authorization_timeout,
-                    perform_authorization(&handler, &store, &client, &auth_key, &config),
+                    flow.perform(&store, &client, &auth_key),
                 )
                 .await;
 
@@ -310,6 +374,70 @@ impl DefaultCredentialResolver {
                 }
             })
             .await
+    }
+}
+
+/// A fully configured interactive flow, selected per key by
+/// [`DefaultCredentialResolver::authorization_flow`].
+enum AuthorizationFlow {
+    /// `OAuth2` authorization code flow (FR-010).
+    AuthorizationCode(Arc<dyn AuthorizationHandler>, AuthorizationConfig),
+    /// `OAuth2` device authorization grant, RFC 8628.
+    DeviceCode(Arc<dyn DeviceCodeHandler>, DeviceAuthorizationConfig),
+}
+
+impl AuthorizationFlow {
+    async fn perform(
+        self,
+        store: &Arc<dyn CredentialStore>,
+        client: &reqwest::Client,
+        key: &str,
+    ) -> Result<ResolvedCredential, CredentialError> {
+        match self {
+            Self::AuthorizationCode(handler, config) => {
+                perform_authorization(&handler, store, client, key, &config).await
+            }
+            Self::DeviceCode(handler, config) => {
+                perform_device_authorization(&handler, store, client, key, &config).await
+            }
+        }
+    }
+}
+
+/// Fill in the credential key on an `AuthorizationFailed` raised by the
+/// `oauth2` helpers, which cannot know it and use an empty placeholder.
+/// Other errors pass through unchanged.
+fn attach_authorization_key(error: CredentialError, key: &str) -> CredentialError {
+    match error {
+        CredentialError::AuthorizationFailed { reason, .. } => {
+            CredentialError::AuthorizationFailed {
+                key: key.to_string(),
+                reason,
+            }
+        }
+        other => other,
+    }
+}
+
+/// Build the `Credential::OAuth2` to persist after a successful interactive
+/// flow, taking the refresh token out of `response`.
+fn issued_credential(
+    response: &mut oauth2::TokenResponse,
+    token_url: &str,
+    client_id: &str,
+    client_secret: Option<&str>,
+    scopes: &[String],
+) -> Credential {
+    Credential::OAuth2 {
+        access_token: response.access_token.clone(),
+        refresh_token: response.refresh_token.take(),
+        expires_at: response
+            .expires_in
+            .map(|secs| Utc::now() + chrono::Duration::seconds(secs)),
+        token_url: token_url.to_string(),
+        client_id: client_id.to_string(),
+        client_secret: client_secret.map(ToString::to_string),
+        scopes: scopes.to_vec(),
     }
 }
 
@@ -328,16 +456,8 @@ async fn perform_authorization(
     config: &AuthorizationConfig,
 ) -> Result<ResolvedCredential, CredentialError> {
     let state = uuid::Uuid::new_v4().to_string();
-    let auth_url =
-        oauth2::build_authorization_url(config, &state).map_err(|error| match error {
-            CredentialError::AuthorizationFailed { reason, .. } => {
-                CredentialError::AuthorizationFailed {
-                    key: key.to_string(),
-                    reason,
-                }
-            }
-            other => other,
-        })?;
+    let auth_url = oauth2::build_authorization_url(config, &state)
+        .map_err(|error| attach_authorization_key(error, key))?;
 
     info!(credential_key = %key, "initiating interactive OAuth2 authorization");
     let code = handler.authorize(&auth_url, &state).await?;
@@ -351,31 +471,70 @@ async fn perform_authorization(
         &config.redirect_uri,
     )
     .await
-    .map_err(|error| match error {
-        CredentialError::AuthorizationFailed { reason, .. } => {
-            CredentialError::AuthorizationFailed {
-                key: key.to_string(),
-                reason,
-            }
-        }
-        other => other,
-    })?;
+    .map_err(|error| attach_authorization_key(error, key))?;
 
-    let expires_at = response
-        .expires_in
-        .map(|secs| Utc::now() + chrono::Duration::seconds(secs));
-    let new_credential = Credential::OAuth2 {
-        access_token: response.access_token.clone(),
-        refresh_token: response.refresh_token.take(),
-        expires_at,
-        token_url: config.token_url.clone(),
-        client_id: config.client_id.clone(),
-        client_secret: config.client_secret.clone(),
-        scopes: config.scopes.clone(),
-    };
+    let new_credential = issued_credential(
+        &mut response,
+        &config.token_url,
+        &config.client_id,
+        config.client_secret.as_deref(),
+        &config.scopes,
+    );
 
     store.set(key, new_credential).await?;
     info!(credential_key = %key, "interactive OAuth2 authorization completed; credential stored");
+
+    Ok(ResolvedCredential::OAuth2AccessToken(response.access_token))
+}
+
+/// Run the `OAuth2` device authorization grant (RFC 8628): request a device
+/// code, show the user the resulting prompt via `handler`, poll the token
+/// endpoint until the user completes (or refuses) authorization, and store
+/// the issued credential on success.
+///
+/// The handler only displays the prompt — unlike the authorization code flow
+/// it returns nothing, because polling is this function's job, not the
+/// handler's.
+///
+/// Errors surfaced from the `oauth2` helpers use an empty `key` placeholder;
+/// this fills it in. Errors returned directly by the handler are propagated
+/// unchanged.
+async fn perform_device_authorization(
+    handler: &Arc<dyn DeviceCodeHandler>,
+    store: &Arc<dyn CredentialStore>,
+    client: &reqwest::Client,
+    key: &str,
+    config: &DeviceAuthorizationConfig,
+) -> Result<ResolvedCredential, CredentialError> {
+    info!(credential_key = %key, "initiating OAuth2 device authorization");
+    let device = oauth2::request_device_code(client, config)
+        .await
+        .map_err(|error| attach_authorization_key(error, key))?;
+
+    // `device.device_code` is deliberately withheld from the handler: it is
+    // the polling secret, and the handler only needs the user-facing fields.
+    let prompt = DeviceCodePrompt {
+        user_code: device.user_code.clone(),
+        verification_uri: device.verification_uri.clone(),
+        verification_uri_complete: device.verification_uri_complete.clone(),
+        expires_in: device.expires_in,
+    };
+    handler.present(&prompt).await?;
+
+    let mut response = oauth2::poll_device_token(client, config, &device)
+        .await
+        .map_err(|error| attach_authorization_key(error, key))?;
+
+    let new_credential = issued_credential(
+        &mut response,
+        &config.token_url,
+        &config.client_id,
+        config.client_secret.as_deref(),
+        &config.scopes,
+    );
+
+    store.set(key, new_credential).await?;
+    info!(credential_key = %key, "OAuth2 device authorization completed; credential stored");
 
     Ok(ResolvedCredential::OAuth2AccessToken(response.access_token))
 }
