@@ -193,7 +193,26 @@ Per-adapter behaviour beyond the generic pipeline above:
 | Thinking support | Depends on upstream proxy | Streaming thinking blocks | Budget mgmt, forced temp=1, signature extraction | N/A |
 | Tool calls | Streamed fragments | Complete objects | Streamed fragments | Streamed fragments with state accumulation |
 | Multi-provider | No (single proxy) | No (Ollama only) | No (Anthropic only) | Yes (vLLM, LM Studio, Groq, Together) |
-| Cost tracking | Provider-dependent (proxy supplies) | Always zero (local) | `Cost::default()` — adapter does not price | `Cost::default()` — adapter does not price |
+| Cost tracking | Provider-dependent (proxy supplies) | Always zero (local) | `Cost::default()` — loop prices from catalog | `Cost::default()` — loop prices from catalog |
+
+### Cost tracking
+
+Adapters report token `Usage` but generally do not price it. Only `ProxyStreamFn`
+passes real provider-billed cost through. For every other adapter, the agent loop
+calls [`price_assistant_message`] on each assistant message before accumulating it,
+filling in `cost` from the compiled model catalog via [`calculate_cost`]. This runs
+in the loop rather than per-adapter so that third-party `StreamFn` implementations
+are covered too.
+
+Precedence: an adapter-supplied non-zero `Cost` is never overwritten. A message
+stays at zero only when the adapter reported no cost *and* the model has no catalog
+pricing (unknown or local models). Because pricing happens before accumulation, the
+priced cost is what reaches `PolicyContext::accumulated_cost` — which is what makes
+`BudgetPolicy::max_cost` enforceable — as well as turn metrics, the context history,
+and the `TurnEnd` event.
+
+[`price_assistant_message`]: https://docs.rs/swink-agent/latest/swink_agent/fn.price_assistant_message.html
+[`calculate_cost`]: https://docs.rs/swink-agent/latest/swink_agent/fn.calculate_cost.html
 
 ---
 
