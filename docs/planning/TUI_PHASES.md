@@ -1,8 +1,8 @@
-> **Archived — historical record, no longer maintained.** Phases T1–T4 shipped
-> (2026-03-14) and their content below is frozen. The single remaining item,
-> **T5.2 per-hunk approve/reject**, is tracked live in
-> [SPECIFICATION_TRACKER.md](SPECIFICATION_TRACKER.md) under "Known Backlog /
-> Not Yet Implemented" — do not update it here.
+> **Archived — historical record, no longer maintained.** Phases T1–T5 shipped;
+> the content below is frozen. **T5.2 per-hunk approve/reject** shipped as spec
+> 027 User Story 6 — see [spec 027](../../specs/027-tui-tools-diffs-status/spec.md)
+> and [the TUI architecture doc](../architecture/tui/README.md#per-hunk-approvereject)
+> for current behavior.
 
 ---
 
@@ -233,14 +233,14 @@ UX polish, configuration, command system, inline diffs, external editor, plan mo
 
 ## Phase T5 — Planned Features
 
-**Status:** T5.1 (side-by-side diff layout) shipped. **T5.2 (per-hunk approve/reject) remains unshipped and is now tracked live in [SPECIFICATION_TRACKER.md](SPECIFICATION_TRACKER.md) — "Known Backlog / Not Yet Implemented".** Plan mode, tiered approval, and per-tool session trust were implemented in Phase T4 (spec 029) and are no longer part of this phase.
+**Status:** T5.1 (side-by-side diff layout) and T5.2 (per-hunk approve/reject) both shipped; T5.2 landed as spec 027 User Story 6, driven from the `write_file` approval prompt. Plan mode, tiered approval, and per-tool session trust were implemented in Phase T4 (spec 029) and are no longer part of this phase.
 
 ### Acceptance Criteria (historical snapshot)
 
 | # | Criterion | Status |
 |---|---|---|
 | T5.1 | Side-by-side diff layout when terminal width exceeds threshold (160 columns) | ✅ |
-| T5.2 | Per-hunk approve/reject (y/n/a) in inline diff view — approved hunks applied, rejected hunks reverted and reported to the agent as a tool result | Planned — see tracker |
+| T5.2 | Per-hunk approve/reject (y/n/a) — approved hunks applied, rejected hunks reverted and reported to the agent | ✅ (at the approval prompt, via `h`; see spec 027 US6) |
 
 ---
 
@@ -252,4 +252,4 @@ UX polish, configuration, command system, inline diffs, external editor, plan mo
 | T2 — Input + Conversation | Text editor, message display, markdown, scrolling | ✅ Complete |
 | T3 — Streaming + Tools | Agent integration, streaming display, tool panel, syntax highlighting | ✅ Complete |
 | T4 — Polish | Config, commands, diffs, editor, plan mode, approval, collapse, context gauge | ✅ Complete |
-| T5 — Planned | Side-by-side diffs (✅), per-hunk approve/reject (open — see [SPECIFICATION_TRACKER.md](SPECIFICATION_TRACKER.md)) | Partially implemented |
+| T5 — Planned | Side-by-side diffs, per-hunk approve/reject | ✅ Complete |

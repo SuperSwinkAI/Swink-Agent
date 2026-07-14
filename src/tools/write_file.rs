@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use super::path::resolve_writable_path;
+use super::path::{resolve_readable_path_blocking, resolve_writable_path};
 use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validated_schema_for};
 use crate::types::ContentBlock;
 
@@ -33,6 +33,68 @@ mod tests {
             Some(ContentBlock::Text { text }) => text.as_str(),
             _ => panic!("expected text content"),
         }
+    }
+
+    #[tokio::test]
+    async fn approval_context_exposes_old_and_new_content_for_existing_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        tokio::fs::create_dir(&root).await.unwrap();
+        tokio::fs::write(root.join("notes.txt"), "before\n")
+            .await
+            .unwrap();
+
+        let context = WriteFileTool::new()
+            .with_execution_root(&root)
+            .approval_context(&json!({ "path": "notes.txt", "content": "after\n" }))
+            .expect("existing file inside the root should yield approval context");
+
+        assert_eq!(context["old_content"], "before\n");
+        assert_eq!(context["new_content"], "after\n");
+        assert_eq!(context["is_new_file"], false);
+    }
+
+    #[tokio::test]
+    async fn approval_context_marks_missing_file_as_new() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        tokio::fs::create_dir(&root).await.unwrap();
+
+        let context = WriteFileTool::new()
+            .with_execution_root(&root)
+            .approval_context(&json!({ "path": "fresh.txt", "content": "hello\n" }))
+            .expect("a not-yet-created file inside the root still yields context");
+
+        assert_eq!(context["old_content"], "");
+        assert_eq!(context["is_new_file"], true);
+    }
+
+    #[tokio::test]
+    async fn approval_context_refuses_path_outside_execution_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        tokio::fs::create_dir(&root).await.unwrap();
+        tokio::fs::write(temp.path().join("outside.txt"), "secret\n")
+            .await
+            .unwrap();
+
+        assert!(
+            WriteFileTool::new()
+                .with_execution_root(&root)
+                .approval_context(&json!({ "path": "../outside.txt", "content": "x" }))
+                .is_none(),
+            "content outside the execution root must not leak into approval context"
+        );
+    }
+
+    #[tokio::test]
+    async fn approval_context_returns_none_for_invalid_params() {
+        assert!(
+            WriteFileTool::new()
+                .approval_context(&json!({ "path": "notes.txt" }))
+                .is_none(),
+            "missing content should not produce a diff preview"
+        );
     }
 
     #[tokio::test]
@@ -124,6 +186,25 @@ impl AgentTool for WriteFileTool {
 
     fn requires_approval(&self) -> bool {
         true
+    }
+
+    /// Provide the before/after content so an approval UI can render a diff of
+    /// the pending write (and offer per-hunk review) *before* it is applied.
+    ///
+    /// The shape mirrors the `details` emitted by [`Self::execute`], so a single
+    /// parser handles both the pre-approval preview and the post-write result.
+    /// Returns `None` when the path cannot be safely resolved for reading — the
+    /// caller then falls back to a plain whole-call approval prompt.
+    fn approval_context(&self, params: &Value) -> Option<Value> {
+        let parsed: Params = serde_json::from_value(params.clone()).ok()?;
+        let path = resolve_readable_path_blocking(&parsed.path, self.execution_root.as_deref())?;
+        let old_content = std::fs::read_to_string(&path).unwrap_or_default();
+        Some(serde_json::json!({
+            "path": path,
+            "is_new_file": old_content.is_empty(),
+            "old_content": old_content,
+            "new_content": parsed.content,
+        }))
     }
 
     fn execute(

@@ -399,13 +399,13 @@ library, adapters, and TUI.
 
 Live items that are not covered by an open spec above:
 
-- **TUI per-hunk approve/reject (was TUI_PHASES.md T5.2)** — each changed hunk
-  in the inline diff view becomes an independent y/n/a decision point; approved
-  hunks are applied, rejected hunks are reverted and reported back to the agent
-  as a tool result. (PRD §16; side-by-side diff layout T5.1 already shipped.)
 - **TUI provider selection priority** — Proxy > OpenAI > Anthropic > Local >
   Ollama; the authoritative priority table lives in
   [getting_started.md](../getting_started.md) (pointer only, not backlog).
+- **TUI post-write hunk revert** — per-hunk review runs at the `write_file`
+  approval prompt (shipped, spec 027 US6). Reviewing or reverting hunks from the
+  read-only diff blocks rendered *after* a write has been applied is not
+  supported.
 
 ---
 

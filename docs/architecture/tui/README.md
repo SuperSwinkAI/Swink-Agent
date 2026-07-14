@@ -168,7 +168,9 @@ Agent integration uses `prompt_stream()` with an mpsc forwarder task that sends 
 | `F3` | Cycle color mode (Custom → MonoWhite → MonoBlack) |
 | `F4` | Cycle model (applied on next send) |
 | `Shift+←` / `Shift+→` | Select previous/next tool block |
-| `y` / `n` / `a` (in diff view) | Per-hunk approve/reject/approve-all (Planned — not implemented; TUI_PHASES T5.2) |
+| `h` (at a `write_file` approval prompt) | Open per-hunk review of the pending diff |
+| `y` / `n` / `a` (in hunk review) | Apply hunk / revert hunk / apply all remaining hunks |
+| `Escape` (in hunk review) | Cancel the review and return to the whole-call approval prompt |
 
 Typing any printable character auto-focuses the input editor.
 
@@ -388,7 +390,18 @@ When a tool result's details carry write-file diff fields (path, new-file flag, 
 - **Side-by-side**: two columns (old | new) when the terminal is ≥ 160 columns wide and the file is not newly created; falls back to unified otherwise
 - Output is truncated after 50 diff lines
 
-> **Planned — not implemented** ([TUI_PHASES T5.2](../../planning/TUI_PHASES.md)): per-hunk approve/reject interaction (`y`/`n`/`a`). Diffs are display-only today.
+### Per-Hunk Approve/Reject
+
+Diffs rendered from a *tool result* are display-only — the write has already happened. Per-hunk review instead runs at the **approval prompt**, before the write is applied:
+
+- `WriteFileTool::approval_context()` reads the file currently on disk and returns the same `path` / `is_new_file` / `old_content` / `new_content` shape as its result `details`, so `DiffData` parses both. It returns `None` (and the TUI falls back to the plain prompt) when the path cannot be safely resolved inside the execution root.
+- At a `write_file` approval prompt, `h` opens the review. `compute_hunks()` splits the change into maximal runs of non-common lines; each hunk is one `y` (apply) / `n` (revert) decision, `a` applies all remaining, `Escape` cancels back to the whole-call prompt. The review panel shows one hunk at a time with an `i/n` progress header.
+- On completion the pending approval is answered: all approved → `ToolApproval::Approved`; all rejected → `ToolApproval::Rejected`; mixed → `ToolApproval::ApprovedWith`, carrying content rebuilt by `merge_hunks()` so rejected hunks keep their original lines. Approving every hunk reproduces the proposed content byte-for-byte; rejecting every hunk reproduces the original.
+- Rejected hunks generate a follow-up message to the agent naming which hunks were reverted, steered in at the next turn boundary so the agent does not assume its write landed intact.
+
+Per-hunk review is offered only for modifications to existing files. New files have no original content to fall back to, so the whole-call `y`/`n` prompt already covers them.
+
+> **Planned — not implemented**: per-hunk review inside the read-only diff blocks rendered in the conversation (post-write). Reverting an already-applied write is not supported; review happens at approval time only.
 
 ---
 

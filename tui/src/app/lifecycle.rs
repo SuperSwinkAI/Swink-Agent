@@ -68,6 +68,7 @@ impl App {
             approval_rx,
             approval_tx,
             pending_approval: None,
+            hunk_review: None,
             context_budget: 0,
             context_tokens_used: 0,
             selected_tool_block: None,
