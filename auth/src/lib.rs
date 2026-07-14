@@ -13,6 +13,6 @@ mod resolver;
 mod token_source;
 
 pub use in_memory::InMemoryCredentialStore;
-pub use oauth2::AuthorizationConfig;
+pub use oauth2::{AuthorizationConfig, DeviceAuthorizationConfig};
 pub use resolver::DefaultCredentialResolver;
 pub use token_source::{ExpiringValue, SingleFlightTokenSource};
