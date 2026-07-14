@@ -1,6 +1,8 @@
 //! OAuth2 token refresh helpers.
 
 use std::fmt;
+use std::future::Future;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use swink_agent::CredentialError;
@@ -83,6 +85,16 @@ fn sanitize_refresh_reason(status: reqwest::StatusCode, body: &str) -> String {
 /// Sanitized reason for a failed `exchange_code` call.
 fn sanitize_code_exchange_reason(status: reqwest::StatusCode, body: &str) -> String {
     sanitize_oauth2_error_reason("authorization code exchange", status, body)
+}
+
+/// Sanitized reason for a failed `request_device_code` call.
+fn sanitize_device_authorization_reason(status: reqwest::StatusCode, body: &str) -> String {
+    sanitize_oauth2_error_reason("device authorization request", status, body)
+}
+
+/// Sanitized reason for a terminal `poll_device_token` failure.
+fn sanitize_device_token_reason(status: reqwest::StatusCode, body: &str) -> String {
+    sanitize_oauth2_error_reason("device token request", status, body)
 }
 
 fn sanitize_token_endpoint(token_url: &str) -> String {
@@ -322,6 +334,330 @@ pub async fn exchange_code(
         })
 }
 
+// ─── Device authorization grant (RFC 8628) ──────────────────────────────────
+
+/// Poll interval used when the provider omits `interval` (RFC 8628 §3.2
+/// makes it OPTIONAL and §3.5 specifies 5 seconds as the default).
+const DEFAULT_DEVICE_POLL_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Amount the poll interval grows on each `slow_down` error (RFC 8628 §3.5:
+/// "increase ... by 5 seconds").
+const SLOW_DOWN_INTERVAL_INCREMENT: Duration = Duration::from_secs(5);
+
+/// Fallback device-code lifetime when the provider omits `expires_in`.
+/// RFC 8628 §3.2 marks `expires_in` REQUIRED, so this only guards against
+/// non-conforming providers rather than defining normal behavior.
+const DEFAULT_DEVICE_CODE_LIFETIME: Duration = Duration::from_secs(600);
+
+/// The `grant_type` that identifies a device access token request
+/// (RFC 8628 §3.4).
+const DEVICE_CODE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:device_code";
+
+/// `OAuth2` client configuration for the device authorization grant
+/// (RFC 8628), the headless counterpart to [`AuthorizationConfig`].
+///
+/// Unlike [`AuthorizationConfig`] this has no `redirect_uri` (the device flow
+/// has no redirect) and its first-leg endpoint is the provider's *device
+/// authorization endpoint*, which is distinct from the authorization endpoint
+/// a browser is sent to.
+///
+/// Pair a credential key with one of these via
+/// [`with_device_authorization_config`](crate::DefaultCredentialResolver::with_device_authorization_config).
+/// A key with a device-code handler configured but no matching
+/// `DeviceAuthorizationConfig` behaves as if no handler were configured
+/// (FR-011: `NotFound`).
+#[derive(Debug, Clone)]
+pub struct DeviceAuthorizationConfig {
+    /// The provider's device authorization endpoint, e.g.
+    /// `https://oauth2.googleapis.com/device/code`.
+    pub device_authorization_endpoint: String,
+    /// The token endpoint polled for the issued tokens.
+    pub token_url: String,
+    /// `OAuth2` client identifier.
+    pub client_id: String,
+    /// `OAuth2` client secret (optional; device-flow clients are usually
+    /// public clients).
+    pub client_secret: Option<String>,
+    /// Requested scopes.
+    pub scopes: Vec<String>,
+}
+
+/// A successful device authorization response (RFC 8628 §3.2).
+#[derive(Deserialize)]
+pub struct DeviceAuthorizationResponse {
+    /// The secret the client polls the token endpoint with. Never shown to
+    /// the user and redacted from [`Debug`].
+    pub device_code: String,
+    /// The short code the user types at [`Self::verification_uri`].
+    pub user_code: String,
+    /// The URL the user visits to enter [`Self::user_code`].
+    pub verification_uri: String,
+    /// Optional URL embedding the user code (RFC 8628 §3.3.1).
+    #[serde(default)]
+    pub verification_uri_complete: Option<String>,
+    /// Lifetime of the device/user code pair in seconds.
+    #[serde(default)]
+    pub expires_in: Option<i64>,
+    /// Minimum seconds between polls. Absent (or non-positive) means the
+    /// RFC 8628 §3.5 default of 5 seconds.
+    #[serde(default)]
+    pub interval: Option<i64>,
+}
+
+impl fmt::Debug for DeviceAuthorizationResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // `device_code` is a bearer-equivalent secret. `user_code` is meant
+        // to be displayed to the user, so it stays visible.
+        f.debug_struct("DeviceAuthorizationResponse")
+            .field("device_code", &"<redacted>")
+            .field("user_code", &self.user_code)
+            .field("verification_uri", &self.verification_uri)
+            .field("verification_uri_complete", &self.verification_uri_complete)
+            .field("expires_in", &self.expires_in)
+            .field("interval", &self.interval)
+            .finish()
+    }
+}
+
+impl DeviceAuthorizationResponse {
+    /// The poll interval, falling back to [`DEFAULT_DEVICE_POLL_INTERVAL`]
+    /// when the provider omits or reports a non-positive `interval`.
+    fn poll_interval(&self) -> Duration {
+        match self.interval {
+            Some(secs) if secs > 0 => Duration::from_secs(
+                u64::try_from(secs).unwrap_or(DEFAULT_DEVICE_POLL_INTERVAL.as_secs()),
+            ),
+            _ => DEFAULT_DEVICE_POLL_INTERVAL,
+        }
+    }
+
+    /// The device-code lifetime, falling back to
+    /// [`DEFAULT_DEVICE_CODE_LIFETIME`] when the provider omits or reports a
+    /// non-positive `expires_in`.
+    fn lifetime(&self) -> Duration {
+        match self.expires_in {
+            Some(secs) if secs > 0 => Duration::from_secs(
+                u64::try_from(secs).unwrap_or(DEFAULT_DEVICE_CODE_LIFETIME.as_secs()),
+            ),
+            Some(_) => Duration::ZERO,
+            None => DEFAULT_DEVICE_CODE_LIFETIME,
+        }
+    }
+}
+
+/// Classification of a non-success device token endpoint response
+/// (RFC 8628 §3.5).
+#[derive(Debug, PartialEq, Eq)]
+enum DevicePollOutcome {
+    /// `authorization_pending` — the user hasn't finished yet; poll again at
+    /// the current interval.
+    Pending,
+    /// `slow_down` — poll again, but increase the interval first.
+    SlowDown,
+    /// A terminal failure carrying an already-sanitized reason.
+    Failed(String),
+}
+
+/// Classify a non-success response from the device token endpoint.
+///
+/// RFC 8628 §3.5 overloads HTTP 400 to mean "keep polling"
+/// (`authorization_pending`, `slow_down`) as well as "give up"
+/// (`access_denied`, `expired_token`), so the decision is driven by the
+/// OAuth2 `error` code rather than the status. Bodies that don't parse as an
+/// RFC 6749 §5.2 error response are terminal, with a status-only reason.
+///
+/// Like every other reason in this module, the returned string never contains
+/// the raw body — only the status and the stable `error` code.
+fn classify_device_poll_response(status: reqwest::StatusCode, body: &str) -> DevicePollOutcome {
+    match serde_json::from_str::<OAuth2ErrorBody>(body) {
+        Ok(parsed) => match parsed.error.as_str() {
+            "authorization_pending" => DevicePollOutcome::Pending,
+            "slow_down" => DevicePollOutcome::SlowDown,
+            _ => DevicePollOutcome::Failed(sanitize_device_token_reason(status, body)),
+        },
+        Err(_) => DevicePollOutcome::Failed(sanitize_device_token_reason(status, body)),
+    }
+}
+
+/// Request a device code and user code from the provider's device
+/// authorization endpoint (RFC 8628 §3.1).
+///
+/// This is the first leg of the device grant; pass the result to
+/// [`poll_device_token`] to obtain tokens.
+///
+/// On failure, the returned [`CredentialError::AuthorizationFailed`] contains
+/// only a sanitized reason (mirroring [`exchange_code`]'s hygiene): HTTP
+/// status plus (if the body is a standard OAuth2 error JSON) the stable
+/// `error` code. The raw response body is NEVER included in the surfaced
+/// error.
+pub async fn request_device_code(
+    client: &reqwest::Client,
+    config: &DeviceAuthorizationConfig,
+) -> Result<DeviceAuthorizationResponse, CredentialError> {
+    debug!(
+        device_authorization_endpoint = %sanitize_token_endpoint(&config.device_authorization_endpoint),
+        "requesting OAuth2 device code"
+    );
+
+    let scopes = config.scopes.join(" ");
+    let mut form = vec![("client_id", config.client_id.as_str())];
+    if !scopes.is_empty() {
+        form.push(("scope", scopes.as_str()));
+    }
+    if let Some(secret) = config.client_secret.as_deref() {
+        form.push(("client_secret", secret));
+    }
+
+    let response = client
+        .post(&config.device_authorization_endpoint)
+        .form(&form)
+        .send()
+        .await
+        .map_err(|e| CredentialError::AuthorizationFailed {
+            key: String::new(),
+            reason: sanitize_transport_reason("device authorization request", &e),
+        })?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        // Raw body stays in debug tracing only; see refresh_token's comment
+        // on why this second debug! call (after the .await) is needed.
+        debug!(
+            device_authorization_endpoint = %sanitize_token_endpoint(&config.device_authorization_endpoint),
+            status = %status,
+            body_len = body.len(),
+            "OAuth2 device authorization request failed; response body redacted"
+        );
+        return Err(CredentialError::AuthorizationFailed {
+            key: String::new(),
+            reason: sanitize_device_authorization_reason(status, &body),
+        });
+    }
+
+    response
+        .json::<DeviceAuthorizationResponse>()
+        .await
+        .map_err(|e| CredentialError::AuthorizationFailed {
+            key: String::new(),
+            reason: sanitize_transport_reason("device authorization request", &e),
+        })
+}
+
+/// Poll the token endpoint until the user completes the device authorization
+/// (RFC 8628 §3.4, §3.5).
+///
+/// Honors the provider's `interval`, backs off by 5 seconds on each
+/// `slow_down`, and keeps polling on `authorization_pending`. Returns once
+/// tokens are issued, or with [`CredentialError::AuthorizationFailed`] when
+/// the provider reports a terminal error (e.g. `access_denied`,
+/// `expired_token`) or the device code's own `expires_in` elapses.
+///
+/// This bounds itself by the device code's lifetime only. Callers wanting a
+/// shorter overall bound should wrap the call in `tokio::time::timeout` — the
+/// resolver does exactly that with its authorization timeout (FR-020).
+///
+/// As with the other helpers here, surfaced reasons never include the raw
+/// response body.
+pub async fn poll_device_token(
+    client: &reqwest::Client,
+    config: &DeviceAuthorizationConfig,
+    device: &DeviceAuthorizationResponse,
+) -> Result<TokenResponse, CredentialError> {
+    poll_device_token_with_sleep(client, config, device, tokio::time::sleep).await
+}
+
+/// [`poll_device_token`] with an injectable sleep, so the polling loop's
+/// interval and back-off behavior can be tested without real time passing.
+async fn poll_device_token_with_sleep<S, F>(
+    client: &reqwest::Client,
+    config: &DeviceAuthorizationConfig,
+    device: &DeviceAuthorizationResponse,
+    sleep: S,
+) -> Result<TokenResponse, CredentialError>
+where
+    S: Fn(Duration) -> F,
+    F: Future<Output = ()>,
+{
+    let mut interval = device.poll_interval();
+    let lifetime = device.lifetime();
+    let started = Instant::now();
+
+    let mut form = vec![
+        ("grant_type", DEVICE_CODE_GRANT_TYPE),
+        ("device_code", device.device_code.as_str()),
+        ("client_id", config.client_id.as_str()),
+    ];
+    if let Some(secret) = config.client_secret.as_deref() {
+        form.push(("client_secret", secret));
+    }
+
+    debug!(
+        token_endpoint = %sanitize_token_endpoint(&config.token_url),
+        interval_secs = interval.as_secs(),
+        "polling OAuth2 device token endpoint"
+    );
+
+    loop {
+        // Wait before each poll, including the first: the user needs time to
+        // visit the verification URI, and RFC 8628 §3.5 requires polling no
+        // faster than `interval`.
+        sleep(interval).await;
+
+        if started.elapsed() >= lifetime {
+            return Err(CredentialError::AuthorizationFailed {
+                key: String::new(),
+                reason: "device token request failed: device code expired".to_string(),
+            });
+        }
+
+        let response = client
+            .post(&config.token_url)
+            .form(&form)
+            .send()
+            .await
+            .map_err(|e| CredentialError::AuthorizationFailed {
+                key: String::new(),
+                reason: sanitize_transport_reason("device token request", &e),
+            })?;
+
+        if response.status().is_success() {
+            return response.json::<TokenResponse>().await.map_err(|e| {
+                CredentialError::AuthorizationFailed {
+                    key: String::new(),
+                    reason: sanitize_transport_reason("device token request", &e),
+                }
+            });
+        }
+
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        debug!(
+            token_endpoint = %sanitize_token_endpoint(&config.token_url),
+            status = %status,
+            body_len = body.len(),
+            "OAuth2 device token poll returned an error; response body redacted"
+        );
+
+        match classify_device_poll_response(status, &body) {
+            DevicePollOutcome::Pending => {}
+            DevicePollOutcome::SlowDown => {
+                interval = interval.saturating_add(SLOW_DOWN_INTERVAL_INCREMENT);
+                debug!(
+                    interval_secs = interval.as_secs(),
+                    "device token endpoint asked us to slow down; increasing poll interval"
+                );
+            }
+            DevicePollOutcome::Failed(reason) => {
+                return Err(CredentialError::AuthorizationFailed {
+                    key: String::new(),
+                    reason,
+                });
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::{self, Write};
@@ -364,6 +700,46 @@ mod tests {
         fn make_writer(&'a self) -> Self::Writer {
             SharedLogWriter(Arc::clone(&self.0))
         }
+    }
+
+    /// Pin tracing's global max level to `DEBUG` for the whole test binary.
+    ///
+    /// The log-capture tests below install only *scoped* (thread-local)
+    /// subscribers. With no global default, tracing's global `MAX_LEVEL`
+    /// fast-path — which `debug!` consults before dispatching — flickers as
+    /// scoped guards are set and dropped across the test harness's worker
+    /// threads under a shared-process runner (`cargo test`), so a `debug!`
+    /// can be filtered out before reaching the capture buffer and the
+    /// assertion fails intermittently.
+    ///
+    /// Installing a global default at `DEBUG` once keeps `MAX_LEVEL` pinned
+    /// for the binary's lifetime; the scoped capture subscriber still takes
+    /// precedence on the test's own thread. The global writer is a sink, so
+    /// it produces no output. Mirrors `plugins/web`'s `pin_global_info_level`
+    /// (see #1094).
+    fn pin_global_debug_level() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            let global = tracing_subscriber::fmt()
+                .with_max_level(tracing::Level::DEBUG)
+                .with_writer(io::sink)
+                .finish();
+            // Ignore the error if a global default was already set elsewhere;
+            // any global default at DEBUG is enough to pin the level.
+            let _ = tracing::subscriber::set_global_default(global);
+        });
+    }
+
+    /// Install a capturing subscriber as this thread's default, with the
+    /// global level pinned so the capture is deterministic under `cargo test`.
+    fn capture_debug_logs(logs: &SharedLogBuffer) -> tracing::subscriber::DefaultGuard {
+        pin_global_debug_level();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .without_time()
+            .with_writer(logs.clone())
+            .finish();
+        tracing::subscriber::set_default(subscriber)
     }
 
     #[test]
@@ -499,12 +875,7 @@ mod tests {
         );
 
         let logs = SharedLogBuffer::default();
-        let subscriber = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::DEBUG)
-            .without_time()
-            .with_writer(logs.clone())
-            .finish();
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let _guard = capture_debug_logs(&logs);
 
         let err = refresh_token(
             &reqwest::Client::new(),
@@ -739,5 +1110,529 @@ mod tests {
 
         let err = build_authorization_url(&config, "state").unwrap_err();
         assert!(matches!(err, CredentialError::AuthorizationFailed { .. }));
+    }
+
+    // ─── Device authorization grant (RFC 8628) ──────────────────────────────
+
+    /// Build a sleeper for [`poll_device_token_with_sleep`] that records the
+    /// durations it is asked to sleep for and returns immediately, making the
+    /// loop's interval and back-off behavior observable without real time
+    /// passing. Returns the recording handle alongside the sleeper.
+    fn recording_sleeper() -> (
+        Arc<Mutex<Vec<Duration>>>,
+        impl Fn(Duration) -> std::future::Ready<()>,
+    ) {
+        let recorded = Arc::new(Mutex::new(Vec::new()));
+        let handle = Arc::clone(&recorded);
+        let sleeper = move |duration: Duration| {
+            handle.lock().unwrap().push(duration);
+            std::future::ready(())
+        };
+        (recorded, sleeper)
+    }
+
+    /// The recorded sleeps, in seconds, in the order the loop performed them.
+    fn recorded_secs(recorded: &Arc<Mutex<Vec<Duration>>>) -> Vec<u64> {
+        recorded
+            .lock()
+            .unwrap()
+            .iter()
+            .map(Duration::as_secs)
+            .collect()
+    }
+
+    fn device_config(base_url: &str) -> DeviceAuthorizationConfig {
+        DeviceAuthorizationConfig {
+            device_authorization_endpoint: format!("{base_url}/device/code"),
+            token_url: format!("{base_url}/token"),
+            client_id: "client-id".to_string(),
+            client_secret: Some("client-secret".to_string()),
+            scopes: vec!["read".to_string()],
+        }
+    }
+
+    fn device_response(interval: Option<i64>) -> DeviceAuthorizationResponse {
+        DeviceAuthorizationResponse {
+            device_code: "device-code-secret".to_string(),
+            user_code: "WDJB-MJHT".to_string(),
+            verification_uri: "https://auth.example.com/device".to_string(),
+            verification_uri_complete: None,
+            expires_in: Some(600),
+            interval,
+        }
+    }
+
+    fn oauth2_error_response(code: &str) -> ResponseTemplate {
+        ResponseTemplate::new(400).set_body_json(serde_json::json!({ "error": code }))
+    }
+
+    fn token_success_response() -> ResponseTemplate {
+        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "device-access",
+            "refresh_token": "device-refresh",
+            "expires_in": 3600,
+            "token_type": "Bearer"
+        }))
+    }
+
+    #[test]
+    fn device_authorization_response_debug_redacts_device_code() {
+        let response = DeviceAuthorizationResponse {
+            device_code: LEAK_SENTINEL.to_string(),
+            user_code: "WDJB-MJHT".to_string(),
+            verification_uri: "https://auth.example.com/device".to_string(),
+            verification_uri_complete: None,
+            expires_in: Some(600),
+            interval: Some(5),
+        };
+
+        let debug = format!("{response:?}");
+
+        assert!(
+            !debug.contains(LEAK_SENTINEL),
+            "device_code leaked: {debug}"
+        );
+        assert!(
+            debug.contains("WDJB-MJHT") && debug.contains("600"),
+            "user-facing prompt fields should remain visible: {debug}"
+        );
+    }
+
+    #[test]
+    fn device_poll_interval_falls_back_when_absent_or_invalid() {
+        assert_eq!(
+            device_response(Some(3)).poll_interval(),
+            Duration::from_secs(3)
+        );
+        assert_eq!(
+            device_response(None).poll_interval(),
+            DEFAULT_DEVICE_POLL_INTERVAL
+        );
+        assert_eq!(
+            device_response(Some(0)).poll_interval(),
+            DEFAULT_DEVICE_POLL_INTERVAL,
+            "a non-positive interval must not busy-poll the provider"
+        );
+        assert_eq!(
+            device_response(Some(-1)).poll_interval(),
+            DEFAULT_DEVICE_POLL_INTERVAL
+        );
+    }
+
+    #[test]
+    fn device_lifetime_falls_back_when_expires_in_absent() {
+        let mut response = device_response(None);
+        response.expires_in = None;
+        assert_eq!(response.lifetime(), DEFAULT_DEVICE_CODE_LIFETIME);
+
+        response.expires_in = Some(30);
+        assert_eq!(response.lifetime(), Duration::from_secs(30));
+
+        response.expires_in = Some(0);
+        assert_eq!(
+            response.lifetime(),
+            Duration::ZERO,
+            "an already-expired code must not be treated as long-lived"
+        );
+    }
+
+    #[test]
+    fn classify_device_poll_response_recognizes_continuable_errors() {
+        assert_eq!(
+            classify_device_poll_response(
+                StatusCode::BAD_REQUEST,
+                r#"{"error":"authorization_pending"}"#
+            ),
+            DevicePollOutcome::Pending
+        );
+        assert_eq!(
+            classify_device_poll_response(StatusCode::BAD_REQUEST, r#"{"error":"slow_down"}"#),
+            DevicePollOutcome::SlowDown
+        );
+    }
+
+    #[test]
+    fn classify_device_poll_response_treats_denied_and_expired_as_terminal() {
+        let denied =
+            classify_device_poll_response(StatusCode::BAD_REQUEST, r#"{"error":"access_denied"}"#);
+        assert_eq!(
+            denied,
+            DevicePollOutcome::Failed(
+                "device token request failed: HTTP 400 (access_denied)".to_string()
+            )
+        );
+
+        let expired =
+            classify_device_poll_response(StatusCode::BAD_REQUEST, r#"{"error":"expired_token"}"#);
+        assert_eq!(
+            expired,
+            DevicePollOutcome::Failed(
+                "device token request failed: HTTP 400 (expired_token)".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn classify_device_poll_response_redacts_body_in_terminal_reason() {
+        // A pending-looking description must not rescue a terminal error, and
+        // the description itself must never reach the reason.
+        let body = format!(
+            r#"{{"error":"access_denied","error_description":"user refused {LEAK_SENTINEL}"}}"#
+        );
+        let outcome = classify_device_poll_response(StatusCode::BAD_REQUEST, &body);
+
+        match outcome {
+            DevicePollOutcome::Failed(reason) => {
+                assert!(!reason.contains(LEAK_SENTINEL), "sentinel leaked: {reason}");
+                assert!(reason.contains("access_denied"));
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_device_poll_response_treats_malformed_body_as_terminal() {
+        let body = format!("<html>{LEAK_SENTINEL}</html>");
+        let outcome = classify_device_poll_response(StatusCode::INTERNAL_SERVER_ERROR, &body);
+
+        assert_eq!(
+            outcome,
+            DevicePollOutcome::Failed("device token request failed: HTTP 500".to_string()),
+            "an unparseable body must not be mistaken for a continuable error"
+        );
+    }
+
+    #[tokio::test]
+    async fn request_device_code_success_parses_response() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/device/code"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "device_code": "dev-123",
+                "user_code": "WDJB-MJHT",
+                "verification_uri": "https://auth.example.com/device",
+                "verification_uri_complete": "https://auth.example.com/device?user_code=WDJB-MJHT",
+                "expires_in": 1800,
+                "interval": 5
+            })))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = device_config(&mock_server.uri());
+        let response = request_device_code(&reqwest::Client::new(), &config)
+            .await
+            .unwrap();
+
+        assert_eq!(response.device_code, "dev-123");
+        assert_eq!(response.user_code, "WDJB-MJHT");
+        assert_eq!(
+            response.verification_uri_complete.as_deref(),
+            Some("https://auth.example.com/device?user_code=WDJB-MJHT")
+        );
+        assert_eq!(response.poll_interval(), Duration::from_secs(5));
+        assert_eq!(response.lifetime(), Duration::from_secs(1800));
+    }
+
+    #[tokio::test]
+    async fn request_device_code_failure_does_not_leak_body() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/device/code"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "error": "invalid_client",
+                "error_description": format!("bad client {LEAK_SENTINEL}"),
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let config = device_config(&mock_server.uri());
+        let err = request_device_code(&reqwest::Client::new(), &config)
+            .await
+            .unwrap_err();
+
+        match &err {
+            CredentialError::AuthorizationFailed { reason, .. } => {
+                assert_eq!(
+                    reason,
+                    "device authorization request failed: HTTP 400 (invalid_client)"
+                );
+            }
+            other => panic!("expected AuthorizationFailed, got {other:?}"),
+        }
+        assert!(!format!("{err}").contains(LEAK_SENTINEL));
+    }
+
+    #[tokio::test]
+    async fn request_device_code_transport_failure_reason_is_sanitized() {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(200))
+            .build()
+            .unwrap();
+        let mut config = device_config("http://127.0.0.1:1");
+        config.device_authorization_endpoint =
+            "http://127.0.0.1:1/device/code?client_secret=LEAK_SENTINEL_ABC123".to_string();
+
+        let err = request_device_code(&client, &config).await.unwrap_err();
+        let display = format!("{err}");
+
+        assert!(matches!(err, CredentialError::AuthorizationFailed { .. }));
+        assert!(!display.contains("LEAK_SENTINEL_ABC123"));
+        assert!(display.contains("transport"));
+    }
+
+    #[tokio::test]
+    async fn poll_device_token_retries_while_authorization_pending() {
+        let mock_server = MockServer::start().await;
+        // Two pending polls, then success. `expect(2)` / `expect(1)` assert
+        // the loop polled exactly the expected number of times.
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(oauth2_error_response("authorization_pending"))
+            .up_to_n_times(2)
+            .expect(2)
+            .mount(&mock_server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(token_success_response())
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = device_config(&mock_server.uri());
+        let device = device_response(Some(3));
+        let (recorded, sleeper) = recording_sleeper();
+
+        let token =
+            poll_device_token_with_sleep(&reqwest::Client::new(), &config, &device, sleeper)
+                .await
+                .unwrap();
+
+        assert_eq!(token.access_token, "device-access");
+        assert_eq!(token.refresh_token.as_deref(), Some("device-refresh"));
+        assert_eq!(
+            recorded_secs(&recorded),
+            vec![3, 3, 3],
+            "authorization_pending must not change the poll interval"
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_device_token_backs_off_on_slow_down() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(oauth2_error_response("slow_down"))
+            .up_to_n_times(2)
+            .expect(2)
+            .mount(&mock_server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(token_success_response())
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = device_config(&mock_server.uri());
+        let device = device_response(Some(5));
+        let (recorded, sleeper) = recording_sleeper();
+
+        let token =
+            poll_device_token_with_sleep(&reqwest::Client::new(), &config, &device, sleeper)
+                .await
+                .unwrap();
+
+        assert_eq!(token.access_token, "device-access");
+        // Each slow_down adds 5s (RFC 8628 §3.5) and the increase persists
+        // for every subsequent poll.
+        assert_eq!(recorded_secs(&recorded), vec![5, 10, 15]);
+    }
+
+    #[tokio::test]
+    async fn poll_device_token_interleaves_pending_and_slow_down() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(oauth2_error_response("authorization_pending"))
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(oauth2_error_response("slow_down"))
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(token_success_response())
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = device_config(&mock_server.uri());
+        let device = device_response(Some(2));
+        let (recorded, sleeper) = recording_sleeper();
+
+        poll_device_token_with_sleep(&reqwest::Client::new(), &config, &device, sleeper)
+            .await
+            .unwrap();
+
+        // Poll 1 pending (interval unchanged), poll 2 slow_down (bump to 7),
+        // poll 3 succeeds.
+        assert_eq!(recorded_secs(&recorded), vec![2, 2, 7]);
+    }
+
+    #[tokio::test]
+    async fn poll_device_token_stops_on_access_denied() {
+        let mock_server = MockServer::start().await;
+        // `expect(1)` asserts the loop gives up rather than retrying a
+        // terminal error.
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(oauth2_error_response("access_denied"))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = device_config(&mock_server.uri());
+        let device = device_response(Some(1));
+        let (_recorded, sleeper) = recording_sleeper();
+
+        let err = poll_device_token_with_sleep(&reqwest::Client::new(), &config, &device, sleeper)
+            .await
+            .unwrap_err();
+
+        match &err {
+            CredentialError::AuthorizationFailed { reason, .. } => {
+                assert!(
+                    reason.contains("access_denied"),
+                    "unexpected reason: {reason}"
+                );
+            }
+            other => panic!("expected AuthorizationFailed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn poll_device_token_stops_when_provider_reports_expired_token() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(oauth2_error_response("expired_token"))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = device_config(&mock_server.uri());
+        let device = device_response(Some(1));
+        let (_recorded, sleeper) = recording_sleeper();
+
+        let err = poll_device_token_with_sleep(&reqwest::Client::new(), &config, &device, sleeper)
+            .await
+            .unwrap_err();
+
+        match &err {
+            CredentialError::AuthorizationFailed { reason, .. } => {
+                assert!(
+                    reason.contains("expired_token"),
+                    "unexpected reason: {reason}"
+                );
+            }
+            other => panic!("expected AuthorizationFailed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn poll_device_token_stops_when_device_code_lifetime_elapses() {
+        let mock_server = MockServer::start().await;
+        // Never mounted to succeed: an already-expired code must fail before
+        // any poll is issued.
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(oauth2_error_response("authorization_pending"))
+            .expect(0)
+            .mount(&mock_server)
+            .await;
+
+        let config = device_config(&mock_server.uri());
+        let mut device = device_response(Some(1));
+        device.expires_in = Some(0);
+        let (_recorded, sleeper) = recording_sleeper();
+
+        let err = poll_device_token_with_sleep(&reqwest::Client::new(), &config, &device, sleeper)
+            .await
+            .unwrap_err();
+
+        match &err {
+            CredentialError::AuthorizationFailed { reason, .. } => {
+                assert_eq!(reason, "device token request failed: device code expired");
+            }
+            other => panic!("expected AuthorizationFailed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn poll_device_token_debug_log_redacts_response_body() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "error": "access_denied",
+                "error_description": format!("refused {LEAK_SENTINEL}"),
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let logs = SharedLogBuffer::default();
+        let _guard = capture_debug_logs(&logs);
+
+        let config = device_config(&mock_server.uri());
+        let device = device_response(Some(1));
+        let (_recorded, sleeper) = recording_sleeper();
+
+        let err = poll_device_token_with_sleep(&reqwest::Client::new(), &config, &device, sleeper)
+            .await
+            .unwrap_err();
+        let log_output = logs.contents();
+
+        assert!(
+            !format!("{err}").contains(LEAK_SENTINEL),
+            "poll error leaked sentinel: {err}"
+        );
+        assert!(
+            !log_output.contains(LEAK_SENTINEL),
+            "debug log leaked response body: {log_output}"
+        );
+        assert!(
+            log_output.contains("body_len") && log_output.contains("response body redacted"),
+            "debug log should record redacted body metadata: {log_output}"
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_device_token_transport_failure_reason_is_sanitized() {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(200))
+            .build()
+            .unwrap();
+        let mut config = device_config("http://127.0.0.1:1");
+        config.token_url =
+            "http://127.0.0.1:1/token?client_secret=LEAK_SENTINEL_ABC123".to_string();
+        let device = device_response(Some(1));
+        let (_recorded, sleeper) = recording_sleeper();
+
+        let err = poll_device_token_with_sleep(&client, &config, &device, sleeper)
+            .await
+            .unwrap_err();
+        let display = format!("{err}");
+
+        assert!(matches!(err, CredentialError::AuthorizationFailed { .. }));
+        assert!(!display.contains("LEAK_SENTINEL_ABC123"));
+        assert!(display.contains("transport"));
     }
 }

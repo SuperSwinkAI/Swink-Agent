@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-07-14
+
+### Fixed — `BudgetPolicy.max_cost` was inert (#1100, #1103)
+
+- **`BudgetPolicy.max_cost` could never fire against any real provider**, including the $10 default bundled into `RecommendedPolicies`. Every built-in remote adapter reports `Usage` but emits `cost: Cost::default()`; only the proxy adapter passed real billed cost through. The loop accumulated that zero verbatim, so `PolicyCtx.accumulated_cost` stayed at `0` and the limit never tripped.
+- The loop now prices assistant messages from the compiled model catalog at a single seam in `run_single_turn`, rather than in each adapter — so third-party `StreamFn` implementations are covered too, and the priced cost reaches accumulation, policies, turn metrics, the context history, and the `TurnEnd` event alike. Adapters that price their own response keep precedence.
+- Note: event consumers reading `cost` from `AgentEvent::MessageEnd` still observe zero in this release; `MessageEnd` is emitted before this seam. That is addressed separately by #1084.
+
+### Added — OAuth2 device-code grant, RFC 8628 (#1071, #1106)
+
+- `DeviceCodeHandler` / `DeviceCodePrompt` in `swink-agent`, and `DeviceAuthorizationConfig` plus `oauth2::{DeviceAuthorizationResponse, request_device_code, poll_device_token}` in `swink-agent-auth`, for CLI/TUI and headless contexts where an authorization-code redirect isn't practical.
+- Added as a *parallel* seam rather than an extension of the authorization-code types: `AuthorizationHandler::authorize` must return an authorization code, which the device flow has no equivalent for (the resolver polls instead). The shared machinery — single-flight dedup, authorization timeout, credential storage, error variants — is reused unchanged.
+- The authorization-code flow takes precedence when a key is configured for both, so existing behavior is unchanged. `DeviceCodePrompt` deliberately excludes `device_code`, so the polling secret never reaches a handler.
+- Fixes a latent bug on the shared path: OAuth2 error classification was driven by HTTP status, and RFC 8628 returns `authorization_pending`/`slow_down` as HTTP 400 — normal polling states would have been treated as terminal failures. Classification now keys off the OAuth2 `error` code.
+
+### Added — optional keychain-backed `CredentialStore` (#1068, #1105)
+
+- `KeychainCredentialStore` (with `KeychainBackend`, `SystemKeychain`, `KeychainError`, `DEFAULT_SERVICE`) in `swink-agent-auth`, behind the new **`keychain` feature, off by default**. A default build sees no change.
+- Consumers construct and pass it explicitly; nothing resolves through it implicitly. Spec 035 amended accordingly: FR-003 now reads "only store *enabled by default*", with new FR-003a admitting opt-in stores. Env-var stores (FR-004) and store chaining (FR-006) remain dropped.
+- Namespaced under the `swink-agent-auth` service, distinct from the TUI's `swink-agent` LLM-provider keys; neither reads the other's entries.
+
+### Added — per-hunk approve/reject for `write_file` (#1069, #1104)
+
+- Hunk-level review at the `write_file` approval prompt, before the write lands. Rejected hunks generate a follow-up tool result explaining which changes were reverted.
+- Placed at the approval prompt rather than the post-write diff view: conversation diffs render from tool results, by which point the write has already happened, so rejection there would mean reverting bytes on disk. The post-write diff remains display-only.
+- Fails closed at every branch — undecided hunks count as rejected, and arguments that can't be safely rewritten resolve to `Rejected` rather than silently applying the original content.
+
+### Notes
+
+- All public API changes in this release are additive; `cargo semver-checks` reports no breaking change against 0.11.0.
+
 ## [0.11.0] - 2026-07-13
 
 ### Added — per-request serving-options seam

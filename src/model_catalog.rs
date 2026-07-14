@@ -4,7 +4,7 @@ use chrono::NaiveDate;
 use serde::Deserialize;
 
 use crate::ModelSpec;
-use crate::types::{Cost, ModelCapabilities, ThinkingLevel, Usage};
+use crate::types::{AssistantMessage, Cost, ModelCapabilities, ThinkingLevel, Usage};
 
 /// Whether a provider's models run on a remote API or on local hardware.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -410,6 +410,57 @@ pub fn calculate_cost(model_id: &str, usage: &Usage) -> Cost {
     }
 }
 
+/// Fill in an assistant message's [`Cost`] from catalog pricing when the
+/// adapter did not price the response itself.
+///
+/// Most built-in remote adapters emit `Cost::default()` on every assistant
+/// message — they report token [`Usage`] but leave pricing to the caller. The
+/// agent loop calls this helper on each assistant message before accumulating
+/// cost, so that [`PolicyContext::accumulated_cost`](crate::PolicyContext) —
+/// and therefore any cost ceiling built on it — sees real money.
+///
+/// Adapters that *do* supply their own cost (the proxy adapter, which passes
+/// through provider-billed amounts) keep precedence: a non-zero [`Cost`] is
+/// left untouched.
+///
+/// Returns `true` if the message was repriced, `false` if it was left as-is
+/// (adapter already priced it, or the model has no catalog pricing).
+///
+/// # Example
+/// ```rust
+/// use swink_agent::{AssistantMessage, Cost, StopReason, Usage, price_assistant_message};
+///
+/// let mut message = AssistantMessage {
+///     content: vec![],
+///     provider: "anthropic".to_string(),
+///     model_id: "claude-sonnet-4-6".to_string(),
+///     usage: Usage {
+///         input: 1_000_000,
+///         ..Usage::default()
+///     },
+///     cost: Cost::default(),
+///     stop_reason: StopReason::Stop,
+///     error_message: None,
+///     error_kind: None,
+///     timestamp: 0,
+///     cache_hint: None,
+/// };
+///
+/// assert!(price_assistant_message(&mut message));
+/// assert!((message.cost.total - 3.0).abs() < 1e-9);
+/// ```
+pub fn price_assistant_message(message: &mut AssistantMessage) -> bool {
+    if !message.cost.is_zero() {
+        return false;
+    }
+    let priced = calculate_cost(&message.model_id, &message.usage);
+    if priced.is_zero() {
+        return false;
+    }
+    message.cost = priced;
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -629,6 +680,68 @@ mod tests {
     fn calculate_cost_zero_usage() {
         let cost = calculate_cost("claude-sonnet-4-6", &usage(0, 0, 0, 0));
         assert!((cost.total).abs() < 0.001);
+    }
+
+    fn message(model_id: &str, usage: Usage, cost: Cost) -> AssistantMessage {
+        AssistantMessage {
+            content: vec![],
+            provider: "anthropic".to_string(),
+            model_id: model_id.to_string(),
+            usage,
+            cost,
+            stop_reason: crate::types::StopReason::Stop,
+            error_message: None,
+            error_kind: None,
+            timestamp: 0,
+            cache_hint: None,
+        }
+    }
+
+    #[test]
+    fn price_assistant_message_fills_in_unpriced_message() {
+        let mut msg = message(
+            "claude-sonnet-4-6",
+            usage(1_000_000, 1_000_000, 0, 0),
+            Cost::default(),
+        );
+        assert!(price_assistant_message(&mut msg));
+        assert!((msg.cost.input - 3.0).abs() < 0.001);
+        assert!((msg.cost.total - msg.cost.input - msg.cost.output).abs() < 0.001);
+        assert!(msg.cost.total > 0.0);
+    }
+
+    #[test]
+    fn price_assistant_message_preserves_adapter_supplied_cost() {
+        let adapter_cost = Cost {
+            input: 0.5,
+            total: 0.5,
+            ..Cost::default()
+        };
+        let mut msg = message(
+            "claude-sonnet-4-6",
+            usage(1_000_000, 1_000_000, 0, 0),
+            adapter_cost,
+        );
+        assert!(!price_assistant_message(&mut msg));
+        assert!((msg.cost.total - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn price_assistant_message_leaves_unknown_model_at_zero() {
+        let mut msg = message(
+            "nonexistent-model-xyz",
+            usage(1_000_000, 1_000_000, 0, 0),
+            Cost::default(),
+        );
+        assert!(!price_assistant_message(&mut msg));
+        assert!(msg.cost.is_zero());
+    }
+
+    #[test]
+    fn price_assistant_message_leaves_zero_usage_at_zero() {
+        let mut msg = message("claude-sonnet-4-6", usage(0, 0, 0, 0), Cost::default());
+        assert!(!price_assistant_message(&mut msg));
+        assert!(msg.cost.is_zero());
     }
 
     #[test]

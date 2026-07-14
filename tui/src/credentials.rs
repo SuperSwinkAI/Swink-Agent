@@ -6,9 +6,13 @@
 //!
 //! This stores **LLM provider API keys** (Ollama/OpenAI/Anthropic/Custom Proxy) for the
 //! TUI itself. It is unrelated to `swink-agent-auth`'s `CredentialStore` (spec
-//! `035-credential-management`), which is an in-memory-only store for *tool*
-//! authentication secrets. See `specs/035-credential-management/spec.md`'s
-//! terminology note for the distinction.
+//! `035-credential-management`), which stores *tool* authentication secrets. See
+//! `specs/035-credential-management/spec.md`'s terminology note for the distinction.
+//!
+//! `swink-agent-auth` also has a keychain-backed `CredentialStore` behind its
+//! `keychain` feature, so both now use the `keyring` crate. They are still
+//! separate systems: this module writes under the `swink-agent` service name,
+//! that one under `swink-agent-auth`, and neither reads the other's entries.
 
 use std::collections::HashMap;
 
