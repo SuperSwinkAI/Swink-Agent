@@ -76,12 +76,31 @@ pub type OnRawPayload = Arc<dyn Fn(&str) + Send + Sync>;
 /// | `context_length` | `options.num_ctx`     | —                                      |
 /// | `top_p`          | `options.top_p`       | `top_p`                                |
 /// | `keep_alive`     | `keep_alive`          | —                                      |
+/// | `format`         | `format` (top level)  | `response_format`                      |
 /// | `extra`          | merged into `options` | merged into the request body           |
+///
+/// # Ollama: top-level fields vs `options.*`
+///
+/// Ollama splits its request body in two: *sampling* knobs live under the
+/// nested `options` object (`num_ctx`, `top_p`, `temperature`, …), while
+/// *request-level* knobs are top-level siblings of `model`/`messages`
+/// (`keep_alive`, `format`). The distinction is protocol-level, not
+/// stylistic — Ollama ignores `options.format` entirely, so JSON mode is
+/// only reachable as a top-level `format` field.
+///
+/// This is why [`format`] is a typed field rather than an `extra` entry: the
+/// Ollama adapter merges `extra` into `options.*`, which structurally cannot
+/// express a top-level field. [`keep_alive`] is typed for the same reason.
+/// Conversely, `top_p` and `context_length` map into `options.*` and could in
+/// principle have been expressed through `extra`.
 ///
 /// `extra` is the escape hatch for provider knobs without a typed field
 /// (e.g. Ollama's `repeat_penalty`). On key collision, typed fields win over
 /// `extra` entries. The default (all `None`, empty `extra`) leaves request
 /// bodies byte-identical to builds without serving options.
+///
+/// [`format`]: ServingOptions::format
+/// [`keep_alive`]: ServingOptions::keep_alive
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ServingOptions {
     /// Model context window to serve this request with (Ollama `num_ctx`).
@@ -91,9 +110,40 @@ pub struct ServingOptions {
     /// How long the backend should keep the model loaded after the request
     /// (Ollama `keep_alive`, e.g. `"5m"`).
     pub keep_alive: Option<String>,
+    /// Structured-output ("JSON mode") constraint for the response.
+    ///
+    /// `None` (the default) leaves request bodies untouched. See
+    /// [`ResponseFormat`] for the per-adapter wire mapping.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<ResponseFormat>,
     /// Additional provider-native options passed through verbatim.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub extra: std::collections::BTreeMap<String, Value>,
+}
+
+/// Structured-output constraint for a response ("JSON mode").
+///
+/// Adapters map this onto their protocol's native structured-output knob and
+/// silently ignore it when the protocol has no equivalent:
+///
+/// | Variant     | Ollama (top-level `format`) | OpenAI-compatible (`response_format`)                                     |
+/// |-------------|-----------------------------|---------------------------------------------------------------------------|
+/// | `Json`      | `"json"`                    | `{"type": "json_object"}`                                                 |
+/// | `Schema(s)` | `s` (the schema verbatim)   | `{"type": "json_schema", "json_schema": {"name": …, "schema": s, …}}`     |
+///
+/// In both variants `s` is a bare [JSON Schema] object. Ollama consumes it
+/// verbatim; the OpenAI-compatible adapter wraps it in the `json_schema`
+/// envelope that protocol requires. Callers therefore pass the same value
+/// regardless of backend.
+///
+/// [JSON Schema]: https://json-schema.org/
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseFormat {
+    /// Constrain the response to some syntactically valid JSON value.
+    Json,
+    /// Constrain the response to a specific JSON Schema.
+    Schema(Value),
 }
 
 impl ServingOptions {

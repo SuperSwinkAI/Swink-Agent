@@ -512,6 +512,7 @@ mod tests {
             serving: crate::stream::ServingOptions {
                 context_length: Some(8192),
                 keep_alive: Some("5m".into()),
+                format: Some(crate::stream::ResponseFormat::Json),
                 ..Default::default()
             },
         };
@@ -522,6 +523,43 @@ mod tests {
         assert_eq!(restored.session_id.as_deref(), Some("sess-123"));
         assert_eq!(restored.serving.context_length, Some(8192));
         assert_eq!(restored.serving.keep_alive.as_deref(), Some("5m"));
+        assert_eq!(
+            restored.serving.format,
+            Some(crate::stream::ResponseFormat::Json)
+        );
+    }
+
+    /// `ResponseFormat::Schema` survives a config round-trip, and a `None`
+    /// format adds no key to the serialized form.
+    #[test]
+    fn stream_options_config_roundtrips_response_format_schema() {
+        let schema = serde_json::json!({ "type": "object" });
+        let config = StreamOptionsConfig {
+            serving: crate::stream::ServingOptions {
+                format: Some(crate::stream::ResponseFormat::Schema(schema.clone())),
+                ..Default::default()
+            },
+            ..StreamOptionsConfig::default()
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let restored: StreamOptionsConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            restored.serving.format,
+            Some(crate::stream::ResponseFormat::Schema(schema))
+        );
+
+        let without = serde_json::to_string(&StreamOptionsConfig {
+            serving: crate::stream::ServingOptions {
+                context_length: Some(8192),
+                ..Default::default()
+            },
+            ..StreamOptionsConfig::default()
+        })
+        .unwrap();
+        assert!(
+            !without.contains("format"),
+            "`format: None` must not add config noise: {without}"
+        );
     }
 
     #[test]
