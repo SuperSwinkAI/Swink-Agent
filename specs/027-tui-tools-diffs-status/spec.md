@@ -99,9 +99,35 @@ A developer manages screen space by collapsing and expanding tool result blocks 
 
 ---
 
+### User Story 6 - Approve or Reject Individual Hunks (Priority: P2) **[Addition]**
+
+A developer reviews a proposed file modification hunk by hunk instead of accepting or rejecting the whole write. At the approval prompt for a file write, the developer opens a per-hunk review and is shown one changed region at a time with a progress indicator. For each hunk they apply it, revert it, or apply all remaining hunks at once. When the review finishes, only the approved hunks are written; rejected hunks keep their original content, and the agent is told which hunks were reverted so it does not assume its write landed intact. The developer can cancel the review at any point and fall back to the whole-call prompt.
+
+**Why this priority**: Whole-call approval forces an all-or-nothing choice on a write that may be mostly good — per-hunk review recovers the useful parts of a partially-wrong edit. It is a usability enhancement over the existing approval gate, not a new gate.
+
+**Independent Test**: Can be tested by having the agent propose a multi-hunk write, opening the review, approving some hunks and rejecting others, and verifying the resulting file contains exactly the approved changes.
+
+**Acceptance Scenarios**:
+
+1. **Given** a pending approval for a write that modifies an existing file, **When** the developer opens the per-hunk review, **Then** the first changed hunk is displayed with its position among the total hunk count.
+2. **Given** a hunk is displayed, **When** the developer applies it, **Then** the next hunk is displayed for review.
+3. **Given** the last hunk has been decided, **When** the review completes, **Then** the pending approval resolves and the review closes.
+4. **Given** every hunk was applied, **When** the review completes, **Then** the write proceeds with exactly the content the agent proposed.
+5. **Given** every hunk was reverted, **When** the review completes, **Then** the write is rejected and the file is left unchanged.
+6. **Given** some hunks were applied and others reverted, **When** the review completes, **Then** the write proceeds with only the approved hunks applied and the reverted hunks retaining their original content.
+7. **Given** at least one hunk was reverted, **When** the review completes, **Then** the agent receives a follow-up message identifying which hunks were reverted.
+8. **Given** a review is in progress, **When** the developer chooses to apply all remaining hunks, **Then** every undecided hunk is applied and the review completes.
+9. **Given** a review is in progress, **When** the developer cancels it, **Then** the review closes with no decisions recorded and the whole-call approval prompt remains pending.
+10. **Given** an approval whose write creates a new file, **When** the developer attempts to open a per-hunk review, **Then** no review opens and the whole-call approval prompt remains.
+
+---
+
 ### Edge Cases
 
 - **Dozens of concurrent tools**: The tool panel caps its height at 10 lines; excess entries are not visible until earlier ones complete and age out.
+- **[Addition]** **Write proposed for a path outside the execution root**: No diff preview is produced, so no per-hunk review is offered and the whole-call approval prompt is used. The write itself is still rejected at execution time by the existing path check.
+- **[Addition]** **File changes on disk between the preview and the write**: The preview is a snapshot taken when the approval request is built; the merged content is computed against that snapshot, so a concurrent external edit is overwritten just as it would be by an unreviewed write.
+- **[Addition]** **Write whose content is identical to what is on disk**: There are no hunks to review, so no per-hunk review is offered.
 - **Binary files or missing newline**: Diffs operate on line-split text content; binary files are not specially handled (they render as raw text lines). Missing trailing newlines are handled by Rust's `str::lines()`.
 - **Long model names**: The status bar renders the full model name without truncation; very long names push other elements rightward.
 - **No context usage reported**: The context gauge is hidden entirely when `context_budget` is 0.
@@ -131,12 +157,20 @@ A developer manages screen space by collapsing and expanding tool result blocks 
 - **FR-015**: Token counts MUST be formatted in human-readable notation (K for thousands, M for millions).
 - **FR-016**: The context window gauge MUST be 10 characters wide and color-coded: green (<60%), yellow (60-85%), red (>85%).
 - **FR-017**: The diff computation MUST use a longest-common-subsequence algorithm.
+- **FR-018**: **[Addition]** A pending approval for a write to an existing file MUST offer a per-hunk review, presenting one hunk at a time with its position among the total.
+- **FR-019**: **[Addition]** Each hunk MUST support apply, revert, and apply-all-remaining decisions, and the review MUST be cancellable back to the whole-call approval prompt with no decisions recorded.
+- **FR-020**: **[Addition]** Completing a review with every hunk approved MUST apply exactly the proposed content; with every hunk rejected MUST leave the file unchanged; with a mix MUST apply only the approved hunks.
+- **FR-021**: **[Addition]** A hunk that was not explicitly approved MUST be treated as rejected — the review MUST NOT apply a change the developer did not accept.
+- **FR-022**: **[Addition]** When at least one hunk is reverted, the agent MUST receive a follow-up message identifying the reverted hunks.
+- **FR-023**: **[Addition]** Per-hunk review MUST NOT be offered for new files, for writes with no changes, or when the before-content cannot be safely resolved.
 
 ### Key Entities
 
 - **ToolPanel**: A docked region above the conversation area that shows active tools, recently completed tools, pending approvals, and resolved approvals. Uses braille spinner frames. Height capped at 10 lines. Auto-hides when idle. **[Addition]** Each active tool tracks a `streamed_output` buffer of live/incremental output as it arrives; the panel shows the most recent non-empty output line as a truncated preview next to the tool name while it is still running.
 - **ToolResultBlock**: A collapsible section in the conversation displaying a tool's output. Has expanded and collapsed states, with auto-collapse behavior and user override.
 - **DiffView**: A visual representation of file changes in unified diff format with color-coded additions/removals. Truncates at 50 lines. **[Addition]** Switches to a side-by-side (two-column) layout instead of unified when the terminal is >= 160 columns wide and the file is not newly created.
+- **Hunk** **[Addition]**: A maximal contiguous run of changed lines between the before and after content, bounded by unchanged lines. The unit of per-hunk approval.
+- **HunkReview** **[Addition]**: The in-progress per-hunk decision session for a pending write approval. Holds the diff, its hunks, a per-hunk decision (apply / revert / undecided), and a cursor for the hunk under review. Resolves the pending approval once every hunk is decided.
 - **StatusBar**: A persistent UI element displaying model information, token usage, cost, agent state, retry status, and elapsed time.
 - **ContextGauge**: A compact progress bar within the status bar showing context window utilization with color-coded urgency thresholds.
 - **FormatHelper**: Utility functions for rendering human-readable token counts, elapsed time, and context gauge percentages.
@@ -151,12 +185,14 @@ A developer manages screen space by collapsing and expanding tool result blocks 
 - **SC-004**: The developer can determine the agent's current state, token usage, and cost without navigating away from the conversation.
 - **SC-005**: Context window utilization color transitions occur at the documented thresholds (60%, 85%).
 - **SC-006**: Auto-collapsed tool blocks reduce visual clutter while remaining expandable on demand.
+- **SC-007**: **[Addition]** A developer can accept part of a proposed file write and reject the rest in a single review pass, without hand-editing the file afterward.
+- **SC-008**: **[Addition]** The content written after a per-hunk review contains every approved hunk and no rejected hunk; an all-approve review is byte-for-byte identical to the unreviewed write.
 
 ## Assumptions
 
 - The TUI scaffold, event loop, and conversation view from specs 025-026 are in place.
 - Tool execution events (start, progress, completion, failure) are emitted by the agent event system.
-- File content before and after modification is available to compute diffs (provided by the tool result or agent context).
+- File content before and after modification is available to compute diffs (provided by the tool result or agent context). **[Addition]** The same before/after content is available on the *approval request*, before the write is applied, which is what makes per-hunk review possible; the approval gate itself (spec 029) is unchanged.
 - Token usage and cost data are provided by the agent or adapter layer; the TUI only displays them.
 - The context window size (maximum tokens) for the current model is known so that utilization percentage can be calculated.
 - The auto-hide and auto-collapse timeouts are hardcoded at 10 seconds (not configurable via TUI config).

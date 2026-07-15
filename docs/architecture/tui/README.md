@@ -168,7 +168,9 @@ Agent integration uses `prompt_stream()` with an mpsc forwarder task that sends 
 | `F3` | Cycle color mode (Custom → MonoWhite → MonoBlack) |
 | `F4` | Cycle model (applied on next send) |
 | `Shift+←` / `Shift+→` | Select previous/next tool block |
-| `y` / `n` / `a` (in diff view) | Per-hunk approve/reject/approve-all (Planned — not implemented; TUI_PHASES T5.2) |
+| `h` (at a `write_file` approval prompt) | Open per-hunk review of the pending diff |
+| `y` / `n` / `a` (in hunk review) | Apply hunk / revert hunk / apply all remaining hunks |
+| `Escape` (in hunk review) | Cancel the review and return to the whole-call approval prompt |
 
 Typing any printable character auto-focuses the input editor.
 
@@ -271,6 +273,65 @@ The TUI loads configuration from `~/.config/swink-agent/tui.toml` via `TuiConfig
 | `color_mode` | `String` | Color mode: `"custom"` (default), `"mono-white"`, or `"mono-black"`. Can be cycled at runtime with F3 |
 | `editor_command` | `Option<String>` | Override for external editor (defaults to `$EDITOR` / `$VISUAL` / `vi`) |
 | `system_prompt` | `Option<String>` | Override the system prompt passed to the agent. If `None`, the agent uses its built-in default. |
+| `pricing` | `PricingTable` | Operator-declared per-model rates. Empty by default. See [Cost and usage display](#cost-and-usage-display). |
+
+---
+
+## Cost and usage display
+
+The status bar renders `↓{input} ↑{output}` and `${cost}`; `/usage` prints a
+per-turn breakdown with per-model subtotals. Both read `App::total_input_tokens`
+/ `total_output_tokens` / `total_cost` / `turn_usage`, which are accumulated in
+`App::handle_agent_event` from `AgentEvent::MessageEnd`.
+
+**The TUI does not price anything.** The agent loop fills in each assistant
+message's `Cost` before emitting `MessageEnd` — see
+[Cost tracking](../streaming/README.md#cost-tracking) for the precedence rules.
+The TUI only totals what it is given, so a model with no pricing honestly shows
+`$0.0000` (and `/usage` says which models those are).
+
+Because the compiled model catalog only knows about models shipped with the
+crate, operators can declare their own rates for local endpoints, private
+deployments, or negotiated per-tier pricing:
+
+```toml
+[pricing."my-local-llama"]
+input_per_million = 0.10
+output_per_million = 0.40
+
+[pricing."claude-sonnet-4-6"]
+input_per_million = 1.50   # negotiated below the catalog's $3.00
+output_per_million = 7.50
+```
+
+Declared rates take precedence over the catalog for any model listed.
+`launch` / `launch_with_extensions` / `launch_with_session` apply them via
+`TuiConfig::apply_pricing`; a host that builds its own `Agent` calls that (or
+`AgentOptions::with_cost_calculator`) directly.
+
+---
+
+## Host extension points
+
+`TuiConfig` is deserialized from TOML and so can only hold data. Anything a host
+supplies *in code* goes on `TuiExtensions`, passed via `App::with_extensions` or
+`launch_with_extensions`:
+
+```rust,ignore
+let extensions = TuiExtensions::new().with_command("spend", |app, _args| {
+    CustomCommandOutcome::Feedback(format!("${:.4}", app.total_cost))
+});
+launch_with_extensions(config, &mut terminal, options, extensions).await?;
+```
+
+Host commands are matched by bare name (no sigil, so `/spend` and `#spend` both
+route) **before** the built-in command table, so a host can shadow a built-in;
+returning `CustomCommandOutcome::NotHandled` falls through to it instead. Secret
+classification (`#key`) runs before dispatch, so host handlers never see
+credentials.
+
+`TuiExtensions` is a consuming builder with a `Default` impl — further seams are
+added as additional `with_*` methods without breaking existing callers.
 
 ---
 
@@ -329,7 +390,18 @@ When a tool result's details carry write-file diff fields (path, new-file flag, 
 - **Side-by-side**: two columns (old | new) when the terminal is ≥ 160 columns wide and the file is not newly created; falls back to unified otherwise
 - Output is truncated after 50 diff lines
 
-> **Planned — not implemented** ([TUI_PHASES T5.2](../../planning/TUI_PHASES.md)): per-hunk approve/reject interaction (`y`/`n`/`a`). Diffs are display-only today.
+### Per-Hunk Approve/Reject
+
+Diffs rendered from a *tool result* are display-only — the write has already happened. Per-hunk review instead runs at the **approval prompt**, before the write is applied:
+
+- `WriteFileTool::approval_context()` reads the file currently on disk and returns the same `path` / `is_new_file` / `old_content` / `new_content` shape as its result `details`, so `DiffData` parses both. It returns `None` (and the TUI falls back to the plain prompt) when the path cannot be safely resolved inside the execution root.
+- At a `write_file` approval prompt, `h` opens the review. `compute_hunks()` splits the change into maximal runs of non-common lines; each hunk is one `y` (apply) / `n` (revert) decision, `a` applies all remaining, `Escape` cancels back to the whole-call prompt. The review panel shows one hunk at a time with an `i/n` progress header.
+- On completion the pending approval is answered: all approved → `ToolApproval::Approved`; all rejected → `ToolApproval::Rejected`; mixed → `ToolApproval::ApprovedWith`, carrying content rebuilt by `merge_hunks()` so rejected hunks keep their original lines. Approving every hunk reproduces the proposed content byte-for-byte; rejecting every hunk reproduces the original.
+- Rejected hunks generate a follow-up message to the agent naming which hunks were reverted, steered in at the next turn boundary so the agent does not assume its write landed intact.
+
+Per-hunk review is offered only for modifications to existing files. New files have no original content to fall back to, so the whole-call `y`/`n` prompt already covers them.
+
+> **Planned — not implemented**: per-hunk review inside the read-only diff blocks rendered in the conversation (post-write). Reverting an already-applied write is not supported; review happens at approval time only.
 
 ---
 

@@ -170,6 +170,13 @@ pub struct AgentLoopConfig {
     /// Its output is injected as a user-role message after the system prompt
     /// to avoid invalidating provider-side caches.
     pub dynamic_system_prompt: Option<Arc<dyn Fn() -> String + Send + Sync>>,
+
+    /// Optional operator-declared cost calculator, consulted before the
+    /// compiled model catalog when pricing an assistant message the adapter
+    /// left unpriced.
+    ///
+    /// See [`AgentOptions::with_cost_calculator`](crate::AgentOptions::with_cost_calculator).
+    pub cost_calculator: Option<Arc<dyn crate::pricing::CostCalculator>>,
 }
 
 impl AgentLoopConfig {
@@ -212,6 +219,7 @@ impl AgentLoopConfig {
             cache_config: None,
             cache_state: std::sync::Mutex::new(crate::context_cache::CacheState::default()),
             dynamic_system_prompt: None,
+            cost_calculator: None,
         }
     }
 

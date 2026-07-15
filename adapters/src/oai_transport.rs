@@ -44,7 +44,10 @@ pub struct OaiAdapterShell {
 }
 
 impl OaiAdapterShell {
-    #[cfg(any(feature = "openai-compat", feature = "mistral"))]
+    // Callers are the `openai`, `xai` and `mistral` adapters. `openai-compat`
+    // is an internal umbrella that `openai`/`xai` both imply, so gating on it
+    // was too broad: enabling `openai-compat` on its own left this dead.
+    #[cfg(any(feature = "openai", feature = "xai", feature = "mistral"))]
     pub(crate) fn new(
         provider: &'static str,
         base_url: impl Into<String>,
@@ -216,6 +219,12 @@ pub(crate) fn classify_oai_error_body(
 ///
 /// Used by adapters that follow the standard OAI message format (`OpenAI`,
 /// Azure, xAI). Mistral uses its own message conversion and body type.
+///
+/// `allow(dead_code)`: live only when a consuming adapter feature is enabled,
+/// so it is dead under feature combinations that pull in none of them (same
+/// rationale as [`oai_send_and_parse`] below). This also keeps the
+/// `OaiChatRequest`/`OaiStreamOptions` bodies it constructs reachable.
+#[allow(dead_code)]
 pub fn prepare_oai_request(
     client: &reqwest::Client,
     url: &str,

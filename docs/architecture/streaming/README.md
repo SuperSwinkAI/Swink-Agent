@@ -193,7 +193,45 @@ Per-adapter behaviour beyond the generic pipeline above:
 | Thinking support | Depends on upstream proxy | Streaming thinking blocks | Budget mgmt, forced temp=1, signature extraction | N/A |
 | Tool calls | Streamed fragments | Complete objects | Streamed fragments | Streamed fragments with state accumulation |
 | Multi-provider | No (single proxy) | No (Ollama only) | No (Anthropic only) | Yes (vLLM, LM Studio, Groq, Together) |
-| Cost tracking | Provider-dependent (proxy supplies) | Always zero (local) | `Cost::default()` — adapter does not price | `Cost::default()` — adapter does not price |
+| Cost tracking | Provider-dependent (proxy supplies) | Always zero (local) | `Cost::default()` — loop prices from catalog | `Cost::default()` — loop prices from catalog |
+
+### Cost tracking
+
+Adapters report token `Usage` but generally do not price it. Only `ProxyStreamFn`
+passes real provider-billed cost through. For every other adapter, the agent loop
+calls [`price_assistant_message_with`] on each assistant message, filling in `cost`
+from the compiled model catalog via [`calculate_cost`]. This runs in the loop rather
+than per-adapter so that third-party `StreamFn` implementations are covered too.
+
+**Precedence** (highest first):
+
+1. **The adapter's own non-zero `Cost`** — never overwritten.
+2. **An operator-declared [`CostCalculator`]**, supplied via
+   [`AgentOptions::with_cost_calculator`] / `with_pricing_table`. The catalog only
+   knows about models shipped with the crate, so this is the only way to price
+   local endpoints, private deployments, or negotiated per-tier rates.
+3. **The compiled model catalog.**
+
+A message stays at zero only when all three decline.
+
+**Where pricing happens.** Two seams, both idempotent because a non-zero `Cost` is
+never overwritten:
+
+- `finalize_stream_message` (`loop_/stream.rs`) prices the message *before*
+  emitting `AgentEvent::MessageEnd`. Event consumers — the TUI status bar and
+  `/usage`, any `EventForwarder` — read cost off that event, so pricing later
+  would leave them all displaying `$0.0000` even with the loop's own accounting
+  correct.
+- `run_single_turn` (`loop_/turn.rs`) prices before accumulation, covering the
+  paths that bypass the streaming layer (overflow recovery, abort messages). This
+  is what makes the priced cost reach `PolicyContext::accumulated_cost` — and
+  therefore `BudgetPolicy::max_cost` — as well as turn metrics, the context
+  history, and the `TurnEnd` event.
+
+[`price_assistant_message_with`]: https://docs.rs/swink-agent/latest/swink_agent/fn.price_assistant_message_with.html
+[`calculate_cost`]: https://docs.rs/swink-agent/latest/swink_agent/fn.calculate_cost.html
+[`CostCalculator`]: https://docs.rs/swink-agent/latest/swink_agent/trait.CostCalculator.html
+[`AgentOptions::with_cost_calculator`]: https://docs.rs/swink-agent/latest/swink_agent/struct.AgentOptions.html#method.with_cost_calculator
 
 ---
 

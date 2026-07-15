@@ -258,6 +258,13 @@ mod tests {
         ));
     }
 
+    #[cfg(any(
+        feature = "ollama",
+        feature = "azure",
+        feature = "proxy",
+        feature = "gemini",
+        feature = "bedrock"
+    ))]
     #[tokio::test]
     async fn race_pre_stream_cancellation_short_circuits() {
         let token = CancellationToken::new();
@@ -392,6 +399,7 @@ mod tests {
         assert!(err.is_timeout(), "expected reqwest timeout, got: {err}");
     }
 
+    #[cfg(feature = "ollama")]
     #[test]
     fn local_read_timeout_exceeds_hosted_default() {
         // The local-inference client exists specifically to outlast the hosted
@@ -400,6 +408,7 @@ mod tests {
         assert!(LOCAL_READ_TIMEOUT > DEFAULT_READ_TIMEOUT);
     }
 
+    #[cfg(feature = "ollama")]
     #[test]
     fn local_adapter_http_client_builds() {
         let _client = local_adapter_http_client();

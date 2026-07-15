@@ -165,6 +165,12 @@ pub struct AgentOptions {
     ///
     /// When set, the loop starts with this chain instead of an empty one.
     pub transfer_chain: Option<crate::transfer::TransferChain>,
+    /// Optional operator-declared cost calculator consulted before the compiled
+    /// model catalog when pricing assistant messages.
+    ///
+    /// See [`with_cost_calculator`](Self::with_cost_calculator) and the
+    /// [`pricing`](crate::pricing) module for the precedence rules.
+    pub cost_calculator: Option<Arc<dyn crate::pricing::CostCalculator>>,
 }
 
 impl AgentOptions {
@@ -218,6 +224,7 @@ impl AgentOptions {
             plugins: Vec::new(),
             agent_name: None,
             transfer_chain: None,
+            cost_calculator: None,
         }
     }
 
@@ -683,6 +690,67 @@ impl AgentOptions {
     pub fn with_transfer_chain(mut self, chain: crate::transfer::TransferChain) -> Self {
         self.transfer_chain = Some(chain);
         self
+    }
+
+    /// Supply operator-declared pricing, consulted before the compiled model
+    /// catalog when an adapter reports no cost of its own.
+    ///
+    /// Most adapters report token usage but leave [`Cost`](crate::Cost) at zero;
+    /// the loop fills that in from the catalog. The catalog only knows about
+    /// models shipped with the crate, so local endpoints, private deployments,
+    /// and negotiated per-tier rates price at zero without an override. This is
+    /// that override.
+    ///
+    /// Accepts anything implementing [`CostCalculator`](crate::CostCalculator) —
+    /// including a plain `Fn(&str, &Usage) -> Option<Cost>` closure for tiered
+    /// or per-tenant logic. For a declarative rate table (e.g. deserialized from
+    /// a `[pricing]` config section) use
+    /// [`with_pricing_table`](Self::with_pricing_table).
+    ///
+    /// Precedence is documented on the [`pricing`](crate::pricing) module: an
+    /// adapter's own non-zero cost always wins, then this calculator, then the
+    /// catalog.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let options = AgentOptions::new_simple("system", ModelSpec::new("local", "my-llama"), stream_fn)
+    ///     .with_cost_calculator(|model_id: &str, usage: &Usage| {
+    ///         (model_id == "my-llama").then(|| Cost {
+    ///             total: 0.001,
+    ///             ..Cost::default()
+    ///         })
+    ///     });
+    /// ```
+    #[must_use]
+    pub fn with_cost_calculator(
+        mut self,
+        calculator: impl crate::pricing::CostCalculator + 'static,
+    ) -> Self {
+        self.cost_calculator = Some(Arc::new(calculator));
+        self
+    }
+
+    /// Supply an operator-declared [`PricingTable`](crate::PricingTable).
+    ///
+    /// Convenience wrapper over [`with_cost_calculator`](Self::with_cost_calculator)
+    /// for the common case: a static, per-model rate table read from config.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let table = PricingTable::new().with_model(
+    ///     "my-llama",
+    ///     ModelRates {
+    ///         input_per_million: 0.10,
+    ///         output_per_million: 0.40,
+    ///         ..ModelRates::default()
+    ///     },
+    /// );
+    /// let options = AgentOptions::new_simple("system", ModelSpec::new("local", "my-llama"), stream_fn)
+    ///     .with_pricing_table(table);
+    /// ```
+    #[must_use]
+    pub fn with_pricing_table(self, table: crate::pricing::PricingTable) -> Self {
+        self.with_cost_calculator(table)
     }
 
     /// Return the effective system prompt (static portion only).

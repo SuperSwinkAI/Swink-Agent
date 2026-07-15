@@ -320,9 +320,29 @@ impl App {
             }
         }
 
-        // Priority 3: Tool approval prompt
+        // Priority 3: Per-hunk diff review (implies a pending approval)
+        if self.hunk_review.is_some() {
+            match key.code {
+                KeyCode::Char('y' | 'Y') => self.decide_current_hunk(true),
+                KeyCode::Char('n' | 'N') => self.decide_current_hunk(false),
+                KeyCode::Char('a' | 'A') => self.approve_remaining_hunks(),
+                KeyCode::Esc => self.cancel_hunk_review(),
+                _ => {}
+            }
+            self.dirty = true;
+            return true;
+        }
+
+        // Priority 4: Tool approval prompt
         if self.pending_approval.is_some() {
             match key.code {
+                KeyCode::Char('h' | 'H') => {
+                    // Falls through to the plain prompt when there is no
+                    // reviewable diff on this request.
+                    self.start_hunk_review();
+                    self.dirty = true;
+                    return true;
+                }
                 KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
                     if let Some((req, responder)) = self.pending_approval.take() {
                         let _ = responder.send(ToolApproval::Approved);
@@ -503,6 +523,17 @@ impl App {
             return;
         }
 
+        // Host-registered commands are matched before the built-in table so an
+        // embedding binary can add commands — or shadow built-ins — without
+        // forking the crate (issue #1084 §2). This runs after the secret
+        // classification above so `#key` input never reaches a host handler.
+        if let Some((name, args)) = commands::split_command(&text)
+            && let Some(feedback) = self.extensions.dispatch(self, name, args)
+        {
+            self.push_system_message(feedback);
+            return;
+        }
+
         if self.status == AgentStatus::Running
             && Self::command_mutates_session_during_stream(&command)
         {
@@ -604,6 +635,11 @@ impl App {
             }
             CommandResult::TogglePlanMode => {
                 self.toggle_operating_mode();
+                return;
+            }
+            CommandResult::ShowUsage => {
+                let report = self.usage_report();
+                self.push_system_message(report);
                 return;
             }
             CommandResult::UntrustTool(name) => {

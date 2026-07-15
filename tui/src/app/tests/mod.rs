@@ -2,7 +2,9 @@ mod helpers;
 
 mod agent_bridge;
 mod approval;
+mod hunk_review;
 mod input_ui;
 mod persistence;
 mod plan_mode;
 mod tool_blocks;
+mod usage_command;

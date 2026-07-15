@@ -48,6 +48,7 @@ pub mod pause_state;
 #[cfg(feature = "plugins")]
 pub(crate) mod plugin;
 pub(crate) mod policy;
+pub mod pricing;
 mod registry;
 mod retry;
 mod schema;
@@ -101,7 +102,8 @@ pub use context_version::{
 pub use convert::{MessageConverter, ToolSchema, convert_messages, extract_tool_schemas};
 pub use credential::{
     AuthConfig, AuthScheme, AuthorizationHandler, Credential, CredentialError, CredentialFuture,
-    CredentialResolver, CredentialStore, CredentialType, ResolvedCredential,
+    CredentialResolver, CredentialStore, CredentialType, DeviceCodeHandler, DeviceCodePrompt,
+    ResolvedCredential,
 };
 pub use emit::Emission;
 pub use error::{AgentError, DowncastError};
@@ -124,7 +126,8 @@ pub use metrics::{MetricsCollector, MetricsFuture, ToolExecMetrics, TurnMetrics}
 pub use model_catalog::{
     ApiVersion, AuthMode, CatalogPreset, DEFAULT_PRICING_STALENESS_DAYS, ModelCatalog,
     PRICING_STALENESS_ENV_VAR, PresetCapability, PresetCatalog, PresetStatus, PricingStaleness,
-    ProviderCatalog, ProviderKind, calculate_cost, model_catalog, pricing_staleness,
+    ProviderCatalog, ProviderKind, calculate_cost, model_catalog, price_assistant_message,
+    price_assistant_message_with, pricing_staleness,
 };
 pub use model_presets::{ModelConnection, ModelConnections, ModelConnectionsBuilder};
 pub use noop_tool::NoopTool;
@@ -134,6 +137,7 @@ pub use orchestrator::{
 };
 #[cfg(feature = "otel")]
 pub use otel::{OtelInitConfig, OtelInitError, init_otel_layer};
+pub use pricing::{CostCalculator, ModelRates, PricingTable};
 pub use registry::{AgentRef, AgentRegistry};
 pub use retry::{DefaultRetryStrategy, RetryStrategy};
 pub use schema::schema_for;

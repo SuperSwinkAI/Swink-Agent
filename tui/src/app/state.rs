@@ -53,6 +53,43 @@ pub struct TrustFollowUp {
     pub expires_at: Instant,
 }
 
+/// An in-progress per-hunk review of a pending `write_file` approval.
+///
+/// Entered with `h` from the tool approval prompt. The user walks the hunks
+/// one at a time; once every hunk has a decision the review finalizes and
+/// answers the still-pending approval request.
+#[derive(Debug)]
+pub struct HunkReview {
+    /// Before/after content for the pending write.
+    pub diff: crate::ui::diff::DiffData,
+    /// Hunks derived from `diff`, in file order.
+    pub hunks: Vec<crate::ui::diff::Hunk>,
+    /// Per-hunk decision; `None` means not yet reviewed.
+    pub decisions: Vec<Option<bool>>,
+    /// Index of the hunk currently under review.
+    pub cursor: usize,
+}
+
+impl HunkReview {
+    /// Indices (1-based, for display) of hunks the user rejected.
+    pub fn rejected_hunks(&self) -> Vec<usize> {
+        self.decisions
+            .iter()
+            .enumerate()
+            .filter(|(_, decision)| !decision.unwrap_or(false))
+            .map(|(index, _)| index + 1)
+            .collect()
+    }
+
+    /// Decisions as a plain bool slice; undecided counts as rejected.
+    pub fn approvals(&self) -> Vec<bool> {
+        self.decisions
+            .iter()
+            .map(|decision| decision.unwrap_or(false))
+            .collect()
+    }
+}
+
 /// Click-drag text selection within the conversation viewport.
 ///
 /// Coordinates are cell offsets inside the conversation's inner area (after
@@ -159,6 +196,28 @@ impl DisplayMessage {
     }
 }
 
+/// Token usage and cost recorded for a single assistant response.
+///
+/// Costs are whatever the agent loop reported: it prices each assistant message
+/// from operator-declared rates or the compiled model catalog before the TUI
+/// sees it (see [`swink_agent::price_assistant_message_with`]). The TUI never
+/// prices anything itself, so `cost` is `0.0` for a model with neither.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TurnUsage {
+    /// Model that produced the response.
+    pub model_id: String,
+    /// Prompt tokens billed for this response.
+    pub input_tokens: u64,
+    /// Completion tokens billed for this response.
+    pub output_tokens: u64,
+    /// Tokens read from a provider-side prompt cache.
+    pub cache_read_tokens: u64,
+    /// Tokens written to a provider-side prompt cache.
+    pub cache_write_tokens: u64,
+    /// Total cost of this response in USD, as priced by the agent loop.
+    pub cost: f64,
+}
+
 /// Top-level application state.
 #[allow(clippy::struct_excessive_bools)]
 pub struct App {
@@ -185,6 +244,12 @@ pub struct App {
     pub total_output_tokens: u64,
     /// Running cost.
     pub total_cost: f64,
+    /// Per-turn usage records, oldest first — the backing data for `/usage`.
+    ///
+    /// One entry is appended per assistant response, so this grows with the
+    /// session and is cleared by `/reset`. The status bar shows the totals;
+    /// this is the breakdown behind them.
+    pub turn_usage: Vec<TurnUsage>,
     /// Session start time for elapsed display.
     pub session_start: Instant,
     /// Dirty flag — only redraw when true.
@@ -217,6 +282,8 @@ pub struct App {
     pub(crate) approval_tx: mpsc::Sender<(ToolApprovalRequest, oneshot::Sender<ToolApproval>)>,
     /// Currently pending approval request and its response channel.
     pub(crate) pending_approval: Option<(ToolApprovalRequest, oneshot::Sender<ToolApproval>)>,
+    /// Active per-hunk review for `pending_approval`, when the user opened one.
+    pub hunk_review: Option<HunkReview>,
     /// Estimated context window token budget.
     pub context_budget: u64,
     /// Estimated tokens currently used in context.
@@ -257,4 +324,6 @@ pub struct App {
     pub(crate) steered_fade_ticks: u8,
     /// Active click-drag selection in the conversation viewport.
     pub(crate) selection: Option<Selection>,
+    /// Host-supplied extension points (custom commands).
+    pub(crate) extensions: crate::extensions::TuiExtensions,
 }
