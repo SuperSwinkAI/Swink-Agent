@@ -227,7 +227,7 @@ jobs:
         run: |
           git fetch --tags origin
           # Exclude pre-release tags (v0.12.0-rc.1) — baseline is the last stable.
-          latest_tag=$(git tag --list 'v*' --sort=-v:refname | grep -v -- - | head -1)
+          latest_tag=$(git tag --list 'v*' --sort=-v:refname | grep -v -e - | head -1)
           if [ -n "$latest_tag" ]; then
             echo "ref=${latest_tag}" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event_name }}" = "pull_request" ]; then
