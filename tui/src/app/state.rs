@@ -54,6 +54,43 @@ pub struct TrustFollowUp {
     pub expires_at: Instant,
 }
 
+/// An in-progress per-hunk review of a pending `write_file` approval.
+///
+/// Entered with `h` from the tool approval prompt. The user walks the hunks
+/// one at a time; once every hunk has a decision the review finalizes and
+/// answers the still-pending approval request.
+#[derive(Debug)]
+pub struct HunkReview {
+    /// Before/after content for the pending write.
+    pub diff: crate::ui::diff::DiffData,
+    /// Hunks derived from `diff`, in file order.
+    pub hunks: Vec<crate::ui::diff::Hunk>,
+    /// Per-hunk decision; `None` means not yet reviewed.
+    pub decisions: Vec<Option<bool>>,
+    /// Index of the hunk currently under review.
+    pub cursor: usize,
+}
+
+impl HunkReview {
+    /// Indices (1-based, for display) of hunks the user rejected.
+    pub fn rejected_hunks(&self) -> Vec<usize> {
+        self.decisions
+            .iter()
+            .enumerate()
+            .filter(|(_, decision)| !decision.unwrap_or(false))
+            .map(|(index, _)| index + 1)
+            .collect()
+    }
+
+    /// Decisions as a plain bool slice; undecided counts as rejected.
+    pub fn approvals(&self) -> Vec<bool> {
+        self.decisions
+            .iter()
+            .map(|decision| decision.unwrap_or(false))
+            .collect()
+    }
+}
+
 /// Click-drag text selection within the conversation viewport.
 ///
 /// Coordinates are cell offsets inside the conversation's inner area (after
@@ -285,6 +322,8 @@ pub struct App {
     pub(crate) approval_tx: mpsc::Sender<(ToolApprovalRequest, oneshot::Sender<ToolApproval>)>,
     /// Currently pending approval request and its response channel.
     pub(crate) pending_approval: Option<(ToolApprovalRequest, oneshot::Sender<ToolApproval>)>,
+    /// Active per-hunk review for `pending_approval`, when the user opened one.
+    pub hunk_review: Option<HunkReview>,
     /// Estimated context window token budget.
     pub context_budget: u64,
     /// Estimated tokens currently used in context.

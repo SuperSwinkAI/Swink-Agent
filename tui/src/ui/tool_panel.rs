@@ -167,10 +167,14 @@ impl ToolPanel {
 
     /// Render the tool panel (no extra prompts).
     pub fn render(&self, frame: &mut Frame, area: Rect) {
-        self.render_with_prompts(frame, area, false, None);
+        self.render_with_prompts(frame, area, false, None, false);
     }
 
     /// Render the tool panel with optional plan approval and trust follow-up prompts.
+    ///
+    /// `hunk_reviewable` advertises the `h` (per-hunk review) key on the
+    /// approval prompt; the caller decides whether the pending write carries a
+    /// reviewable diff.
     #[allow(clippy::too_many_lines)]
     pub fn render_with_prompts(
         &self,
@@ -178,6 +182,7 @@ impl ToolPanel {
         area: Rect,
         pending_plan_approval: bool,
         trust_follow_up: Option<&str>,
+        hunk_reviewable: bool,
     ) {
         let block = Block::default()
             .borders(Borders::ALL)
@@ -248,7 +253,11 @@ impl ToolPanel {
                     Style::default().fg(theme::border_focused_color()),
                 ),
                 Span::styled(
-                    " \u{2014} Approve? [Y/n]",
+                    if hunk_reviewable {
+                        " \u{2014} Approve? [Y/n] [h]unks"
+                    } else {
+                        " \u{2014} Approve? [Y/n]"
+                    },
                     Style::default()
                         .fg(theme::tool_color())
                         .add_modifier(Modifier::BOLD),

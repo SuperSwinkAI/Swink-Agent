@@ -10,8 +10,19 @@ keywords = ["llm", "agent", "oauth2", "credentials", "auth"]
 categories = ["development-tools", "authentication"]
 readme = "README.md"
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = []
+# Persist credentials in the OS keychain (macOS Keychain Services, Windows
+# Credential Manager, Linux/BSD Secret Service). Off by default: it pulls in
+# platform secret-store dependencies that headless deployments do not need.
+keychain = ["dep:keyring", "tokio/rt"]
+
 [dependencies]
-swink-agent = { path = "..", version = "0.11.0", default-features = false }
+swink-agent = { path = "..", version = "0.12.0", default-features = false }
 reqwest.workspace = true
 chrono.workspace = true
 serde.workspace = true
@@ -21,6 +32,7 @@ futures.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+keyring = { workspace = true, optional = true }
 
 [dev-dependencies]
 wiremock.workspace = true

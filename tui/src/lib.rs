@@ -55,8 +55,8 @@ use tracing::warn;
 use swink_agent::{Agent, ToolApproval, ToolApprovalRequest};
 
 pub use app::{
-    AgentStatus, App, DisplayMessage, MessageRole, OperatingMode, PathCompletion, TrustFollowUp,
-    TurnUsage,
+    AgentStatus, App, DisplayMessage, HunkReview, MessageRole, OperatingMode, PathCompletion,
+    TrustFollowUp, TurnUsage,
 };
 pub use config::TuiConfig;
 pub use error::TuiError;

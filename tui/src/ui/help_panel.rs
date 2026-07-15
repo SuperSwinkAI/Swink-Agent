@@ -81,6 +81,8 @@ pub fn help_lines() -> Vec<Line<'static>> {
         key_line("F3", "Color mode", normal),
         key_line("F4", "Cycle model", normal),
         key_line("Shift+\u{2190}/\u{2192}", "Cycle tools", normal),
+        key_line("h", "Review diff hunks", normal),
+        key_line("y/n/a", "Hunk apply/revert/all", normal),
         Line::from(""),
         Line::from(Span::styled(" # Commands", bold)),
         divider.clone(),

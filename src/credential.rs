@@ -402,6 +402,54 @@ pub trait AuthorizationHandler: Send + Sync {
     fn authorize(&self, auth_url: &str, state: &str) -> CredentialFuture<'_, String>;
 }
 
+// ─── DeviceCodeHandler trait ────────────────────────────────────────────────
+
+/// User-facing instructions for an in-progress `OAuth2` device authorization
+/// grant (RFC 8628 §3.2).
+///
+/// This carries only the fields a user needs to see. The `device_code` — the
+/// secret the client polls the token endpoint with — is deliberately NOT
+/// included: handlers display a prompt, they do not participate in polling,
+/// so they never need it.
+#[derive(Debug, Clone)]
+pub struct DeviceCodePrompt {
+    /// The short code the user types at the verification URI, e.g. `WDJB-MJHT`.
+    pub user_code: String,
+    /// The URL the user visits to enter `user_code`.
+    pub verification_uri: String,
+    /// Optional URL that embeds `user_code`, letting the user skip typing it
+    /// (RFC 8628 §3.3.1). Handlers should prefer this when present.
+    pub verification_uri_complete: Option<String>,
+    /// Lifetime of `user_code` in seconds, if the provider reported one.
+    pub expires_in: Option<i64>,
+}
+
+/// Pluggable callback for the `OAuth2` device authorization grant
+/// (RFC 8628), the headless counterpart to [`AuthorizationHandler`].
+///
+/// Where [`AuthorizationHandler`] sends a user to a URL and must return an
+/// authorization code, this handler only *displays* a prompt — the resolver
+/// polls the token endpoint itself. That makes it suitable for CLI/TUI and
+/// other contexts where an authorization-code redirect isn't practical, since
+/// no local callback listener is required.
+///
+/// Implementations typically print `prompt.user_code` and
+/// `prompt.verification_uri` (or open `verification_uri_complete` in a
+/// browser) and return immediately. Returning from `present` does not signal
+/// that the user has finished authorizing — the resolver keeps polling until
+/// the provider issues a token, denies the request, or the code expires.
+///
+/// When no handler is configured, a missing credential resolves to
+/// [`CredentialError::NotFound`] instead of attempting device authorization,
+/// mirroring [`AuthorizationHandler`]'s behavior (FR-011).
+pub trait DeviceCodeHandler: Send + Sync {
+    /// Display the device authorization prompt to the user.
+    ///
+    /// Returning `Ok(())` means the prompt was shown, not that the user has
+    /// authorized. Return an error to abort the flow before polling starts.
+    fn present(&self, prompt: &DeviceCodePrompt) -> CredentialFuture<'_, ()>;
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

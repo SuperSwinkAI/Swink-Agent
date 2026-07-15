@@ -336,9 +336,29 @@ impl App {
             }
         }
 
-        // Priority 3: Tool approval prompt
+        // Priority 3: Per-hunk diff review (implies a pending approval)
+        if self.hunk_review.is_some() {
+            match key.code {
+                KeyCode::Char('y' | 'Y') => self.decide_current_hunk(true),
+                KeyCode::Char('n' | 'N') => self.decide_current_hunk(false),
+                KeyCode::Char('a' | 'A') => self.approve_remaining_hunks(),
+                KeyCode::Esc => self.cancel_hunk_review(),
+                _ => {}
+            }
+            self.dirty = true;
+            return true;
+        }
+
+        // Priority 4: Tool approval prompt
         if self.pending_approval.is_some() {
             match key.code {
+                KeyCode::Char('h' | 'H') => {
+                    // Falls through to the plain prompt when there is no
+                    // reviewable diff on this request.
+                    self.start_hunk_review();
+                    self.dirty = true;
+                    return true;
+                }
                 KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
                     if let Some((req, responder)) = self.pending_approval.take() {
                         let _ = responder.send(ToolApproval::Approved);
