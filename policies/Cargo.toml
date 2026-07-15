@@ -39,6 +39,7 @@ unicode-truncate = { version = "2.0.1", optional = true }
 
 [dev-dependencies]
 swink-agent = { path = "..", default-features = false, features = ["testkit"] }
+swink-agent-memory = { path = "../memory" }
 futures = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
