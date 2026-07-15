@@ -198,8 +198,15 @@ jobs:
           RUSTDOCFLAGS: "-D warnings"
 
   # ── Semver: runs on every PR against integration or main ────────────────
-  # Baseline is the target branch so PRs against `integration` are checked
-  # against integration, not main.
+  # Baseline is the LATEST RELEASE TAG, not the target branch. Semver
+  # guarantees exist between releases; `integration` carries an unreleased
+  # version, and comparing tree-vs-tree at the same version number makes
+  # cargo-semver-checks assume a minor bump and reject changes that are
+  # legal in an unreleased major line (bit #1108, then #1121). Against the
+  # tag, the already-bumped workspace version declares the break honestly.
+  # Once that version IS tagged, baseline and tree versions match again and
+  # the gate forces the next breaking PR to bump — the version-driver
+  # pattern is preserved, it just keys off releases instead of branch state.
   semver:
     runs-on: ubuntu-latest
     steps:
@@ -218,7 +225,13 @@ jobs:
       - name: Pick baseline ref
         id: baseline
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          git fetch --tags origin
+          # Exclude pre-release tags (v0.12.0-rc.1) — baseline is the last stable.
+          latest_tag=$(git tag --list 'v*' --sort=-v:refname | grep -v -- - | head -1)
+          if [ -n "$latest_tag" ]; then
+            echo "ref=${latest_tag}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            # No release tags yet — fall back to the target branch.
             echo "ref=origin/${{ github.base_ref }}" >> "$GITHUB_OUTPUT"
             git fetch origin "${{ github.base_ref }}"
           else
