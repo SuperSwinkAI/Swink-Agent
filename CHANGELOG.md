@@ -13,6 +13,12 @@ Bundles the full 0.11.x development line off `integration`. **Supersedes the
 unreleased 0.11.1** — that version was never tagged or published, so its entries
 are folded in here rather than kept as a phantom release.
 
+### Added — manual context compaction (#1102)
+
+- **`swink-agent`**: `Agent::compact_context()` — an on-demand counterpart to the automatic in-loop compaction, for host `/compact` commands (unblocks SuperSwink-Coding's TUI `/compact`). Runs the configured context transformer(s) against the stored history with `overflow = true` (a host asking to compact wants maximal pruning), persists the pruned history, and returns the resulting `CompactionReport` synchronously.
+- Mirrors the loop pipeline exactly: async transformer first, sync second, one `AgentEvent::ContextCompacted` per transformer that compacts — dispatched through the normal subscriber/forwarder path, so existing host event rendering picks it up unchanged. Returns `Ok(None)` when no transformer is configured or the history is already under budget (no event emitted), and `Err(AgentError::AlreadyRunning)` while a loop is active, since compacting mid-turn would race the loop's view of the history.
+- Spec 006 amended additively (new FR-020 plus a Session 2026-07-15 clarification): manual invocation means `overflow = true` no longer implies a provider overflow error occurred.
+
 ### Added — TUI cost/usage display with pluggable pricing (#1084, #1108)
 
 - **`swink-agent`**: new `pricing` module (`CostCalculator`, `ModelRates`, `PricingTable`), `AgentOptions::with_cost_calculator`/`with_pricing_table`, `AgentLoopConfig::cost_calculator`, and `price_assistant_message_with` — operators can declare per-tier rates that outrank the compiled catalog.
