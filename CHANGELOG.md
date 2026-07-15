@@ -9,34 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.12.0] - 2026-07-15
 
+Bundles the full 0.11.x development line off `integration`. **Supersedes the
+unreleased 0.11.1** — that version was never tagged or published, so its entries
+are folded in here rather than kept as a phantom release.
+
 ### Added — TUI cost/usage display with pluggable pricing (#1084, #1108)
 
 - **`swink-agent`**: new `pricing` module (`CostCalculator`, `ModelRates`, `PricingTable`), `AgentOptions::with_cost_calculator`/`with_pricing_table`, `AgentLoopConfig::cost_calculator`, and `price_assistant_message_with` — operators can declare per-tier rates that outrank the compiled catalog.
 - **`swink-agent-tui`**: `TuiExtensions` (a consuming builder threaded via `App::with_extensions`/`launch_with_extensions`) for host-supplied code, `CustomCommandOutcome`/`CustomCommandFn` for host slash commands, `App::turn_usage`/`TurnUsage`, `TuiConfig::pricing`/`apply_pricing`, and `handle_agent_event` widened to `pub`. `launch()` delegates to `launch_with_extensions()`, so there is one code path.
 - **Completes #1100's fix for event consumers.** #1103 priced at the turn seam, but the TUI reads cost from `AgentEvent::MessageEnd`, emitted earlier in `finalize_stream_message` — so the loop accumulated real cost while every event consumer still displayed `$0.0000`. Pricing now happens before `MessageEnd` is emitted; the turn-level call remains as an idempotent safety net for paths that bypass streaming (overflow recovery, aborts).
 
-### Changed — BREAKING
+### Added — `@path` file mentions in the TUI (#1093, #1112)
 
-- **`AgentLoopConfig` gains a `cost_calculator` field.** It is an externally-constructible struct with public fields, so exhaustive struct-literal construction breaks — add `cost_calculator: None` or use `..Default::default()`. This is the 0.12.0 version driver (`cargo semver-checks`: `constructible_struct_adds_field`), the same class of break that drove 0.11.0.
-- **`AgentEvent::MessageEnd` now carries a non-zero `cost`** for catalog-known models. Code asserting `cost == 0` there will now observe real values. This is the intended fix, but it is a behavior change.
-
-### Fixed — feature-conditional dead code (#919, #1116)
-
-- Gated dead code so `-D warnings` passes under every feature combination — `cargo hack --each-feature` is now clean (127/127). Previously invisible because `release.yml` only ever builds `--all-features`, while `ci.yml` is what runs `--no-default-features` and `--each-feature`.
-- Found along the way: the `openai-compat` gate named an internal umbrella feature implying no adapter, so `--features openai-compat` compiled the whole OpenAI plumbing with zero consumers, and `mod openai` was fully dead under `xai`. Also fixed three tests in `swink-agent-adapters` whose items were `ollama`-gated but whose tests were not — that crate did not compile standalone.
-
-### Fixed — TUI tests reached the real OS keychain (#1111, #1113)
-
-- `swink-agent-tui`'s tests called the **real** OS keychain, raising macOS password prompts and **hanging `cargo test --workspace` indefinitely** on `SecKeychainFindGenericPassword`.
-- `tui/src/credentials.rs` now routes all access through a `KeychainBackend`, and the real `SystemKeychain` is `#[cfg(not(test))]` — a unit test cannot reach a real keyring even by wiring the backend back in, which is how the bug arose. Caller signatures unchanged; production behavior identical.
-
-## [0.11.1] - 2026-07-14
-
-### Fixed — `BudgetPolicy.max_cost` was inert (#1100, #1103)
-
-- **`BudgetPolicy.max_cost` could never fire against any real provider**, including the $10 default bundled into `RecommendedPolicies`. Every built-in remote adapter reports `Usage` but emits `cost: Cost::default()`; only the proxy adapter passed real billed cost through. The loop accumulated that zero verbatim, so `PolicyCtx.accumulated_cost` stayed at `0` and the limit never tripped.
-- The loop now prices assistant messages from the compiled model catalog at a single seam in `run_single_turn`, rather than in each adapter — so third-party `StreamFn` implementations are covered too, and the priced cost reaches accumulation, policies, turn metrics, the context history, and the `TurnEnd` event alike. Adapters that price their own response keep precedence.
-- Note: event consumers reading `cost` from `AgentEvent::MessageEnd` still observe zero in this release; `MessageEnd` is emitted before this seam. That is addressed separately by #1084.
+- `@path` completion and lazy injection via the `TuiExtensions` seam #1108 established: `PathCandidate`, `PathCompletionFn`, `MentionResolverFn`, `TuiExtensions::with_path_completions`/`with_mention_resolver`, and `mentions::{PathMention, parse_mentions}`.
+- Two seams rather than one, split by *when* they run: completion supplies candidates as the user types; the resolver injects file content at send time, so a mention costs nothing until the turn is actually dispatched.
+- No new `launch_*` overload and no `TuiConfig` churn. `TuiExtensions` keeps private fields behind consuming `with_*` builders, so hosts opt in explicitly and later extension points stay additive rather than breaking struct-literal construction.
 
 ### Added — OAuth2 device-code grant, RFC 8628 (#1071, #1106)
 
@@ -57,9 +44,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Placed at the approval prompt rather than the post-write diff view: conversation diffs render from tool results, by which point the write has already happened, so rejection there would mean reverting bytes on disk. The post-write diff remains display-only.
 - Fails closed at every branch — undecided hunks count as rejected, and arguments that can't be safely rewritten resolve to `Rejected` rather than silently applying the original content.
 
-### Notes
+### Changed — BREAKING
 
-- All public API changes in this release are additive; `cargo semver-checks` reports no breaking change against 0.11.0.
+- **`AgentLoopConfig` gains a `cost_calculator` field.** It is an externally-constructible struct with public fields, so exhaustive struct-literal construction breaks — add `cost_calculator: None` or use `..Default::default()`. This is the 0.12.0 version driver (`cargo semver-checks`: `constructible_struct_adds_field`), the same class of break that drove 0.11.0.
+- **`AgentEvent::MessageEnd` now carries a non-zero `cost`** for catalog-known models. Code asserting `cost == 0` there will now observe real values. This is the intended fix, but it is a behavior change.
+
+### Fixed — `BudgetPolicy.max_cost` was inert (#1100, #1103)
+
+- **`BudgetPolicy.max_cost` could never fire against any real provider**, including the $10 default bundled into `RecommendedPolicies`. Every built-in remote adapter reports `Usage` but emits `cost: Cost::default()`; only the proxy adapter passed real billed cost through. The loop accumulated that zero verbatim, so `PolicyCtx.accumulated_cost` stayed at `0` and the limit never tripped.
+- The loop now prices assistant messages from the compiled model catalog at a single seam in `run_single_turn`, rather than in each adapter — so third-party `StreamFn` implementations are covered too, and the priced cost reaches accumulation, policies, turn metrics, the context history, and the `TurnEnd` event alike. Adapters that price their own response keep precedence.
+- Event consumers reading `cost` from `AgentEvent::MessageEnd` were still observing zero after #1103, because `MessageEnd` is emitted before this seam. That is fixed by #1108 in this same release (see above); the two land together, so no published version ever carries the half-fix.
+
+### Fixed — feature-conditional dead code (#919, #1116)
+
+- Gated dead code so `-D warnings` passes under every feature combination — `cargo hack --each-feature` is now clean (127/127). Previously invisible because `release.yml` only ever builds `--all-features`, while `ci.yml` is what runs `--no-default-features` and `--each-feature`.
+- Found along the way: the `openai-compat` gate named an internal umbrella feature implying no adapter, so `--features openai-compat` compiled the whole OpenAI plumbing with zero consumers, and `mod openai` was fully dead under `xai`. Also fixed three tests in `swink-agent-adapters` whose items were `ollama`-gated but whose tests were not — that crate did not compile standalone.
+
+### Fixed — TUI tests reached the real OS keychain (#1111, #1113)
+
+- `swink-agent-tui`'s tests called the **real** OS keychain, raising macOS password prompts and **hanging `cargo test --workspace` indefinitely** on `SecKeychainFindGenericPassword`.
+- `tui/src/credentials.rs` now routes all access through a `KeychainBackend`, and the real `SystemKeychain` is `#[cfg(not(test))]` — a unit test cannot reach a real keyring even by wiring the backend back in, which is how the bug arose. Caller signatures unchanged; production behavior identical.
+
+### Fixed — flaky theme test (#1107, #1118)
+
+- `swink-agent-tui`'s theme tests raced on a process-global `COLOR_MODE` atomic: a concurrent test reset it mid-assertion, so `mono_white_returns_white` observed `Cyan` (the `Custom`-mode assistant color) instead of `White`. Reproduced at **5 failures in 20 runs** before the fix. The global is gone; each test owns its own theme state.
+
+### Internal — CI hardening (#919, #1109)
+
+- `ci.yml` gains a `cargo audit` job, `RUSTFLAGS: -D warnings` at workflow level (parity with `release.yml`, which was the only workflow enforcing it), pinned toolchain action SHAs, `--locked` on every cargo invocation that accepts it, and a Windows `cargo check` smoke gate on PRs.
+- The audit job justified itself on its first run: it caught **RUSTSEC-2026-0185** — `quinn-proto` ≤ 0.11.14, remote memory exhaustion, CVSS 7.5 high — reaching the tree through `reqwest` → `quinn`. Bumped to 0.11.16 per the advisory rather than added to the ignore list.
+- `cargo hack --each-feature --no-dev-deps` deliberately omits `--locked`: `--no-dev-deps` rewrites `Cargo.toml` as it runs and `--locked` then refuses to update `Cargo.lock`. The two flags are mutually exclusive; every other step keeps `--locked`.
 
 ## [0.11.0] - 2026-07-13
 
@@ -425,7 +439,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Major additions: Gemma 4 local inference, `BlockAccumulator` for streaming event assembly, `schemars`-based proc-macro engine, multi-agent patterns and artifact service, MCP integration, plugin system, policy slots, credential management, TUI session management, and web browse plugin. 42 specs implemented across the 0.6 lifecycle.
 
-[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.8...HEAD
+[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.11.0...HEAD
 [0.7.8]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.7...v0.7.8
 [0.7.7]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.5...v0.7.6
