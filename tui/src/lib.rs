@@ -83,8 +83,10 @@ type ApprovalCallbackFn = Box<
         + Sync,
 >;
 
-/// Default system prompt used when no explicit prompt, env var, or config is provided.
-const DEFAULT_SYSTEM_PROMPT: &str = "You are a helpful assistant.";
+// Default system prompt used when no explicit prompt, env var, or config is
+// provided. Shared with `swink-agentd` via the core crate so the binaries
+// cannot drift.
+use swink_agent::DEFAULT_SYSTEM_PROMPT;
 
 /// Initialize the terminal for TUI rendering.
 ///

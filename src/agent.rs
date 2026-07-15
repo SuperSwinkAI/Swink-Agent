@@ -48,7 +48,9 @@ use crate::tool_name::disambiguate_provider_safe_tool_name;
 use crate::types::{AgentMessage, LlmMessage, ModelSpec};
 
 // Re-export so `lib.rs` can still do `pub use agent::{AgentOptions, SubscriptionId, ...}`.
-pub use crate::agent_options::{AgentOptions, DEFAULT_PLAN_MODE_ADDENDUM};
+pub use crate::agent_options::{
+    AgentOptions, DEFAULT_MODEL, DEFAULT_PLAN_MODE_ADDENDUM, DEFAULT_SYSTEM_PROMPT,
+};
 pub use crate::agent_subscriptions::SubscriptionId;
 
 // ─── Enums / modes ───────────────────────────────────────────────────────────

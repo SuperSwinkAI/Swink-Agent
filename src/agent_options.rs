@@ -35,6 +35,22 @@ pub(crate) type ApproveToolArc = Arc<ApproveToolFn>;
 /// Fallback addendum appended in plan mode when no custom addendum is set.
 pub const DEFAULT_PLAN_MODE_ADDENDUM: &str = "\n\nYou are in planning mode. Analyze the request and produce a step-by-step plan. Do not make any modifications or execute any write operations.";
 
+// ─── Shared binary defaults ───────────────────────────────────────────────────
+
+/// Default system prompt shared by the swink-agent binaries (TUI and daemon).
+///
+/// Used when neither a CLI flag, the `LLM_SYSTEM_PROMPT` environment variable,
+/// nor a config file provides a system prompt. Kept here (rather than
+/// duplicated per binary) so the binaries cannot drift apart.
+pub const DEFAULT_SYSTEM_PROMPT: &str = "You are a helpful assistant.";
+
+/// Default model identifier shared by the swink-agent binaries.
+///
+/// Used when neither a CLI flag nor the `LLM_MODEL` environment variable
+/// provides a model. This is the documented model alias (see `.env.example`),
+/// not a dated snapshot id, so it tracks the provider's current release.
+pub const DEFAULT_MODEL: &str = "claude-sonnet-4-6";
+
 // ─── AgentOptions ─────────────────────────────────────────────────────────────
 
 /// Configuration options for constructing an [`Agent`](crate::Agent).

@@ -78,8 +78,8 @@ pub mod prelude;
 
 // Re-exports
 pub use agent::{
-    Agent, AgentOptions, AgentState, DEFAULT_PLAN_MODE_ADDENDUM, FollowUpMode, SteeringMode,
-    SubscriptionId, default_convert,
+    Agent, AgentOptions, AgentState, DEFAULT_MODEL, DEFAULT_PLAN_MODE_ADDENDUM,
+    DEFAULT_SYSTEM_PROMPT, FollowUpMode, SteeringMode, SubscriptionId, default_convert,
 };
 pub use agent_id::AgentId;
 pub use async_context_transformer::{AsyncContextTransformer, AsyncTransformFuture};
