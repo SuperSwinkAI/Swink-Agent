@@ -21,17 +21,19 @@ uuid = { version = "1.23.3", features = ["v4"] }
 # TLS is rustls with the pure-Rust `ring` provider — NOT the default
 # aws-lc-rs, whose aws-lc-sys build requires cc/cmake (+ NASM on Windows)
 # in every downstream consumer. `rustls-no-provider` compiles rustls
-# without a crypto provider; each crate that uses reqwest also depends on
-# `rustls` (below) with the `ring` feature, and rustls auto-selects it as
-# the sole provider enabled in the graph. The non-TLS features mirror what
-# reqwest's defaults gave us (charset, http2, system-proxy) plus the
-# json/stream/form we already enabled. Root trust stays with
-# rustls-platform-verifier (OS-native roots), same as reqwest's default.
+# without a crypto provider; reqwest then panics at `Client` construction
+# until a process default provider is installed, so every crate that
+# builds a client calls its `ensure_default_crypto_provider()` helper
+# first (installing ring; a provider already installed by the host — e.g.
+# aws-lc-rs for FIPS — wins). The non-TLS features mirror what reqwest's
+# defaults gave us (charset, http2, system-proxy) plus the json/stream/form
+# we already enabled. Root trust stays with rustls-platform-verifier
+# (OS-native roots), same as reqwest's default.
 reqwest = { version = "0.13.4", default-features = false, features = ["charset", "form", "http2", "json", "rustls-no-provider", "stream", "system-proxy"] }
 # The crypto provider for rustls (see the reqwest entry above). Every crate
-# with a `reqwest` dependency must also list `rustls` so the ring provider
-# is enabled in downstream builds — features are additive, and without a
-# provider anywhere in the graph reqwest fails at client construction.
+# with a `reqwest` dependency also lists `rustls` and installs
+# `rustls::crypto::ring::default_provider()` as the process default before
+# constructing a client.
 rustls = { version = "0.23.37", default-features = false, features = ["logging", "ring", "std", "tls12"] }
 thiserror = "2.0.18"
 rand = "0.10.1"

@@ -671,6 +671,14 @@ mod tests {
 
     const LEAK_SENTINEL: &str = "LEAK_SENTINEL_ABC123";
 
+    /// Build a plain client after installing the ring crypto provider —
+    /// under `rustls-no-provider` (#1110) a bare `reqwest::Client::new()`
+    /// panics until a process default provider exists.
+    fn test_client() -> reqwest::Client {
+        crate::ensure_default_crypto_provider();
+        reqwest::Client::new()
+    }
+
     #[derive(Clone, Default)]
     struct SharedLogBuffer(Arc<Mutex<Vec<u8>>>);
 
@@ -878,7 +886,7 @@ mod tests {
         let _guard = capture_debug_logs(&logs);
 
         let err = refresh_token(
-            &reqwest::Client::new(),
+            &test_client(),
             &token_url,
             "refresh-token",
             "client-id",
@@ -918,6 +926,7 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_token_transport_failure_reason_is_sanitized() {
+        crate::ensure_default_crypto_provider();
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_millis(200))
             .build()
@@ -968,7 +977,7 @@ mod tests {
 
         let token_url = format!("{}/token", mock_server.uri());
         let response = exchange_code(
-            &reqwest::Client::new(),
+            &test_client(),
             &token_url,
             "auth-code",
             "client-id",
@@ -997,7 +1006,7 @@ mod tests {
 
         let token_url = format!("{}/token", mock_server.uri());
         let err = exchange_code(
-            &reqwest::Client::new(),
+            &test_client(),
             &token_url,
             "auth-code",
             "client-id",
@@ -1023,6 +1032,7 @@ mod tests {
 
     #[tokio::test]
     async fn exchange_code_transport_failure_reason_is_sanitized() {
+        crate::ensure_default_crypto_provider();
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_millis(200))
             .build()
@@ -1320,9 +1330,7 @@ mod tests {
             .await;
 
         let config = device_config(&mock_server.uri());
-        let response = request_device_code(&reqwest::Client::new(), &config)
-            .await
-            .unwrap();
+        let response = request_device_code(&test_client(), &config).await.unwrap();
 
         assert_eq!(response.device_code, "dev-123");
         assert_eq!(response.user_code, "WDJB-MJHT");
@@ -1347,7 +1355,7 @@ mod tests {
             .await;
 
         let config = device_config(&mock_server.uri());
-        let err = request_device_code(&reqwest::Client::new(), &config)
+        let err = request_device_code(&test_client(), &config)
             .await
             .unwrap_err();
 
@@ -1365,6 +1373,7 @@ mod tests {
 
     #[tokio::test]
     async fn request_device_code_transport_failure_reason_is_sanitized() {
+        crate::ensure_default_crypto_provider();
         let client = reqwest::Client::builder()
             .timeout(Duration::from_millis(200))
             .build()
@@ -1404,10 +1413,9 @@ mod tests {
         let device = device_response(Some(3));
         let (recorded, sleeper) = recording_sleeper();
 
-        let token =
-            poll_device_token_with_sleep(&reqwest::Client::new(), &config, &device, sleeper)
-                .await
-                .unwrap();
+        let token = poll_device_token_with_sleep(&test_client(), &config, &device, sleeper)
+            .await
+            .unwrap();
 
         assert_eq!(token.access_token, "device-access");
         assert_eq!(token.refresh_token.as_deref(), Some("device-refresh"));
@@ -1439,10 +1447,9 @@ mod tests {
         let device = device_response(Some(5));
         let (recorded, sleeper) = recording_sleeper();
 
-        let token =
-            poll_device_token_with_sleep(&reqwest::Client::new(), &config, &device, sleeper)
-                .await
-                .unwrap();
+        let token = poll_device_token_with_sleep(&test_client(), &config, &device, sleeper)
+            .await
+            .unwrap();
 
         assert_eq!(token.access_token, "device-access");
         // Each slow_down adds 5s (RFC 8628 §3.5) and the increase persists
@@ -1478,7 +1485,7 @@ mod tests {
         let device = device_response(Some(2));
         let (recorded, sleeper) = recording_sleeper();
 
-        poll_device_token_with_sleep(&reqwest::Client::new(), &config, &device, sleeper)
+        poll_device_token_with_sleep(&test_client(), &config, &device, sleeper)
             .await
             .unwrap();
 
@@ -1503,7 +1510,7 @@ mod tests {
         let device = device_response(Some(1));
         let (_recorded, sleeper) = recording_sleeper();
 
-        let err = poll_device_token_with_sleep(&reqwest::Client::new(), &config, &device, sleeper)
+        let err = poll_device_token_with_sleep(&test_client(), &config, &device, sleeper)
             .await
             .unwrap_err();
 
@@ -1532,7 +1539,7 @@ mod tests {
         let device = device_response(Some(1));
         let (_recorded, sleeper) = recording_sleeper();
 
-        let err = poll_device_token_with_sleep(&reqwest::Client::new(), &config, &device, sleeper)
+        let err = poll_device_token_with_sleep(&test_client(), &config, &device, sleeper)
             .await
             .unwrap_err();
 
@@ -1564,7 +1571,7 @@ mod tests {
         device.expires_in = Some(0);
         let (_recorded, sleeper) = recording_sleeper();
 
-        let err = poll_device_token_with_sleep(&reqwest::Client::new(), &config, &device, sleeper)
+        let err = poll_device_token_with_sleep(&test_client(), &config, &device, sleeper)
             .await
             .unwrap_err();
 
@@ -1595,7 +1602,7 @@ mod tests {
         let device = device_response(Some(1));
         let (_recorded, sleeper) = recording_sleeper();
 
-        let err = poll_device_token_with_sleep(&reqwest::Client::new(), &config, &device, sleeper)
+        let err = poll_device_token_with_sleep(&test_client(), &config, &device, sleeper)
             .await
             .unwrap_err();
         let log_output = logs.contents();
@@ -1616,6 +1623,7 @@ mod tests {
 
     #[tokio::test]
     async fn poll_device_token_transport_failure_reason_is_sanitized() {
+        crate::ensure_default_crypto_provider();
         let client = reqwest::Client::builder()
             .timeout(Duration::from_millis(200))
             .build()

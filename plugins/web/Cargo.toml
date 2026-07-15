@@ -20,8 +20,9 @@ integration = []
 [dependencies]
 swink-agent = { path = "../..", version = "0.12.0", default-features = false, features = ["plugins"] }
 reqwest.workspace = true
-# Not used directly: enables rustls's `ring` crypto provider for reqwest
-# (workspace reqwest is `rustls-no-provider`; see the root Cargo.toml).
+# Supplies the `ring` crypto provider, installed as the process default
+# before any reqwest client is built (workspace reqwest is
+# `rustls-no-provider`; see the root Cargo.toml).
 rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true

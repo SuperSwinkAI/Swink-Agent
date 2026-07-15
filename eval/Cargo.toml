@@ -37,9 +37,10 @@ backon = { workspace = true, optional = true }
 strsim = { workspace = true, optional = true }
 jsonschema = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
-# Not used directly: enables rustls's `ring` crypto provider for reqwest
-# (workspace reqwest is `rustls-no-provider`; see the root Cargo.toml).
-# `dep:rustls` rides along with every feature that enables `dep:reqwest`.
+# Supplies the `ring` crypto provider, installed as the process default
+# before any reqwest client is built (workspace reqwest is
+# `rustls-no-provider`; see the root Cargo.toml). `dep:rustls` rides along
+# with every feature that enables `dep:reqwest`.
 rustls = { workspace = true, optional = true }
 url = "2.5.8"
 tempfile.workspace = true

@@ -74,6 +74,7 @@ impl WebPlugin {
     /// configured search provider is unavailable (missing feature flag or
     /// missing API key).
     pub fn from_config(config: WebPluginConfig) -> Result<Self, WebPluginError> {
+        crate::ensure_default_crypto_provider();
         let http_client = reqwest::Client::builder()
             .user_agent(&config.user_agent)
             .redirect(reqwest::redirect::Policy::none())

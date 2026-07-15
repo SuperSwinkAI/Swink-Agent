@@ -78,6 +78,7 @@ impl LangfuseTraceProvider {
         public_key: impl Into<String>,
         secret_key: impl Into<String>,
     ) -> Result<Self, TraceProviderError> {
+        crate::ensure_default_crypto_provider();
         let http = Client::builder()
             .timeout(DEFAULT_TIMEOUT)
             .build()

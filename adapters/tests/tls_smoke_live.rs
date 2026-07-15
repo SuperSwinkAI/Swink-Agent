@@ -16,6 +16,10 @@ use std::time::Duration;
 #[tokio::test]
 #[ignore = "needs network: performs a real TLS handshake against api.anthropic.com"]
 async fn ring_provider_negotiates_tls() {
+    // The same call every adapter constructor makes before building its
+    // client; without it reqwest panics under `rustls-no-provider`.
+    swink_agent_adapters::ensure_default_crypto_provider();
+
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()

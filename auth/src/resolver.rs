@@ -63,6 +63,7 @@ impl DefaultCredentialResolver {
     /// Create a resolver backed by the given credential store.
     #[must_use]
     pub fn new(store: Arc<dyn CredentialStore>) -> Self {
+        crate::ensure_default_crypto_provider();
         Self {
             store,
             client: reqwest::Client::new(),

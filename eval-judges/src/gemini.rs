@@ -79,6 +79,7 @@ impl GeminiJudgeClient {
         api_key: impl Into<String>,
         model: impl Into<String>,
     ) -> Self {
+        swink_agent_adapters::ensure_default_crypto_provider();
         let http = Client::builder()
             .timeout(DEFAULT_TIMEOUT)
             .build()

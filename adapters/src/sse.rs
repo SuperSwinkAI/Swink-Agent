@@ -1201,6 +1201,7 @@ mod tests {
             }
         });
 
+        crate::base::ensure_default_crypto_provider();
         let client = reqwest::Client::new();
         let resp = client
             .get(format!("http://{addr}/"))
