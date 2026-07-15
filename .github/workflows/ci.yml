@@ -91,8 +91,11 @@ jobs:
       - run: cargo binstall --no-confirm --force cargo-hack
 
       # Each-feature check (excludes local-llm: metal/cuda/cudnn/vulkan all need GPU toolchains unavailable on ubuntu-latest)
+      # No --locked here: --no-dev-deps rewrites Cargo.toml while cargo-hack runs, and --locked
+      # then refuses to update Cargo.lock ("cannot update the lock file ... because --locked was
+      # passed"). The two flags are mutually exclusive. Every other step keeps --locked.
       - name: cargo hack (each feature)
-        run: cargo hack check --workspace --each-feature --no-dev-deps --exclude swink-agent-local-llm --locked
+        run: cargo hack check --workspace --each-feature --no-dev-deps --exclude swink-agent-local-llm
 
       # Feature-smoke sentinels
       - name: Adapters no-default-features sentinel
