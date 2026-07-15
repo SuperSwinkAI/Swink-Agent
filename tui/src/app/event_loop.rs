@@ -11,7 +11,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 
 use swink_agent::{ApprovalMode, ToolApproval};
 
-use super::state::{PathCompletion, Selection, TrustFollowUp};
+use super::state::{PathCompletion, Selection, SkillCompletion, TrustFollowUp};
 use crate::commands::{self, ApprovalModeArg, ClipboardContent, CommandResult};
 use crate::theme;
 use crate::ui;
@@ -437,6 +437,130 @@ impl App {
         self.dirty = true;
     }
 
+    /// Recompute whichever completion popup the cursor position calls for.
+    ///
+    /// The two trigger queries are mutually exclusive at the cursor — a
+    /// leading `/name` is never an `@` mention and vice versa — so at most one
+    /// popup is open after a refresh; each refresh clears its own popup when
+    /// its query is absent.
+    pub(super) fn refresh_completions(&mut self) {
+        self.refresh_path_completion();
+        self.refresh_skill_completion();
+    }
+
+    /// Recompute the `/skill` completion popup against the cursor.
+    ///
+    /// Mirrors [`App::refresh_path_completion`], with one addition: tier-2
+    /// details are fetched for the highlighted candidate, through a per-name
+    /// cache carried across refreshes so a keystroke or highlight move never
+    /// re-invokes the host callback for a name it already answered.
+    pub(super) fn refresh_skill_completion(&mut self) {
+        if !self.extensions.has_skill_completions() {
+            return;
+        }
+
+        let previous = self.skill_completion.take();
+        let Some(query) = self.input.slash_query() else {
+            self.dirty |= previous.is_some();
+            return;
+        };
+
+        let candidates = self.extensions.complete_skills(&query.query);
+        if candidates.is_empty() {
+            self.dirty |= previous.is_some();
+            return;
+        }
+
+        // Keep the highlight where it was if the same candidate is still on
+        // offer, and keep the details cache — both survive query refinement.
+        let selected = previous
+            .as_ref()
+            .and_then(SkillCompletion::selected_candidate)
+            .and_then(|prior| candidates.iter().position(|next| next == prior))
+            .unwrap_or(0);
+        let details = previous.map(|prior| prior.details).unwrap_or_default();
+
+        self.skill_completion = Some(SkillCompletion {
+            candidates,
+            selected,
+            start: query.start,
+            details,
+        });
+        self.cache_selected_skill_details();
+        self.dirty = true;
+    }
+
+    /// Fetch tier-2 details for the highlighted skill, unless already cached.
+    ///
+    /// This is the *only* place the details callback runs, so "once per
+    /// highlighted name per popup" holds by construction.
+    fn cache_selected_skill_details(&mut self) {
+        let Some(name) = self
+            .skill_completion
+            .as_ref()
+            .and_then(SkillCompletion::selected_candidate)
+            .map(|candidate| candidate.name.clone())
+        else {
+            return;
+        };
+        if self
+            .skill_completion
+            .as_ref()
+            .is_some_and(|completion| completion.details.contains_key(&name))
+        {
+            return;
+        }
+
+        let details = self.extensions.skill_details(&name);
+        if let Some(completion) = self.skill_completion.as_mut() {
+            completion.details.insert(name, details);
+        }
+    }
+
+    /// Accept the highlighted skill into the input, closing the popup.
+    pub(super) fn accept_skill_completion(&mut self) {
+        let Some(completion) = self.skill_completion.take() else {
+            return;
+        };
+        if let Some(candidate) = completion.selected_candidate() {
+            // The trailing space terminates the token, which closes the popup
+            // on the next refresh without a special case.
+            self.input
+                .replace_mention_query(completion.start, &format!("/{} ", candidate.name));
+        }
+        self.dirty = true;
+    }
+
+    /// Keys the `/skill` popup consumes while open. Returns whether it took
+    /// the key. Deliberately a near-duplicate of
+    /// [`App::handle_path_completion_key`] — genericizing would drag a public
+    /// struct into a shared abstraction for ~30 lines of code.
+    fn handle_skill_completion_key(&mut self, key: KeyEvent) -> bool {
+        let Some(completion) = &mut self.skill_completion else {
+            return false;
+        };
+
+        match (key.modifiers, key.code) {
+            (_, KeyCode::Up) => {
+                completion.select_prev();
+                self.cache_selected_skill_details();
+            }
+            (_, KeyCode::Down) => {
+                completion.select_next();
+                self.cache_selected_skill_details();
+            }
+            (_, KeyCode::Tab | KeyCode::Enter) => {
+                self.accept_skill_completion();
+                return true;
+            }
+            (_, KeyCode::Esc) => self.skill_completion = None,
+            _ => return false,
+        }
+
+        self.dirty = true;
+        true
+    }
+
     /// Accept the highlighted candidate into the input, closing the popup.
     pub(super) fn accept_path_completion(&mut self) {
         let Some(completion) = self.path_completion.take() else {
@@ -479,8 +603,8 @@ impl App {
     /// Keys that edit the text or move the cursor. Returns whether the key was one.
     ///
     /// Grouped together because they share an epilogue: every one of them can
-    /// move the cursor into or out of an `@path` mention, so each is followed by
-    /// a single completion refresh.
+    /// move the cursor into or out of an `@path` mention or a leading `/skill`
+    /// token, so each is followed by a single completion refresh.
     fn handle_editing_key(&mut self, key: KeyEvent) -> bool {
         match (key.modifiers, key.code) {
             (KeyModifiers::SHIFT, KeyCode::Enter) => self.input.insert_newline(),
@@ -514,14 +638,17 @@ impl App {
             _ => return false,
         }
 
-        self.refresh_path_completion();
+        self.refresh_completions();
         true
     }
 
     fn handle_input_key(&mut self, key: KeyEvent) {
-        // Precedence: an open completion popup claims its keys first, then the
-        // editing keys, then everything else.
+        // Precedence: an open completion popup claims its keys first (at most
+        // one is ever open), then the editing keys, then everything else.
         if self.handle_path_completion_key(key) {
+            return;
+        }
+        if self.handle_skill_completion_key(key) {
             return;
         }
         if matches!(key.code, KeyCode::Esc) && self.status == AgentStatus::Running {
@@ -612,6 +739,7 @@ impl App {
         // Whatever is in the editor is what gets submitted; an open popup is
         // not an implicit accept.
         self.path_completion = None;
+        self.skill_completion = None;
 
         // Classify the pending input BEFORE draining the editor so that
         // secret-bearing commands (e.g. `#key <provider> <api-key>`) can be
@@ -652,6 +780,20 @@ impl App {
             && let Some(feedback) = self.extensions.dispatch(self, name, args)
         {
             self.push_system_message(feedback);
+            return;
+        }
+
+        // Known skills are submitted as prompts rather than commands, so
+        // `/deploy` never hits the Unknown-command fallback. The raw text is
+        // what gets displayed; `send_to_agent` expands the invocation. Match
+        // precedence is secrets → host commands → skills → built-ins
+        // (first-match-wins), so a host `with_command` shadows a same-named
+        // skill. Parsed with `parse_skill_invocation` (not `split_command`) so
+        // only the leading-`/` form routes here — `#name` stays a command.
+        if let Some(invocation) = crate::skills::parse_skill_invocation(&text)
+            && self.extensions.is_known_skill(&invocation.name)
+        {
+            self.submit_user_text(text);
             return;
         }
 

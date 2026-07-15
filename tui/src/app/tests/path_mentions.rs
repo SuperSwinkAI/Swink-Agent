@@ -4,67 +4,17 @@
 //! fires on every keystroke inside a mention, while the resolver — the seam that
 //! reads files — must not fire until the prompt is submitted.
 
-use std::pin::Pin;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use swink_agent::testing::text_only_events;
-use swink_agent::{AgentContext, AssistantMessageEvent, ModelSpec, StreamFn, StreamOptions};
-use tokio_util::sync::CancellationToken;
 
 use super::super::*;
-use super::helpers::{drain_agent_events_until_idle, make_test_agent};
+use super::helpers::{
+    PromptCapturingStreamFn, ResolverSpy, drain_agent_events_until_idle, make_test_agent,
+};
 use crate::config::TuiConfig;
 use crate::extensions::{PathCandidate, TuiExtensions};
-
-/// A `StreamFn` that records the user text of every prompt it is streamed.
-///
-/// This is how we assert on what actually reached the model, rather than
-/// trusting the TUI's own bookkeeping.
-struct PromptCapturingStreamFn {
-    prompts: Arc<Mutex<Vec<String>>>,
-}
-
-impl StreamFn for PromptCapturingStreamFn {
-    fn stream<'a>(
-        &'a self,
-        _model: &'a ModelSpec,
-        context: &'a AgentContext,
-        _options: &'a StreamOptions,
-        _cancellation_token: CancellationToken,
-    ) -> Pin<Box<dyn futures::Stream<Item = AssistantMessageEvent> + Send + 'a>> {
-        let texts: Vec<String> = context
-            .messages
-            .iter()
-            .filter_map(|message| match message {
-                swink_agent::AgentMessage::Llm(swink_agent::LlmMessage::User(user)) => {
-                    Some(user.content.iter().filter_map(|block| match block {
-                        swink_agent::ContentBlock::Text { text } => Some(text.clone()),
-                        _ => None,
-                    }))
-                }
-                _ => None,
-            })
-            .flatten()
-            .collect();
-        self.prompts.lock().unwrap().extend(texts);
-        Box::pin(futures::stream::iter(text_only_events("ok")))
-    }
-}
-
-/// Counts resolver invocations and records the text each one saw.
-#[derive(Default)]
-struct ResolverSpy {
-    calls: AtomicUsize,
-    seen: Mutex<Vec<String>>,
-}
-
-impl ResolverSpy {
-    fn call_count(&self) -> usize {
-        self.calls.load(Ordering::SeqCst)
-    }
-}
 
 fn type_text(app: &mut App, text: &str) {
     for ch in text.chars() {

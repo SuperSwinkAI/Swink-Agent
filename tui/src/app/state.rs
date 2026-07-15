@@ -1,6 +1,6 @@
 //! Shared state types for the TUI app.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -13,7 +13,7 @@ use swink_agent::{
 };
 
 use crate::config::TuiConfig;
-use crate::extensions::PathCandidate;
+use crate::extensions::{PathCandidate, SkillCandidate};
 use crate::session::JsonlSessionStore;
 use crate::ui::conversation::ConversationView;
 use crate::ui::help_panel::HelpPanel;
@@ -258,6 +258,61 @@ impl PathCompletion {
     }
 }
 
+/// Open `/skill` completion popup.
+///
+/// Present only while a host-supplied provider has returned candidates for the
+/// leading `/name` under the cursor; `None` whenever the popup is closed.
+///
+/// Tier-2 documentation (the SKILL.md body) is fetched lazily for the
+/// highlighted candidate and cached here per name, so moving the highlight
+/// back and forth never re-invokes the host callback.
+#[derive(Debug, Clone)]
+pub struct SkillCompletion {
+    /// Candidates as the host returned them, in the host's order.
+    pub candidates: Vec<SkillCandidate>,
+    /// Index of the highlighted candidate. Always in range.
+    pub selected: usize,
+    /// Byte offset of the `/` in the cursor's line, for splicing on accept.
+    pub(crate) start: usize,
+    /// Cached tier-2 details per skill name. `Some(None)` records "fetched,
+    /// nothing to show" so absent details are not re-fetched either. Carried
+    /// across refreshes while the popup stays open.
+    pub(crate) details: HashMap<String, Option<String>>,
+}
+
+impl SkillCompletion {
+    /// The highlighted candidate.
+    #[must_use]
+    pub fn selected_candidate(&self) -> Option<&SkillCandidate> {
+        self.candidates.get(self.selected)
+    }
+
+    /// Cached tier-2 documentation for the highlighted candidate, if the host
+    /// supplied any.
+    #[must_use]
+    pub fn selected_details(&self) -> Option<&str> {
+        let candidate = self.selected_candidate()?;
+        self.details.get(&candidate.name)?.as_deref()
+    }
+
+    /// Highlight the next candidate, wrapping to the first.
+    pub fn select_next(&mut self) {
+        if !self.candidates.is_empty() {
+            self.selected = (self.selected + 1) % self.candidates.len();
+        }
+    }
+
+    /// Highlight the previous candidate, wrapping to the last.
+    pub fn select_prev(&mut self) {
+        if !self.candidates.is_empty() {
+            self.selected = self
+                .selected
+                .checked_sub(1)
+                .unwrap_or(self.candidates.len() - 1);
+        }
+    }
+}
+
 /// Top-level application state.
 #[allow(clippy::struct_excessive_bools)]
 pub struct App {
@@ -371,4 +426,11 @@ pub struct App {
     /// Only ever populated when a host registered a completion provider via
     /// [`TuiExtensions::with_path_completions`](crate::TuiExtensions::with_path_completions).
     pub path_completion: Option<PathCompletion>,
+    /// Open `/skill` completion popup, or `None` when closed.
+    ///
+    /// Only ever populated when a host registered a completion provider via
+    /// [`TuiExtensions::with_skill_completions`](crate::TuiExtensions::with_skill_completions).
+    /// At most one of `path_completion` and `skill_completion` is open at a
+    /// time — their trigger queries are mutually exclusive at the cursor.
+    pub skill_completion: Option<SkillCompletion>,
 }
