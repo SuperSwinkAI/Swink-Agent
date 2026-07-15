@@ -14,6 +14,9 @@ readme = "README.md"
 swink-agent = { path = "..", version = "0.12.0", default-features = false }
 rmcp = { version = "2.0.0", features = ["client", "client-side-sse", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "transport-child-process"] }
 reqwest = { workspace = true }
+# Not used directly: enables rustls's `ring` crypto provider for reqwest
+# (workspace reqwest is `rustls-no-provider`; see the root Cargo.toml).
+rustls.workspace = true
 futures.workspace = true
 tokio = { workspace = true, features = ["macros", "process", "rt", "sync", "time"] }
 tokio-util.workspace = true

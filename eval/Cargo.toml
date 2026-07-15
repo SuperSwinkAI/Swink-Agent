@@ -37,6 +37,10 @@ backon = { workspace = true, optional = true }
 strsim = { workspace = true, optional = true }
 jsonschema = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
+# Not used directly: enables rustls's `ring` crypto provider for reqwest
+# (workspace reqwest is `rustls-no-provider`; see the root Cargo.toml).
+# `dep:rustls` rides along with every feature that enables `dep:reqwest`.
+rustls = { workspace = true, optional = true }
 url = "2.5.8"
 tempfile.workspace = true
 opentelemetry = { workspace = true, optional = true }
@@ -59,7 +63,7 @@ evaluator-structured = ["judge-core", "dep:jsonschema"]
 evaluator-simple = ["judge-core", "dep:strsim"]
 evaluator-code = ["judge-core"]
 evaluator-sandbox = ["evaluator-code", "dep:libc"]
-multimodal = ["judge-core", "dep:reqwest"]
+multimodal = ["judge-core", "dep:reqwest", "dep:rustls"]
 all-evaluators = [
     "evaluator-quality",
     "evaluator-safety",
@@ -74,13 +78,13 @@ all-evaluators = [
 simulation = ["judge-core", "dep:jsonschema"]
 generation = ["judge-core"]
 trace-ingest = ["dep:opentelemetry", "dep:opentelemetry_sdk", "opentelemetry_sdk/testing"]
-trace-otlp = ["trace-ingest", "dep:opentelemetry-otlp", "dep:reqwest"]
-trace-langfuse = ["trace-ingest", "dep:reqwest"]
-trace-opensearch = ["trace-ingest", "dep:reqwest"]
+trace-otlp = ["trace-ingest", "dep:opentelemetry-otlp", "dep:reqwest", "dep:rustls"]
+trace-langfuse = ["trace-ingest", "dep:reqwest", "dep:rustls"]
+trace-opensearch = ["trace-ingest", "dep:reqwest", "dep:rustls"]
 trace-cloudwatch = ["trace-ingest"]
 telemetry = ["dep:opentelemetry", "dep:opentelemetry_sdk"]
 html-report = ["dep:askama"]
-langsmith = ["dep:reqwest"]
+langsmith = ["dep:reqwest", "dep:rustls"]
 cli = ["dep:clap"]
 training-export = []
 
