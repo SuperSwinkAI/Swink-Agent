@@ -4,7 +4,11 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
 
-use swink_agent::{schema_for, validate_schema, validate_tool_arguments};
+use swink_agent::{schema_for, validate_schema};
+// Argument validation is only exercised by the built-in tool schema tests
+// below, which are `builtin-tools`-gated — so this import must be too.
+#[cfg(feature = "builtin-tools")]
+use swink_agent::validate_tool_arguments;
 
 // ─── schema_for generates valid schemas ─────────────────────────────────────
 

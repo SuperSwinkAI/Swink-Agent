@@ -7,7 +7,9 @@
 use serde::{Deserialize, Serialize};
 use swink_agent::{ToolApproval, ToolApprovalRequest};
 
-#[cfg(any(unix, test))]
+// Used only by the handshake parsers below (and their tests), which are gated
+// on the `client`/`server` features — so this import carries the same gate.
+#[cfg(any(all(unix, any(feature = "client", feature = "server")), test))]
 use crate::jsonrpc::RpcError;
 
 // ─── Handshake ────────────────────────────────────────────────────────────────
@@ -42,7 +44,9 @@ pub struct ServerInfo {
     pub version: String,
 }
 
-#[cfg(any(unix, test))]
+// Called only from the unix `run_session` path in `server.rs`, which is itself
+// behind the `server` feature — plus this module's own tests.
+#[cfg(any(all(unix, feature = "server"), test))]
 pub(crate) fn parse_initialize_params(
     params: Option<serde_json::Value>,
 ) -> Result<InitializeParams, RpcError> {
@@ -51,7 +55,9 @@ pub(crate) fn parse_initialize_params(
     Ok(params)
 }
 
-#[cfg(any(unix, test))]
+// Called only from the unix handshake path in `client.rs`, which is itself
+// behind the `client` feature — plus this module's own tests.
+#[cfg(any(all(unix, feature = "client"), test))]
 pub(crate) fn parse_initialized_params(
     params: Option<serde_json::Value>,
 ) -> Result<InitializedParams, RpcError> {
@@ -60,7 +66,8 @@ pub(crate) fn parse_initialized_params(
     Ok(params)
 }
 
-#[cfg(any(unix, test))]
+// Shared by both handshake parsers above; live whenever either of them is.
+#[cfg(any(all(unix, any(feature = "client", feature = "server")), test))]
 fn parse_handshake_params<T>(params: Option<serde_json::Value>, method: &str) -> Result<T, RpcError>
 where
     T: for<'de> Deserialize<'de>,
@@ -74,7 +81,8 @@ where
         .map_err(|e| RpcError::invalid_request(format!("invalid {method} params: {e}")))
 }
 
-#[cfg(any(unix, test))]
+// Shared by both handshake parsers above; live whenever either of them is.
+#[cfg(any(all(unix, any(feature = "client", feature = "server")), test))]
 fn ensure_protocol_version(actual: &str) -> Result<(), RpcError> {
     if actual == PROTOCOL_VERSION {
         return Ok(());
