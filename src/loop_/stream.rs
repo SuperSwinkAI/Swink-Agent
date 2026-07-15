@@ -279,7 +279,8 @@ async fn stream_with_retry_single(
         if let Some(exit) = emit_attempt_deltas(&events, tx).await {
             return exit;
         }
-        let result = finalize_stream_message(model, events, tx).await;
+        let result =
+            finalize_stream_message(model, events, tx, config.cost_calculator.as_deref()).await;
         if let StreamResult::Message(ref msg) = result {
             llm_span.record("agent.tokens.input", msg.usage.input);
             llm_span.record("agent.tokens.output", msg.usage.output);
@@ -644,13 +645,21 @@ pub fn capability_filter_tools(
     tools.to_vec()
 }
 
-/// Accumulate collected stream events into a final message and emit `MessageEnd`.
+/// Accumulate collected stream events into a final message, price it, and emit
+/// `MessageEnd`.
+///
+/// Pricing happens here — before the event is emitted — rather than only in
+/// `run_single_turn`, because `MessageEnd` is what event consumers (the TUI
+/// status bar, `/usage`, any `EventForwarder`) read cost from. Pricing only at
+/// the turn level would leave every one of them reading `$0.0000` even though
+/// the loop's own accumulated cost was correct (issues #1100, #1084).
 async fn finalize_stream_message(
     model: &ModelSpec,
     events: Vec<AssistantMessageEvent>,
     tx: &mpsc::Sender<AgentEvent>,
+    calculator: Option<&dyn crate::pricing::CostCalculator>,
 ) -> StreamResult {
-    let message = match accumulate_message(events, &model.provider, &model.model_id) {
+    let mut message = match accumulate_message(events, &model.provider, &model.model_id) {
         Ok(msg) => msg,
         Err(e) => {
             let err = AgentError::StreamError {
@@ -668,10 +677,15 @@ async fn finalize_stream_message(
         }
     };
 
+    // Adapters that priced their own response keep precedence; otherwise an
+    // operator-declared calculator outranks the compiled catalog.
+    crate::model_catalog::price_assistant_message_with(&mut message, calculator);
+
     info!(
         input_tokens = message.usage.input,
         output_tokens = message.usage.output,
         total_tokens = message.usage.total,
+        cost = message.cost.total,
         stop_reason = ?message.stop_reason,
         "stream completed"
     );

@@ -4,6 +4,7 @@ use chrono::NaiveDate;
 use serde::Deserialize;
 
 use crate::ModelSpec;
+use crate::pricing::CostCalculator;
 use crate::types::{AssistantMessage, Cost, ModelCapabilities, ThinkingLevel, Usage};
 
 /// Whether a provider's models run on a remote API or on local hardware.
@@ -450,10 +451,74 @@ pub fn calculate_cost(model_id: &str, usage: &Usage) -> Cost {
 /// assert!((message.cost.total - 3.0).abs() < 1e-9);
 /// ```
 pub fn price_assistant_message(message: &mut AssistantMessage) -> bool {
+    price_assistant_message_with(message, None)
+}
+
+/// Like [`price_assistant_message`], but consults an operator-declared
+/// [`CostCalculator`] before falling back to the compiled model catalog.
+///
+/// This is what the agent loop actually calls, threading through the calculator
+/// configured via
+/// [`AgentOptions::with_cost_calculator`](crate::AgentOptions::with_cost_calculator).
+/// It exists because the catalog only knows about models shipped with the
+/// crate — local endpoints, private deployments, and negotiated per-tier rates
+/// all price at zero without an override.
+///
+/// Precedence, highest first:
+///
+/// 1. The adapter's own non-zero [`Cost`] — never overwritten.
+/// 2. `calculator`, when it returns a non-zero [`Cost`] for this model.
+/// 3. The compiled model catalog.
+///
+/// Returns `true` if the message was repriced.
+///
+/// # Example
+/// ```rust
+/// use swink_agent::{
+///     AssistantMessage, Cost, ModelRates, PricingTable, StopReason, Usage,
+///     price_assistant_message_with,
+/// };
+///
+/// // `claude-sonnet-4-6` is in the catalog at $3.00/M input, but the operator
+/// // negotiated $1.00/M and says so.
+/// let table = PricingTable::new().with_model(
+///     "claude-sonnet-4-6",
+///     ModelRates {
+///         input_per_million: 1.0,
+///         ..ModelRates::default()
+///     },
+/// );
+///
+/// let mut message = AssistantMessage {
+///     content: vec![],
+///     provider: "anthropic".to_string(),
+///     model_id: "claude-sonnet-4-6".to_string(),
+///     usage: Usage {
+///         input: 1_000_000,
+///         ..Usage::default()
+///     },
+///     cost: Cost::default(),
+///     stop_reason: StopReason::Stop,
+///     error_message: None,
+///     error_kind: None,
+///     timestamp: 0,
+///     cache_hint: None,
+/// };
+///
+/// assert!(price_assistant_message_with(&mut message, Some(&table)));
+/// assert!((message.cost.total - 1.0).abs() < 1e-9);
+/// ```
+pub fn price_assistant_message_with(
+    message: &mut AssistantMessage,
+    calculator: Option<&dyn CostCalculator>,
+) -> bool {
     if !message.cost.is_zero() {
         return false;
     }
-    let priced = calculate_cost(&message.model_id, &message.usage);
+    let priced = calculator
+        .and_then(|calculator| calculator.calculate(&message.model_id, &message.usage))
+        .filter(|cost| !cost.is_zero())
+        .unwrap_or_else(|| calculate_cost(&message.model_id, &message.usage));
     if priced.is_zero() {
         return false;
     }
@@ -742,6 +807,115 @@ mod tests {
         let mut msg = message("claude-sonnet-4-6", usage(0, 0, 0, 0), Cost::default());
         assert!(!price_assistant_message(&mut msg));
         assert!(msg.cost.is_zero());
+    }
+
+    /// Issue #1084: operator-declared rates must beat the compiled catalog.
+    ///
+    /// `claude-sonnet-4-6` is in the catalog at $3.00/M input. An operator who
+    /// declares $1.00/M must see $1.00 — otherwise a `[pricing]` config section
+    /// silently does nothing for any model the catalog happens to know.
+    #[test]
+    fn operator_declared_rates_take_precedence_over_catalog() {
+        let table = crate::pricing::PricingTable::new().with_model(
+            "claude-sonnet-4-6",
+            crate::pricing::ModelRates {
+                input_per_million: 1.0,
+                ..crate::pricing::ModelRates::default()
+            },
+        );
+        let mut msg = message(
+            "claude-sonnet-4-6",
+            usage(1_000_000, 0, 0, 0),
+            Cost::default(),
+        );
+
+        assert!(price_assistant_message_with(&mut msg, Some(&table)));
+        assert!(
+            (msg.cost.total - 1.0).abs() < 0.001,
+            "expected the operator's $1.00/M rate, got ${:.4} (catalog rate is $3.00/M)",
+            msg.cost.total
+        );
+    }
+
+    /// A calculator that declines a model must not suppress catalog pricing.
+    #[test]
+    fn calculator_declining_a_model_falls_back_to_catalog() {
+        let table = crate::pricing::PricingTable::new().with_model(
+            "some-other-model",
+            crate::pricing::ModelRates {
+                input_per_million: 1.0,
+                ..crate::pricing::ModelRates::default()
+            },
+        );
+        let mut msg = message(
+            "claude-sonnet-4-6",
+            usage(1_000_000, 0, 0, 0),
+            Cost::default(),
+        );
+
+        assert!(price_assistant_message_with(&mut msg, Some(&table)));
+        assert!(
+            (msg.cost.total - 3.0).abs() < 0.001,
+            "expected catalog pricing"
+        );
+    }
+
+    /// Operator rates are the only way to price a model the catalog has never
+    /// heard of — local endpoints and private deployments.
+    #[test]
+    fn operator_declared_rates_price_a_model_absent_from_the_catalog() {
+        let table = crate::pricing::PricingTable::new().with_model(
+            "my-local-llama",
+            crate::pricing::ModelRates {
+                input_per_million: 0.10,
+                output_per_million: 0.40,
+                ..crate::pricing::ModelRates::default()
+            },
+        );
+        let mut msg = message(
+            "my-local-llama",
+            usage(1_000_000, 1_000_000, 0, 0),
+            Cost::default(),
+        );
+
+        assert!(price_assistant_message_with(&mut msg, Some(&table)));
+        assert!((msg.cost.total - 0.50).abs() < 0.001);
+    }
+
+    /// The adapter's own billed cost outranks even an operator override.
+    #[test]
+    fn adapter_supplied_cost_outranks_operator_declared_rates() {
+        let table = crate::pricing::PricingTable::new().with_model(
+            "claude-sonnet-4-6",
+            crate::pricing::ModelRates {
+                input_per_million: 1.0,
+                ..crate::pricing::ModelRates::default()
+            },
+        );
+        let adapter_cost = Cost {
+            input: 0.25,
+            total: 0.25,
+            ..Cost::default()
+        };
+        let mut msg = message("claude-sonnet-4-6", usage(1_000_000, 0, 0, 0), adapter_cost);
+
+        assert!(!price_assistant_message_with(&mut msg, Some(&table)));
+        assert!((msg.cost.total - 0.25).abs() < 0.001);
+    }
+
+    /// A calculator returning an explicit zero declines rather than pinning the
+    /// message to zero, so the catalog still gets a turn.
+    #[test]
+    fn calculator_returning_zero_cost_falls_back_to_catalog() {
+        let zeroing = |_model_id: &str, _usage: &Usage| Some(Cost::default());
+        let mut msg = message(
+            "claude-sonnet-4-6",
+            usage(1_000_000, 0, 0, 0),
+            Cost::default(),
+        );
+
+        assert!(price_assistant_message_with(&mut msg, Some(&zeroing)));
+        assert!((msg.cost.total - 3.0).abs() < 0.001);
     }
 
     #[test]

@@ -94,7 +94,7 @@ pub fn help_lines() -> Vec<Line<'static>> {
         Line::from(Span::styled(" / Commands", bold)),
         divider,
         Line::from(Span::styled(" /quit /thinking /system", normal)),
-        Line::from(Span::styled(" /reset /editor /plan", normal)),
+        Line::from(Span::styled(" /reset /editor /plan /usage", normal)),
     ]
 }
 

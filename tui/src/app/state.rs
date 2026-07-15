@@ -196,6 +196,28 @@ impl DisplayMessage {
     }
 }
 
+/// Token usage and cost recorded for a single assistant response.
+///
+/// Costs are whatever the agent loop reported: it prices each assistant message
+/// from operator-declared rates or the compiled model catalog before the TUI
+/// sees it (see [`swink_agent::price_assistant_message_with`]). The TUI never
+/// prices anything itself, so `cost` is `0.0` for a model with neither.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TurnUsage {
+    /// Model that produced the response.
+    pub model_id: String,
+    /// Prompt tokens billed for this response.
+    pub input_tokens: u64,
+    /// Completion tokens billed for this response.
+    pub output_tokens: u64,
+    /// Tokens read from a provider-side prompt cache.
+    pub cache_read_tokens: u64,
+    /// Tokens written to a provider-side prompt cache.
+    pub cache_write_tokens: u64,
+    /// Total cost of this response in USD, as priced by the agent loop.
+    pub cost: f64,
+}
+
 /// Top-level application state.
 #[allow(clippy::struct_excessive_bools)]
 pub struct App {
@@ -222,6 +244,12 @@ pub struct App {
     pub total_output_tokens: u64,
     /// Running cost.
     pub total_cost: f64,
+    /// Per-turn usage records, oldest first — the backing data for `/usage`.
+    ///
+    /// One entry is appended per assistant response, so this grows with the
+    /// session and is cleared by `/reset`. The status bar shows the totals;
+    /// this is the breakdown behind them.
+    pub turn_usage: Vec<TurnUsage>,
     /// Session start time for elapsed display.
     pub session_start: Instant,
     /// Dirty flag — only redraw when true.
@@ -296,4 +324,6 @@ pub struct App {
     pub(crate) steered_fade_ticks: u8,
     /// Active click-drag selection in the conversation viewport.
     pub(crate) selection: Option<Selection>,
+    /// Host-supplied extension points (custom commands).
+    pub(crate) extensions: crate::extensions::TuiExtensions,
 }

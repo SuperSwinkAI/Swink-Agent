@@ -273,6 +273,65 @@ The TUI loads configuration from `~/.config/swink-agent/tui.toml` via `TuiConfig
 | `color_mode` | `String` | Color mode: `"custom"` (default), `"mono-white"`, or `"mono-black"`. Can be cycled at runtime with F3 |
 | `editor_command` | `Option<String>` | Override for external editor (defaults to `$EDITOR` / `$VISUAL` / `vi`) |
 | `system_prompt` | `Option<String>` | Override the system prompt passed to the agent. If `None`, the agent uses its built-in default. |
+| `pricing` | `PricingTable` | Operator-declared per-model rates. Empty by default. See [Cost and usage display](#cost-and-usage-display). |
+
+---
+
+## Cost and usage display
+
+The status bar renders `↓{input} ↑{output}` and `${cost}`; `/usage` prints a
+per-turn breakdown with per-model subtotals. Both read `App::total_input_tokens`
+/ `total_output_tokens` / `total_cost` / `turn_usage`, which are accumulated in
+`App::handle_agent_event` from `AgentEvent::MessageEnd`.
+
+**The TUI does not price anything.** The agent loop fills in each assistant
+message's `Cost` before emitting `MessageEnd` — see
+[Cost tracking](../streaming/README.md#cost-tracking) for the precedence rules.
+The TUI only totals what it is given, so a model with no pricing honestly shows
+`$0.0000` (and `/usage` says which models those are).
+
+Because the compiled model catalog only knows about models shipped with the
+crate, operators can declare their own rates for local endpoints, private
+deployments, or negotiated per-tier pricing:
+
+```toml
+[pricing."my-local-llama"]
+input_per_million = 0.10
+output_per_million = 0.40
+
+[pricing."claude-sonnet-4-6"]
+input_per_million = 1.50   # negotiated below the catalog's $3.00
+output_per_million = 7.50
+```
+
+Declared rates take precedence over the catalog for any model listed.
+`launch` / `launch_with_extensions` / `launch_with_session` apply them via
+`TuiConfig::apply_pricing`; a host that builds its own `Agent` calls that (or
+`AgentOptions::with_cost_calculator`) directly.
+
+---
+
+## Host extension points
+
+`TuiConfig` is deserialized from TOML and so can only hold data. Anything a host
+supplies *in code* goes on `TuiExtensions`, passed via `App::with_extensions` or
+`launch_with_extensions`:
+
+```rust,ignore
+let extensions = TuiExtensions::new().with_command("spend", |app, _args| {
+    CustomCommandOutcome::Feedback(format!("${:.4}", app.total_cost))
+});
+launch_with_extensions(config, &mut terminal, options, extensions).await?;
+```
+
+Host commands are matched by bare name (no sigil, so `/spend` and `#spend` both
+route) **before** the built-in command table, so a host can shadow a built-in;
+returning `CustomCommandOutcome::NotHandled` falls through to it instead. Secret
+classification (`#key`) runs before dispatch, so host handlers never see
+credentials.
+
+`TuiExtensions` is a consuming builder with a `Default` impl — further seams are
+added as additional `with_*` methods without breaking existing callers.
 
 ---
 
