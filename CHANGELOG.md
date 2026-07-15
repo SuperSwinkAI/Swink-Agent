@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-15
+
+### Added — TUI cost/usage display with pluggable pricing (#1084, #1108)
+
+- **`swink-agent`**: new `pricing` module (`CostCalculator`, `ModelRates`, `PricingTable`), `AgentOptions::with_cost_calculator`/`with_pricing_table`, `AgentLoopConfig::cost_calculator`, and `price_assistant_message_with` — operators can declare per-tier rates that outrank the compiled catalog.
+- **`swink-agent-tui`**: `TuiExtensions` (a consuming builder threaded via `App::with_extensions`/`launch_with_extensions`) for host-supplied code, `CustomCommandOutcome`/`CustomCommandFn` for host slash commands, `App::turn_usage`/`TurnUsage`, `TuiConfig::pricing`/`apply_pricing`, and `handle_agent_event` widened to `pub`. `launch()` delegates to `launch_with_extensions()`, so there is one code path.
+- **Completes #1100's fix for event consumers.** #1103 priced at the turn seam, but the TUI reads cost from `AgentEvent::MessageEnd`, emitted earlier in `finalize_stream_message` — so the loop accumulated real cost while every event consumer still displayed `$0.0000`. Pricing now happens before `MessageEnd` is emitted; the turn-level call remains as an idempotent safety net for paths that bypass streaming (overflow recovery, aborts).
+
+### Changed — BREAKING
+
+- **`AgentLoopConfig` gains a `cost_calculator` field.** It is an externally-constructible struct with public fields, so exhaustive struct-literal construction breaks — add `cost_calculator: None` or use `..Default::default()`. This is the 0.12.0 version driver (`cargo semver-checks`: `constructible_struct_adds_field`), the same class of break that drove 0.11.0.
+- **`AgentEvent::MessageEnd` now carries a non-zero `cost`** for catalog-known models. Code asserting `cost == 0` there will now observe real values. This is the intended fix, but it is a behavior change.
+
+### Fixed — feature-conditional dead code (#919, #1116)
+
+- Gated dead code so `-D warnings` passes under every feature combination — `cargo hack --each-feature` is now clean (127/127). Previously invisible because `release.yml` only ever builds `--all-features`, while `ci.yml` is what runs `--no-default-features` and `--each-feature`.
+- Found along the way: the `openai-compat` gate named an internal umbrella feature implying no adapter, so `--features openai-compat` compiled the whole OpenAI plumbing with zero consumers, and `mod openai` was fully dead under `xai`. Also fixed three tests in `swink-agent-adapters` whose items were `ollama`-gated but whose tests were not — that crate did not compile standalone.
+
+### Fixed — TUI tests reached the real OS keychain (#1111, #1113)
+
+- `swink-agent-tui`'s tests called the **real** OS keychain, raising macOS password prompts and **hanging `cargo test --workspace` indefinitely** on `SecKeychainFindGenericPassword`.
+- `tui/src/credentials.rs` now routes all access through a `KeychainBackend`, and the real `SystemKeychain` is `#[cfg(not(test))]` — a unit test cannot reach a real keyring even by wiring the backend back in, which is how the bug arose. Caller signatures unchanged; production behavior identical.
+
 ## [0.11.1] - 2026-07-14
 
 ### Fixed — `BudgetPolicy.max_cost` was inert (#1100, #1103)
