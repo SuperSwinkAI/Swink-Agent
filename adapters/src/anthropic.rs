@@ -359,19 +359,45 @@ async fn send_request(
         .as_deref()
         .unwrap_or(&anthropic.base.api_key);
 
-    anthropic
+    let request = anthropic
         .base
         .client
         .post(&url)
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| {
-            AssistantMessageEvent::error_network(format!("Anthropic connection error: {e}"))
-        })
+        .header("content-type", "application/json");
+
+    // `ServingOptions::extra` merges into the top level of the `/v1/messages`
+    // body — that is where Anthropic's provider-native knobs live (`top_k`,
+    // `stop_sequences`, `metadata`, `service_tier`, …). Typed fields win on
+    // collision; a key the API doesn't know is rejected loudly with HTTP 400
+    // rather than silently dropped. The empty-`extra` fast path serializes the
+    // typed struct directly, keeping default request bytes untouched.
+    let request = if options.serving.extra.is_empty() {
+        request.json(&body)
+    } else {
+        const TYPED_KEYS: &[&str] = &[
+            "model",
+            "max_tokens",
+            "stream",
+            "system",
+            "messages",
+            "tools",
+            "temperature",
+            "thinking",
+        ];
+        let mut value = serde_json::to_value(&body).map_err(|e| {
+            AssistantMessageEvent::error_network(format!("Anthropic JSON error: {e}"))
+        })?;
+        if let Value::Object(map) = &mut value {
+            crate::base::merge_extra(map, &options.serving.extra, TYPED_KEYS);
+        }
+        request.json(&value)
+    };
+
+    request.send().await.map_err(|e| {
+        AssistantMessageEvent::error_network(format!("Anthropic connection error: {e}"))
+    })
 }
 
 /// Resolve thinking configuration from the model spec.

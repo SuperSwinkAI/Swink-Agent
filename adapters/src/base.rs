@@ -81,6 +81,40 @@ impl std::fmt::Debug for AdapterBase {
     }
 }
 
+/// Merge [`ServingOptions::extra`] entries into a JSON request-body map.
+///
+/// Single implementation of the documented merge rule shared by every
+/// adapter: **typed request fields win over colliding `extra` keys**, so any
+/// `extra` entry whose key appears in `typed_keys` is discarded. Every other
+/// entry is inserted verbatim, overwriting a pre-existing entry with the same
+/// key.
+///
+/// Callers decide what "typed" means for their wire format:
+/// - adapters that serialize a typed struct (OAI transport, Mistral,
+///   Anthropic, Gemini, Bedrock) pass the static list of field names the
+///   struct can emit;
+/// - adapters that build the map imperatively (Ollama) pass only the keys
+///   they are about to insert, so an *unset* typed knob leaves the matching
+///   `extra` entry intact.
+///
+/// `allow(dead_code)`: live only under provider features that build JSON
+/// request bodies (same rationale as [`AdapterBase`]).
+///
+/// [`ServingOptions::extra`]: swink_agent::ServingOptions
+#[allow(dead_code)]
+pub(crate) fn merge_extra(
+    body: &mut serde_json::Map<String, serde_json::Value>,
+    extra: &std::collections::BTreeMap<String, serde_json::Value>,
+    typed_keys: &[&str],
+) {
+    for (key, value) in extra {
+        if typed_keys.contains(&key.as_str()) {
+            continue;
+        }
+        body.insert(key.clone(), value.clone());
+    }
+}
+
 /// Prefix a pre-stream terminal error with `Start` so the core accumulator
 /// still receives a valid stream envelope.
 #[must_use]
@@ -235,6 +269,41 @@ mod tests {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use tokio::net::TcpListener;
     use tokio::sync::oneshot;
+
+    #[test]
+    fn merge_extra_typed_keys_win() {
+        let extra: std::collections::BTreeMap<String, serde_json::Value> = [
+            ("temperature".to_string(), serde_json::json!(0.1)),
+            ("top_k".to_string(), serde_json::json!(40)),
+        ]
+        .into_iter()
+        .collect();
+        let mut body = serde_json::Map::new();
+        body.insert("temperature".to_string(), serde_json::json!(0.7));
+
+        merge_extra(&mut body, &extra, &["temperature"]);
+
+        assert_eq!(body["temperature"], serde_json::json!(0.7));
+        assert_eq!(body["top_k"], serde_json::json!(40));
+    }
+
+    #[test]
+    fn merge_extra_overwrites_untyped_collisions() {
+        let extra = std::collections::BTreeMap::from([("seed".to_string(), serde_json::json!(2))]);
+        let mut body = serde_json::Map::new();
+        body.insert("seed".to_string(), serde_json::json!(1));
+
+        merge_extra(&mut body, &extra, &[]);
+
+        assert_eq!(body["seed"], serde_json::json!(2));
+    }
+
+    #[test]
+    fn merge_extra_empty_is_noop() {
+        let mut body = serde_json::Map::new();
+        merge_extra(&mut body, &std::collections::BTreeMap::new(), &["model"]);
+        assert!(body.is_empty());
+    }
 
     #[test]
     fn trailing_slash_stripped() {

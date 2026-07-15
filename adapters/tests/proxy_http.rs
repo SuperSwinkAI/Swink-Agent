@@ -534,3 +534,55 @@ async fn cancellation_yields_aborted() {
         "expected an Aborted event after cancellation, got: {events:?}"
     );
 }
+
+// ── ServingOptions::extra is not supported by the proxy protocol ─────────
+
+/// The proxy wire protocol has no channel for `ServingOptions::extra`; the
+/// adapter warns and drops the keys. The request body must be unchanged —
+/// no extra key may appear anywhere in it.
+#[tokio::test]
+async fn serving_extra_is_dropped_and_body_unchanged() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/stream"))
+        .respond_with(sse_response(&text_only_sse_body()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let proxy = ProxyStreamFn::new(server.uri(), "test-token");
+    let options = StreamOptions {
+        temperature: Some(0.7),
+        serving: swink_agent::ServingOptions {
+            extra: std::collections::BTreeMap::from([("top_k".to_string(), serde_json::json!(40))]),
+            ..swink_agent::ServingOptions::default()
+        },
+        ..StreamOptions::default()
+    };
+    let events = collect_events_with_options(&proxy, options).await;
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::Done { .. })),
+        "stream should still complete normally: {events:?}"
+    );
+
+    let received = server.received_requests().await.expect("request log");
+    let raw = String::from_utf8(received[0].body.clone()).expect("utf8 body");
+    assert!(
+        !raw.contains("top_k"),
+        "extra keys must not reach the proxy body: {raw}"
+    );
+    let body: serde_json::Value = serde_json::from_str(&raw).expect("JSON body");
+    let option_keys: Vec<&str> = body["options"]
+        .as_object()
+        .expect("options object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        option_keys,
+        vec!["temperature"],
+        "proxy options schema must stay fixed: {raw}"
+    );
+}

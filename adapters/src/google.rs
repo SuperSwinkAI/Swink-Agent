@@ -370,16 +370,37 @@ async fn send_request(
     let body = convert_request(context, options);
     let api_key = options.api_key.as_deref().unwrap_or(&gemini.api_key);
 
-    gemini
-        .client
-        .post(&url)
-        .header("x-goog-api-key", api_key)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|error| {
-            AssistantMessageEvent::error_network(format!("Google connection error: {error}"))
-        })
+    let request = gemini.client.post(&url).header("x-goog-api-key", api_key);
+
+    // `ServingOptions::extra` merges into `generationConfig` — Gemini's
+    // provider-native generation knobs (`topK`, `topP`, `candidateCount`,
+    // `stopSequences`, `responseMimeType`, `seed`, …) live in that namespace,
+    // mirroring how the Ollama adapter merges `extra` into its `options`
+    // object. Keys are the wire (camelCase) names. Typed fields win on
+    // collision; unknown keys are rejected loudly by the API with HTTP 400.
+    // The empty-`extra` fast path serializes the typed struct directly,
+    // keeping default request bytes untouched.
+    let request = if options.serving.extra.is_empty() {
+        request.json(&body)
+    } else {
+        const TYPED_KEYS: &[&str] = &["temperature", "maxOutputTokens", "thinkingConfig"];
+        let mut value = serde_json::to_value(&body).map_err(|error| {
+            AssistantMessageEvent::error_network(format!("Google JSON error: {error}"))
+        })?;
+        if let Value::Object(map) = &mut value {
+            let config = map
+                .entry("generationConfig")
+                .or_insert_with(|| Value::Object(serde_json::Map::new()));
+            if let Value::Object(config) = config {
+                crate::base::merge_extra(config, &options.serving.extra, TYPED_KEYS);
+            }
+        }
+        request.json(&value)
+    };
+
+    request.send().await.map_err(|error| {
+        AssistantMessageEvent::error_network(format!("Google connection error: {error}"))
+    })
 }
 
 fn convert_request(context: &AgentContext, options: &StreamOptions) -> GeminiRequest {

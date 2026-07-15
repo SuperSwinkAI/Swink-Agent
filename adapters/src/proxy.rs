@@ -221,6 +221,19 @@ async fn send_request(
 ) -> Result<reqwest::Response, AssistantMessageEvent> {
     let url = format!("{}/v1/stream", proxy.base_url);
 
+    // The proxy wire protocol has no channel for `ServingOptions::extra`
+    // (its options schema is fixed: temperature / max_tokens / session_id),
+    // so honoring the pass-through contract is structurally impossible here.
+    // Reject loudly instead of silently: warn once per stream call, naming
+    // the dropped keys.
+    if !options.serving.extra.is_empty() {
+        let dropped_keys: Vec<&str> = options.serving.extra.keys().map(String::as_str).collect();
+        tracing::warn!(
+            ?dropped_keys,
+            "proxy protocol does not support ServingOptions::extra; dropping keys"
+        );
+    }
+
     let llm_messages: Vec<&LlmMessage> = context
         .messages
         .iter()

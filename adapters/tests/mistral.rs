@@ -1092,3 +1092,62 @@ impl AgentTool for DummyTool {
         Box::pin(async { AgentToolResult::text("done") })
     }
 }
+
+/// `ServingOptions::extra` merges into the top level of Mistral's request
+/// body (same rule as the shared OAI transport); keys colliding with typed
+/// fields are dropped — typed fields win.
+#[tokio::test]
+async fn mistral_extra_merges_into_top_level_body() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(sse_response(
+            &[
+                r#"data: {"choices":[{"delta":{"content":"ok"},"index":0}]}"#,
+                "",
+                r#"data: {"choices":[{"delta":{},"finish_reason":"stop","index":0}]}"#,
+                "",
+                "data: [DONE]",
+                "",
+                "",
+            ]
+            .join("\n"),
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let stream_fn = MistralStreamFn::new(server.uri(), "test-key");
+    let options = StreamOptions {
+        max_tokens: Some(512),
+        serving: swink_agent::ServingOptions {
+            extra: [
+                ("random_seed".to_string(), serde_json::json!(42)),
+                ("safe_prompt".to_string(), serde_json::json!(true)),
+                // Colliding key: the typed `max_tokens` must win.
+                ("max_tokens".to_string(), serde_json::json!(1)),
+            ]
+            .into_iter()
+            .collect(),
+            ..swink_agent::ServingOptions::default()
+        },
+        ..StreamOptions::default()
+    };
+    let model = test_model();
+    let context = test_context();
+    let events: Vec<AssistantMessageEvent> = stream_fn
+        .stream(&model, &context, &options, CancellationToken::new())
+        .collect()
+        .await;
+    assert!(matches!(events[0], AssistantMessageEvent::Start));
+
+    let received = server.received_requests().await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&received[0].body).expect("JSON body");
+    assert_eq!(body["random_seed"], serde_json::json!(42), "body: {body}");
+    assert_eq!(body["safe_prompt"], serde_json::json!(true), "body: {body}");
+    assert_eq!(
+        body["max_tokens"],
+        serde_json::json!(512),
+        "typed `max_tokens` must win over the colliding extra entry: {body}"
+    );
+}

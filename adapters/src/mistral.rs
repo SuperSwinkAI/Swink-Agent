@@ -165,6 +165,12 @@ struct MistralChatRequest {
     tools: Vec<crate::openai_compat::OaiTool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_choice: Option<String>,
+    /// Extra provider-native body fields (`swink_agent::ServingOptions::extra`)
+    /// minus keys colliding with the typed fields above (typed fields win);
+    /// built with `crate::base::merge_extra`. Empty flattened maps serialize
+    /// to nothing, so default bodies are unchanged.
+    #[serde(flatten)]
+    extra: serde_json::Map<String, serde_json::Value>,
 }
 
 // ─── Stream implementation ─────────────────────────────────────────────────
@@ -191,6 +197,20 @@ fn mistral_stream<'a>(
             convert_messages_for_mistral(&context.messages, &context.system_prompt, &mut id_map);
         let (tools, tool_choice) = build_oai_tools(&context.tools);
 
+        // Typed request fields win over colliding `ServingOptions::extra`
+        // keys, same rule as the shared OAI transport.
+        const TYPED_KEYS: &[&str] = &[
+            "model",
+            "messages",
+            "stream",
+            "temperature",
+            "max_tokens",
+            "tools",
+            "tool_choice",
+        ];
+        let mut extra = serde_json::Map::new();
+        crate::base::merge_extra(&mut extra, &options.serving.extra, TYPED_KEYS);
+
         let body = MistralChatRequest {
             model: model.model_id.clone(),
             messages,
@@ -199,6 +219,7 @@ fn mistral_stream<'a>(
             max_tokens: options.max_tokens,
             tools,
             tool_choice,
+            extra,
         };
 
         let request = mistral.shell.post_json_request(&url, &body, options);
