@@ -15,8 +15,8 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use common::{notify_on_request, test_context};
 use swink_agent::{
-    AssistantMessageEvent, ModelCapabilities, ModelSpec, ServingOptions, StopReason, StreamFn,
-    StreamOptions, ThinkingLevel,
+    AssistantMessageEvent, ModelCapabilities, ModelSpec, ResponseFormat, ServingOptions,
+    StopReason, StreamFn, StreamOptions, ThinkingLevel,
 };
 use swink_agent_adapters::OllamaStreamFn;
 
@@ -805,6 +805,7 @@ async fn ollama_serving_options_serialize_into_request_body() {
             context_length: Some(8192),
             top_p: Some(0.9),
             keep_alive: Some("5m".to_string()),
+            format: None,
             // The colliding `num_ctx` must lose to the typed `context_length`.
             extra: [
                 ("repeat_penalty".to_string(), serde_json::json!(1.1)),
@@ -853,10 +854,98 @@ async fn ollama_default_serving_options_leave_body_unchanged() {
 
     let requests = server.received_requests().await.expect("recording enabled");
     let body = String::from_utf8(requests[0].body.clone()).expect("utf8 body");
-    for key in ["num_ctx", "top_p", "keep_alive", "\"options\""] {
+    for key in ["num_ctx", "top_p", "keep_alive", "\"options\"", "format"] {
         assert!(
             !body.contains(key),
             "default serving options must not emit `{key}`, body: {body}"
         );
     }
+}
+
+/// Drive one request with `serving` and return the raw request body Ollama saw.
+async fn body_for_serving(serving: ServingOptions) -> String {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/chat"))
+        .respond_with(ndjson_response(&[
+            r#"{"message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":5,"eval_count":10}"#,
+        ]))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let ollama = OllamaStreamFn::new(server.uri());
+    let options = StreamOptions {
+        serving,
+        ..StreamOptions::default()
+    };
+    let _events: Vec<_> = ollama
+        .stream(
+            &test_model(),
+            &test_context(),
+            &options,
+            CancellationToken::new(),
+        )
+        .collect::<Vec<_>>()
+        .await;
+
+    let requests = server.received_requests().await.expect("recording enabled");
+    String::from_utf8(requests[0].body.clone()).expect("utf8 body")
+}
+
+/// 21. `ResponseFormat::Json` serializes as the **top-level** `format` request
+/// field. Ollama ignores `options.format`, so it must never land there.
+#[tokio::test]
+async fn ollama_response_format_json_is_top_level() {
+    let body = body_for_serving(ServingOptions {
+        format: Some(ResponseFormat::Json),
+        ..ServingOptions::default()
+    })
+    .await;
+
+    let json: serde_json::Value = serde_json::from_str(&body).expect("valid JSON body");
+    assert_eq!(json["format"], serde_json::json!("json"), "body: {body}");
+    assert!(
+        json.get("options").is_none(),
+        "`format` alone must not create an `options` object, body: {body}"
+    );
+}
+
+/// 22. `ResponseFormat::Schema` passes the JSON Schema through verbatim as the
+/// top-level `format` field, still with nothing under `options`.
+#[tokio::test]
+async fn ollama_response_format_schema_is_top_level_verbatim() {
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": { "name": { "type": "string" } },
+        "required": ["name"],
+    });
+    let body = body_for_serving(ServingOptions {
+        format: Some(ResponseFormat::Schema(schema.clone())),
+        // A sampling knob so `options` exists and can be checked for leakage.
+        top_p: Some(0.9),
+        ..ServingOptions::default()
+    })
+    .await;
+
+    let json: serde_json::Value = serde_json::from_str(&body).expect("valid JSON body");
+    assert_eq!(json["format"], schema, "schema must pass through: {body}");
+    assert_eq!(json["options"]["top_p"], serde_json::json!(0.9));
+    assert!(
+        json["options"].get("format").is_none(),
+        "`format` must never appear under `options`, body: {body}"
+    );
+}
+
+/// 23. With `format: None` the request body is byte-identical to what the
+/// adapter emitted before `ServingOptions::format` existed. The literal below
+/// was captured from the pre-change adapter; it must not drift.
+#[tokio::test]
+async fn ollama_format_none_body_is_byte_identical() {
+    let body = body_for_serving(ServingOptions::default()).await;
+    assert_eq!(
+        body,
+        r#"{"model":"test-model","messages":[{"role":"system","content":"You are a test assistant."}],"stream":true}"#,
+        "`format: None` must leave the request body byte-identical"
+    );
 }
