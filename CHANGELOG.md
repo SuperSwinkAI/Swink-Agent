@@ -13,10 +13,17 @@ Bundles the full 0.11.x development line off `integration`. **Supersedes the
 unreleased 0.11.1** — that version was never tagged or published, so its entries
 are folded in here rather than kept as a phantom release.
 
+### Added — manual context compaction (#1102)
+
+- **`swink-agent`**: `Agent::compact_context()` — an on-demand counterpart to the automatic in-loop compaction, for host `/compact` commands (unblocks SuperSwink-Coding's TUI `/compact`). Runs the configured context transformer(s) against the stored history with `overflow = true` (a host asking to compact wants maximal pruning), persists the pruned history, and returns the resulting `CompactionReport` synchronously.
+- Mirrors the loop pipeline exactly: async transformer first, sync second, one `AgentEvent::ContextCompacted` per transformer that compacts — dispatched through the normal subscriber/forwarder path, so existing host event rendering picks it up unchanged. Returns `Ok(None)` when no transformer is configured or the history is already under budget (no event emitted), and `Err(AgentError::AlreadyRunning)` while a loop is active, since compacting mid-turn would race the loop's view of the history.
+- Spec 006 amended additively (new FR-020 plus a Session 2026-07-15 clarification): manual invocation means `overflow = true` no longer implies a provider overflow error occurred.
+
 ### Fixed — `swink-agentd` honors `LLM_SYSTEM_PROMPT` / `LLM_MODEL` (#931)
 
 - The daemon loads `.env` via dotenvy but its clap args used baked-in `default_value`s, so `LLM_SYSTEM_PROMPT` and `LLM_MODEL` from the environment were silently ignored — set in `.env`, the TUI honored them and `swink-agentd` didn't. Both args are now `Option<String>` resolved as CLI flag > env var > shared default, mirroring the TUI's tested `resolve_system_prompt` chain.
 - The duplicated default literals are promoted to shared core constants `swink_agent::{DEFAULT_SYSTEM_PROMPT, DEFAULT_MODEL}` (additive), and the TUI's proxy-mode model fallback now uses the documented `claude-sonnet-4-6` alias instead of the dated `claude-sonnet-4-20250514` snapshot.
+
 
 ### Added — TUI cost/usage display with pluggable pricing (#1084, #1108)
 
