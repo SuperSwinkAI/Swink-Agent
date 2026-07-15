@@ -7,5 +7,6 @@ mod input_ui;
 mod path_mentions;
 mod persistence;
 mod plan_mode;
+mod skills;
 mod tool_blocks;
 mod usage_command;

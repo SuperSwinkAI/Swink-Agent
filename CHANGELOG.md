@@ -19,6 +19,13 @@ are folded in here rather than kept as a phantom release.
 - Mirrors the loop pipeline exactly: async transformer first, sync second, one `AgentEvent::ContextCompacted` per transformer that compacts — dispatched through the normal subscriber/forwarder path, so existing host event rendering picks it up unchanged. Returns `Ok(None)` when no transformer is configured or the history is already under budget (no event emitted), and `Err(AgentError::AlreadyRunning)` while a loop is active, since compacting mid-turn would race the loop's view of the history.
 - Spec 006 amended additively (new FR-020 plus a Session 2026-07-15 clarification): manual invocation means `overflow = true` no longer implies a provider overflow error occurred.
 
+### Added — TUI skills discovery (#1092)
+
+- **`swink-agent-tui`**: three new `TuiExtensions` seams for pluggable skill discovery with progressive disclosure — `with_skill_completions` (`SkillCandidate` list as a leading `/name` is typed), `with_skill_details` (SKILL.md body on highlight, cached per popup so arrow-key travel never re-invokes the callback), and `with_skill_resolver` (expansion at submit only, via the new `SkillInvocation`/`parse_skill_invocation`). Plus `App::skill_completion`/`SkillCompletion`, `InputEditor::slash_query`, and a preview block in the completion popup.
+- Submit precedence is secrets → host commands → skills → built-ins: a known skill submits as a prompt (raw `/deploy` stays in the transcript; the model receives the expansion) instead of hitting the Unknown-command fallback. `@path` mentions expand on the raw text first, so a skill body is never mention-scanned.
+- New off-by-default **`skills` cargo feature**: `TuiExtensions::with_skill_dirs` eagerly indexes `<dir>/<name>/SKILL.md` (YAML frontmatter `name`/`description`, directory-name fallback) under explicitly passed directories only — no implicit default paths — and wires all three seams over that index.
+
+
 ### Added — TUI cost/usage display with pluggable pricing (#1084, #1108)
 
 - **`swink-agent`**: new `pricing` module (`CostCalculator`, `ModelRates`, `PricingTable`), `AgentOptions::with_cost_calculator`/`with_pricing_table`, `AgentLoopConfig::cost_calculator`, and `price_assistant_message_with` — operators can declare per-tier rates that outrank the compiled catalog.

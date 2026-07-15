@@ -20,15 +20,25 @@ impl App {
             return;
         }
 
-        // This is the *only* place `@path` mentions are expanded, and it runs
-        // once per submitted prompt — never while the user types (issue #1093).
-        // `text` stays raw from here on, so the conversation view and the
-        // queued-message overlay keep showing `@src/lib.rs` rather than the
-        // file content that goes to the model.
+        // This is the *only* place `@path` mentions and `/skill` invocations
+        // are expanded, and it runs once per submitted prompt — never while
+        // the user types (issues #1093, #1092). `text` stays raw from here on,
+        // so the conversation view and the queued-message overlay keep showing
+        // `@src/lib.rs` / `/deploy` rather than the content that goes to the
+        // model.
         let outbound = self
             .extensions
             .resolve_mentions(&text)
             .unwrap_or_else(|| text.clone());
+
+        // ORDER MATTERS: mentions are resolved on the raw text FIRST, and only
+        // then is the skill invocation parsed from — and expanded into — the
+        // result. The invocation is a leading token, so its span survives
+        // mention splices later in the string; and because the skill body is
+        // inserted *after* mention scanning, that body is never mention-scanned
+        // itself — a SKILL.md containing `@/etc/passwd` must NOT induce a host
+        // file read.
+        let outbound = self.extensions.resolve_skill(&outbound).unwrap_or(outbound);
 
         let Some(agent) = &mut self.agent else {
             return;

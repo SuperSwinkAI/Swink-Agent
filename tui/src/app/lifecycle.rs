@@ -90,6 +90,7 @@ impl App {
             selection: None,
             extensions: crate::extensions::TuiExtensions::new(),
             path_completion: None,
+            skill_completion: None,
         }
     }
 

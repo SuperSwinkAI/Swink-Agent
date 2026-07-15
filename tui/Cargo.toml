@@ -41,6 +41,7 @@ tracing-appender = "0.2.5"
 dotenvy.workspace = true
 thiserror.workspace = true
 tempfile.workspace = true
+serde_yaml = { workspace = true, optional = true }
 
 [features]
 default = ["cli"]
@@ -48,6 +49,8 @@ cli = ["adapters"]
 adapters = ["dep:swink-agent-adapters"]
 full = ["local", "cli"]
 local = ["dep:swink-agent-local-llm"]
+# Filesystem-backed skills discovery (`TuiExtensions::with_skill_dirs`).
+skills = ["dep:serde_yaml"]
 
 [[example]]
 name = "custom_agent"
