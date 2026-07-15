@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
 
+# Parity with release.yml: warnings are hard errors everywhere, not just in
+# the explicit `clippy -- -D warnings` step. Without this, a warning can pass
+# CI and then fail the release build.
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
 jobs:
   # ── Primary gate: matrix over ubuntu + macos, runs on every PR ──────────
   check:
@@ -27,25 +34,25 @@ jobs:
       - name: Spell check
         uses: crate-ci/typos@bee27e3a4fd1ea2111cf90ab89cd076c870fce14 # v1
 
-      - run: cargo clippy --workspace -- -D warnings
+      - run: cargo clippy --workspace --locked -- -D warnings
 
       - uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
 
       - run: cargo binstall --no-confirm --force --locked cargo-nextest
 
-      - run: cargo nextest run --workspace
+      - run: cargo nextest run --workspace --locked
 
       - name: Test (testkit features)
-        run: cargo test --workspace --features testkit
+        run: cargo test --workspace --features testkit --locked
 
-      - run: cargo build --examples --workspace
+      - run: cargo build --examples --workspace --locked
 
-      - run: cargo test --workspace --doc
+      - run: cargo test --workspace --doc --locked
 
-      - run: cargo test -p swink-agent --no-default-features
+      - run: cargo test -p swink-agent --no-default-features --locked
 
       - name: Check docs
-        run: cargo doc --no-deps --workspace
+        run: cargo doc --no-deps --workspace --locked
         env:
           RUSTDOCFLAGS: "-D warnings"
 
@@ -67,7 +74,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
-      - run: cargo check --workspace --all-targets
+      - run: cargo check --workspace --all-targets --locked
 
   # ── Feature matrix: consolidated from features + feature-smoke + all-features ─
   features:
@@ -84,34 +91,37 @@ jobs:
       - run: cargo binstall --no-confirm --force cargo-hack
 
       # Each-feature check (excludes local-llm: metal/cuda/cudnn/vulkan all need GPU toolchains unavailable on ubuntu-latest)
+      # No --locked here: --no-dev-deps rewrites Cargo.toml while cargo-hack runs, and --locked
+      # then refuses to update Cargo.lock ("cannot update the lock file ... because --locked was
+      # passed"). The two flags are mutually exclusive. Every other step keeps --locked.
       - name: cargo hack (each feature)
         run: cargo hack check --workspace --each-feature --no-dev-deps --exclude swink-agent-local-llm
 
       # Feature-smoke sentinels
       - name: Adapters no-default-features sentinel
-        run: cargo test -p swink-agent-adapters --no-default-features --test no_default_features
+        run: cargo test -p swink-agent-adapters --no-default-features --test no_default_features --locked
 
       - name: Adapters anthropic feature smoke
-        run: cargo check -p swink-agent-adapters --no-default-features --features anthropic
+        run: cargo check -p swink-agent-adapters --no-default-features --features anthropic --locked
 
       - name: Adapters gemini feature smoke
-        run: cargo check -p swink-agent-adapters --no-default-features --features gemini
+        run: cargo check -p swink-agent-adapters --no-default-features --features gemini --locked
 
       - name: Local LLM no-default-features sentinel
-        run: cargo test -p swink-agent-local-llm --no-default-features --test no_default_features
+        run: cargo test -p swink-agent-local-llm --no-default-features --test no_default_features --locked
 
       - name: Local LLM gemma4 feature smoke
-        run: cargo check -p swink-agent-local-llm --no-default-features --features gemma4
+        run: cargo check -p swink-agent-local-llm --no-default-features --features gemma4 --locked
 
       # All-features workspace test
       - name: Test (all features)
-        run: cargo test --workspace --all-features --exclude swink-agent-local-llm
+        run: cargo test --workspace --all-features --exclude swink-agent-local-llm --locked
 
       - name: Build policies example (all features)
-        run: cargo build -p swink-agent-policies --all-features --example with_policies
+        run: cargo build -p swink-agent-policies --all-features --example with_policies --locked
 
       - name: Build TUI example (all features)
-        run: cargo build -p swink-agent-tui --all-features --example custom_agent
+        run: cargo build -p swink-agent-tui --all-features --example custom_agent --locked
 
   # ── Dependency policy ───────────────────────────────────────────────────
   deny:
@@ -121,7 +131,43 @@ jobs:
 
       - uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2
 
-  # ── Windows smoke: still main-push-only (Windows runners are expensive) ─
+  # ── CVE scan: complements cargo-deny's advisory check ───────────────────
+  # The --ignore list mirrors the `[advisories] ignore` list in deny.toml so
+  # the two tools stay consistent. Keep them in sync when either changes.
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
+
+      - run: cargo binstall --no-confirm --force cargo-audit
+
+      # RUSTSEC-2024-0384 — `instant` unmaintained, transitive via
+      # notify-types. Mirrors the deny.toml ignore; no upstream fix available.
+      - run: cargo audit --ignore RUSTSEC-2024-0384
+
+  # ── Windows PR smoke: cargo check only ─────────────────────────────────
+  # Windows runners bill at 2x, so PRs get a compile-only gate to catch
+  # platform breakage early. The full Windows suite still runs on main push
+  # via `check-platform` below.
+  check-windows:
+    name: Windows smoke (cargo check)
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - run: cargo check --workspace --all-targets --locked
+
+  # ── Windows full suite: still main-push-only (Windows runners are expensive) ─
   check-platform:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: windows-latest
@@ -136,18 +182,18 @@ jobs:
 
       - run: cargo fmt --check
 
-      - run: cargo clippy --workspace -- -D warnings
+      - run: cargo clippy --workspace --locked -- -D warnings
 
       - uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
 
       - run: cargo binstall --no-confirm --force cargo-nextest
 
-      - run: cargo nextest run --workspace
+      - run: cargo nextest run --workspace --locked
 
-      - run: cargo test --workspace --doc
+      - run: cargo test --workspace --doc --locked
 
       - name: Check docs
-        run: cargo doc --no-deps --workspace
+        run: cargo doc --no-deps --workspace --locked
         env:
           RUSTDOCFLAGS: "-D warnings"
 
