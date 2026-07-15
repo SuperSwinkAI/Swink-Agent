@@ -202,6 +202,17 @@ extract_tool_schemas(tools: &[Arc<dyn AgentTool>]) -> Vec<ToolSchema>
 .with_token_counter(counter: Arc<dyn TokenCounter>) -> Self
 ```
 
+## Agent Methods (context-related)
+
+```rust
+// Manual compact-on-demand (FR-020, #1102). Runs the configured hook(s)
+// against the stored history with overflow = true, emits ContextCompacted
+// per compacting hook, and returns the last report. Ok(None) when no hook
+// is configured or every hook declines; Err(AgentError::AlreadyRunning)
+// while a loop is active.
+Agent::compact_context(&mut self) -> Result<Option<CompactionReport>, AgentError>
+```
+
 ## Re-exports from lib.rs
 
 ```rust

@@ -160,6 +160,7 @@ A developer wants to check whether the current context would exceed the model's 
 - **FR-017**: When no `CacheConfig` is set, caching-related behavior MUST be completely absent — zero overhead, full backward compatibility.
 - **FR-018**: When `CacheConfig` is active, the system MUST emit an `AgentEvent::CacheAction { hint, prefix_tokens }` event each turn, enabling observability of cache write/read/refresh transitions.
 - **FR-019**: When an adapter returns a cache-miss error, the framework MUST reset `CacheState` and retry the turn with `CacheHint::Write`, following the existing `RetryStrategy` path.
+- **FR-020**: System MUST provide a manual compaction entry point on the agent (`Agent::compact_context`) that runs the configured transformation hook(s) against the stored history on host demand, outside the turn loop. Added by [#1102](https://github.com/SuperSwinkAI/Swink-Agent/issues/1102). Manual invocation passes `overflow = true` (maximal pruning), emits one `AgentEvent::ContextCompacted` per hook that reports compaction through the normal event path, persists the pruned history, and preserves the loop's hook order (async first, sync second). With no hook configured, or when every hook declines, it is a no-op returning no report and emitting no event. It MUST refuse to run while an agent loop is active.
 
 ### Key Entities
 
@@ -209,6 +210,12 @@ A developer wants to check whether the current context would exceed the model's 
 - Q: How is the dynamic prompt placed relative to the static prompt? → A: Static prompt is the system prompt message (the cache target). Dynamic prompt is injected as a separate user-role message immediately after the system prompt. This ensures the system prompt message is byte-identical across turns, preserving the cache. Follows Google ADK's pattern: static in `system_instruction`, dynamic appended to `contents`.
 - Q: Can `static_system_prompt` change mid-conversation? → A: No. `static_system_prompt` is immutable for the lifetime of the agent loop. Changing persona or tool set requires starting a new agent/session. This is a documented constraint — enforced by taking `static_system_prompt` as an owned `String` at construction, not a closure.
 - Q: How does the adapter signal a provider-side cache miss to the framework? → A: Adapter returns a retryable error (new `AgentError::CacheMiss` variant or tagged `NetworkError`). The framework's retry path detects the cache-miss error kind and calls `CacheState::reset()` before the retry turn, so the next attempt emits `CacheHint::Write` with fresh content. Follows the existing `RetryStrategy` pattern — no new retry mechanism needed.
+
+### Session 2026-07-15 — manual compact-on-demand (#1102)
+
+- Q: [#1102](https://github.com/SuperSwinkAI/Swink-Agent/issues/1102) asks for a host-triggered compaction entry point (a TUI `/compact` command downstream). FR-005/FR-007 describe hooks called "before each provider call" with the overflow signal set "after a context overflow error" — does manual invocation change that contract? → A: **It extends it additively (new FR-020); nothing existing changes.** The in-loop schedule and overflow semantics are untouched. Manual invocation is a second caller of the same hooks: it always passes `overflow = true` because a host explicitly asking to compact wants maximal pruning (the sliding window's `overflow_budget`), not the lenient normal budget. Hooks therefore cannot assume `overflow = true` implies a provider overflow error occurred.
+- Q: Does an under-budget manual call return `Some(report)` with `dropped_count == 0` or `None`? → A: `None` — manual compaction mirrors loop compaction exactly, and the hooks already return `None` when they decline. No event is emitted for a declined pass, same as in the loop.
+- Q: Why does `compact_context` refuse to run while a loop is active? → A: The loop owns the working copy of the history during a run (`start_loop` takes it); compacting the agent-side history concurrently would race the loop's view. The method follows the same `AlreadyRunning` guard as the other invocation entry points.
 
 ## Assumptions
 
