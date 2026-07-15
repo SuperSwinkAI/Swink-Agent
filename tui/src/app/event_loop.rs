@@ -11,7 +11,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 
 use swink_agent::{ApprovalMode, ToolApproval};
 
-use super::state::{Selection, TrustFollowUp};
+use super::state::{PathCompletion, Selection, TrustFollowUp};
 use crate::commands::{self, ApprovalModeArg, ClipboardContent, CommandResult};
 use crate::theme;
 use crate::ui;
@@ -221,7 +221,23 @@ impl App {
         self.dirty = true;
     }
 
-    pub(super) fn handle_key_event(&mut self, key: KeyEvent) {
+    /// Feed one key event through the same path [`App::run`] uses.
+    ///
+    /// Public so a host can drive the input flow from outside the crate —
+    /// including asserting on `@path` completion in its own tests — without
+    /// forking. Mirrors
+    /// [`handle_agent_event`](App::handle_agent_event) on the agent side.
+    ///
+    /// # Example
+    /// ```rust
+    /// use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    /// use swink_agent_tui::{App, TuiConfig};
+    ///
+    /// let mut app = App::new(TuiConfig::default());
+    /// app.handle_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+    /// assert_eq!(app.input.lines(), ["h"]);
+    /// ```
+    pub fn handle_key_event(&mut self, key: KeyEvent) {
         match (key.modifiers, key.code) {
             (KeyModifiers::CONTROL, KeyCode::Char('q')) => {
                 self.should_quit = true;
@@ -381,26 +397,93 @@ impl App {
         false
     }
 
-    fn handle_input_key(&mut self, key: KeyEvent) {
+    /// Recompute the `@path` completion popup against the cursor.
+    ///
+    /// Called after anything that moves the cursor or changes the text. Returns
+    /// immediately when no host provider is registered, so hosts that never
+    /// opted into `@path` completion pay nothing per keystroke. Note this only
+    /// ever asks the host for *candidates* — file content is resolved at submit
+    /// time (see [`App::send_to_agent`]), never here.
+    pub(super) fn refresh_path_completion(&mut self) {
+        if !self.extensions.has_path_completions() {
+            return;
+        }
+
+        let previous = self.path_completion.take();
+        let Some(query) = self.input.mention_query() else {
+            self.dirty |= previous.is_some();
+            return;
+        };
+
+        let candidates = self.extensions.complete_path(&query.query);
+        if candidates.is_empty() {
+            self.dirty |= previous.is_some();
+            return;
+        }
+
+        // Keep the highlight where it was if the same candidate is still on
+        // offer, so refining a query does not silently re-point the selection.
+        let selected = previous
+            .as_ref()
+            .and_then(PathCompletion::selected_candidate)
+            .and_then(|prior| candidates.iter().position(|next| next == prior))
+            .unwrap_or(0);
+
+        self.path_completion = Some(PathCompletion {
+            candidates,
+            selected,
+            start: query.start,
+        });
+        self.dirty = true;
+    }
+
+    /// Accept the highlighted candidate into the input, closing the popup.
+    pub(super) fn accept_path_completion(&mut self) {
+        let Some(completion) = self.path_completion.take() else {
+            return;
+        };
+        if let Some(candidate) = completion.selected_candidate() {
+            // The trailing space terminates the mention, which closes the popup
+            // on the next refresh without a special case.
+            self.input
+                .replace_mention_query(completion.start, &format!("@{} ", candidate.path));
+        }
+        self.dirty = true;
+    }
+
+    /// Keys the `@path` popup consumes while open. Returns whether it took the key.
+    ///
+    /// Up/Down navigate rather than recalling history, Tab/Enter accept rather
+    /// than switching focus or submitting, and Esc dismisses rather than
+    /// aborting the agent — each only while the popup is actually open.
+    fn handle_path_completion_key(&mut self, key: KeyEvent) -> bool {
+        let Some(completion) = &mut self.path_completion else {
+            return false;
+        };
+
         match (key.modifiers, key.code) {
-            (_, KeyCode::Esc) if self.status == AgentStatus::Running => {
-                self.abort_agent();
+            (_, KeyCode::Up) => completion.select_prev(),
+            (_, KeyCode::Down) => completion.select_next(),
+            (_, KeyCode::Tab | KeyCode::Enter) => {
+                self.accept_path_completion();
+                return true;
             }
-            (KeyModifiers::SHIFT, KeyCode::BackTab) => {
-                self.toggle_operating_mode();
-            }
-            (_, KeyCode::Tab) => {
-                self.focus = match self.focus {
-                    Focus::Input => Focus::Conversation,
-                    Focus::Conversation => Focus::Input,
-                };
-            }
-            (KeyModifiers::NONE, KeyCode::Enter) => {
-                self.submit_input();
-            }
-            (KeyModifiers::SHIFT, KeyCode::Enter) => {
-                self.input.insert_newline();
-            }
+            (_, KeyCode::Esc) => self.path_completion = None,
+            _ => return false,
+        }
+
+        self.dirty = true;
+        true
+    }
+
+    /// Keys that edit the text or move the cursor. Returns whether the key was one.
+    ///
+    /// Grouped together because they share an epilogue: every one of them can
+    /// move the cursor into or out of an `@path` mention, so each is followed by
+    /// a single completion refresh.
+    fn handle_editing_key(&mut self, key: KeyEvent) -> bool {
+        match (key.modifiers, key.code) {
+            (KeyModifiers::SHIFT, KeyCode::Enter) => self.input.insert_newline(),
             (_, KeyCode::Home) | (KeyModifiers::CONTROL, KeyCode::Char('a')) => {
                 self.input.move_home();
             }
@@ -423,6 +506,45 @@ impl App {
             }
             (KeyModifiers::NONE, KeyCode::Left) => self.input.move_left(),
             (KeyModifiers::NONE, KeyCode::Right) => self.input.move_right(),
+            (_, KeyCode::Backspace) => self.input.backspace(),
+            (_, KeyCode::Delete) => self.input.delete(),
+            (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(character)) => {
+                self.input.insert_char(character);
+            }
+            _ => return false,
+        }
+
+        self.refresh_path_completion();
+        true
+    }
+
+    fn handle_input_key(&mut self, key: KeyEvent) {
+        // Precedence: an open completion popup claims its keys first, then the
+        // editing keys, then everything else.
+        if self.handle_path_completion_key(key) {
+            return;
+        }
+        if matches!(key.code, KeyCode::Esc) && self.status == AgentStatus::Running {
+            self.abort_agent();
+            return;
+        }
+        if self.handle_editing_key(key) {
+            return;
+        }
+
+        match (key.modifiers, key.code) {
+            (KeyModifiers::SHIFT, KeyCode::BackTab) => {
+                self.toggle_operating_mode();
+            }
+            (_, KeyCode::Tab) => {
+                self.focus = match self.focus {
+                    Focus::Input => Focus::Conversation,
+                    Focus::Conversation => Focus::Input,
+                };
+            }
+            (KeyModifiers::NONE, KeyCode::Enter) => {
+                self.submit_input();
+            }
             (_, KeyCode::PageUp) => {
                 let page = self.conversation_page_height();
                 self.conversation.scroll_up(page);
@@ -431,8 +553,6 @@ impl App {
                 let page = self.conversation_page_height();
                 self.conversation.scroll_down(page, page);
             }
-            (_, KeyCode::Backspace) => self.input.backspace(),
-            (_, KeyCode::Delete) => self.input.delete(),
             (_, KeyCode::F(1)) => {
                 self.help_panel.toggle();
             }
@@ -462,9 +582,6 @@ impl App {
             (KeyModifiers::SHIFT, KeyCode::Right) => {
                 self.select_next_tool_block();
             }
-            (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(character)) => {
-                self.input.insert_char(character);
-            }
             _ => {}
         }
     }
@@ -492,6 +609,10 @@ impl App {
 
     #[allow(clippy::too_many_lines)]
     pub(super) fn submit_input(&mut self) {
+        // Whatever is in the editor is what gets submitted; an open popup is
+        // not an implicit accept.
+        self.path_completion = None;
+
         // Classify the pending input BEFORE draining the editor so that
         // secret-bearing commands (e.g. `#key <provider> <api-key>`) can be
         // submitted without entering the input history. See issue #614.

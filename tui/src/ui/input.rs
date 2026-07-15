@@ -8,6 +8,18 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use crate::theme;
 
+/// An in-progress `@path` mention sitting under the cursor.
+///
+/// Produced by [`InputEditor::mention_query`] and consumed by
+/// [`InputEditor::replace_mention_query`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MentionQuery {
+    /// Byte offset of the `@` within the cursor's line.
+    pub start: usize,
+    /// Text between the `@` and the cursor. Empty right after `@` is typed.
+    pub query: String,
+}
+
 /// Multi-line input editor state.
 pub struct InputEditor {
     /// Lines of text in the editor.
@@ -285,6 +297,60 @@ impl InputEditor {
         }
     }
 
+    /// The `@path` mention the cursor is currently inside, if any.
+    ///
+    /// Returns `None` unless the cursor sits at the end of an unbroken `@`
+    /// token: the `@` must start the line or follow whitespace, and no
+    /// whitespace may fall between it and the cursor. That means moving the
+    /// cursor away from a mention, or typing a space to finish one, closes the
+    /// completion popup without any special-casing at the call site.
+    #[must_use]
+    pub fn mention_query(&self) -> Option<MentionQuery> {
+        let line = self.lines.get(self.cursor_row)?;
+        let cursor_byte = Self::char_to_byte(line, self.cursor_col);
+        let before = line.get(..cursor_byte)?;
+
+        let start = before.rfind('@')?;
+        let query = &before[start + '@'.len_utf8()..];
+        if query.chars().any(char::is_whitespace) {
+            return None;
+        }
+        if start > 0
+            && !before[..start]
+                .chars()
+                .next_back()
+                .is_some_and(char::is_whitespace)
+        {
+            return None;
+        }
+
+        Some(MentionQuery {
+            start,
+            query: query.to_string(),
+        })
+    }
+
+    /// Replace the mention token running from `start` to the cursor.
+    ///
+    /// `start` is a [`MentionQuery::start`] offset and `replacement` is the
+    /// full mention text including its `@`. The cursor lands at the end of the
+    /// inserted text. A `start` that is no longer valid (stale offset, moved
+    /// cursor) is ignored rather than panicking.
+    pub fn replace_mention_query(&mut self, start: usize, replacement: &str) {
+        let Some(line) = self.lines.get(self.cursor_row) else {
+            return;
+        };
+        let cursor_byte = Self::char_to_byte(line, self.cursor_col);
+        if start > cursor_byte || !line.is_char_boundary(start) {
+            return;
+        }
+
+        self.lines[self.cursor_row].replace_range(start..cursor_byte, replacement);
+        self.cursor_col = self.lines[self.cursor_row][..start + replacement.len()]
+            .chars()
+            .count();
+    }
+
     /// Check if this is a multi-line input.
     pub const fn is_multiline(&self) -> bool {
         self.lines.len() > 1
@@ -515,6 +581,108 @@ mod tests {
         editor.history_next();
         // Should restore to empty (saved input)
         assert_eq!(editor.lines, vec![String::new()]);
+    }
+
+    fn editor_with(text: &str) -> InputEditor {
+        let mut editor = InputEditor::new();
+        for ch in text.chars() {
+            if ch == '\n' {
+                editor.insert_newline();
+            } else {
+                editor.insert_char(ch);
+            }
+        }
+        editor
+    }
+
+    #[test]
+    fn no_mention_query_in_plain_text() {
+        assert!(editor_with("hello world").mention_query().is_none());
+    }
+
+    #[test]
+    fn mention_query_is_empty_right_after_the_at_sign() {
+        let query = editor_with("look at @").mention_query().unwrap();
+        assert_eq!(query.query, "");
+        assert_eq!(query.start, 8);
+    }
+
+    #[test]
+    fn mention_query_grows_as_the_path_is_typed() {
+        assert_eq!(
+            editor_with("@src/li").mention_query().unwrap().query,
+            "src/li"
+        );
+    }
+
+    #[test]
+    fn whitespace_after_the_mention_closes_the_query() {
+        assert!(editor_with("@src/lib.rs ").mention_query().is_none());
+    }
+
+    #[test]
+    fn at_sign_inside_a_word_is_not_a_mention_query() {
+        assert!(editor_with("wes@example").mention_query().is_none());
+    }
+
+    #[test]
+    fn mention_query_tracks_the_cursor_not_the_line_end() {
+        let mut editor = editor_with("@src/lib.rs");
+        editor.move_left();
+        editor.move_left();
+        // Cursor sits between "." and "rs" — the query is the prefix only.
+        assert_eq!(editor.mention_query().unwrap().query, "src/lib.");
+    }
+
+    #[test]
+    fn mention_query_found_on_a_later_line() {
+        let editor = editor_with("first line\n@src/li");
+        let query = editor.mention_query().unwrap();
+        assert_eq!(query.query, "src/li");
+        assert_eq!(query.start, 0);
+    }
+
+    #[test]
+    fn replace_mention_query_swaps_in_the_accepted_path() {
+        let mut editor = editor_with("look at @src/li");
+        let start = editor.mention_query().unwrap().start;
+        editor.replace_mention_query(start, "@src/lib.rs ");
+        assert_eq!(editor.lines(), ["look at @src/lib.rs "]);
+    }
+
+    #[test]
+    fn replace_mention_query_leaves_the_cursor_after_the_insertion() {
+        let mut editor = editor_with("@src/li");
+        editor.replace_mention_query(0, "@src/lib.rs ");
+        assert_eq!(editor.cursor_col, 12);
+        editor.insert_char('x');
+        assert_eq!(editor.lines(), ["@src/lib.rs x"]);
+    }
+
+    #[test]
+    fn replace_mention_query_preserves_text_after_the_cursor() {
+        let mut editor = editor_with("@src/li tail");
+        for _ in 0..5 {
+            editor.move_left();
+        }
+        let start = editor.mention_query().unwrap().start;
+        editor.replace_mention_query(start, "@src/lib.rs");
+        assert_eq!(editor.lines(), ["@src/lib.rs tail"]);
+    }
+
+    #[test]
+    fn replace_mention_query_ignores_a_stale_start_offset() {
+        let mut editor = editor_with("@a");
+        editor.replace_mention_query(99, "@should-not-apply");
+        assert_eq!(editor.lines(), ["@a"]);
+    }
+
+    #[test]
+    fn replace_mention_query_handles_multibyte_prefixes() {
+        let mut editor = editor_with("héllo @src/li");
+        let start = editor.mention_query().unwrap().start;
+        editor.replace_mention_query(start, "@src/lib.rs");
+        assert_eq!(editor.lines(), ["héllo @src/lib.rs"]);
     }
 
     #[test]

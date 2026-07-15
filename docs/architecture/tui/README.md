@@ -333,6 +333,45 @@ credentials.
 `TuiExtensions` is a consuming builder with a `Default` impl — further seams are
 added as additional `with_*` methods without breaking existing callers.
 
+### `@path` file mentions
+
+Two seams, deliberately split by *when* they run:
+
+```rust,ignore
+let extensions = TuiExtensions::new()
+    // 1. Discovery — runs per keystroke inside an `@` mention.
+    .with_path_completions(|query| my_index.matching(query).map(PathCandidate::new).collect())
+    // 2. Expansion — runs once per submitted prompt that contains a mention.
+    .with_mention_resolver(|text, mentions| {
+        let mut out = text.to_string();
+        for mention in mentions.iter().rev() {   // back-to-front keeps spans valid
+            let body = std::fs::read_to_string(&mention.path).ok()?;
+            out.replace_range(mention.start..mention.end, &body);
+        }
+        Some(out)
+    });
+```
+
+The TUI never touches the filesystem. It parses mentions (`parse_mentions`),
+renders the popup, and hands the host `PathMention`s with byte spans; the host
+owns path discovery, working-directory semantics, ignore rules, and file reads.
+
+**Resolution is lazy by construction.** The resolver is called from
+`send_to_agent`, not from the input handler, so:
+
+- typing `@src/lib.rs` reads nothing — only the completion provider runs;
+- the resolver runs once, at submit, and only when the text holds a mention;
+- the conversation view keeps showing the raw `@src/lib.rs`, while the agent
+  receives the expansion. `mentions_resolve_at_submit_and_never_while_typing`
+  pins this.
+
+A mention is an `@` that starts the text or follows whitespace, plus the
+following non-whitespace run, minus trailing sentence punctuation — so
+`user@example.com` is not a mention and `see @src/lib.rs.` mentions
+`src/lib.rs`. While the popup is open it takes Up/Down (navigate), Tab/Enter
+(accept), and Esc (dismiss); each falls through to its normal binding when the
+popup is closed.
+
 ---
 
 ## Terminal Setup / Teardown
