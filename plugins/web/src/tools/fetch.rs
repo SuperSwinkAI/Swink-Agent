@@ -64,6 +64,7 @@ impl FetchTool {
         request_timeout: Duration,
         user_agent: Option<&str>,
     ) -> reqwest::Client {
+        crate::ensure_default_crypto_provider();
         let mut builder = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(request_timeout);
@@ -213,6 +214,7 @@ impl FetchTool {
             return Ok(self.client.clone());
         };
 
+        crate::ensure_default_crypto_provider();
         let mut builder = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(self.request_timeout)

@@ -102,6 +102,25 @@ pub fn cancelled_error(message: impl Into<String>) -> swink_agent::AssistantMess
     }
 }
 
+/// Ensure a process-wide default rustls crypto provider is installed.
+///
+/// The workspace builds reqwest with `rustls-no-provider` so that the
+/// default aws-lc-rs provider — whose `aws-lc-sys` build requires `cc` and
+/// CMake (plus NASM on Windows) — never enters a consumer's dependency
+/// tree (#1110). In that configuration reqwest refuses to construct a
+/// `Client` (it panics in `ClientBuilder::build`) until a process default
+/// [`rustls::crypto::CryptoProvider`] exists, so this installs ring.
+///
+/// Idempotent and race-safe: if a provider is already installed —
+/// including a different one chosen by the host application, e.g.
+/// aws-lc-rs for FIPS — the existing installation wins and this is a
+/// no-op. Every adapter constructor calls it before building its HTTP
+/// client; hosts that build their own `reqwest::Client` against the same
+/// feature unification should call it too.
+pub fn ensure_default_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 /// Build the default HTTP client used by remote adapters.
 ///
 /// Streaming endpoints should not use an overall request deadline, because a
@@ -127,6 +146,7 @@ pub(crate) fn adapter_http_client_with_timeouts(
     connect_timeout: Duration,
     read_timeout: Duration,
 ) -> reqwest::Client {
+    ensure_default_crypto_provider();
     reqwest::Client::builder()
         .connect_timeout(connect_timeout)
         .read_timeout(read_timeout)
@@ -305,6 +325,7 @@ mod tests {
             }
         });
 
+        ensure_default_crypto_provider();
         let response = reqwest::Client::new()
             .get(format!("http://{addr}/"))
             .send()
@@ -349,6 +370,7 @@ mod tests {
             }
         });
 
+        ensure_default_crypto_provider();
         let response = reqwest::Client::new()
             .get(format!("http://{addr}/"))
             .send()

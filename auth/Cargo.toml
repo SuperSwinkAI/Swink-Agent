@@ -24,6 +24,10 @@ keychain = ["dep:keyring", "tokio/rt"]
 [dependencies]
 swink-agent = { path = "..", version = "0.12.0", default-features = false }
 reqwest.workspace = true
+# Supplies the `ring` crypto provider, installed as the process default
+# before any reqwest client is built (workspace reqwest is
+# `rustls-no-provider`; see the root Cargo.toml).
+rustls.workspace = true
 chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true

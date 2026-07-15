@@ -288,6 +288,7 @@ async fn materialize_checked_url(
     parsed: Url,
     filter: &dyn UrlFilter,
 ) -> Result<MaterializedAttachment, AttachmentError> {
+    crate::ensure_default_crypto_provider();
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()

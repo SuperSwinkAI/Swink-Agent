@@ -66,6 +66,7 @@ impl LangSmithExporter {
         &self,
         result: &EvalSetResult,
     ) -> Result<ReporterOutput, LangSmithExportError> {
+        crate::ensure_default_crypto_provider();
         let client = reqwest::Client::new();
         let runs_url = self.api_path("runs")?;
         let feedback_url = self.api_path("feedback")?;
