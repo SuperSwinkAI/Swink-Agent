@@ -34,6 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Placed at the approval prompt rather than the post-write diff view: conversation diffs render from tool results, by which point the write has already happened, so rejection there would mean reverting bytes on disk. The post-write diff remains display-only.
 - Fails closed at every branch — undecided hunks count as rejected, and arguments that can't be safely rewritten resolve to `Rejected` rather than silently applying the original content.
 
+### Fixed — TUI tests reached the real OS keychain (#1111, #1113)
+
+- `swink-agent-tui`'s tests called the **real** OS keychain, raising macOS password prompts and **hanging `cargo test --workspace` indefinitely** on `SecKeychainFindGenericPassword`. `wizard.rs`'s test-only constructor bypassed keychain *reads* but wired the live `store_credential` for *writes*, and `app/persistence.rs`'s `store_key`/`list_keys` had no test seam at all.
+- `tui/src/credentials.rs` now routes all access through a `KeychainBackend`, and the real `SystemKeychain` is `#[cfg(not(test))]` — so a unit test cannot reach a real keyring even by wiring the backend back in, which is how this bug arose. Caller signatures are unchanged and production behavior is identical.
+- Test-only change; no runtime effect on library consumers.
+
 ### Notes
 
 - All public API changes in this release are additive; `cargo semver-checks` reports no breaking change against 0.11.0.
