@@ -13,6 +13,18 @@ Bundles the full 0.11.x development line off `integration`. **Supersedes the
 unreleased 0.11.1** — that version was never tagged or published, so its entries
 are folded in here rather than kept as a phantom release.
 
+### Added — manual context compaction (#1102)
+
+- **`swink-agent`**: `Agent::compact_context()` — an on-demand counterpart to the automatic in-loop compaction, for host `/compact` commands (unblocks SuperSwink-Coding's TUI `/compact`). Runs the configured context transformer(s) against the stored history with `overflow = true` (a host asking to compact wants maximal pruning), persists the pruned history, and returns the resulting `CompactionReport` synchronously.
+- Mirrors the loop pipeline exactly: async transformer first, sync second, one `AgentEvent::ContextCompacted` per transformer that compacts — dispatched through the normal subscriber/forwarder path, so existing host event rendering picks it up unchanged. Returns `Ok(None)` when no transformer is configured or the history is already under budget (no event emitted), and `Err(AgentError::AlreadyRunning)` while a loop is active, since compacting mid-turn would race the loop's view of the history.
+- Spec 006 amended additively (new FR-020 plus a Session 2026-07-15 clarification): manual invocation means `overflow = true` no longer implies a provider overflow error occurred.
+
+### Added — TUI skills discovery (#1092)
+
+- **`swink-agent-tui`**: three new `TuiExtensions` seams for pluggable skill discovery with progressive disclosure — `with_skill_completions` (`SkillCandidate` list as a leading `/name` is typed), `with_skill_details` (SKILL.md body on highlight, cached per popup so arrow-key travel never re-invokes the callback), and `with_skill_resolver` (expansion at submit only, via the new `SkillInvocation`/`parse_skill_invocation`). Plus `App::skill_completion`/`SkillCompletion`, `InputEditor::slash_query`, and a preview block in the completion popup.
+- Submit precedence is secrets → host commands → skills → built-ins: a known skill submits as a prompt (raw `/deploy` stays in the transcript; the model receives the expansion) instead of hitting the Unknown-command fallback. `@path` mentions expand on the raw text first, so a skill body is never mention-scanned.
+- New off-by-default **`skills` cargo feature**: `TuiExtensions::with_skill_dirs` eagerly indexes `<dir>/<name>/SKILL.md` (YAML frontmatter `name`/`description`, directory-name fallback) under explicitly passed directories only — no implicit default paths — and wires all three seams over that index.
+
 ### Added — checkpoint hardening: session-scoped IDs, retention, RollingCheckpointPolicy (#1070)
 
 - Default-on crash-safety checkpointing was considered and **rejected** (FR-019 stands: no policy is enabled by default); the opt-in path was hardened instead. `CheckpointPolicy::with_session_id` scopes IDs to `"{session}-turn-{n}"` — without it, the per-run turn index means a second `prompt()` run silently overwrites the first run's checkpoints, and "restore the highest turn" can resurrect stale history. The unscoped format remains the default for backward compatibility.

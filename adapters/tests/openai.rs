@@ -1088,6 +1088,7 @@ async fn serving_options_serialize_into_request_body() {
             context_length: Some(8192),
             top_p: Some(0.9),
             keep_alive: Some("5m".to_string()),
+            format: None,
             extra: [
                 ("logit_bias".to_string(), serde_json::json!({"50256": -100})),
                 // Colliding key: the typed `top_p` above must win.
@@ -1112,5 +1113,94 @@ async fn serving_options_serialize_into_request_body() {
     assert!(
         !body.contains("0.1"),
         "extra top_p must lose to typed: {body}"
+    );
+}
+
+/// Drive one request with `serving` and return the raw request body sent.
+async fn body_for_serving(serving: swink_agent::ServingOptions) -> String {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(sse_response(
+            &[
+                r#"data: {"choices":[{"delta":{},"finish_reason":"stop","index":0}]}"#,
+                "",
+                "data: [DONE]",
+                "",
+                "",
+            ]
+            .join("\n"),
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let stream_fn = OpenAiStreamFn::new(server.uri(), "test-key");
+    let options = StreamOptions {
+        serving,
+        ..StreamOptions::default()
+    };
+    let _events = collect_events_with_options(&stream_fn, options).await;
+
+    let requests = server.received_requests().await.expect("recording enabled");
+    String::from_utf8(requests[0].body.clone()).expect("utf8 body")
+}
+
+/// `ResponseFormat::Json` maps onto the OAI protocol's `response_format` field
+/// as `{"type": "json_object"}`.
+#[tokio::test]
+async fn openai_response_format_json_maps_to_json_object() {
+    let body = body_for_serving(swink_agent::ServingOptions {
+        format: Some(swink_agent::ResponseFormat::Json),
+        ..swink_agent::ServingOptions::default()
+    })
+    .await;
+
+    let json: serde_json::Value = serde_json::from_str(&body).expect("valid JSON body");
+    assert_eq!(
+        json["response_format"],
+        serde_json::json!({ "type": "json_object" }),
+        "body: {body}"
+    );
+    assert!(
+        !body.contains("\"format\":"),
+        "must use `response_format`, not Ollama's `format`: {body}"
+    );
+}
+
+/// `ResponseFormat::Schema` is wrapped in the protocol's `json_schema`
+/// envelope, carrying the caller's bare JSON Schema verbatim inside it.
+#[tokio::test]
+async fn openai_response_format_schema_maps_to_json_schema_envelope() {
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": { "name": { "type": "string" } },
+        "required": ["name"],
+    });
+    let body = body_for_serving(swink_agent::ServingOptions {
+        format: Some(swink_agent::ResponseFormat::Schema(schema.clone())),
+        ..swink_agent::ServingOptions::default()
+    })
+    .await;
+
+    let json: serde_json::Value = serde_json::from_str(&body).expect("valid JSON body");
+    assert_eq!(json["response_format"]["type"], "json_schema", "{body}");
+    assert_eq!(
+        json["response_format"]["json_schema"]["schema"], schema,
+        "caller's schema must pass through verbatim: {body}"
+    );
+    assert_eq!(json["response_format"]["json_schema"]["strict"], true);
+}
+
+/// With `format: None` the request body is byte-identical to what the adapter
+/// emitted before `ServingOptions::format` existed. The literal below was
+/// captured from the pre-change adapter; it must not drift.
+#[tokio::test]
+async fn openai_format_none_body_is_byte_identical() {
+    let body = body_for_serving(swink_agent::ServingOptions::default()).await;
+    assert_eq!(
+        body,
+        r#"{"model":"gpt-4","messages":[{"role":"system","content":"You are a test assistant."}],"stream":true,"stream_options":{"include_usage":true}}"#,
+        "`format: None` must leave the request body byte-identical"
     );
 }

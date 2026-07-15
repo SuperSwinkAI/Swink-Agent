@@ -1,16 +1,68 @@
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use swink_agent::AgentTool;
+use swink_agent::testing::text_only_events;
 use swink_agent::{
-    Agent, AgentMessage, AgentOptions, AgentToolResult, AssistantMessage, Cost, LlmMessage,
-    ModelSpec, StopReason, StreamFn, Usage, UserMessage, default_convert,
+    Agent, AgentContext, AgentMessage, AgentOptions, AgentToolResult, AssistantMessage,
+    AssistantMessageEvent, Cost, LlmMessage, ModelSpec, StopReason, StreamFn, StreamOptions, Usage,
+    UserMessage, default_convert,
 };
 use tokio_util::sync::CancellationToken;
 
 use super::super::*;
+
+/// A `StreamFn` that records the user text of every prompt it is streamed.
+///
+/// This is how we assert on what actually reached the model, rather than
+/// trusting the TUI's own bookkeeping. Shared by the `@path` mention tests and
+/// the `/skill` tests.
+pub(super) struct PromptCapturingStreamFn {
+    pub(super) prompts: Arc<Mutex<Vec<String>>>,
+}
+
+impl StreamFn for PromptCapturingStreamFn {
+    fn stream<'a>(
+        &'a self,
+        _model: &'a ModelSpec,
+        context: &'a AgentContext,
+        _options: &'a StreamOptions,
+        _cancellation_token: CancellationToken,
+    ) -> Pin<Box<dyn futures::Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        let texts: Vec<String> = context
+            .messages
+            .iter()
+            .filter_map(|message| match message {
+                swink_agent::AgentMessage::Llm(swink_agent::LlmMessage::User(user)) => {
+                    Some(user.content.iter().filter_map(|block| match block {
+                        swink_agent::ContentBlock::Text { text } => Some(text.clone()),
+                        _ => None,
+                    }))
+                }
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        self.prompts.lock().unwrap().extend(texts);
+        Box::pin(futures::stream::iter(text_only_events("ok")))
+    }
+}
+
+/// Counts resolver invocations and records the text each one saw.
+#[derive(Default)]
+pub(super) struct ResolverSpy {
+    pub(super) calls: AtomicUsize,
+    pub(super) seen: Mutex<Vec<String>>,
+}
+
+impl ResolverSpy {
+    pub(super) fn call_count(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
 
 pub(super) fn make_test_agent(stream_fn: Arc<dyn StreamFn>) -> Agent {
     Agent::new(AgentOptions::new(

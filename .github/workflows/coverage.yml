@@ -1,0 +1,55 @@
+name: Coverage
+
+# Informational only — not a required check and not a gate (#927). Runs on
+# integration/main pushes and weekly, not per-PR: a full-workspace tarpaulin
+# pass is far too slow for the PR loop, and the numbers only need to move
+# when the tree does.
+on:
+  push:
+    branches: [integration, main]
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
+
+      - run: cargo binstall --no-confirm --force cargo-tarpaulin
+
+      # Config lives in tarpaulin.toml (workspace, Llvm engine, Html/Lcov/Json
+      # into target/tarpaulin). local-llm is excluded here for the same reason
+      # ci.yml's feature jobs exclude it: its backends want GPU toolchains.
+      - name: Run tarpaulin
+        run: cargo tarpaulin --exclude swink-agent-local-llm
+
+      - name: Coverage summary
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          with open("target/tarpaulin/tarpaulin-report.json") as f:
+              data = json.load(f)
+          files = data.get("files", [])
+          covered = sum(len([t for t in f["traces"] if t["stats"]["Line"] > 0]) for f in files)
+          total = sum(len(f["traces"]) for f in files)
+          pct = 100 * covered / total if total else 0.0
+          print(f"## Coverage: {pct:.1f}% ({covered}/{total} lines)")
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-report
+          path: target/tarpaulin/
+          retention-days: 30

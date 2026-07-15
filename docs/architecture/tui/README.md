@@ -372,6 +372,53 @@ following non-whitespace run, minus trailing sentence punctuation — so
 (accept), and Esc (dismiss); each falls through to its normal binding when the
 popup is closed.
 
+### Skills
+
+Three seams, one per tier of progressive disclosure:
+
+```rust,ignore
+let extensions = TuiExtensions::new()
+    // Tier 1 — candidates, per keystroke inside a leading `/name`.
+    .with_skill_completions(|query| {
+        my_index.matching(query)
+            .map(|s| SkillCandidate::new(&s.name).with_description(&s.summary))
+            .collect()
+    })
+    // Tier 2 — SKILL.md body, on highlight (cached per popup).
+    .with_skill_details(|name| my_index.body_of(name))
+    // Tier 3 — expansion, once per submitted prompt that starts with `/name`.
+    .with_skill_resolver(|text, invocation| {
+        let body = my_index.body_of(&invocation.name)?;
+        let mut out = text.to_string();
+        out.replace_range(invocation.start..invocation.end, &body);
+        Some(out)
+    });
+```
+
+Unlike a mention, an invocation is **leading-only**: the `/` must be the first
+non-whitespace character of the prompt (`parse_skill_invocation`), matching the
+command table's single-leading-sigil model — `either/or` and `/usr/bin`
+mid-sentence never trigger anything. The popup itself mirrors the `@path` one
+(same keys, at most one of the two popups open at a time), with the highlighted
+skill's tier-2 documentation rendered as a clamped preview below the list.
+
+Submit-time dispatch precedence is secrets → host commands → skills →
+built-ins, first match wins: a known skill (exact name match against the
+completion provider) is submitted as a prompt instead of falling to the
+Unknown-command feedback, and a host `with_command` of the same name shadows
+it. As with mentions, resolution is lazy and the transcript keeps showing the
+raw `/deploy` while the agent receives the expansion. Mentions are expanded
+*before* the skill invocation, on the raw text, so a skill body is never
+mention-scanned — a SKILL.md containing `@/etc/passwd` cannot induce a host
+file read. `skill_body_is_read_at_submit_and_never_while_typing` and
+`a_skill_body_is_never_mention_scanned` pin this.
+
+For hosts without their own index, the off-by-default `skills` cargo feature
+adds `TuiExtensions::with_skill_dirs`, which eagerly indexes
+`<dir>/<name>/SKILL.md` (YAML frontmatter: `name`, `description`) under
+*explicitly passed* directories only — there are no implicit default paths —
+and wires all three seams over that index.
+
 ---
 
 ## Terminal Setup / Teardown

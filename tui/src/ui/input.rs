@@ -8,15 +8,18 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use crate::theme;
 
-/// An in-progress `@path` mention sitting under the cursor.
+/// An in-progress sigil token (`@path` mention or leading `/skill`) sitting
+/// under the cursor.
 ///
-/// Produced by [`InputEditor::mention_query`] and consumed by
-/// [`InputEditor::replace_mention_query`].
+/// Produced by [`InputEditor::mention_query`] / [`InputEditor::slash_query`]
+/// and consumed by [`InputEditor::replace_mention_query`]. The name predates
+/// the `/skill` use — see [`InputEditor::slash_query`] for why it is shared.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MentionQuery {
-    /// Byte offset of the `@` within the cursor's line.
+    /// Byte offset of the sigil (`@` or `/`) within the cursor's line.
     pub start: usize,
-    /// Text between the `@` and the cursor. Empty right after `@` is typed.
+    /// Text between the sigil and the cursor. Empty right after the sigil is
+    /// typed.
     pub query: String,
 }
 
@@ -306,21 +309,64 @@ impl InputEditor {
     /// completion popup without any special-casing at the call site.
     #[must_use]
     pub fn mention_query(&self) -> Option<MentionQuery> {
+        self.sigil_query('@', false)
+    }
+
+    /// The leading `/skill` invocation the cursor is currently inside, if any.
+    ///
+    /// Stricter than [`mention_query`](Self::mention_query): the `/` must be
+    /// the first non-whitespace character of the **first** line (matching the
+    /// command table's single-leading-sigil model), and the cursor must sit at
+    /// the end of the unbroken token after it. A mid-sentence `/` is never a
+    /// query. Note that `/usr/bin` at line start *does* produce a query — the
+    /// popup simply closes when the host returns no candidates for it.
+    ///
+    /// Returns a [`MentionQuery`] even though nothing here is a mention: the
+    /// type is just "sigil offset plus partial token", and renaming it (or
+    /// adding a twin) would break the public API for zero structural gain. The
+    /// `start` offset points at the `/`.
+    #[must_use]
+    pub fn slash_query(&self) -> Option<MentionQuery> {
+        self.sigil_query('/', true)
+    }
+
+    /// Shared sigil-token scanner behind [`mention_query`](Self::mention_query)
+    /// and [`slash_query`](Self::slash_query).
+    ///
+    /// Finds `sigil` before the cursor on the cursor's line with no whitespace
+    /// between it and the cursor. With `leading_only`, the sigil must be the
+    /// first non-whitespace character of the first line; otherwise it must
+    /// start the line or follow whitespace (the `@` rule that keeps
+    /// `user@example.com` from becoming a mention).
+    fn sigil_query(&self, sigil: char, leading_only: bool) -> Option<MentionQuery> {
+        if leading_only && self.cursor_row != 0 {
+            return None;
+        }
         let line = self.lines.get(self.cursor_row)?;
         let cursor_byte = Self::char_to_byte(line, self.cursor_col);
         let before = line.get(..cursor_byte)?;
 
-        let start = before.rfind('@')?;
-        let query = &before[start + '@'.len_utf8()..];
+        let start = if leading_only {
+            let start = before.find(sigil)?;
+            if !before[..start].chars().all(char::is_whitespace) {
+                return None;
+            }
+            start
+        } else {
+            let start = before.rfind(sigil)?;
+            if start > 0
+                && !before[..start]
+                    .chars()
+                    .next_back()
+                    .is_some_and(char::is_whitespace)
+            {
+                return None;
+            }
+            start
+        };
+
+        let query = &before[start + sigil.len_utf8()..];
         if query.chars().any(char::is_whitespace) {
-            return None;
-        }
-        if start > 0
-            && !before[..start]
-                .chars()
-                .next_back()
-                .is_some_and(char::is_whitespace)
-        {
             return None;
         }
 
@@ -330,10 +376,11 @@ impl InputEditor {
         })
     }
 
-    /// Replace the mention token running from `start` to the cursor.
+    /// Replace the sigil token running from `start` to the cursor.
     ///
     /// `start` is a [`MentionQuery::start`] offset and `replacement` is the
-    /// full mention text including its `@`. The cursor lands at the end of the
+    /// full token text including its sigil (`@path` or `/skill`, as produced
+    /// by the matching query method). The cursor lands at the end of the
     /// inserted text. A `start` that is no longer valid (stale offset, moved
     /// cursor) is ignored rather than panicking.
     pub fn replace_mention_query(&mut self, start: usize, replacement: &str) {
@@ -683,6 +730,93 @@ mod tests {
         let start = editor.mention_query().unwrap().start;
         editor.replace_mention_query(start, "@src/lib.rs");
         assert_eq!(editor.lines(), ["héllo @src/lib.rs"]);
+    }
+
+    #[test]
+    fn no_slash_query_in_plain_text() {
+        assert!(editor_with("hello world").slash_query().is_none());
+    }
+
+    #[test]
+    fn slash_query_is_empty_right_after_the_slash() {
+        let query = editor_with("/").slash_query().unwrap();
+        assert_eq!(query.query, "");
+        assert_eq!(query.start, 0);
+    }
+
+    #[test]
+    fn slash_query_grows_as_the_name_is_typed() {
+        assert_eq!(editor_with("/depl").slash_query().unwrap().query, "depl");
+    }
+
+    #[test]
+    fn slash_query_allows_leading_whitespace() {
+        let query = editor_with("  /dep").slash_query().unwrap();
+        assert_eq!(query.query, "dep");
+        assert_eq!(query.start, 2);
+    }
+
+    #[test]
+    fn whitespace_after_the_name_closes_the_slash_query() {
+        assert!(editor_with("/deploy ").slash_query().is_none());
+        assert!(editor_with("/deploy prod").slash_query().is_none());
+    }
+
+    #[test]
+    fn a_mid_text_slash_is_not_a_slash_query() {
+        assert!(editor_with("see /dep").slash_query().is_none());
+        assert!(editor_with("either/or").slash_query().is_none());
+    }
+
+    #[test]
+    fn a_path_at_line_start_does_produce_a_slash_query() {
+        // The popup closes because the host returns no candidates for it —
+        // the query itself is legitimate.
+        assert_eq!(
+            editor_with("/usr/bin").slash_query().unwrap().query,
+            "usr/bin"
+        );
+    }
+
+    #[test]
+    fn a_slash_on_a_later_line_is_not_a_slash_query() {
+        assert!(editor_with("first line\n/dep").slash_query().is_none());
+    }
+
+    #[test]
+    fn slash_query_tracks_the_cursor_not_the_line_end() {
+        let mut editor = editor_with("/deploy");
+        editor.move_left();
+        editor.move_left();
+        // Cursor sits between "depl" and "oy" — the query is the prefix only.
+        assert_eq!(editor.slash_query().unwrap().query, "depl");
+    }
+
+    #[test]
+    fn slash_query_and_mention_query_are_mutually_exclusive() {
+        // A leading slash token is not a mention...
+        let slash = editor_with("/dep");
+        assert!(slash.slash_query().is_some());
+        assert!(slash.mention_query().is_none());
+
+        // ...and a mention is not a leading slash token.
+        let mention = editor_with("look at @src/li");
+        assert!(mention.mention_query().is_some());
+        assert!(mention.slash_query().is_none());
+
+        // Even a mention typed after a leading command: the cursor is in the
+        // mention, so only the mention query fires.
+        let both = editor_with("/deploy @src/li");
+        assert!(both.slash_query().is_none(), "whitespace closed the token");
+        assert!(both.mention_query().is_some());
+    }
+
+    #[test]
+    fn replace_mention_query_splices_an_accepted_skill() {
+        let mut editor = editor_with("/dep");
+        let start = editor.slash_query().unwrap().start;
+        editor.replace_mention_query(start, "/deploy ");
+        assert_eq!(editor.lines(), ["/deploy "]);
     }
 
     #[test]

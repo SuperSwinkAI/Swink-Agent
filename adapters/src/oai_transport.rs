@@ -22,7 +22,7 @@ use tracing::warn;
 #[cfg(feature = "mistral")]
 use serde::Serialize;
 
-use swink_agent::{AgentContext, AssistantMessageEvent, ModelSpec, StreamOptions};
+use swink_agent::{AgentContext, AssistantMessageEvent, ModelSpec, ResponseFormat, StreamOptions};
 
 use crate::base::AdapterBase;
 use crate::convert;
@@ -212,6 +212,29 @@ pub(crate) fn classify_oai_error_body(
     None
 }
 
+/// Map [`ResponseFormat`] onto the OAI protocol's `response_format` field.
+///
+/// `Json` becomes `{"type": "json_object"}`. `Schema` is a bare JSON Schema
+/// (what Ollama takes verbatim), so it gets wrapped in the `json_schema`
+/// envelope this protocol requires; `strict` opts into constrained decoding.
+///
+/// `allow(dead_code)`: reachable only from [`prepare_oai_request`], which is
+/// itself live only under a consuming adapter feature.
+#[allow(dead_code)]
+fn oai_response_format(options: &StreamOptions) -> Option<serde_json::Value> {
+    options.serving.format.as_ref().map(|format| match format {
+        ResponseFormat::Json => serde_json::json!({ "type": "json_object" }),
+        ResponseFormat::Schema(schema) => serde_json::json!({
+            "type": "json_schema",
+            "json_schema": {
+                "name": "response",
+                "strict": true,
+                "schema": schema,
+            },
+        }),
+    })
+}
+
 /// Build a standard OAI-compatible HTTP request (without auth headers).
 ///
 /// Handles message conversion, tool extraction, and body serialization.
@@ -243,6 +266,7 @@ pub fn prepare_oai_request(
         "temperature",
         "max_tokens",
         "top_p",
+        "response_format",
         "tools",
         "tool_choice",
     ];
@@ -267,6 +291,7 @@ pub fn prepare_oai_request(
         temperature: options.temperature,
         max_tokens: options.max_tokens,
         top_p: options.serving.top_p,
+        response_format: oai_response_format(options),
         tools,
         tool_choice,
         extra,

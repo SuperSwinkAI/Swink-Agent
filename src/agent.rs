@@ -10,6 +10,8 @@
 
 #[path = "agent/checkpointing.rs"]
 mod checkpointing;
+#[path = "agent/compaction.rs"]
+mod compaction;
 #[path = "agent/control.rs"]
 mod control;
 #[path = "agent/events.rs"]

@@ -5709,6 +5709,7 @@ dependencies = [
  "ratatui",
  "serde",
  "serde_json",
+ "serde_yaml",
  "swink-agent",
  "swink-agent-adapters",
  "swink-agent-local-llm",
