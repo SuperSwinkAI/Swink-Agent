@@ -24,7 +24,11 @@ vulkan = ["llama-cpp-2/vulkan"]
 [dependencies]
 swink-agent = { path = "..", version = "0.12.0", default-features = false }
 llama-cpp-2 = "0.1.146"
-hf-hub = { version = "0.5.0", features = ["tokio"] }
+# default-features off: hf-hub's defaults pull native-tls (→ OpenSSL, a C
+# build dep) and ureq (a second, sync HTTP client). We only use the tokio
+# async API, and rustls-tls keeps TLS on the same ring/rustls stack as the
+# rest of the workspace — no C toolchain for `local` builds (#1110's goal).
+hf-hub = { version = "0.5.0", default-features = false, features = ["tokio", "rustls-tls"] }
 tokio = { workspace = true, features = ["rt", "sync"] }
 tokio-util.workspace = true
 tokio-stream.workspace = true
