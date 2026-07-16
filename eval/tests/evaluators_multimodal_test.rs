@@ -30,8 +30,7 @@ impl JudgeClient for FixedVerdict {
 }
 
 fn make_case_with_attachments(attachments: Vec<Attachment>) -> EvalCase {
-    EvalCase::new("case", "Case", "s", vec!["check the image".into()])
-        .with_attachments(attachments)
+    EvalCase::new("case", "Case", "s", vec!["check the image".into()]).with_attachments(attachments)
 }
 
 fn make_invocation() -> Invocation {

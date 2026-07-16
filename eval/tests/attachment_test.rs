@@ -15,15 +15,10 @@ impl UrlFilter for AllowAllUrls {
 }
 
 fn base_case(id: &str) -> EvalCase {
-    EvalCase::new(
-        id,
-        id,
-        String::new(),
-        vec!["look at the image".to_string()],
-    )
-    .with_expected_response(ResponseCriteria::Contains {
-        substring: "safe".to_string(),
-    })
+    EvalCase::new(id, id, String::new(), vec!["look at the image".to_string()])
+        .with_expected_response(ResponseCriteria::Contains {
+            substring: "safe".to_string(),
+        })
 }
 
 #[tokio::test]

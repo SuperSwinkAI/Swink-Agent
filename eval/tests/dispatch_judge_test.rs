@@ -23,8 +23,7 @@ impl JudgeClient for CannedJudge {
     fn judge<'a>(&'a self, prompt: &'a str) -> swink_agent_eval::JudgeFuture<'a> {
         Box::pin(async move {
             self.prompts.lock().unwrap().push(prompt.to_string());
-            let mut verdict =
-                JudgeVerdict::new(self.score, (0.5..=1.0).contains(&self.score));
+            let mut verdict = JudgeVerdict::new(self.score, (0.5..=1.0).contains(&self.score));
             // Preserve the raw (possibly out-of-range) score; `new()` clamps to
             // [0,1] but these tests exercise downstream clamping in dispatch.
             verdict.score = self.score;

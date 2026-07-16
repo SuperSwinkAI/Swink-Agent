@@ -23,7 +23,11 @@ fn make_eval_set_result(passed: usize, failed: usize, cost: f64) -> EvalSetResul
         };
         #[allow(clippy::cast_precision_loss)]
         let invocation = mock_invocation(&[], Some("response"), cost / total as f64, 100);
-        case_results.push(EvalCaseResult::new(format!("case_{i}"), invocation, verdict));
+        case_results.push(EvalCaseResult::new(
+            format!("case_{i}"),
+            invocation,
+            verdict,
+        ));
     }
 
     let summary = EvalSummary::default()

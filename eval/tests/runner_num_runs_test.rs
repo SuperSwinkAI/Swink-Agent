@@ -164,8 +164,7 @@ impl JudgeClient for RunnerCancellingJudge {
         Box::pin(async move {
             runner_cancel.cancel();
             tokio::task::yield_now().await;
-            Ok(JudgeVerdict::new(1.0, true)
-                .with_reason("would pass without runner cancellation"))
+            Ok(JudgeVerdict::new(1.0, true).with_reason("would pass without runner cancellation"))
         })
     }
 }

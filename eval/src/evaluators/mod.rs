@@ -475,12 +475,7 @@ pub struct DispatchOutcome {
 impl DispatchOutcome {
     /// Construct a dispatch outcome from its component parts.
     #[must_use]
-    pub fn new(
-        score: Score,
-        pass: bool,
-        details: DetailBuffer,
-        verdict: JudgeVerdict,
-    ) -> Self {
+    pub fn new(score: Score, pass: bool, details: DetailBuffer, verdict: JudgeVerdict) -> Self {
         Self {
             score,
             pass,

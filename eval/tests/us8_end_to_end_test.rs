@@ -29,7 +29,8 @@ fn sample_result() -> EvalSetResult {
         Verdict::Pass,
     )
     .with_metric_results(vec![
-        EvalMetricResult::new("helpfulness", Score::new(0.87, 0.5)).with_details("grounded in policy"),
+        EvalMetricResult::new("helpfulness", Score::new(0.87, 0.5))
+            .with_details("grounded in policy"),
         EvalMetricResult::new("correctness", Score::new(0.93, 0.7))
             .with_details("quoted the refund window"),
     ]);

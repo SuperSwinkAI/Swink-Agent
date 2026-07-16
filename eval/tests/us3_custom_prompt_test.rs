@@ -86,17 +86,18 @@ fn fully_populated_case() -> EvalCase {
         "The task should be completed.",
         AssertionKind::GoalCompleted,
     ));
-    case.expected_trajectory = Some(vec![
-        ExpectedToolCall::new("search")
-            .with_arguments(serde_json::json!({ "query": "two plus two" })),
-    ]);
+    case.expected_trajectory =
+        Some(vec![ExpectedToolCall::new("search").with_arguments(
+            serde_json::json!({ "query": "two plus two" }),
+        )]);
     case.expected_interactions = Some(vec![InteractionExpectation::new(
         "planner",
         "worker",
         "delegates the task",
     )]);
     case.few_shot_examples = vec![
-        FewShotExample::new("retrieved evidence", "ground truth").with_reasoning("because evidence"),
+        FewShotExample::new("retrieved evidence", "ground truth")
+            .with_reasoning("because evidence"),
     ];
     case.attachments = vec![Attachment::Base64 {
         mime: "image/png".into(),

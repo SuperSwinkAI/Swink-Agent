@@ -59,7 +59,12 @@ fn any_order_ignores_sequence() {
 #[test]
 fn returns_none_when_no_trajectory_expected() {
     let matcher = TrajectoryMatcher::exact();
-    let case = EvalCase::new("no-traj", "No Trajectory", String::new(), vec!["hi".to_string()]);
+    let case = EvalCase::new(
+        "no-traj",
+        "No Trajectory",
+        String::new(),
+        vec!["hi".to_string()],
+    );
     let invocation = mock_invocation(&["read"], Some("hello"), 0.0, 0);
     assert!(matcher.evaluate(&case, &invocation).is_none());
 }

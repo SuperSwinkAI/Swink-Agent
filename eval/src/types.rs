@@ -1908,7 +1908,10 @@ mod validation_tests {
             .with_budget(BudgetConstraints::default().with_max_cost(2.0))
             .with_semantic_tool_selection(true);
         assert_eq!(case.description.as_deref(), Some("a description"));
-        assert_eq!(case.budget.as_ref().and_then(|budget| budget.max_cost), Some(2.0));
+        assert_eq!(
+            case.budget.as_ref().and_then(|budget| budget.max_cost),
+            Some(2.0)
+        );
         assert!(case.semantic_tool_selection);
 
         let budget = BudgetConstraints::default().with_max_cost(1.0);

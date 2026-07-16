@@ -62,9 +62,7 @@ impl Evaluator for Panics {
 fn registry_with_defaults_has_four_evaluators() {
     let registry = EvaluatorRegistry::with_defaults();
     let invocation = common::mock_invocation(&["read", "write"], Some("hello"), 0.01, 500);
-    let case = common::case_with_trajectory(vec![swink_agent_eval::ExpectedToolCall::new(
-        "read",
-    )]);
+    let case = common::case_with_trajectory(vec![swink_agent_eval::ExpectedToolCall::new("read")]);
     let results = registry.evaluate(&case, &invocation);
     // with_defaults registers: trajectory, budget, response, efficiency
     // trajectory applies (has expected_trajectory), efficiency applies (has tool calls)
@@ -171,7 +169,10 @@ fn closure_evaluator_works() {
     registry.register((
         "my_closure",
         |_case: &EvalCase, _inv: &Invocation| -> Option<EvalMetricResult> {
-            Some(EvalMetricResult::new("my_closure", Score::new(0.75, 0.5)).with_details("closure evaluator"))
+            Some(
+                EvalMetricResult::new("my_closure", Score::new(0.75, 0.5))
+                    .with_details("closure evaluator"),
+            )
         },
     ));
 

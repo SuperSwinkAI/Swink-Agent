@@ -106,7 +106,14 @@ fn content_scored_case(id: &str) -> EvalCase {
         vec!["hello".to_string()],
     )
     .with_expected_response(ResponseCriteria::Custom(Arc::new(|response: &str| {
-        Score::new(if response.contains("useful") { 0.9 } else { 0.3 }, 0.5)
+        Score::new(
+            if response.contains("useful") {
+                0.9
+            } else {
+                0.3
+            },
+            0.5,
+        )
     })))
 }
 
@@ -317,7 +324,14 @@ fn regressing_case(id: &str, priority: Option<&str>) -> EvalCase {
         vec!["hello".to_string()],
     )
     .with_expected_response(ResponseCriteria::Custom(Arc::new(|response: &str| {
-        Score::new(if response.contains("MARKER") { 0.1 } else { 0.9 }, 0.5)
+        Score::new(
+            if response.contains("MARKER") {
+                0.1
+            } else {
+                0.9
+            },
+            0.5,
+        )
     })))
     .with_metadata(metadata)
 }
@@ -333,7 +347,14 @@ fn improving_case(id: &str) -> EvalCase {
         vec!["hello".to_string()],
     )
     .with_expected_response(ResponseCriteria::Custom(Arc::new(|response: &str| {
-        Score::new(if response.contains("MARKER") { 0.9 } else { 0.1 }, 0.5)
+        Score::new(
+            if response.contains("MARKER") {
+                0.9
+            } else {
+                0.1
+            },
+            0.5,
+        )
     })))
 }
 

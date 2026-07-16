@@ -37,9 +37,10 @@ fn make_case_result(case_id: &str, score_val: f64) -> EvalCaseResult {
     } else {
         Verdict::Fail
     };
-    EvalCaseResult::new(case_id, inv, verdict).with_metric_results(vec![
-        EvalMetricResult::new("trajectory", Score::new(score_val, 0.5)),
-    ])
+    EvalCaseResult::new(case_id, inv, verdict).with_metric_results(vec![EvalMetricResult::new(
+        "trajectory",
+        Score::new(score_val, 0.5),
+    )])
 }
 
 // ─── ChatML / SFT ───────────────────────────────────────────────────────────

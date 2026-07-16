@@ -368,10 +368,8 @@ mod tests {
 
     #[test]
     fn block_on_judge_owns_runtime_without_ambient_tokio() {
-        let result = block_on_judge(async {
-            Ok(JudgeVerdict::new(0.7, true).with_reason("ok"))
-        })
-        .expect("blocking helper should build its own runtime");
+        let result = block_on_judge(async { Ok(JudgeVerdict::new(0.7, true).with_reason("ok")) })
+            .expect("blocking helper should build its own runtime");
 
         assert!(result.pass);
         assert!((result.score - 0.7).abs() < f64::EPSILON);
@@ -385,10 +383,8 @@ mod tests {
             .expect("current-thread runtime");
 
         let result = runtime.block_on(async {
-            block_on_judge(async {
-                Ok(JudgeVerdict::new(1.0, true))
-            })
-            .expect("current-thread runtime should delegate to an owned runtime")
+            block_on_judge(async { Ok(JudgeVerdict::new(1.0, true)) })
+                .expect("current-thread runtime should delegate to an owned runtime")
         });
 
         assert!(result.pass);

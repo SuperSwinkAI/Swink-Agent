@@ -43,15 +43,9 @@ impl AgentFactory for ToolAwareFactory {
 }
 
 fn case() -> EvalCase {
-    EvalCase::new(
-        "c1",
-        "c1",
-        "You are helpful.",
-        vec!["hello".to_string()],
+    EvalCase::new("c1", "c1", "You are helpful.", vec!["hello".to_string()]).with_expected_response(
+        ResponseCriteria::Custom(Arc::new(|_: &str| Score::new(1.0, 0.5))),
     )
-    .with_expected_response(ResponseCriteria::Custom(Arc::new(|_: &str| {
-        Score::new(1.0, 0.5)
-    })))
 }
 
 #[test]
