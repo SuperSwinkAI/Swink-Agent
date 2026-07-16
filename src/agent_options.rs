@@ -54,6 +54,7 @@ pub const DEFAULT_MODEL: &str = "claude-sonnet-4-6";
 // ─── AgentOptions ─────────────────────────────────────────────────────────────
 
 /// Configuration options for constructing an [`Agent`](crate::Agent).
+#[non_exhaustive]
 pub struct AgentOptions {
     /// System prompt (used as-is when no static/dynamic split is configured).
     pub system_prompt: String,
@@ -777,11 +778,9 @@ impl AgentOptions {
     /// ```ignore
     /// let table = PricingTable::new().with_model(
     ///     "my-llama",
-    ///     ModelRates {
-    ///         input_per_million: 0.10,
-    ///         output_per_million: 0.40,
-    ///         ..ModelRates::default()
-    ///     },
+    ///     ModelRates::default()
+    ///         .with_input_per_million(0.10)
+    ///         .with_output_per_million(0.40),
     /// );
     /// let options = AgentOptions::new_simple("system", ModelSpec::new("local", "my-llama"), stream_fn)
     ///     .with_pricing_table(table);

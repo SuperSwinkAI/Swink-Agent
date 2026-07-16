@@ -88,6 +88,14 @@ all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
 
+# Restriction lints (not part of any group): every exported struct with
+# all-pub fields and every exported enum must be #[non_exhaustive] unless
+# it is deliberately frozen by design (those carry an explicit
+# `#[allow(clippy::exhaustive_structs)]`/`exhaustive_enums` with a comment).
+# Guards against `constructible_struct_adds_field` semver breaks.
+exhaustive_structs = "warn"
+exhaustive_enums = "warn"
+
 # Pedantic/nursery overrides — noisy, stylistic, or churn on toolchain bumps.
 # Keep this list tight; every allow is a signal lost.
 module_name_repetitions = "allow"

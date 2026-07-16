@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// A structured event emitted by an agent, tool, or callback.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Emission {
     /// Event name (e.g., "progress", "`artifact_created`").

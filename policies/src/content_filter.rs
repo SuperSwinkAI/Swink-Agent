@@ -11,6 +11,7 @@ use swink_agent::{ContentBlock, PolicyContext, PolicyVerdict, PostTurnPolicy, Tu
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 /// A single filter rule consisting of a compiled regex and metadata.
+#[non_exhaustive]
 #[derive(Debug)]
 pub struct FilterRule {
     /// The compiled regex pattern.
@@ -30,6 +31,7 @@ struct KeywordRule {
 }
 
 /// Errors returned when constructing a [`ContentFilter`].
+#[non_exhaustive]
 #[derive(Debug)]
 pub enum ContentFilterError {
     /// The supplied regex pattern failed to compile.
@@ -300,45 +302,24 @@ mod tests {
         cost: &'a Cost,
         state: &'a swink_agent::SessionState,
     ) -> PolicyContext<'a> {
-        PolicyContext {
-            turn_index: 0,
-            accumulated_usage: usage,
-            accumulated_cost: cost,
-            message_count: 0,
-            overflow_signal: false,
-            new_messages: &[],
-            state,
-        }
+        PolicyContext::new(0, usage, cost, 0, false, &[], state)
     }
 
     fn make_turn_ctx(msg: &AssistantMessage) -> TurnPolicyContext<'_> {
         static MODEL: std::sync::LazyLock<swink_agent::ModelSpec> =
             std::sync::LazyLock::new(|| swink_agent::ModelSpec::new("test", "test-model"));
-        TurnPolicyContext {
-            assistant_message: msg,
-            tool_results: &[],
-            stop_reason: StopReason::Stop,
-            system_prompt: "",
-            model_spec: &MODEL,
-            context_messages: &[],
-        }
+        TurnPolicyContext::new(msg, &[], StopReason::Stop, "", &MODEL, &[])
     }
 
     fn make_msg(text: &str) -> AssistantMessage {
-        AssistantMessage {
-            content: vec![ContentBlock::Text {
+        AssistantMessage::new(
+            vec![ContentBlock::Text {
                 text: text.to_string(),
             }],
-            provider: String::new(),
-            model_id: String::new(),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::Stop,
-            error_message: None,
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        }
+            String::new(),
+            String::new(),
+        )
+        .with_timestamp(0)
     }
 
     #[test]

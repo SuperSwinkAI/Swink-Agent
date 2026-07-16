@@ -3,93 +3,73 @@
 #![allow(dead_code)]
 
 use chrono::{DateTime, Utc};
-use swink_agent::{
-    AgentMessage, AssistantMessage, ContentBlock, Cost, LlmMessage, StopReason, Usage, UserMessage,
-};
+use swink_agent::{AgentMessage, AssistantMessage, ContentBlock, LlmMessage, UserMessage};
 use swink_agent_memory::SessionMeta;
 
 /// Create a sample `UserMessage` wrapped as `AgentMessage`.
 pub fn user_message(text: &str) -> AgentMessage {
-    AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text {
+    AgentMessage::Llm(LlmMessage::User(
+        UserMessage::new(vec![ContentBlock::Text {
             text: text.to_owned(),
-        }],
-        timestamp: 0,
-        cache_hint: None,
-    }))
+        }])
+        .with_timestamp(0),
+    ))
 }
 
 /// Create a sample `AssistantMessage` wrapped as `AgentMessage`.
 pub fn assistant_message(text: &str) -> AgentMessage {
-    AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
-        content: vec![ContentBlock::Text {
-            text: text.to_owned(),
-        }],
-        provider: "test".to_string(),
-        model_id: "test-model".to_string(),
-        usage: Usage::default(),
-        cost: Cost::default(),
-        stop_reason: StopReason::Stop,
-        error_message: None,
-        error_kind: None,
-        timestamp: 0,
-        cache_hint: None,
-    }))
+    AgentMessage::Llm(LlmMessage::Assistant(
+        AssistantMessage::new(
+            vec![ContentBlock::Text {
+                text: text.to_owned(),
+            }],
+            "test",
+            "test-model",
+        )
+        .with_timestamp(0),
+    ))
 }
 
 /// Create a sample `UserMessage` with timestamp, as raw `LlmMessage`.
 ///
 /// Used for `SessionEntry::Message` which takes `LlmMessage` directly.
 pub fn user_message_at(text: &str, timestamp: u64) -> LlmMessage {
-    LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text {
+    LlmMessage::User(
+        UserMessage::new(vec![ContentBlock::Text {
             text: text.to_owned(),
-        }],
-        timestamp,
-        cache_hint: None,
-    })
+        }])
+        .with_timestamp(timestamp),
+    )
 }
 
 /// Create a raw `LlmMessage::User` for use with `SessionEntry::Message`.
 pub fn llm_user_message(text: &str) -> LlmMessage {
-    LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text {
+    LlmMessage::User(
+        UserMessage::new(vec![ContentBlock::Text {
             text: text.to_owned(),
-        }],
-        timestamp: 0,
-        cache_hint: None,
-    })
+        }])
+        .with_timestamp(0),
+    )
 }
 
 /// Create a raw `LlmMessage::Assistant` for use with `SessionEntry::Message`.
 pub fn llm_assistant_message(text: &str) -> LlmMessage {
-    LlmMessage::Assistant(AssistantMessage {
-        content: vec![ContentBlock::Text {
-            text: text.to_owned(),
-        }],
-        provider: "test".to_string(),
-        model_id: "test-model".to_string(),
-        usage: Usage::default(),
-        cost: Cost::default(),
-        stop_reason: StopReason::Stop,
-        error_message: None,
-        error_kind: None,
-        timestamp: 0,
-        cache_hint: None,
-    })
+    LlmMessage::Assistant(
+        AssistantMessage::new(
+            vec![ContentBlock::Text {
+                text: text.to_owned(),
+            }],
+            "test",
+            "test-model",
+        )
+        .with_timestamp(0),
+    )
 }
 
 /// Create a sample `SessionMeta` with the given id and title.
 pub fn sample_meta(id: &str, title: &str) -> SessionMeta {
     let now = Utc::now();
-    SessionMeta {
-        id: id.to_string(),
-        title: title.to_string(),
-        created_at: now,
-        updated_at: now,
-        version: 1,
-        sequence: 0,
-    }
+    SessionMeta::new(id, title, now, now)
 }
 
 /// Create a `SessionMeta` with specific timestamps.
@@ -99,12 +79,5 @@ pub fn sample_meta_with_times(
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 ) -> SessionMeta {
-    SessionMeta {
-        id: id.to_string(),
-        title: title.to_string(),
-        created_at,
-        updated_at,
-        version: 1,
-        sequence: 0,
-    }
+    SessionMeta::new(id, title, created_at, updated_at)
 }

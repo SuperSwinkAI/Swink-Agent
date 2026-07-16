@@ -36,10 +36,7 @@ fn make_eval_set_result(passed: usize, failed: usize, cost: f64) -> EvalSetResul
             total_cases: total,
             passed,
             failed,
-            total_cost: Cost {
-                total: cost,
-                ..Default::default()
-            },
+            total_cost: Cost::default().with_total(cost),
             total_usage: Usage::default(),
             total_duration: Duration::from_millis(100),
         },

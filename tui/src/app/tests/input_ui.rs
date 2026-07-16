@@ -203,14 +203,7 @@ async fn load_session_keeps_full_agent_state_but_trims_visible_history() {
     }
     let session_id = "session-1";
     let now = swink_agent_memory::now_utc();
-    let meta = SessionMeta {
-        id: session_id.to_string(),
-        title: "mock-model".to_string(),
-        created_at: now,
-        updated_at: now,
-        version: 1,
-        sequence: 0,
-    };
+    let meta = SessionMeta::new(session_id, "mock-model", now, now);
     store.save(session_id, &meta, &full_messages).unwrap();
 
     let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
@@ -328,14 +321,7 @@ async fn resume_into_loads_existing_session() {
 
     let session_id = "session-resume-test";
     let now = swink_agent_memory::now_utc();
-    let meta = SessionMeta {
-        id: session_id.to_string(),
-        title: "mock-model".to_string(),
-        created_at: now,
-        updated_at: now,
-        version: 1,
-        sequence: 0,
-    };
+    let meta = SessionMeta::new(session_id, "mock-model", now, now);
     let messages = vec![
         make_user_agent_message("hello"),
         make_assistant_agent_message("world"),
@@ -423,14 +409,7 @@ async fn auto_save_after_load_preserves_created_at_and_continues_sequence() {
     let session_id = "session-load-then-save";
 
     let original_created = swink_agent_memory::now_utc();
-    let meta = SessionMeta {
-        id: session_id.to_string(),
-        title: "mock-model".to_string(),
-        created_at: original_created,
-        updated_at: original_created,
-        version: 1,
-        sequence: 0,
-    };
+    let meta = SessionMeta::new(session_id, "mock-model", original_created, original_created);
     store
         .save(session_id, &meta, &[make_user_agent_message("hi")])
         .unwrap();
@@ -606,14 +585,7 @@ async fn running_load_command_is_blocked_without_switching_sessions() {
     let tempdir = tempdir().unwrap();
     let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
     let now = swink_agent_memory::now_utc();
-    let meta = SessionMeta {
-        id: "saved-session".to_string(),
-        title: "saved-model".to_string(),
-        created_at: now,
-        updated_at: now,
-        version: 1,
-        sequence: 0,
-    };
+    let meta = SessionMeta::new("saved-session", "saved-model", now, now);
     store
         .save("saved-session", &meta, &[make_user_agent_message("loaded")])
         .unwrap();

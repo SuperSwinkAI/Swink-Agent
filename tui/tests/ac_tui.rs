@@ -48,18 +48,7 @@ fn make_agent_with_approval_mode(mode: ApprovalMode) -> Agent {
 }
 
 fn make_display_message(role: MessageRole) -> DisplayMessage {
-    DisplayMessage {
-        role,
-        content: format!("{role:?} message"),
-        thinking: None,
-        is_streaming: false,
-        collapsed: false,
-        summary: String::new(),
-        user_expanded: false,
-        expanded_at: None,
-        plan_mode: false,
-        diff_data: None,
-    }
+    DisplayMessage::new(role, format!("{role:?} message"))
 }
 
 // ---------------------------------------------------------------------------

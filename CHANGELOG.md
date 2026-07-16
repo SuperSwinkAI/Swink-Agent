@@ -9,6 +9,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.12.0] - 2026-07-15
 
+### Changed — public API hardened with #[non_exhaustive] (gap 1)
+
+Architecture-review gap 1: `constructible_struct_adds_field` semver breaks had
+already burned three PRs this cycle (#1097, #1108, #1121). Every externally-
+constructible `pub` struct with all-`pub` fields, and every `pub` enum, across
+the published crates (`swink-agent`, `swink-agent-adapters`, `-artifacts`,
+`-auth`, `-eval`, `-local-llm`, `-macros`, `-mcp`, `-memory`, `-patterns`,
+`-plugin-web`, `-policies`, `-rpc`, `-tui`) now carries `#[non_exhaustive]`
+unless deliberately exempted. This is a breaking change in itself, so it had
+to land inside this window, before the 0.12.0 tag freezes the surface.
+
+- **184 public types protected**: 82 enums + 96 structs marked
+  `#[non_exhaustive]`; 6 types left deliberately exhaustive (3 enums, 3
+  structs) as frozen-by-design data carriers:
+  - `swink-agent-rpc`: `RequestId`, `MessageKind<'a>`, `IncomingMessage`
+    (enums) and `RpcError`, `RawMessage` (structs) — all fixed shapes defined
+    by the JSON-RPC 2.0 spec.
+  - `swink-agent-plugin-web`: `Viewport` (struct) — a width × height pair,
+    frozen by design.
+  Each carries `#[allow(clippy::exhaustive_structs)]` / `exhaustive_enums`
+  plus a one-line comment stating why it is frozen.
+- Every protected struct that users construct directly (not only via
+  `Default`) keeps a documented `new()`/builder seam — `#[non_exhaustive]`
+  blocks external struct-literal and functional-update (`..Default::default()`)
+  syntax, so construction now goes through `new()` plus `with_*()` chains.
+  New or extended constructors/builders were added where none existed,
+  including `UserMessage::new`, `AssistantMessage::new` (+ `impl Default`),
+  `ToolResultMessage::new`, `Usage`/`Cost` per-field `with_*`, `AgentResult::new`,
+  `AgentContext::new`, `TurnSnapshot::new`, `PolicyContext::new`,
+  `ToolDispatchContext::new`, `TurnPolicyContext::new`, `ArtifactData`/
+  `ArtifactVersion`/`ArtifactMeta::new`, `DeviceCodePrompt::new`,
+  `AuthConfig::new`, `ToolApprovalRequest::new`, `AgentToolResult::new`,
+  `ModelRates` per-field `with_*`, `ProviderCatalog`/`PresetCatalog`/
+  `CatalogPreset::new`, and equivalents in `swink-agent-mcp`, `-memory`,
+  `-policies`, `-rpc`, and `-tui` for their own load-bearing types
+  (`McpServerConfig`, `SessionMeta`, `DisplayMessage`, `TurnUsage`,
+  `HunkReview`, `PathCandidate`, `UserInput`, `ToolApprovalRequestDto`, etc).
+- All internal fallout fixed across the workspace: every cross-crate
+  struct-literal, functional-update, and non-exhaustive `match` without a
+  wildcard arm (adapters' provider implementations and live-integration
+  tests, the TUI's own event/persistence/display code, policies' own
+  policy-context construction, memory's JSONL codec, artifacts' three
+  storage backends, rpc's DTO conversions, patterns' pipeline executors, and
+  the core crate's own `tests/` integration suite) was migrated to the new
+  constructor/builder seams or given an explicit, behavior-preserving
+  wildcard arm.
+- New workspace-wide lints in `[workspace.lints.clippy]`: `exhaustive_structs
+  = "warn"` and `exhaustive_enums = "warn"` — restriction lints that flag any
+  future exported struct/enum missing `#[non_exhaustive]` (or an explicit
+  frozen-by-design allow), so this class of semver break can't recur
+  silently.
+
 Bundles the full 0.11.x development line off `integration`. **Supersedes the
 unreleased 0.11.1** — that version was never tagged or published, so its entries
 are folded in here rather than kept as a phantom release.

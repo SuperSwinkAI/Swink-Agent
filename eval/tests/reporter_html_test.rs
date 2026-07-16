@@ -47,16 +47,11 @@ fn sample_result() -> EvalSetResult {
             total_cases: 2,
             passed: 1,
             failed: 1,
-            total_cost: Cost {
-                total: 0.03,
-                ..Default::default()
-            },
-            total_usage: Usage {
-                input: 120,
-                output: 140,
-                total: 260,
-                ..Default::default()
-            },
+            total_cost: Cost::default().with_total(0.03),
+            total_usage: Usage::default()
+                .with_input(120)
+                .with_output(140)
+                .with_total(260),
             total_duration: Duration::from_millis(220),
         },
         timestamp: 42,
@@ -92,16 +87,11 @@ fn large_result(case_count: usize) -> EvalSetResult {
             total_cases: case_count,
             passed: case_count,
             failed: 0,
-            total_cost: Cost {
-                total: total_cost,
-                ..Default::default()
-            },
-            total_usage: Usage {
-                input: case_count as u64 * 5,
-                output: case_count as u64 * 5,
-                total: case_count as u64 * 10,
-                ..Default::default()
-            },
+            total_cost: Cost::default().with_total(total_cost),
+            total_usage: Usage::default()
+                .with_input(case_count as u64 * 5)
+                .with_output(case_count as u64 * 5)
+                .with_total(case_count as u64 * 10),
             total_duration: Duration::from_secs(case_count as u64),
         },
         timestamp: 99,

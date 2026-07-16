@@ -57,46 +57,35 @@ async fn collect_events_with_context(
 }
 
 fn make_assistant_with_tool_call(tool_call_id: &str, tool_name: &str) -> AssistantMessage {
-    AssistantMessage {
-        content: vec![ContentBlock::ToolCall {
+    AssistantMessage::new(
+        vec![ContentBlock::ToolCall {
             id: tool_call_id.to_string(),
             name: tool_name.to_string(),
             arguments: serde_json::json!({}),
             partial_json: None,
         }],
-        stop_reason: StopReason::ToolUse,
-        usage: swink_agent::Usage::default(),
-        cost: swink_agent::Cost::default(),
-        model_id: String::new(),
-        provider: String::new(),
-        error_message: None,
-        error_kind: None,
-        timestamp: 0,
-        cache_hint: None,
-    }
+        String::new(),
+        String::new(),
+    )
+    .with_stop_reason(StopReason::ToolUse)
+    .with_timestamp(0)
 }
 
 fn make_tool_result(tool_call_id: &str, result_text: &str) -> ToolResultMessage {
-    ToolResultMessage {
-        tool_call_id: tool_call_id.to_string(),
-        content: vec![ContentBlock::Text {
+    ToolResultMessage::new(
+        tool_call_id.to_string(),
+        vec![ContentBlock::Text {
             text: result_text.to_string(),
         }],
-        is_error: false,
-        timestamp: 0,
-        details: Value::Null,
-        cache_hint: None,
-    }
+    )
+    .with_timestamp(0)
 }
 
 fn make_user_message(text: &str) -> UserMessage {
-    UserMessage {
-        content: vec![ContentBlock::Text {
-            text: text.to_string(),
-        }],
-        timestamp: 0,
-        cache_hint: None,
-    }
+    UserMessage::new(vec![ContentBlock::Text {
+        text: text.to_string(),
+    }])
+    .with_timestamp(0)
 }
 
 // ── US1: Text Streaming ────────────────────────────────────────────────────
@@ -200,10 +189,7 @@ async fn request_body_no_stream_options() {
     let sf = MistralStreamFn::new(server.uri(), "test-key");
     let model = test_model();
     let context = test_context();
-    let options = StreamOptions {
-        max_tokens: Some(100),
-        ..StreamOptions::default()
-    };
+    let options = StreamOptions::default().with_max_tokens(100);
     let token = CancellationToken::new();
     let _events: Vec<_> = sf.stream(&model, &context, &options, token).collect().await;
 
@@ -470,9 +456,9 @@ async fn tool_call_id_format_in_request() {
 
     let sf = MistralStreamFn::new(server.uri(), "test-key");
 
-    let context = AgentContext {
-        system_prompt: String::new(),
-        messages: vec![
+    let context = AgentContext::new(
+        String::new(),
+        vec![
             AgentMessage::Llm(LlmMessage::Assistant(make_assistant_with_tool_call(
                 "call_abc123xyz456",
                 "bash",
@@ -482,8 +468,8 @@ async fn tool_call_id_format_in_request() {
                 "result",
             ))),
         ],
-        tools: Vec::new(),
-    };
+        Vec::new(),
+    );
 
     let _events = collect_events_with_context(&sf, &context).await;
 
@@ -577,11 +563,7 @@ async fn tool_definitions_in_request() {
     let sf = MistralStreamFn::new(server.uri(), "test-key");
 
     let tool: Arc<dyn AgentTool> = Arc::new(DummyTool);
-    let context = AgentContext {
-        system_prompt: "test".into(),
-        messages: Vec::new(),
-        tools: vec![tool],
-    };
+    let context = AgentContext::new("test", Vec::new(), vec![tool]);
 
     let _events = collect_events_with_context(&sf, &context).await;
 
@@ -680,9 +662,9 @@ async fn message_ordering_normalization() {
 
     let sf = MistralStreamFn::new(server.uri(), "test-key");
 
-    let context = AgentContext {
-        system_prompt: String::new(),
-        messages: vec![
+    let context = AgentContext::new(
+        String::new(),
+        vec![
             AgentMessage::Llm(LlmMessage::User(make_user_message("call the tool"))),
             AgentMessage::Llm(LlmMessage::Assistant(make_assistant_with_tool_call(
                 "call_xyz", "bash",
@@ -693,8 +675,8 @@ async fn message_ordering_normalization() {
             // User message immediately after tool result.
             AgentMessage::Llm(LlmMessage::User(make_user_message("thanks"))),
         ],
-        tools: Vec::new(),
-    };
+        Vec::new(),
+    );
 
     let _events = collect_events_with_context(&sf, &context).await;
 
@@ -944,10 +926,7 @@ async fn api_key_override_in_options() {
     let sf = MistralStreamFn::new(server.uri(), "default-key");
     let model = test_model();
     let context = test_context();
-    let options = StreamOptions {
-        api_key: Some("override-key".to_string()),
-        ..StreamOptions::default()
-    };
+    let options = StreamOptions::default().with_api_key("override-key".to_string());
     let token = CancellationToken::new();
     let events: Vec<_> = sf.stream(&model, &context, &options, token).collect().await;
 
@@ -1118,10 +1097,9 @@ async fn mistral_extra_merges_into_top_level_body() {
         .await;
 
     let stream_fn = MistralStreamFn::new(server.uri(), "test-key");
-    let options = StreamOptions {
-        max_tokens: Some(512),
-        serving: swink_agent::ServingOptions {
-            extra: [
+    let options = StreamOptions::default().with_max_tokens(512).with_serving(
+        swink_agent::ServingOptions::default().with_extra(
+            [
                 ("random_seed".to_string(), serde_json::json!(42)),
                 ("safe_prompt".to_string(), serde_json::json!(true)),
                 // Colliding key: the typed `max_tokens` must win.
@@ -1129,10 +1107,8 @@ async fn mistral_extra_merges_into_top_level_body() {
             ]
             .into_iter()
             .collect(),
-            ..swink_agent::ServingOptions::default()
-        },
-        ..StreamOptions::default()
-    };
+        ),
+    );
     let model = test_model();
     let context = test_context();
     let events: Vec<AssistantMessageEvent> = stream_fn

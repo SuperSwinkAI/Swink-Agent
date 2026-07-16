@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 /// When attached to [`AgentOptions`](crate::AgentOptions), the framework
 /// annotates cacheable prefix messages with [`CacheHint`] markers that
 /// adapters translate to provider-specific cache control headers.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct CacheConfig {
     /// Time-to-live for the cached prefix on the provider side.
@@ -45,6 +46,7 @@ impl CacheConfig {
 ///
 /// Adapters inspect this during message conversion to translate into
 /// provider-specific cache control (e.g., Anthropic's `cache_control` field).
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum CacheHint {

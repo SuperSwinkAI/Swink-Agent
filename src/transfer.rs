@@ -104,6 +104,7 @@ impl TransferSignal {
 // ─── TransferError ─────────────────────────────────────────────────────────
 
 /// Error type for transfer chain safety violations.
+#[non_exhaustive]
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum TransferError {
     /// Agent already appears in the transfer chain (circular reference).

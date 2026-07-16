@@ -63,7 +63,9 @@ impl PreDispatchPolicy for BlockEchoPolicy {
 fn llm_only(message: &AgentMessage) -> Option<LlmMessage> {
     match message {
         AgentMessage::Llm(message) => Some(message.clone()),
-        AgentMessage::Custom(_) => None,
+        // Covers AgentMessage::Custom and, since AgentMessage is
+        // #[non_exhaustive], any future variant.
+        _ => None,
     }
 }
 
@@ -107,19 +109,15 @@ fn tool_call_then_stop(id: &str, name: &str, args: &str) -> Vec<Vec<AssistantMes
 async fn make_echo_tool(requires_approval: bool) -> Arc<dyn AgentTool> {
     let config = common::MockServerConfig::new(vec![]);
     let client = common::spawn_mock_server_with_client(&config).await;
-    let config = McpServerConfig {
-        name: "policy-test-server".into(),
-        transport: McpTransport::Stdio {
+    let config = McpServerConfig::new(
+        "policy-test-server",
+        McpTransport::Stdio {
             command: "mock".into(),
             args: vec![],
             env: HashMap::default(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(requires_approval);
     let conn = Arc::new(
         McpConnection::from_service(config, client, None)
             .await
@@ -157,19 +155,15 @@ fn collect_event_names(events: &[AgentEvent]) -> Vec<&'static str> {
 
 /// Helper to create a disconnected `McpConnection` for metadata-only tests.
 fn disconnected_connection(requires_approval: bool) -> (McpServerConfig, Arc<McpConnection>) {
-    let config = McpServerConfig {
-        name: "policy-test-server".into(),
-        transport: McpTransport::Stdio {
+    let config = McpServerConfig::new(
+        "policy-test-server",
+        McpTransport::Stdio {
             command: "mock".into(),
             args: vec![],
             env: HashMap::default(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(requires_approval);
     let conn = Arc::new(McpConnection::disconnected(config.clone()));
     (config, conn)
 }
@@ -253,13 +247,10 @@ async fn mcp_tool_approval_context_is_redacted_in_tool_approval_request_debug() 
         "path": "/tmp/output.txt",
         "text": "${API_KEY}"
     });
-    let request = ToolApprovalRequest {
-        tool_call_id: "call_1".into(),
-        tool_name: tool.name().into(),
-        arguments: params.clone(),
-        requires_approval: true,
-        context: tool.approval_context(&params),
-    };
+    let mut request = ToolApprovalRequest::new("call_1", tool.name(), params.clone(), true);
+    if let Some(context) = tool.approval_context(&params) {
+        request = request.with_context(context);
+    }
 
     let debug = format!("{request:?}");
 

@@ -116,7 +116,9 @@ type ConvertToLlmBoxed = Box<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send 
 fn default_convert_to_llm() -> ConvertToLlmBoxed {
     Box::new(|msg| match msg {
         AgentMessage::Llm(llm) => Some(llm.clone()),
-        AgentMessage::Custom(_) => None,
+        // Covers AgentMessage::Custom and, since AgentMessage is
+        // #[non_exhaustive], any future variant.
+        _ => None,
     })
 }
 
@@ -225,13 +227,12 @@ async fn sequential_policy_executes_tools_in_order() {
         ToolExecutionPolicy::Sequential,
     );
 
-    let prompt = vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text {
+    let prompt = vec![AgentMessage::Llm(LlmMessage::User(
+        UserMessage::new(vec![ContentBlock::Text {
             text: "go".to_string(),
-        }],
-        timestamp: 0,
-        cache_hint: None,
-    }))];
+        }])
+        .with_timestamp(0),
+    ))];
 
     let stream =
         swink_agent::agent_loop(prompt, "test".to_string(), config, CancellationToken::new());
@@ -289,13 +290,12 @@ async fn priority_policy_executes_higher_priority_first() {
         ToolExecutionPolicy::Priority(priority_fn),
     );
 
-    let prompt = vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text {
+    let prompt = vec![AgentMessage::Llm(LlmMessage::User(
+        UserMessage::new(vec![ContentBlock::Text {
             text: "go".to_string(),
-        }],
-        timestamp: 0,
-        cache_hint: None,
-    }))];
+        }])
+        .with_timestamp(0),
+    ))];
 
     let stream =
         swink_agent::agent_loop(prompt, "test".to_string(), config, CancellationToken::new());
@@ -374,13 +374,12 @@ async fn concurrent_policy_is_default_and_spawns_all() {
         ToolExecutionPolicy::Concurrent,
     );
 
-    let prompt = vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text {
+    let prompt = vec![AgentMessage::Llm(LlmMessage::User(
+        UserMessage::new(vec![ContentBlock::Text {
             text: "go".to_string(),
-        }],
-        timestamp: 0,
-        cache_hint: None,
-    }))];
+        }])
+        .with_timestamp(0),
+    ))];
 
     let stream =
         swink_agent::agent_loop(prompt, "test".to_string(), config, CancellationToken::new());
@@ -446,13 +445,12 @@ async fn custom_strategy_controls_grouping() {
         ToolExecutionPolicy::Custom(Arc::new(ReverseSequentialStrategy)),
     );
 
-    let prompt = vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text {
+    let prompt = vec![AgentMessage::Llm(LlmMessage::User(
+        UserMessage::new(vec![ContentBlock::Text {
             text: "go".to_string(),
-        }],
-        timestamp: 0,
-        cache_hint: None,
-    }))];
+        }])
+        .with_timestamp(0),
+    ))];
 
     let stream =
         swink_agent::agent_loop(prompt, "test".to_string(), config, CancellationToken::new());
@@ -510,13 +508,12 @@ async fn priority_groups_with_equal_priority_run_concurrently() {
         ToolExecutionPolicy::Priority(priority_fn),
     );
 
-    let prompt = vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text {
+    let prompt = vec![AgentMessage::Llm(LlmMessage::User(
+        UserMessage::new(vec![ContentBlock::Text {
             text: "go".to_string(),
-        }],
-        timestamp: 0,
-        cache_hint: None,
-    }))];
+        }])
+        .with_timestamp(0),
+    ))];
 
     let stream =
         swink_agent::agent_loop(prompt, "test".to_string(), config, CancellationToken::new());

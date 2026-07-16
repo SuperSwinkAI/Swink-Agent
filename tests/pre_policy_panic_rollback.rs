@@ -55,13 +55,7 @@ fn panicking_pre_dispatch_policy_restores_arguments_before_continuing() {
         "path": "safe.txt",
         "mode": "overwrite"
     });
-    let mut ctx = ToolDispatchContext {
-        tool_name: "write_file",
-        tool_call_id: "call-1",
-        arguments: &mut arguments,
-        execution_root: None,
-        state: &state,
-    };
+    let mut ctx = ToolDispatchContext::new("write_file", "call-1", &mut arguments, None, &state);
 
     let verdict = run_pre_dispatch_policies(&policies, &mut ctx);
 

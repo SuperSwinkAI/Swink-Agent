@@ -223,16 +223,11 @@ fn check_budget(options: &AgentOptions, state: &SessionState) -> Option<String> 
             "no pre-turn policy named '{BUDGET_NAME}' (BudgetPolicy) is wired"
         ));
     };
-    let usage = Usage {
-        input: u64::MAX,
-        output: u64::MAX,
-        total: u64::MAX,
-        ..Usage::default()
-    };
-    let cost = Cost {
-        total: f64::MAX,
-        ..Cost::default()
-    };
+    let usage = Usage::default()
+        .with_input(u64::MAX)
+        .with_output(u64::MAX)
+        .with_total(u64::MAX);
+    let cost = Cost::default().with_total(f64::MAX);
     let ctx = probe_policy_context(0, &usage, &cost, state);
     if matches!(policy.evaluate(&ctx), PolicyVerdict::Stop(_)) {
         None
@@ -287,13 +282,13 @@ fn check_sandbox(options: &AgentOptions, state: &SessionState) -> Option<String>
         "file_path": probe,
         "file": probe,
     });
-    let mut ctx = ToolDispatchContext {
-        tool_name: "guardrail_probe",
-        tool_call_id: "guardrail-probe",
-        arguments: &mut arguments,
-        execution_root: None,
+    let mut ctx = ToolDispatchContext::new(
+        "guardrail_probe",
+        "guardrail-probe",
+        &mut arguments,
+        None,
         state,
-    };
+    );
     if matches!(policy.evaluate(&mut ctx), PreDispatchVerdict::Skip(_)) {
         None
     } else {
@@ -321,13 +316,13 @@ fn check_deny_list(
         ));
     };
     let mut arguments = serde_json::json!({});
-    let mut ctx = ToolDispatchContext {
-        tool_name: expected_denied_tool,
-        tool_call_id: "guardrail-probe",
-        arguments: &mut arguments,
-        execution_root: None,
+    let mut ctx = ToolDispatchContext::new(
+        expected_denied_tool,
+        "guardrail-probe",
+        &mut arguments,
+        None,
         state,
-    };
+    );
     if matches!(policy.evaluate(&mut ctx), PreDispatchVerdict::Skip(_)) {
         None
     } else {
@@ -345,15 +340,7 @@ const fn probe_policy_context<'a>(
     cost: &'a Cost,
     state: &'a SessionState,
 ) -> PolicyContext<'a> {
-    PolicyContext {
-        turn_index,
-        accumulated_usage: usage,
-        accumulated_cost: cost,
-        message_count: 0,
-        overflow_signal: false,
-        new_messages: &[],
-        state,
-    }
+    PolicyContext::new(turn_index, usage, cost, 0, false, &[], state)
 }
 
 /// Panicking wrapper around [`verify_production_guardrails`] for use in

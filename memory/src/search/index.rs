@@ -262,16 +262,17 @@ impl TantivyIndex {
             let body = search::searchable_text_pub(&entry);
             let snippet = snippet_from_text(&body, 0);
 
-            hits.push(SessionHit {
+            // Convert tantivy's f32 score to a comparable usize (×1000 for ordering).
+            // score is always non-negative (BM25 score from tantivy).
+            #[allow(clippy::cast_sign_loss)]
+            let score = (score.max(0.0) * 1000.0) as usize;
+            hits.push(SessionHit::new(
                 session_id,
                 session_title,
                 entry,
-                // Convert tantivy's f32 score to a comparable usize (×1000 for ordering).
-                // score is always non-negative (BM25 score from tantivy).
-                #[allow(clippy::cast_sign_loss)]
-                score: (score.max(0.0) * 1000.0) as usize,
+                score,
                 snippet,
-            });
+            ));
         }
 
         Ok(hits)

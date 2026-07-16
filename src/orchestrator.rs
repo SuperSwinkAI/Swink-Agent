@@ -26,11 +26,23 @@ type OptionsFactoryArc = Arc<dyn Fn() -> AgentOptions + Send + Sync>;
 // ─── Request / Response channel ─────────────────────────────────────────────
 
 /// A message sent to a running agent via its request channel.
+#[non_exhaustive]
 pub struct AgentRequest {
     /// The messages to inject into the agent.
     pub messages: Vec<AgentMessage>,
     /// A one-shot channel for the agent's response.
     pub reply: oneshot::Sender<Result<AgentResult, AgentError>>,
+}
+
+impl AgentRequest {
+    /// Create a new agent request with the given messages and reply channel.
+    #[must_use]
+    pub fn new(
+        messages: Vec<AgentMessage>,
+        reply: oneshot::Sender<Result<AgentResult, AgentError>>,
+    ) -> Self {
+        Self { messages, reply }
+    }
 }
 
 fn send_agent_reply<T>(
@@ -54,6 +66,7 @@ fn send_agent_reply<T>(
 // ─── Supervisor ─────────────────────────────────────────────────────────────
 
 /// What the supervisor decides after an agent error.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SupervisorAction {
     /// Restart the failed agent with the same options.
@@ -158,10 +171,7 @@ impl OrchestratedHandle {
         messages: Vec<AgentMessage>,
     ) -> Result<AgentResult, AgentError> {
         let (reply_tx, reply_rx) = oneshot::channel();
-        let request = AgentRequest {
-            messages,
-            reply: reply_tx,
-        };
+        let request = AgentRequest::new(messages, reply_tx);
         self.request_tx.send(request).await.map_err(|_| {
             AgentError::plugin(
                 "orchestrator",

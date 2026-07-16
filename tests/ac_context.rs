@@ -200,13 +200,10 @@ async fn context_overflow_triggers_retry() {
     let mut messages = Vec::new();
     for i in 0..5 {
         messages.push(AgentMessage::Llm(LlmMessage::User(
-            swink_agent::UserMessage {
-                content: vec![ContentBlock::Text {
-                    text: format!("msg{i}:{padding}"),
-                }],
-                timestamp: 0,
-                cache_hint: None,
-            },
+            swink_agent::UserMessage::new(vec![ContentBlock::Text {
+                text: format!("msg{i}:{padding}"),
+            }])
+            .with_timestamp(0),
         )));
     }
 

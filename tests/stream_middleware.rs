@@ -17,11 +17,7 @@ use swink_agent::{
 use common::{MockStreamFn, default_model};
 
 fn empty_context() -> AgentContext {
-    AgentContext {
-        system_prompt: String::new(),
-        messages: vec![],
-        tools: vec![],
-    }
+    AgentContext::new(String::new(), vec![], vec![])
 }
 
 fn text_events() -> Vec<AssistantMessageEvent> {

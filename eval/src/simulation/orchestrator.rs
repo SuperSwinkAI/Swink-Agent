@@ -80,13 +80,10 @@ pub async fn run_multiturn_simulation(
         }
 
         let conversation = vec![swink_agent::AgentMessage::Llm(LlmMessage::User(
-            UserMessage {
-                content: vec![ContentBlock::Text {
-                    text: next_user.message.clone(),
-                }],
-                timestamp: now_timestamp(),
-                cache_hint: None,
-            },
+            UserMessage::new(vec![ContentBlock::Text {
+                text: next_user.message.clone(),
+            }])
+            .with_timestamp(now_timestamp()),
         ))];
         let stream = agent
             .prompt_stream(conversation)
@@ -136,16 +133,13 @@ pub async fn run_multiturn_simulation(
                 if let Some(idx) = last_idx {
                     collector.append_tool_result(
                         idx,
-                        ToolResultMessage {
-                            tool_call_id: call.id.clone(),
-                            content: vec![ContentBlock::Text {
+                        ToolResultMessage::new(
+                            call.id.clone(),
+                            vec![ContentBlock::Text {
                                 text: value.to_string(),
                             }],
-                            is_error: false,
-                            timestamp: now_timestamp(),
-                            details: serde_json::Value::Null,
-                            cache_hint: None,
-                        },
+                        )
+                        .with_timestamp(now_timestamp()),
                     );
                 }
             }

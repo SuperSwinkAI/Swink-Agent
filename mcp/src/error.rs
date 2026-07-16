@@ -3,6 +3,7 @@
 use std::fmt;
 
 /// Errors from MCP operations.
+#[non_exhaustive]
 #[derive(Debug)]
 pub enum McpError {
     /// Failed to spawn subprocess for stdio transport.

@@ -1119,12 +1119,10 @@ impl StreamState {
 
         self.events.push(AssistantMessageEvent::Done {
             stop_reason,
-            usage: Usage {
-                input: u64::from(self.prompt_tokens),
-                output: u64::from(self.completion_tokens),
-                total: u64::from(self.prompt_tokens + self.completion_tokens),
-                ..Default::default()
-            },
+            usage: Usage::default()
+                .with_input(u64::from(self.prompt_tokens))
+                .with_output(u64::from(self.completion_tokens))
+                .with_total(u64::from(self.prompt_tokens + self.completion_tokens)),
             cost: Cost::default(),
         });
 
@@ -1484,20 +1482,14 @@ mod tests {
     #[test]
     fn thinking_enabled_requires_capability_and_non_off_level() {
         let mut model = ModelSpec::new("local", "gemma-4-E2B-it");
-        model.capabilities = Some(swink_agent::ModelCapabilities {
-            supports_thinking: true,
-            ..Default::default()
-        });
+        model.capabilities = Some(swink_agent::ModelCapabilities::none().with_thinking(true));
 
         assert!(!thinking_enabled_for_model(&model));
 
         model.thinking_level = ThinkingLevel::Low;
         assert!(thinking_enabled_for_model(&model));
 
-        model.capabilities = Some(swink_agent::ModelCapabilities {
-            supports_thinking: false,
-            ..Default::default()
-        });
+        model.capabilities = Some(swink_agent::ModelCapabilities::none().with_thinking(false));
         assert!(!thinking_enabled_for_model(&model));
     }
 
@@ -1980,11 +1972,7 @@ mod tests {
         let local_model = Arc::new(LocalModel::from_preset(crate::ModelPreset::SmolLM3_3B));
         let stream_fn = LocalStreamFn::new(local_model);
         let model = ModelSpec::new("local", "SmolLM3-3B-Q4_K_M");
-        let context = AgentContext {
-            system_prompt: String::new(),
-            messages: vec![],
-            tools: vec![],
-        };
+        let context = AgentContext::new(String::new(), vec![], vec![]);
         let options = StreamOptions::default();
         let token = CancellationToken::new();
         token.cancel();
@@ -2170,11 +2158,9 @@ mod tests {
 
     #[test]
     fn stream_options_forward_generation_overrides() {
-        let options = StreamOptions {
-            temperature: Some(0.8),
-            max_tokens: Some(256),
-            ..StreamOptions::default()
-        };
+        let options = StreamOptions::default()
+            .with_temperature(0.8)
+            .with_max_tokens(256);
 
         assert_eq!(
             generation_options_from_stream_options(&options),
@@ -2187,10 +2173,7 @@ mod tests {
 
     #[test]
     fn stream_options_max_tokens_saturates_to_u32() {
-        let options = StreamOptions {
-            max_tokens: Some(u64::MAX),
-            ..StreamOptions::default()
-        };
+        let options = StreamOptions::default().with_max_tokens(u64::MAX);
 
         assert_eq!(
             generation_options_from_stream_options(&options).max_tokens,

@@ -11,6 +11,8 @@ use tokio::process::{Child, Command};
 use crate::domain::DomainFilter;
 
 /// Viewport dimensions for screenshots.
+// Frozen by design: a width x height dimensions pair; no further fields expected.
+#[allow(clippy::exhaustive_structs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Viewport {
     pub width: u32,
@@ -18,6 +20,7 @@ pub struct Viewport {
 }
 
 /// Preset extraction types.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ExtractionPreset {
@@ -27,11 +30,28 @@ pub enum ExtractionPreset {
 }
 
 /// A single extracted element from a web page.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExtractedElement {
     pub tag: String,
     pub text: String,
     pub attributes: HashMap<String, String>,
+}
+
+impl ExtractedElement {
+    /// Construct a new `ExtractedElement`.
+    #[must_use]
+    pub fn new(
+        tag: impl Into<String>,
+        text: impl Into<String>,
+        attributes: HashMap<String, String>,
+    ) -> Self {
+        Self {
+            tag: tag.into(),
+            text: text.into(),
+            attributes,
+        }
+    }
 }
 
 /// Screenshot response plus the browser's final URL after redirects.

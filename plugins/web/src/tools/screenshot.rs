@@ -238,22 +238,22 @@ fn build_screenshot_result(
         }
     }
 
-    AgentToolResult {
-        content: vec![ContentBlock::Image {
+    let mut result = AgentToolResult::new(
+        vec![ContentBlock::Image {
             source: ImageSource::Base64 {
                 media_type: "image/png".into(),
                 data: screenshot.base64,
             },
         }],
-        details: serde_json::json!({
-            "url": url,
-            "final_url": screenshot.final_url,
-            "width": width,
-            "height": height,
-        }),
-        is_error: false,
-        transfer_signal: None,
-    }
+        false,
+    );
+    result.details = serde_json::json!({
+        "url": url,
+        "final_url": screenshot.final_url,
+        "width": width,
+        "height": height,
+    });
+    result
 }
 
 fn build_schema() -> Value {

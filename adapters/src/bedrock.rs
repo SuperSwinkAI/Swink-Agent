@@ -745,16 +745,14 @@ fn parse_metadata_frame(
 ) -> Result<Vec<AssistantMessageEvent>, String> {
     let event: MetadataEvent = serde_json::from_slice(payload)
         .map_err(|e| format!("Bedrock metadata parse error: {e}"))?;
-    let usage = Usage {
-        input: event.usage.input_tokens,
-        output: event.usage.output_tokens,
-        total: if event.usage.total_tokens == 0 {
+    let usage = Usage::default()
+        .with_input(event.usage.input_tokens)
+        .with_output(event.usage.output_tokens)
+        .with_total(if event.usage.total_tokens == 0 {
             event.usage.input_tokens + event.usage.output_tokens
         } else {
             event.usage.total_tokens
-        },
-        ..Usage::default()
-    };
+        });
     let stop_reason = map_stop_reason(state.stop_reason.as_deref());
     let mut events = finalize::finalize_blocks(state);
     match stop_reason {
@@ -1010,6 +1008,10 @@ fn convert_messages(messages: &[AgentMessage]) -> Vec<BedrockMessage> {
                     }],
                 });
             }
+            // Unknown future LlmMessage variant: nothing sensible to send to
+            // Bedrock, so drop it — same as messages skipped elsewhere in
+            // this loop (e.g. non-LLM AgentMessage variants).
+            &_ => {}
         }
     }
     result
@@ -1332,19 +1334,16 @@ mod tests {
 
     #[test]
     fn build_request_uses_system_field() {
-        let context = AgentContext {
-            system_prompt: "You are a helpful assistant.".to_string(),
-            messages: vec![AgentMessage::Llm(LlmMessage::User(
-                swink_agent::UserMessage {
-                    content: vec![ContentBlock::Text {
-                        text: "Hello".to_string(),
-                    }],
-                    timestamp: 0,
-                    cache_hint: None,
-                },
+        let context = AgentContext::new(
+            "You are a helpful assistant.".to_string(),
+            vec![AgentMessage::Llm(LlmMessage::User(
+                swink_agent::UserMessage::new(vec![ContentBlock::Text {
+                    text: "Hello".to_string(),
+                }])
+                .with_timestamp(0),
             ))],
-            tools: vec![],
-        };
+            vec![],
+        );
         let options = StreamOptions::default();
         let request = build_request(&context, &options);
         assert!(request.system.is_some());
@@ -2187,23 +2186,18 @@ mod tests {
     fn convert_messages_sanitized_tool_use_becomes_empty_object_input() {
         use swink_agent::AssistantMessage as HarnessAssistantMessage;
 
-        let mut assistant = HarnessAssistantMessage {
-            content: vec![ContentBlock::ToolCall {
+        let mut assistant = HarnessAssistantMessage::new(
+            vec![ContentBlock::ToolCall {
                 id: "tooluse_abc".into(),
                 name: "read_file".into(),
                 arguments: serde_json::Value::Null,
                 partial_json: Some(r#"{"path": "/tm"#.into()),
             }],
-            provider: "bedrock".into(),
-            model_id: "anthropic.claude-3-sonnet".into(),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::Length,
-            error_message: None,
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        };
+            "bedrock",
+            "anthropic.claude-3-sonnet",
+        )
+        .with_stop_reason(StopReason::Length)
+        .with_timestamp(0);
 
         swink_agent::sanitize_incomplete_tool_calls(&mut assistant);
 

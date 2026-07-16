@@ -68,11 +68,7 @@ fn fails_on_output_exceeded() {
     });
     let invocation = Invocation {
         turns: vec![],
-        total_usage: Usage {
-            output: 11,
-            total: 11,
-            ..Default::default()
-        },
+        total_usage: Usage::default().with_output(11).with_total(11),
         total_cost: Cost::default(),
         total_duration: Duration::from_secs(1),
         final_response: None,
@@ -100,10 +96,7 @@ fn tool_response_events(id: &str) -> Vec<AssistantMessageEvent> {
         AssistantMessageEvent::Done {
             stop_reason: StopReason::ToolUse,
             usage: Usage::default(),
-            cost: Cost {
-                total: 0.005,
-                ..Default::default()
-            },
+            cost: Cost::default().with_total(0.005),
         },
     ]
 }
@@ -120,10 +113,7 @@ fn text_response_events(text: &str) -> Vec<AssistantMessageEvent> {
         AssistantMessageEvent::Done {
             stop_reason: StopReason::ToolUse,
             usage: Usage::default(),
-            cost: Cost {
-                total: 0.005,
-                ..Default::default()
-            },
+            cost: Cost::default().with_total(0.005),
         },
     ]
 }

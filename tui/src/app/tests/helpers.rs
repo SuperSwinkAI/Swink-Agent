@@ -8,8 +8,8 @@ use swink_agent::AgentTool;
 use swink_agent::testing::text_only_events;
 use swink_agent::{
     Agent, AgentContext, AgentMessage, AgentOptions, AgentToolResult, AssistantMessage,
-    AssistantMessageEvent, Cost, LlmMessage, ModelSpec, StopReason, StreamFn, StreamOptions, Usage,
-    UserMessage, default_convert,
+    AssistantMessageEvent, LlmMessage, ModelSpec, StopReason, StreamFn, StreamOptions, UserMessage,
+    default_convert,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -165,45 +165,35 @@ pub(super) fn make_assistant_message(content: &str) -> DisplayMessage {
 }
 
 pub(super) fn make_user_agent_message(content: &str) -> AgentMessage {
-    AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![swink_agent::ContentBlock::Text {
+    AgentMessage::Llm(LlmMessage::User(
+        UserMessage::new(vec![swink_agent::ContentBlock::Text {
             text: content.to_string(),
-        }],
-        timestamp: 0,
-        cache_hint: None,
-    }))
+        }])
+        .with_timestamp(0),
+    ))
 }
 
 pub(super) fn make_assistant_agent_message(content: &str) -> AgentMessage {
-    AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
-        content: vec![swink_agent::ContentBlock::Text {
-            text: content.to_string(),
-        }],
-        provider: "test".to_string(),
-        model_id: "mock-model".to_string(),
-        usage: Usage::default(),
-        cost: Cost::default(),
-        stop_reason: StopReason::Stop,
-        error_message: None,
-        error_kind: None,
-        timestamp: 0,
-        cache_hint: None,
-    }))
+    AgentMessage::Llm(LlmMessage::Assistant(
+        AssistantMessage::new(
+            vec![swink_agent::ContentBlock::Text {
+                text: content.to_string(),
+            }],
+            "test",
+            "mock-model",
+        )
+        .with_stop_reason(StopReason::Stop)
+        .with_timestamp(0),
+    ))
 }
 
 pub(super) fn make_error_assistant_agent_message(error_msg: &str) -> AgentMessage {
-    AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
-        content: vec![],
-        provider: "test".to_string(),
-        model_id: "mock-model".to_string(),
-        usage: Usage::default(),
-        cost: Cost::default(),
-        stop_reason: StopReason::Error,
-        error_message: Some(error_msg.to_string()),
-        error_kind: None,
-        timestamp: 0,
-        cache_hint: None,
-    }))
+    AgentMessage::Llm(LlmMessage::Assistant(
+        AssistantMessage::new(vec![], "test", "mock-model")
+            .with_stop_reason(StopReason::Error)
+            .with_error_message(error_msg)
+            .with_timestamp(0),
+    ))
 }
 
 pub(super) fn instant_secs_ago(secs: u64) -> Instant {

@@ -19,6 +19,7 @@ use crate::stream::AssistantMessageEvent;
 // ─── OpenBlock ─────────────────────────────────────────────────────────────
 
 /// A content block that is still open and needs a closing event.
+#[non_exhaustive]
 #[derive(Debug)]
 pub enum OpenBlock {
     /// An open text block.

@@ -319,13 +319,10 @@ mod tests {
                 "full_async",
                 &meta,
                 &[AgentMessage::Llm(swink_agent::LlmMessage::User(
-                    swink_agent::UserMessage {
-                        content: vec![swink_agent::ContentBlock::Text {
-                            text: "hello".to_string(),
-                        }],
-                        timestamp: 1,
-                        cache_hint: None,
-                    },
+                    swink_agent::UserMessage::new(vec![swink_agent::ContentBlock::Text {
+                        text: "hello".to_string(),
+                    }])
+                    .with_timestamp(1),
                 ))],
                 &serde_json::json!({"scroll": 7}),
             )
@@ -350,13 +347,10 @@ mod tests {
                 "full_async_load",
                 &test_meta("full_async_load"),
                 &[AgentMessage::Llm(swink_agent::LlmMessage::User(
-                    swink_agent::UserMessage {
-                        content: vec![swink_agent::ContentBlock::Text {
-                            text: "hello".to_string(),
-                        }],
-                        timestamp: 1,
-                        cache_hint: None,
-                    },
+                    swink_agent::UserMessage::new(vec![swink_agent::ContentBlock::Text {
+                        text: "hello".to_string(),
+                    }])
+                    .with_timestamp(1),
                 ))],
                 &serde_json::json!({"scroll": 11}),
             )
@@ -429,23 +423,21 @@ mod tests {
             BlockingSessionStore::new(jsonl_store).with_registry(Arc::clone(&registry));
 
         let messages: Vec<AgentMessage> = vec![
-            AgentMessage::Llm(swink_agent::LlmMessage::User(swink_agent::UserMessage {
-                content: vec![swink_agent::ContentBlock::Text {
+            AgentMessage::Llm(swink_agent::LlmMessage::User(
+                swink_agent::UserMessage::new(vec![swink_agent::ContentBlock::Text {
                     text: "hello".to_string(),
-                }],
-                timestamp: 1,
-                cache_hint: None,
-            })),
+                }])
+                .with_timestamp(1),
+            )),
             AgentMessage::Custom(Box::new(TestCustomMsg {
                 data: "preserved".to_string(),
             })),
-            AgentMessage::Llm(swink_agent::LlmMessage::User(swink_agent::UserMessage {
-                content: vec![swink_agent::ContentBlock::Text {
+            AgentMessage::Llm(swink_agent::LlmMessage::User(
+                swink_agent::UserMessage::new(vec![swink_agent::ContentBlock::Text {
                     text: "world".to_string(),
-                }],
-                timestamp: 2,
-                cache_hint: None,
-            })),
+                }])
+                .with_timestamp(2),
+            )),
         ];
 
         let meta = test_meta("custom_save");
@@ -498,23 +490,21 @@ mod tests {
             let sync_store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
             let meta = test_meta("drop_custom");
             let messages: Vec<AgentMessage> = vec![
-                AgentMessage::Llm(swink_agent::LlmMessage::User(swink_agent::UserMessage {
-                    content: vec![swink_agent::ContentBlock::Text {
+                AgentMessage::Llm(swink_agent::LlmMessage::User(
+                    swink_agent::UserMessage::new(vec![swink_agent::ContentBlock::Text {
                         text: "before".to_string(),
-                    }],
-                    timestamp: 1,
-                    cache_hint: None,
-                })),
+                    }])
+                    .with_timestamp(1),
+                )),
                 AgentMessage::Custom(Box::new(TestCustomMsg {
                     data: "not-restored".to_string(),
                 })),
-                AgentMessage::Llm(swink_agent::LlmMessage::User(swink_agent::UserMessage {
-                    content: vec![swink_agent::ContentBlock::Text {
+                AgentMessage::Llm(swink_agent::LlmMessage::User(
+                    swink_agent::UserMessage::new(vec![swink_agent::ContentBlock::Text {
                         text: "after".to_string(),
-                    }],
-                    timestamp: 2,
-                    cache_hint: None,
-                })),
+                    }])
+                    .with_timestamp(2),
+                )),
             ];
             crate::store::SessionStore::save(&sync_store, "drop_custom", &meta, &messages).unwrap();
         }
@@ -544,13 +534,10 @@ mod tests {
         // Create session with an LLM message.
         let meta = test_meta("custom_append");
         let initial: Vec<AgentMessage> = vec![AgentMessage::Llm(swink_agent::LlmMessage::User(
-            swink_agent::UserMessage {
-                content: vec![swink_agent::ContentBlock::Text {
-                    text: "start".to_string(),
-                }],
-                timestamp: 1,
-                cache_hint: None,
-            },
+            swink_agent::UserMessage::new(vec![swink_agent::ContentBlock::Text {
+                text: "start".to_string(),
+            }])
+            .with_timestamp(1),
         ))];
         async_store
             .save("custom_append", &meta, &initial)

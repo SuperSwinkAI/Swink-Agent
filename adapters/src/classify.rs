@@ -22,6 +22,7 @@ use swink_agent::AssistantMessageEvent;
 /// Maps to the error categories that the core agent loop understands:
 /// authentication failures are terminal, throttling is retryable, and
 /// network/server errors are retryable.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HttpErrorKind {
     /// Authentication or authorization failure (401, 403).

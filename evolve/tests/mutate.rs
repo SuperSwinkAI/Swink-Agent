@@ -105,10 +105,7 @@ async fn llm_guided_records_budget_invocation_and_cost() {
         cost: Some(0.01),
     }]));
     let strategy = LlmGuided::new(judge);
-    let budget = CycleBudget::new(Cost {
-        total: 10.0,
-        ..Cost::default()
-    });
+    let budget = CycleBudget::new(Cost::default().with_total(10.0));
     let mut context = make_context(3);
     context.budget = Some(&budget);
 
@@ -140,10 +137,7 @@ async fn llm_guided_counts_invocation_without_cost() {
         cost: None,
     }]));
     let strategy = LlmGuided::new(judge);
-    let budget = CycleBudget::new(Cost {
-        total: 10.0,
-        ..Cost::default()
-    });
+    let budget = CycleBudget::new(Cost::default().with_total(10.0));
     let mut context = make_context(3);
     context.budget = Some(&budget);
 

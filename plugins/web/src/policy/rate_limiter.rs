@@ -85,13 +85,7 @@ mod tests {
         args: &'a mut serde_json::Value,
         state: &'a SessionState,
     ) -> ToolDispatchContext<'a> {
-        ToolDispatchContext {
-            tool_name,
-            tool_call_id,
-            arguments: args,
-            execution_root: None,
-            state,
-        }
+        ToolDispatchContext::new(tool_name, tool_call_id, args, None, state)
     }
 
     #[test]

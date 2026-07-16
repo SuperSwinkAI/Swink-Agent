@@ -14,6 +14,7 @@ use crate::types::{AgentMessage, AgentResult, ContentBlock, LlmMessage, UserMess
 use crate::util::now_timestamp;
 
 /// The lifecycle status of a spawned agent task.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentStatus {
     /// The agent task is still executing.

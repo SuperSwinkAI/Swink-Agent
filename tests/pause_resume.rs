@@ -49,13 +49,12 @@ async fn pause_captures_pending_follow_up_messages() {
     let mut agent = Agent::new(options);
 
     agent.follow_up(swink_agent::AgentMessage::Llm(
-        swink_agent::LlmMessage::User(swink_agent::UserMessage {
-            content: vec![swink_agent::ContentBlock::Text {
+        swink_agent::LlmMessage::User(
+            swink_agent::UserMessage::new(vec![swink_agent::ContentBlock::Text {
                 text: "queued follow-up".to_string(),
-            }],
-            timestamp: 1,
-            cache_hint: None,
-        }),
+            }])
+            .with_timestamp(1),
+        ),
     ));
 
     let _stream = agent.prompt_stream(vec![user_msg("start")]).unwrap();
@@ -115,13 +114,12 @@ async fn resume_restores_messages_and_continues() {
     // Create a checkpoint from current state, with a pending follow-up so
     // continue_async is valid (last message is assistant, so we need pending).
     // The pending message triggers a follow-up round inside the loop.
-    let pending = vec![swink_agent::LlmMessage::User(swink_agent::UserMessage {
-        content: vec![swink_agent::ContentBlock::Text {
+    let pending = vec![swink_agent::LlmMessage::User(
+        swink_agent::UserMessage::new(vec![swink_agent::ContentBlock::Text {
             text: "continue please".to_string(),
-        }],
-        timestamp: 0,
-        cache_hint: None,
-    })];
+        }])
+        .with_timestamp(0),
+    )];
     let checkpoint = LoopCheckpoint::new(
         "Be helpful.",
         "test",
@@ -142,13 +140,12 @@ async fn resume_stream_returns_event_stream() {
     // Run once to populate messages
     let _ = agent.prompt_text("hi").await.unwrap();
 
-    let pending = vec![swink_agent::LlmMessage::User(swink_agent::UserMessage {
-        content: vec![swink_agent::ContentBlock::Text {
+    let pending = vec![swink_agent::LlmMessage::User(
+        swink_agent::UserMessage::new(vec![swink_agent::ContentBlock::Text {
             text: "continue".to_string(),
-        }],
-        timestamp: 0,
-        cache_hint: None,
-    })];
+        }])
+        .with_timestamp(0),
+    )];
     let checkpoint = LoopCheckpoint::new(
         "Be helpful.",
         "test",

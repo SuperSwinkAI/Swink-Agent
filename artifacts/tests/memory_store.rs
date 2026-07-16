@@ -5,11 +5,7 @@ use swink_agent::{ArtifactData, ArtifactError, ArtifactMeta, ArtifactStore};
 use swink_agent_artifacts::InMemoryArtifactStore;
 
 fn text_data(content: &str) -> ArtifactData {
-    ArtifactData {
-        content: content.as_bytes().to_vec(),
-        content_type: "text/plain".to_string(),
-        metadata: HashMap::new(),
-    }
+    ArtifactData::new(content.as_bytes().to_vec(), "text/plain".to_string())
 }
 
 #[tokio::test]
@@ -147,11 +143,7 @@ async fn save_validates_name() {
 #[tokio::test]
 async fn save_empty_content_succeeds() {
     let store = InMemoryArtifactStore::new();
-    let data = ArtifactData {
-        content: vec![],
-        content_type: "application/octet-stream".to_string(),
-        metadata: HashMap::new(),
-    };
+    let data = ArtifactData::new(vec![], "application/octet-stream".to_string());
     let version = store.save("s1", "empty.bin", data).await.unwrap();
 
     assert_eq!(version.version, 1);
@@ -166,16 +158,8 @@ async fn save_empty_content_succeeds() {
 async fn list_returns_all_artifacts() {
     let store = InMemoryArtifactStore::new();
 
-    let csv_data = ArtifactData {
-        content: b"a,b,c".to_vec(),
-        content_type: "text/csv".to_string(),
-        metadata: HashMap::new(),
-    };
-    let json_data = ArtifactData {
-        content: b"{}".to_vec(),
-        content_type: "application/json".to_string(),
-        metadata: HashMap::new(),
-    };
+    let csv_data = ArtifactData::new(b"a,b,c".to_vec(), "text/csv".to_string());
+    let json_data = ArtifactData::new(b"{}".to_vec(), "application/json".to_string());
 
     store
         .save("s1", "report.md", text_data("hello"))
@@ -235,11 +219,8 @@ async fn load_includes_custom_metadata() {
     metadata.insert("author".to_string(), "agent-1".to_string());
     metadata.insert("source".to_string(), "web-scrape".to_string());
 
-    let data = ArtifactData {
-        content: b"some content".to_vec(),
-        content_type: "text/plain".to_string(),
-        metadata,
-    };
+    let data = ArtifactData::new(b"some content".to_vec(), "text/plain".to_string())
+        .with_metadata(metadata);
 
     store.save("s1", "result.txt", data).await.unwrap();
 

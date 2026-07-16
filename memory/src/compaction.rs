@@ -9,11 +9,10 @@ use std::sync::{Arc, Mutex};
 
 #[allow(deprecated)]
 use swink_agent::sliding_window;
-use swink_agent::{
-    AgentMessage, AssistantMessage, ContentBlock, Cost, LlmMessage, StopReason, Usage,
-};
+use swink_agent::{AgentMessage, AssistantMessage, ContentBlock, LlmMessage};
 
 /// Result of a compaction operation (diagnostic type for future use).
+#[non_exhaustive]
 #[derive(Debug)]
 pub struct CompactionResult {
     /// The compacted messages.
@@ -22,6 +21,18 @@ pub struct CompactionResult {
     pub removed_count: usize,
     /// The summary that was injected, if any.
     pub summary: Option<String>,
+}
+
+impl CompactionResult {
+    /// Creates a new compaction result from its constituent parts.
+    #[must_use]
+    pub fn new(messages: Vec<AgentMessage>, removed_count: usize, summary: Option<String>) -> Self {
+        Self {
+            messages,
+            removed_count,
+            summary,
+        }
+    }
 }
 
 /// Summarization-aware context compactor.
@@ -91,20 +102,16 @@ impl SummarizingCompactor {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if let Some(text) = guard.take() {
-                    let summary_msg = AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
-                        content: vec![ContentBlock::Text {
-                            text: format!("[Context summary of earlier conversation]\n{text}"),
-                        }],
-                        provider: String::new(),
-                        model_id: String::new(),
-                        usage: Usage::default(),
-                        cost: Cost::default(),
-                        stop_reason: StopReason::Stop,
-                        error_message: None,
-                        error_kind: None,
-                        timestamp: 0,
-                        cache_hint: None,
-                    }));
+                    let summary_msg = AgentMessage::Llm(LlmMessage::Assistant(
+                        AssistantMessage::new(
+                            vec![ContentBlock::Text {
+                                text: format!("[Context summary of earlier conversation]\n{text}"),
+                            }],
+                            String::new(),
+                            String::new(),
+                        )
+                        .with_timestamp(0),
+                    ));
 
                     // Insert after anchor messages.
                     let insert_pos = anchor.min(messages.len());
@@ -153,13 +160,12 @@ mod tests {
     use swink_agent::{ContentBlock, LlmMessage, UserMessage};
 
     fn text_message(text: &str) -> AgentMessage {
-        AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
+        AgentMessage::Llm(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text {
                 text: text.to_owned(),
-            }],
-            timestamp: 0,
-            cache_hint: None,
-        }))
+            }])
+            .with_timestamp(0),
+        ))
     }
 
     #[test]

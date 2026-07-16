@@ -10,19 +10,17 @@
 //! ```ignore
 //! use swink_agent_mcp::{McpManager, McpServerConfig, McpTransport};
 //!
-//! let configs = vec![McpServerConfig {
-//!     name: "filesystem".into(),
-//!     transport: McpTransport::Stdio {
-//!         command: "npx".into(),
-//!         args: vec!["-y".into(), "@modelcontextprotocol/server-filesystem".into()],
-//!         env: Default::default(),
-//!     },
-//!     tool_prefix: Some("fs".into()),
-//!     tool_filter: None,
-//!     requires_approval: true,
-//!     connect_timeout_ms: None,
-//!     discovery_timeout_ms: None,
-//! }];
+//! let configs = vec![
+//!     McpServerConfig::new(
+//!         "filesystem",
+//!         McpTransport::Stdio {
+//!             command: "npx".into(),
+//!             args: vec!["-y".into(), "@modelcontextprotocol/server-filesystem".into()],
+//!             env: Default::default(),
+//!         },
+//!     )
+//!     .with_tool_prefix("fs"),
+//! ];
 //!
 //! let mut mcp = McpManager::new(configs);
 //! mcp.connect_all().await?;

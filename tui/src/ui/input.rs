@@ -14,6 +14,7 @@ use crate::theme;
 /// Produced by [`InputEditor::mention_query`] / [`InputEditor::slash_query`]
 /// and consumed by [`InputEditor::replace_mention_query`]. The name predates
 /// the `/skill` use — see [`InputEditor::slash_query`] for why it is shared.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MentionQuery {
     /// Byte offset of the sigil (`@` or `/`) within the cursor's line.
@@ -21,6 +22,17 @@ pub struct MentionQuery {
     /// Text between the sigil and the cursor. Empty right after the sigil is
     /// typed.
     pub query: String,
+}
+
+impl MentionQuery {
+    /// Build a query for the sigil token starting at `start` in the line.
+    #[must_use]
+    pub fn new(start: usize, query: impl Into<String>) -> Self {
+        Self {
+            start,
+            query: query.into(),
+        }
+    }
 }
 
 /// Multi-line input editor state.
@@ -370,10 +382,7 @@ impl InputEditor {
             return None;
         }
 
-        Some(MentionQuery {
-            start,
-            query: query.to_string(),
-        })
+        Some(MentionQuery::new(start, query))
     }
 
     /// Replace the sigil token running from `start` to the cursor.

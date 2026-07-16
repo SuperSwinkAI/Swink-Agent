@@ -97,11 +97,10 @@ pub(crate) async fn run_parallel(
 
                 let mut agent = factory.create(&branch_name)?;
 
-                let messages = vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-                    content: vec![ContentBlock::Text { text: input }],
-                    timestamp: now_timestamp(),
-                    cache_hint: None,
-                }))];
+                let messages = vec![AgentMessage::Llm(LlmMessage::User(
+                    UserMessage::new(vec![ContentBlock::Text { text: input }])
+                        .with_timestamp(now_timestamp()),
+                ))];
 
                 let result = tokio::select! {
                     _ = token.cancelled() => Err(PipelineError::Cancelled),
@@ -409,11 +408,10 @@ async fn merge_custom(
 
     // Create aggregator agent and pass formatted outputs
     let mut aggregator = factory.create(&aggregator_name)?;
-    let messages = vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text { text: formatted }],
-        timestamp: now_timestamp(),
-        cache_hint: None,
-    }))];
+    let messages = vec![AgentMessage::Llm(LlmMessage::User(
+        UserMessage::new(vec![ContentBlock::Text { text: formatted }])
+            .with_timestamp(now_timestamp()),
+    ))];
 
     let agg_result =
         aggregator

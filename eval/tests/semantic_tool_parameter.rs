@@ -88,18 +88,9 @@ fn invocation_with(calls: &[(&str, serde_json::Value)]) -> Invocation {
     Invocation {
         turns: vec![TurnRecord {
             turn_index: 0,
-            assistant_message: AssistantMessage {
-                content: vec![],
-                provider: "test".into(),
-                model_id: "test-model".into(),
-                usage: Usage::default(),
-                cost: Cost::default(),
-                stop_reason: StopReason::Stop,
-                error_message: None,
-                error_kind: None,
-                timestamp: 0,
-                cache_hint: None,
-            },
+            assistant_message: AssistantMessage::new(vec![], "test", "test-model")
+                .with_stop_reason(StopReason::Stop)
+                .with_timestamp(0),
             tool_calls,
             tool_results: vec![],
             duration: Duration::from_millis(1),

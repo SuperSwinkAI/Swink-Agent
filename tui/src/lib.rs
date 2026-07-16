@@ -246,23 +246,21 @@ mod tests {
     use tokio::sync::mpsc;
 
     fn approval_request() -> ToolApprovalRequest {
-        ToolApprovalRequest {
-            tool_call_id: "call_1".into(),
-            tool_name: "write_file".into(),
-            arguments: serde_json::json!({"path": "secret.txt"}),
-            requires_approval: true,
-            context: None,
-        }
+        ToolApprovalRequest::new(
+            "call_1",
+            "write_file",
+            serde_json::json!({"path": "secret.txt"}),
+            true,
+        )
     }
 
     fn read_only_approval_request() -> ToolApprovalRequest {
-        ToolApprovalRequest {
-            tool_call_id: "call_read".into(),
-            tool_name: "read_file".into(),
-            arguments: serde_json::json!({"path": "notes.md"}),
-            requires_approval: false,
-            context: None,
-        }
+        ToolApprovalRequest::new(
+            "call_read",
+            "read_file",
+            serde_json::json!({"path": "notes.md"}),
+            false,
+        )
     }
 
     #[test]

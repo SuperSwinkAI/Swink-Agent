@@ -316,34 +316,61 @@ mod tests {
     }
 
     fn sample_assistant_message() -> AssistantMessage {
-        AssistantMessage {
-            content: vec![swink_agent::ContentBlock::Text {
+        AssistantMessage::new(
+            vec![swink_agent::ContentBlock::Text {
                 text: "Hello!".to_string(),
             }],
-            provider: "anthropic".to_string(),
-            model_id: "claude-sonnet-4-20250514".to_string(),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::Stop,
-            error_message: None,
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        }
+            "anthropic",
+            "claude-sonnet-4-20250514",
+        )
+        .with_timestamp(0)
     }
 
     fn sample_messages() -> Vec<AgentMessage> {
         use swink_agent::{ContentBlock, LlmMessage, UserMessage};
         vec![
-            AgentMessage::Llm(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+            AgentMessage::Llm(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: "What is 2+2?".to_string(),
-                }],
-                timestamp: 100,
-                cache_hint: None,
-            })),
+                }])
+                .with_timestamp(100),
+            )),
             AgentMessage::Llm(LlmMessage::Assistant(sample_assistant_message())),
         ]
+    }
+
+    /// Shared `PolicyContext` builder for tests. `overflow_signal` is always
+    /// `false` and `new_messages` is always empty across every call site in
+    /// this file, so those two fields are fixed here rather than threaded
+    /// through as parameters.
+    fn make_policy_ctx<'a>(
+        turn_index: usize,
+        message_count: usize,
+        usage: &'a Usage,
+        cost: &'a Cost,
+        state: &'a swink_agent::SessionState,
+    ) -> PolicyContext<'a> {
+        PolicyContext::new(turn_index, usage, cost, message_count, false, &[], state)
+    }
+
+    /// Shared `TurnPolicyContext` builder for tests. `tool_results` is always
+    /// empty and `stop_reason` is always `StopReason::Stop` across every call
+    /// site in this file, so those two fields are fixed here rather than
+    /// threaded through as parameters.
+    fn make_turn_ctx<'a>(
+        assistant_message: &'a AssistantMessage,
+        system_prompt: &'a str,
+        model_spec: &'a ModelSpec,
+        context_messages: &'a [AgentMessage],
+    ) -> TurnPolicyContext<'a> {
+        TurnPolicyContext::new(
+            assistant_message,
+            &[],
+            StopReason::Stop,
+            system_prompt,
+            model_spec,
+            context_messages,
+        )
     }
 
     #[test]
@@ -367,26 +394,11 @@ mod tests {
         let usage = Usage::default();
         let cost = Cost::default();
         let state = swink_agent::SessionState::new();
-        let ctx = PolicyContext {
-            turn_index: 0,
-            accumulated_usage: &usage,
-            accumulated_cost: &cost,
-            message_count: 0,
-            overflow_signal: false,
-            new_messages: &[],
-            state: &state,
-        };
+        let ctx = make_policy_ctx(0, 0, &usage, &cost, &state);
         let msg = sample_assistant_message();
         let model = sample_model_spec();
         let messages = sample_messages();
-        let turn = TurnPolicyContext {
-            assistant_message: &msg,
-            tool_results: &[],
-            stop_reason: StopReason::Stop,
-            system_prompt: "Be helpful.",
-            model_spec: &model,
-            context_messages: &messages,
-        };
+        let turn = make_turn_ctx(&msg, "Be helpful.", &model, &messages);
 
         let result = policy.evaluate(&ctx, &turn);
         assert!(matches!(result, PolicyVerdict::Continue));
@@ -400,26 +412,11 @@ mod tests {
         let usage = Usage::default();
         let cost = Cost::default();
         let state = swink_agent::SessionState::new();
-        let ctx = PolicyContext {
-            turn_index: 0,
-            accumulated_usage: &usage,
-            accumulated_cost: &cost,
-            message_count: 2,
-            overflow_signal: false,
-            new_messages: &[],
-            state: &state,
-        };
+        let ctx = make_policy_ctx(0, 2, &usage, &cost, &state);
         let msg = sample_assistant_message();
         let model = sample_model_spec();
         let messages = sample_messages();
-        let turn = TurnPolicyContext {
-            assistant_message: &msg,
-            tool_results: &[],
-            stop_reason: StopReason::Stop,
-            system_prompt: "You are a helpful math tutor.",
-            model_spec: &model,
-            context_messages: &messages,
-        };
+        let turn = make_turn_ctx(&msg, "You are a helpful math tutor.", &model, &messages);
 
         policy.evaluate(&ctx, &turn);
 
@@ -435,26 +432,11 @@ mod tests {
         let usage = Usage::default();
         let cost = Cost::default();
         let state = swink_agent::SessionState::new();
-        let ctx = PolicyContext {
-            turn_index: 1,
-            accumulated_usage: &usage,
-            accumulated_cost: &cost,
-            message_count: 2,
-            overflow_signal: false,
-            new_messages: &[],
-            state: &state,
-        };
+        let ctx = make_policy_ctx(1, 2, &usage, &cost, &state);
         let msg = sample_assistant_message();
         let model = sample_model_spec();
         let messages = sample_messages();
-        let turn = TurnPolicyContext {
-            assistant_message: &msg,
-            tool_results: &[],
-            stop_reason: StopReason::Stop,
-            system_prompt: "prompt",
-            model_spec: &model,
-            context_messages: &messages,
-        };
+        let turn = make_turn_ctx(&msg, "prompt", &model, &messages);
 
         policy.evaluate(&ctx, &turn);
 
@@ -471,26 +453,11 @@ mod tests {
         let usage = Usage::default();
         let cost = Cost::default();
         let state = swink_agent::SessionState::new();
-        let ctx = PolicyContext {
-            turn_index: 0,
-            accumulated_usage: &usage,
-            accumulated_cost: &cost,
-            message_count: 2,
-            overflow_signal: false,
-            new_messages: &[],
-            state: &state,
-        };
+        let ctx = make_policy_ctx(0, 2, &usage, &cost, &state);
         let msg = sample_assistant_message();
         let model = sample_model_spec();
         let messages = sample_messages();
-        let turn = TurnPolicyContext {
-            assistant_message: &msg,
-            tool_results: &[],
-            stop_reason: StopReason::Stop,
-            system_prompt: "prompt",
-            model_spec: &model,
-            context_messages: &messages,
-        };
+        let turn = make_turn_ctx(&msg, "prompt", &model, &messages);
 
         policy.evaluate(&ctx, &turn);
 
@@ -507,37 +474,14 @@ mod tests {
         let store = Arc::new(MockCheckpointStore::new());
         let policy = CheckpointPolicy::new(store.clone() as Arc<dyn CheckpointStore>);
 
-        let usage = Usage {
-            input: 100,
-            output: 50,
-            ..Default::default()
-        };
-        let cost = Cost {
-            input: 0.01,
-            output: 0.005,
-            ..Default::default()
-        };
+        let usage = Usage::default().with_input(100).with_output(50);
+        let cost = Cost::default().with_input(0.01).with_output(0.005);
         let state = swink_agent::SessionState::new();
-        let ctx = PolicyContext {
-            turn_index: 3,
-            accumulated_usage: &usage,
-            accumulated_cost: &cost,
-            message_count: 2,
-            overflow_signal: false,
-            new_messages: &[],
-            state: &state,
-        };
+        let ctx = make_policy_ctx(3, 2, &usage, &cost, &state);
         let msg = sample_assistant_message();
         let model = sample_model_spec();
         let messages = sample_messages();
-        let turn = TurnPolicyContext {
-            assistant_message: &msg,
-            tool_results: &[],
-            stop_reason: StopReason::Stop,
-            system_prompt: "You are a math tutor.",
-            model_spec: &model,
-            context_messages: &messages,
-        };
+        let turn = make_turn_ctx(&msg, "You are a math tutor.", &model, &messages);
 
         policy.evaluate(&ctx, &turn);
         store.wait_for_checkpoint("turn-3").await;
@@ -596,32 +540,14 @@ mod tests {
         let usage = Usage::default();
         let cost = Cost::default();
         let state = swink_agent::SessionState::new();
-        let ctx = PolicyContext {
-            turn_index: 0,
-            accumulated_usage: &usage,
-            accumulated_cost: &cost,
-            message_count: 2,
-            overflow_signal: false,
-            new_messages: &[],
-            state: &state,
-        };
+        let ctx = make_policy_ctx(0, 2, &usage, &cost, &state);
         let msg = sample_assistant_message();
         let model = sample_model_spec();
         let messages = sample_messages();
-        let turn1 = TurnPolicyContext {
-            assistant_message: &msg,
-            tool_results: &[],
-            stop_reason: StopReason::Stop,
-            system_prompt: "first run",
-            model_spec: &model,
-            context_messages: &messages,
-        };
+        let turn1 = make_turn_ctx(&msg, "first run", &model, &messages);
         run1.evaluate(&ctx, &turn1);
 
-        let turn2 = TurnPolicyContext {
-            system_prompt: "second run",
-            ..turn1
-        };
+        let turn2 = make_turn_ctx(&msg, "second run", &model, &messages);
         run2.evaluate(&ctx, &turn2);
 
         let cp1 = store.wait_for_checkpoint("run1-turn-0").await;
@@ -642,36 +568,18 @@ mod tests {
         let usage = Usage::default();
         let cost = Cost::default();
         let state = swink_agent::SessionState::new();
-        let ctx = PolicyContext {
-            turn_index: 0,
-            accumulated_usage: &usage,
-            accumulated_cost: &cost,
-            message_count: 2,
-            overflow_signal: false,
-            new_messages: &[],
-            state: &state,
-        };
+        let ctx = make_policy_ctx(0, 2, &usage, &cost, &state);
         let msg = sample_assistant_message();
         let model = sample_model_spec();
         let messages = sample_messages();
-        let turn1 = TurnPolicyContext {
-            assistant_message: &msg,
-            tool_results: &[],
-            stop_reason: StopReason::Stop,
-            system_prompt: "first run",
-            model_spec: &model,
-            context_messages: &messages,
-        };
+        let turn1 = make_turn_ctx(&msg, "first run", &model, &messages);
 
         policy.evaluate(&ctx, &turn1);
         let cp = store.wait_for_checkpoint("turn-0").await;
         assert_eq!(cp.system_prompt, "first run");
 
         // "Second run": turn_index is 0 again.
-        let turn2 = TurnPolicyContext {
-            system_prompt: "second run",
-            ..turn1
-        };
+        let turn2 = make_turn_ctx(&msg, "second run", &model, &messages);
         policy.evaluate(&ctx, &turn2);
 
         loop {
@@ -697,33 +605,18 @@ mod tests {
         let messages = sample_messages();
 
         for turn_index in 0..3 {
-            let ctx = PolicyContext {
-                turn_index,
-                accumulated_usage: &usage,
-                accumulated_cost: &cost,
-                message_count: 2,
-                overflow_signal: false,
-                new_messages: &[],
-                state: &state,
-            };
-            let turn = TurnPolicyContext {
-                assistant_message: &msg,
-                tool_results: &[],
-                stop_reason: StopReason::Stop,
-                system_prompt: "rolling prompt",
-                model_spec: &model,
-                context_messages: &messages,
-            };
+            let ctx = make_policy_ctx(turn_index, 2, &usage, &cost, &state);
+            let turn = make_turn_ctx(&msg, "rolling prompt", &model, &messages);
             let verdict = policy.evaluate(&ctx, &turn);
             assert!(matches!(verdict, PolicyVerdict::Continue));
 
             // Wait until this turn's save lands before evaluating the next,
             // so the final content deterministically reflects the last turn.
             loop {
-                if let Some(cp) = store.get("rolling") {
-                    if cp.turn_count == turn_index {
-                        break;
-                    }
+                if let Some(cp) = store.get("rolling")
+                    && cp.turn_count == turn_index
+                {
+                    break;
                 }
                 store.saved.notified().await;
             }
@@ -746,26 +639,11 @@ mod tests {
         let usage = Usage::default();
         let cost = Cost::default();
         let state = swink_agent::SessionState::new();
-        let ctx = PolicyContext {
-            turn_index: 0,
-            accumulated_usage: &usage,
-            accumulated_cost: &cost,
-            message_count: 2,
-            overflow_signal: false,
-            new_messages: &[],
-            state: &state,
-        };
+        let ctx = make_policy_ctx(0, 2, &usage, &cost, &state);
         let msg = sample_assistant_message();
         let model = sample_model_spec();
         let messages = sample_messages();
-        let turn = TurnPolicyContext {
-            assistant_message: &msg,
-            tool_results: &[],
-            stop_reason: StopReason::Stop,
-            system_prompt: "prompt",
-            model_spec: &model,
-            context_messages: &messages,
-        };
+        let turn = make_turn_ctx(&msg, "prompt", &model, &messages);
 
         policy.evaluate(&ctx, &turn);
         let cp = store.wait_for_checkpoint("sess-a-rolling").await;
@@ -784,26 +662,11 @@ mod tests {
         state
             .set("profile", serde_json::json!({"tier": "pro", "score": 42}))
             .unwrap();
-        let ctx = PolicyContext {
-            turn_index: 4,
-            accumulated_usage: &usage,
-            accumulated_cost: &cost,
-            message_count: 2,
-            overflow_signal: false,
-            new_messages: &[],
-            state: &state,
-        };
+        let ctx = make_policy_ctx(4, 2, &usage, &cost, &state);
         let msg = sample_assistant_message();
         let model = sample_model_spec();
         let messages = sample_messages();
-        let turn = TurnPolicyContext {
-            assistant_message: &msg,
-            tool_results: &[],
-            stop_reason: StopReason::Stop,
-            system_prompt: "Track session state.",
-            model_spec: &model,
-            context_messages: &messages,
-        };
+        let turn = make_turn_ctx(&msg, "Track session state.", &model, &messages);
 
         policy.evaluate(&ctx, &turn);
         store.wait_for_checkpoint("turn-4").await;

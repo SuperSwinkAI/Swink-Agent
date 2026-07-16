@@ -13,13 +13,10 @@ use swink_agent::{
 // T008
 #[test]
 fn user_message_construction_and_access() {
-    let msg = UserMessage {
-        content: vec![ContentBlock::Text {
-            text: "hello world".into(),
-        }],
-        timestamp: 1_710_000_000,
-        cache_hint: None,
-    };
+    let msg = UserMessage::new(vec![ContentBlock::Text {
+        text: "hello world".into(),
+    }])
+    .with_timestamp(1_710_000_000);
     assert_eq!(msg.content.len(), 1);
     assert!(matches!(&msg.content[0], ContentBlock::Text { text } if text == "hello world"));
     assert_eq!(msg.timestamp, 1_710_000_000);
@@ -28,34 +25,32 @@ fn user_message_construction_and_access() {
 // T009
 #[test]
 fn assistant_message_construction_and_access() {
-    let msg = AssistantMessage {
-        content: vec![ContentBlock::Text {
+    let msg = AssistantMessage::new(
+        vec![ContentBlock::Text {
             text: "response".into(),
         }],
-        provider: "anthropic".into(),
-        model_id: "claude-sonnet-4-6".into(),
-        usage: Usage {
-            input: 100,
-            output: 50,
-            cache_read: 10,
-            cache_write: 5,
-            total: 165,
-            ..Default::default()
-        },
-        cost: Cost {
-            input: 0.01,
-            output: 0.02,
-            cache_read: 0.001,
-            cache_write: 0.0005,
-            total: 0.0315,
-            ..Default::default()
-        },
-        stop_reason: StopReason::Stop,
-        error_message: Some("optional error".into()),
-        error_kind: None,
-        timestamp: 1_710_000_001,
-        cache_hint: None,
-    };
+        "anthropic",
+        "claude-sonnet-4-6",
+    )
+    .with_usage(
+        Usage::default()
+            .with_input(100)
+            .with_output(50)
+            .with_cache_read(10)
+            .with_cache_write(5)
+            .with_total(165),
+    )
+    .with_cost(
+        Cost::default()
+            .with_input(0.01)
+            .with_output(0.02)
+            .with_cache_read(0.001)
+            .with_cache_write(0.0005)
+            .with_total(0.0315),
+    )
+    .with_stop_reason(StopReason::Stop)
+    .with_error_message("optional error")
+    .with_timestamp(1_710_000_001);
     assert_eq!(msg.provider, "anthropic");
     assert_eq!(msg.model_id, "claude-sonnet-4-6");
     assert_eq!(msg.usage.input, 100);
@@ -69,16 +64,13 @@ fn assistant_message_construction_and_access() {
 // T010
 #[test]
 fn tool_result_message_construction_and_access() {
-    let msg = ToolResultMessage {
-        tool_call_id: "tc_123".into(),
-        content: vec![ContentBlock::Text {
+    let msg = ToolResultMessage::new(
+        "tc_123",
+        vec![ContentBlock::Text {
             text: "tool output".into(),
         }],
-        is_error: false,
-        timestamp: 1_710_000_002,
-        details: serde_json::Value::Null,
-        cache_hint: None,
-    };
+    )
+    .with_timestamp(1_710_000_002);
     assert_eq!(msg.tool_call_id, "tc_123");
     assert_eq!(msg.content.len(), 1);
     assert!(!msg.is_error);
@@ -89,54 +81,46 @@ fn tool_result_message_construction_and_access() {
 #[test]
 fn message_conversation_sequence() {
     let messages: Vec<AgentMessage> = vec![
-        AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
+        AgentMessage::Llm(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text {
                 text: "user input".into(),
-            }],
-            timestamp: 1,
-            cache_hint: None,
-        })),
-        AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
-            content: vec![ContentBlock::ToolCall {
-                id: "tc_1".into(),
-                name: "read_file".into(),
-                arguments: serde_json::json!({"path": "/tmp/file.txt"}),
-                partial_json: None,
-            }],
-            provider: "anthropic".into(),
-            model_id: "claude".into(),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::ToolUse,
-            error_message: None,
-            error_kind: None,
-            timestamp: 2,
-            cache_hint: None,
-        })),
-        AgentMessage::Llm(LlmMessage::ToolResult(ToolResultMessage {
-            tool_call_id: "tc_1".into(),
-            content: vec![ContentBlock::Text {
-                text: "file contents".into(),
-            }],
-            is_error: false,
-            timestamp: 3,
-            details: serde_json::Value::Null,
-            cache_hint: None,
-        })),
-        AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
-            content: vec![ContentBlock::Text {
-                text: "final answer".into(),
-            }],
-            provider: "anthropic".into(),
-            model_id: "claude".into(),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::Stop,
-            error_message: None,
-            error_kind: None,
-            timestamp: 4,
-            cache_hint: None,
-        })),
+            }])
+            .with_timestamp(1),
+        )),
+        AgentMessage::Llm(LlmMessage::Assistant(
+            AssistantMessage::new(
+                vec![ContentBlock::ToolCall {
+                    id: "tc_1".into(),
+                    name: "read_file".into(),
+                    arguments: serde_json::json!({"path": "/tmp/file.txt"}),
+                    partial_json: None,
+                }],
+                "anthropic",
+                "claude",
+            )
+            .with_stop_reason(StopReason::ToolUse)
+            .with_timestamp(2),
+        )),
+        AgentMessage::Llm(LlmMessage::ToolResult(
+            ToolResultMessage::new(
+                "tc_1",
+                vec![ContentBlock::Text {
+                    text: "file contents".into(),
+                }],
+            )
+            .with_timestamp(3),
+        )),
+        AgentMessage::Llm(LlmMessage::Assistant(
+            AssistantMessage::new(
+                vec![ContentBlock::Text {
+                    text: "final answer".into(),
+                }],
+                "anthropic",
+                "claude",
+            )
+            .with_stop_reason(StopReason::Stop)
+            .with_timestamp(4),
+        )),
     ];
     assert_eq!(messages.len(), 4);
     assert!(matches!(
@@ -160,49 +144,43 @@ fn message_conversation_sequence() {
 // T012
 #[test]
 fn llm_message_serde_roundtrip() {
-    let user = LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text {
+    let user = LlmMessage::User(
+        UserMessage::new(vec![ContentBlock::Text {
             text: "hello".into(),
-        }],
-        timestamp: 100,
-        cache_hint: None,
-    });
-    let assistant = LlmMessage::Assistant(AssistantMessage {
-        content: vec![ContentBlock::Text { text: "hi".into() }],
-        provider: "openai".into(),
-        model_id: "gpt-4".into(),
-        usage: Usage {
-            input: 10,
-            output: 20,
-            cache_read: 0,
-            cache_write: 0,
-            total: 30,
-            ..Default::default()
-        },
-        cost: Cost {
-            input: 0.001,
-            output: 0.002,
-            cache_read: 0.0,
-            cache_write: 0.0,
-            total: 0.003,
-            ..Default::default()
-        },
-        stop_reason: StopReason::Stop,
-        error_message: None,
-        error_kind: None,
-        timestamp: 101,
-        cache_hint: None,
-    });
-    let tool_result = LlmMessage::ToolResult(ToolResultMessage {
-        tool_call_id: "tc_1".into(),
-        content: vec![ContentBlock::Text {
-            text: "result".into(),
-        }],
-        is_error: true,
-        timestamp: 102,
-        details: serde_json::Value::Null,
-        cache_hint: None,
-    });
+        }])
+        .with_timestamp(100),
+    );
+    let assistant = LlmMessage::Assistant(
+        AssistantMessage::new(
+            vec![ContentBlock::Text { text: "hi".into() }],
+            "openai",
+            "gpt-4",
+        )
+        .with_usage(
+            Usage::default()
+                .with_input(10)
+                .with_output(20)
+                .with_total(30),
+        )
+        .with_cost(
+            Cost::default()
+                .with_input(0.001)
+                .with_output(0.002)
+                .with_total(0.003),
+        )
+        .with_stop_reason(StopReason::Stop)
+        .with_timestamp(101),
+    );
+    let tool_result = LlmMessage::ToolResult(
+        ToolResultMessage::new(
+            "tc_1",
+            vec![ContentBlock::Text {
+                text: "result".into(),
+            }],
+        )
+        .with_is_error(true)
+        .with_timestamp(102),
+    );
 
     for msg in [&user, &assistant, &tool_result] {
         let json = serde_json::to_string(msg).unwrap();
@@ -218,11 +196,7 @@ fn llm_message_serde_roundtrip() {
 // T014 — verify LlmMessage has correct serde tagging
 #[test]
 fn llm_message_serde_tag() {
-    let msg = LlmMessage::User(UserMessage {
-        content: vec![],
-        timestamp: 0,
-        cache_hint: None,
-    });
+    let msg = LlmMessage::User(UserMessage::new(vec![]).with_timestamp(0));
     let json = serde_json::to_value(&msg).unwrap();
     assert_eq!(json["role"], "user");
 }
@@ -375,14 +349,12 @@ fn content_block_serde_roundtrip_all_variants() {
 // T024
 #[test]
 fn usage_individual_counters() {
-    let usage = Usage {
-        input: 100,
-        output: 200,
-        cache_read: 50,
-        cache_write: 25,
-        total: 375,
-        ..Default::default()
-    };
+    let usage = Usage::default()
+        .with_input(100)
+        .with_output(200)
+        .with_cache_read(50)
+        .with_cache_write(25)
+        .with_total(375);
     assert_eq!(usage.input, 100);
     assert_eq!(usage.output, 200);
     assert_eq!(usage.cache_read, 50);
@@ -393,22 +365,18 @@ fn usage_individual_counters() {
 // T025
 #[test]
 fn usage_aggregation_two_records() {
-    let a = Usage {
-        input: 10,
-        output: 20,
-        cache_read: 5,
-        cache_write: 3,
-        total: 38,
-        ..Default::default()
-    };
-    let b = Usage {
-        input: 1,
-        output: 2,
-        cache_read: 3,
-        cache_write: 4,
-        total: 10,
-        ..Default::default()
-    };
+    let a = Usage::default()
+        .with_input(10)
+        .with_output(20)
+        .with_cache_read(5)
+        .with_cache_write(3)
+        .with_total(38);
+    let b = Usage::default()
+        .with_input(1)
+        .with_output(2)
+        .with_cache_read(3)
+        .with_cache_write(4)
+        .with_total(10);
     let c = a + b;
     assert_eq!(c.input, 11);
     assert_eq!(c.output, 22);
@@ -421,14 +389,12 @@ fn usage_aggregation_two_records() {
 #[test]
 fn usage_add_assign() {
     let mut a = Usage::default();
-    let b = Usage {
-        input: 5,
-        output: 10,
-        cache_read: 1,
-        cache_write: 2,
-        total: 18,
-        ..Default::default()
-    };
+    let b = Usage::default()
+        .with_input(5)
+        .with_output(10)
+        .with_cache_read(1)
+        .with_cache_write(2)
+        .with_total(18);
     a += b.clone();
     assert_eq!(a, b);
 }
@@ -447,22 +413,18 @@ fn usage_zero_counters_valid() {
 // T028
 #[test]
 fn cost_per_category_and_total() {
-    let a = Cost {
-        input: 0.01,
-        output: 0.02,
-        cache_read: 0.005,
-        cache_write: 0.003,
-        total: 0.038,
-        ..Default::default()
-    };
-    let b = Cost {
-        input: 0.01,
-        output: 0.02,
-        cache_read: 0.005,
-        cache_write: 0.003,
-        total: 0.038,
-        ..Default::default()
-    };
+    let a = Cost::default()
+        .with_input(0.01)
+        .with_output(0.02)
+        .with_cache_read(0.005)
+        .with_cache_write(0.003)
+        .with_total(0.038);
+    let b = Cost::default()
+        .with_input(0.01)
+        .with_output(0.02)
+        .with_cache_read(0.005)
+        .with_cache_write(0.003)
+        .with_total(0.038);
     let c = a + b;
     assert!((c.input - 0.02).abs() < f64::EPSILON);
     assert!((c.output - 0.04).abs() < f64::EPSILON);
@@ -475,14 +437,10 @@ fn cost_per_category_and_total() {
 #[test]
 fn cost_add_assign() {
     let mut a = Cost::default();
-    let b = Cost {
-        input: 0.1,
-        output: 0.2,
-        cache_read: 0.0,
-        cache_write: 0.0,
-        total: 0.3,
-        ..Default::default()
-    };
+    let b = Cost::default()
+        .with_input(0.1)
+        .with_output(0.2)
+        .with_total(0.3);
     a += b;
     assert!((a.input - 0.1).abs() < f64::EPSILON);
     assert!((a.output - 0.2).abs() < f64::EPSILON);
@@ -492,26 +450,22 @@ fn cost_add_assign() {
 // T030
 #[test]
 fn usage_cost_serde_roundtrip() {
-    let usage = Usage {
-        input: 100,
-        output: 200,
-        cache_read: 50,
-        cache_write: 25,
-        total: 375,
-        ..Default::default()
-    };
+    let usage = Usage::default()
+        .with_input(100)
+        .with_output(200)
+        .with_cache_read(50)
+        .with_cache_write(25)
+        .with_total(375);
     let json = serde_json::to_string(&usage).unwrap();
     let parsed: Usage = serde_json::from_str(&json).unwrap();
     assert_eq!(usage, parsed);
 
-    let cost = Cost {
-        input: 0.01,
-        output: 0.02,
-        cache_read: 0.005,
-        cache_write: 0.003,
-        total: 0.038,
-        ..Default::default()
-    };
+    let cost = Cost::default()
+        .with_input(0.01)
+        .with_output(0.02)
+        .with_cache_read(0.005)
+        .with_cache_write(0.003)
+        .with_total(0.038);
     let json = serde_json::to_string(&cost).unwrap();
     let parsed: Cost = serde_json::from_str(&json).unwrap();
     assert!((cost.input - parsed.input).abs() < f64::EPSILON);
@@ -551,11 +505,9 @@ fn custom_message_wrap_and_store() {
         value: "data".into(),
     };
     let messages: Vec<AgentMessage> = vec![
-        AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text { text: "hi".into() }],
-            timestamp: 0,
-            cache_hint: None,
-        })),
+        AgentMessage::Llm(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text { text: "hi".into() }]).with_timestamp(0),
+        )),
         AgentMessage::Custom(Box::new(custom)),
     ];
     assert_eq!(messages.len(), 2);
@@ -590,11 +542,7 @@ fn custom_message_downcast_wrong_type() {
 // T046
 #[test]
 fn custom_message_downcast_on_llm_variant() {
-    let msg = AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![],
-        timestamp: 0,
-        cache_hint: None,
-    }));
+    let msg = AgentMessage::Llm(LlmMessage::User(UserMessage::new(vec![]).with_timestamp(0)));
     let result = msg.downcast_ref::<TestCustom>();
     assert!(result.is_err());
     let err = result.unwrap_err();
@@ -702,47 +650,44 @@ fn model_spec_serde_roundtrip() {
 // T054
 #[test]
 fn agent_result_construction() {
-    let result = AgentResult {
-        messages: vec![AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
-            content: vec![ContentBlock::Text {
-                text: "answer".into(),
-            }],
-            provider: "openai".into(),
-            model_id: "gpt-4".into(),
-            usage: Usage {
-                input: 50,
-                output: 100,
-                total: 150,
-                ..Default::default()
-            },
-            cost: Cost {
-                input: 0.005,
-                output: 0.01,
-                total: 0.015,
-                ..Default::default()
-            },
-            stop_reason: StopReason::Stop,
-            error_message: None,
-            error_kind: None,
-            timestamp: 1,
-            cache_hint: None,
-        }))],
-        stop_reason: StopReason::Stop,
-        usage: Usage {
-            input: 50,
-            output: 100,
-            total: 150,
-            ..Default::default()
-        },
-        cost: Cost {
-            input: 0.005,
-            output: 0.01,
-            total: 0.015,
-            ..Default::default()
-        },
-        error: None,
-        transfer_signal: None,
-    };
+    let result = AgentResult::new(
+        vec![AgentMessage::Llm(LlmMessage::Assistant(
+            AssistantMessage::new(
+                vec![ContentBlock::Text {
+                    text: "answer".into(),
+                }],
+                "openai",
+                "gpt-4",
+            )
+            .with_usage(
+                Usage::default()
+                    .with_input(50)
+                    .with_output(100)
+                    .with_total(150),
+            )
+            .with_cost(
+                Cost::default()
+                    .with_input(0.005)
+                    .with_output(0.01)
+                    .with_total(0.015),
+            )
+            .with_stop_reason(StopReason::Stop)
+            .with_timestamp(1),
+        ))],
+        StopReason::Stop,
+    )
+    .with_usage(
+        Usage::default()
+            .with_input(50)
+            .with_output(100)
+            .with_total(150),
+    )
+    .with_cost(
+        Cost::default()
+            .with_input(0.005)
+            .with_output(0.01)
+            .with_total(0.015),
+    );
     assert_eq!(result.messages.len(), 1);
     assert_eq!(result.stop_reason, StopReason::Stop);
     assert_eq!(result.usage.total, 150);
@@ -752,31 +697,27 @@ fn agent_result_construction() {
 // T055
 #[test]
 fn agent_context_construction() {
-    let ctx = AgentContext {
-        system_prompt: "You are a helpful assistant.".into(),
-        messages: vec![
-            AgentMessage::Llm(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+    let ctx = AgentContext::new(
+        "You are a helpful assistant.",
+        vec![
+            AgentMessage::Llm(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: "hello".into(),
-                }],
-                timestamp: 0,
-                cache_hint: None,
-            })),
-            AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
-                content: vec![ContentBlock::Text { text: "hi".into() }],
-                provider: "test".into(),
-                model_id: "test-model".into(),
-                usage: Usage::default(),
-                cost: Cost::default(),
-                stop_reason: StopReason::Stop,
-                error_message: None,
-                error_kind: None,
-                timestamp: 1,
-                cache_hint: None,
-            })),
+                }])
+                .with_timestamp(0),
+            )),
+            AgentMessage::Llm(LlmMessage::Assistant(
+                AssistantMessage::new(
+                    vec![ContentBlock::Text { text: "hi".into() }],
+                    "test",
+                    "test-model",
+                )
+                .with_stop_reason(StopReason::Stop)
+                .with_timestamp(1),
+            )),
         ],
-        tools: vec![],
-    };
+        vec![],
+    );
     assert_eq!(ctx.system_prompt, "You are a helpful assistant.");
     assert_eq!(ctx.messages.len(), 2);
     assert!(ctx.tools.is_empty());

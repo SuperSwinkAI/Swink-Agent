@@ -74,15 +74,7 @@ mod tests {
         cost: &'a Cost,
         state: &'a swink_agent::SessionState,
     ) -> PolicyContext<'a> {
-        PolicyContext {
-            turn_index: turn,
-            accumulated_usage: usage,
-            accumulated_cost: cost,
-            message_count: 0,
-            overflow_signal: false,
-            new_messages: &[],
-            state,
-        }
+        PolicyContext::new(turn, usage, cost, 0, false, &[], state)
     }
 
     #[test]

@@ -36,14 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let store = JsonlSessionStore::new(dir)?;
 
     let id = format_session_id();
-    let meta = SessionMeta {
-        id: id.clone(),
-        title: "My session".into(),
-        created_at: now_utc(),
-        updated_at: now_utc(),
-        version: 1,
-        sequence: 0,
-    };
+    let meta = SessionMeta::new(id.clone(), "My session", now_utc(), now_utc());
     store.save(&id, &meta, &messages)?;
     Ok(())
 }

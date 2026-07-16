@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Progress event emitted during model download and loading.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum ProgressEvent {
     /// Model weights are being downloaded.

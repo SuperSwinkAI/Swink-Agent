@@ -19,19 +19,19 @@ fn five_tool_config() -> common::MockServerConfig {
 /// Build a minimal `McpServerConfig` placeholder (transport is unused — we call
 /// `McpConnection::from_service` directly with a pre-connected service).
 fn stub_config(name: &str, filter: Option<ToolFilter>) -> McpServerConfig {
-    McpServerConfig {
-        name: name.to_string(),
-        transport: McpTransport::Stdio {
+    let mut config = McpServerConfig::new(
+        name,
+        McpTransport::Stdio {
             command: "mock".into(),
             args: vec![],
             env: HashMap::default(),
         },
-        tool_prefix: None,
-        tool_filter: filter,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
+    )
+    .with_requires_approval(false);
+    if let Some(filter) = filter {
+        config = config.with_tool_filter(filter);
     }
+    config
 }
 
 /// T030: mock server with 5 tools, allow-list of 2, verify only 2 tools returned.
@@ -42,10 +42,7 @@ async fn filter_allow_list_includes_only_matching_tools() {
 
     let config = stub_config(
         "allow-test",
-        Some(ToolFilter {
-            allow: Some(vec!["tool_a".into(), "tool_b".into()]),
-            deny: None,
-        }),
+        Some(ToolFilter::new().with_allow(vec!["tool_a".into(), "tool_b".into()])),
     );
 
     let conn = McpConnection::from_service(config, service, None)
@@ -68,10 +65,7 @@ async fn filter_deny_list_excludes_matching_tools() {
 
     let config = stub_config(
         "deny-test",
-        Some(ToolFilter {
-            allow: None,
-            deny: Some(vec!["tool_c".into()]),
-        }),
+        Some(ToolFilter::new().with_deny(vec!["tool_c".into()])),
     );
 
     let conn = McpConnection::from_service(config, service, None)
@@ -95,10 +89,11 @@ async fn filter_allow_then_deny_applied_in_order() {
 
     let config = stub_config(
         "combined-filter-test",
-        Some(ToolFilter {
-            allow: Some(vec!["tool_a".into(), "tool_b".into(), "tool_c".into()]),
-            deny: Some(vec!["tool_c".into()]),
-        }),
+        Some(
+            ToolFilter::new()
+                .with_allow(vec!["tool_a".into(), "tool_b".into(), "tool_c".into()])
+                .with_deny(vec!["tool_c".into()]),
+        ),
     );
 
     let conn = McpConnection::from_service(config, service, None)

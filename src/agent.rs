@@ -82,6 +82,7 @@ pub enum FollowUpMode {
 // ─── AgentState ──────────────────────────────────────────────────────────────
 
 /// Observable state of the agent.
+#[non_exhaustive]
 pub struct AgentState {
     /// The system prompt sent to the LLM.
     pub system_prompt: String,

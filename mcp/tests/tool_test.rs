@@ -161,19 +161,15 @@ async fn mcp_tool_approval_context_returns_params() {
 
 /// Helper to create a mock `McpConnection` for metadata-only tests.
 fn create_mock_connection() -> Arc<swink_agent_mcp::McpConnection> {
-    let config = swink_agent_mcp::McpServerConfig {
-        name: "test-server".into(),
-        transport: swink_agent_mcp::McpTransport::Stdio {
+    let config = swink_agent_mcp::McpServerConfig::new(
+        "test-server",
+        swink_agent_mcp::McpTransport::Stdio {
             command: "echo".into(),
             args: vec![],
             env: HashMap::default(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
 
     Arc::new(swink_agent_mcp::McpConnection::disconnected(config))
 }

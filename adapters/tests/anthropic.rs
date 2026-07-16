@@ -740,10 +740,7 @@ async fn anthropic_stream_options_api_key_overrides_default() {
     let sf = AnthropicStreamFn::new(server.uri(), "default-key");
     let model = test_model();
     let context = test_context();
-    let options = StreamOptions {
-        api_key: Some("override-key".to_string()),
-        ..StreamOptions::default()
-    };
+    let options = StreamOptions::default().with_api_key("override-key".to_string());
     let token = CancellationToken::new();
     let events: Vec<_> = sf.stream(&model, &context, &options, token).collect().await;
 
@@ -1193,15 +1190,12 @@ async fn anthropic_on_raw_payload_observes_runtime_sse_lines() {
 
     let observed = Arc::new(Mutex::new(Vec::<String>::new()));
     let callback_lines = Arc::clone(&observed);
-    let options = StreamOptions {
-        on_raw_payload: Some(Arc::new(move |line| {
-            callback_lines
-                .lock()
-                .expect("callback buffer poisoned")
-                .push(line.to_owned());
-        })),
-        ..StreamOptions::default()
-    };
+    let options = StreamOptions::default().with_on_raw_payload(Arc::new(move |line| {
+        callback_lines
+            .lock()
+            .expect("callback buffer poisoned")
+            .push(line.to_owned());
+    }));
 
     let sf = AnthropicStreamFn::new(server.uri(), "test-key");
     let events = collect_events_with_options(&sf, options).await;
@@ -1244,10 +1238,9 @@ async fn anthropic_extra_merges_into_top_level_body() {
         .await;
 
     let sf = AnthropicStreamFn::new(server.uri(), "test-key");
-    let options = StreamOptions {
-        temperature: Some(0.7),
-        serving: swink_agent::ServingOptions {
-            extra: [
+    let options = StreamOptions::default().with_temperature(0.7).with_serving(
+        swink_agent::ServingOptions::default().with_extra(
+            [
                 ("top_k".to_string(), serde_json::json!(40)),
                 ("stop_sequences".to_string(), serde_json::json!(["END"])),
                 // Colliding keys: the typed fields must win.
@@ -1256,10 +1249,8 @@ async fn anthropic_extra_merges_into_top_level_body() {
             ]
             .into_iter()
             .collect(),
-            ..swink_agent::ServingOptions::default()
-        },
-        ..StreamOptions::default()
-    };
+        ),
+    );
     let events = collect_events_with_options(&sf, options).await;
     assert!(matches!(events[0], AssistantMessageEvent::Start));
 

@@ -90,20 +90,15 @@ fn make_case() -> swink_agent_eval::EvalCase {
 }
 
 fn in_process_invocation(response: &str) -> Invocation {
-    let msg = AssistantMessage {
-        content: vec![ContentBlock::Text {
+    let msg = AssistantMessage::new(
+        vec![ContentBlock::Text {
             text: response.into(),
         }],
-        provider: "test".into(),
-        model_id: "test-model".into(),
-        usage: Usage::default(),
-        cost: Cost::default(),
-        stop_reason: StopReason::Stop,
-        error_message: None,
-        error_kind: None,
-        timestamp: 0,
-        cache_hint: None,
-    };
+        "test",
+        "test-model",
+    )
+    .with_stop_reason(StopReason::Stop)
+    .with_timestamp(0);
     Invocation {
         turns: vec![TurnRecord {
             turn_index: 0,

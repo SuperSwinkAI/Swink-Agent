@@ -35,6 +35,7 @@ use super::{
 /// vectors for backward compatibility. `MessageSlot` records the original
 /// ordering so that [`restore_messages`] can reconstruct the interleaved
 /// sequence faithfully.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum MessageSlot {
@@ -48,7 +49,8 @@ pub enum MessageSlot {
 
 /// The result of splitting an `AgentMessage` slice into LLM and custom
 /// vectors, plus ordering metadata.
-#[derive(Debug, Clone)]
+#[non_exhaustive]
+#[derive(Debug, Clone, Default)]
 pub struct SerializedMessages {
     /// LLM messages in insertion order.
     pub llm_messages: Vec<LlmMessage>,
@@ -56,6 +58,22 @@ pub struct SerializedMessages {
     pub custom_messages: Vec<serde_json::Value>,
     /// Records the original interleaved order of LLM and custom messages.
     pub message_order: Vec<MessageSlot>,
+}
+
+impl SerializedMessages {
+    /// Create a new `SerializedMessages` from its component parts.
+    #[must_use]
+    pub const fn new(
+        llm_messages: Vec<LlmMessage>,
+        custom_messages: Vec<serde_json::Value>,
+        message_order: Vec<MessageSlot>,
+    ) -> Self {
+        Self {
+            llm_messages,
+            custom_messages,
+            message_order,
+        }
+    }
 }
 
 // ─── Batch serialize / restore ──────────────────────────────────────────────

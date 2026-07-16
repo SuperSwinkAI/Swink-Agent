@@ -16,6 +16,7 @@ use crate::types::ModelSpec;
 // ─── RetryConfig ─────────────────────────────────────────────────────────────
 
 /// Serializable representation of [`DefaultRetryStrategy`](crate::DefaultRetryStrategy) parameters.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetryConfig {
     /// Maximum number of attempts (including the initial call).
@@ -79,6 +80,7 @@ impl RetryConfig {
 ///
 /// The `api_key` field is intentionally omitted — secrets should not be
 /// persisted in config snapshots.
+#[non_exhaustive]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StreamOptionsConfig {
     /// Sampling temperature.
@@ -133,6 +135,7 @@ impl StreamOptionsConfig {
 // ─── SteeringMode / FollowUpMode serde wrappers ─────────────────────────────
 
 /// Serializable mirror of [`SteeringMode`](crate::SteeringMode).
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SteeringModeConfig {
@@ -160,6 +163,7 @@ impl From<SteeringModeConfig> for crate::agent::SteeringMode {
 }
 
 /// Serializable mirror of [`FollowUpMode`](crate::FollowUpMode).
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FollowUpModeConfig {
@@ -187,6 +191,7 @@ impl From<FollowUpModeConfig> for crate::agent::FollowUpMode {
 }
 
 /// Serializable mirror of [`ApprovalMode`](crate::ApprovalMode).
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalModeConfig {
@@ -201,6 +206,7 @@ pub enum ApprovalModeConfig {
 /// Serializable representation of [`CacheConfig`](crate::context_cache::CacheConfig).
 ///
 /// Duration is stored as milliseconds for serde-friendliness.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheConfigData {
     /// Time-to-live in milliseconds.
@@ -222,6 +228,16 @@ impl From<&crate::context_cache::CacheConfig> for CacheConfigData {
 }
 
 impl CacheConfigData {
+    /// Create a new cache config snapshot.
+    #[must_use]
+    pub const fn new(ttl_ms: u64, min_tokens: usize, cache_intervals: usize) -> Self {
+        Self {
+            ttl_ms,
+            min_tokens,
+            cache_intervals,
+        }
+    }
+
     /// Convert back to a [`CacheConfig`](crate::context_cache::CacheConfig).
     #[must_use]
     pub const fn to_cache_config(&self) -> crate::context_cache::CacheConfig {
@@ -290,6 +306,7 @@ impl From<ApprovalModeConfig> for ApprovalMode {
 /// let opts = AgentOptions::from_config(config, stream_fn, convert_to_llm)
 ///     .with_tools(re_register_tools(&config.tool_names));
 /// ```
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     /// System prompt sent to the LLM.
@@ -348,6 +365,96 @@ const fn default_structured_output_max_retries() -> usize {
 }
 
 impl AgentConfig {
+    /// Create a new config with the required fields; everything else takes
+    /// its default value (matching the serde defaults used on deserialize).
+    #[must_use]
+    pub fn new(system_prompt: impl Into<String>, model: ModelSpec) -> Self {
+        Self {
+            system_prompt: system_prompt.into(),
+            model,
+            tool_names: Vec::new(),
+            retry: RetryConfig::default(),
+            stream_options: StreamOptionsConfig::default(),
+            steering_mode: SteeringModeConfig::default(),
+            follow_up_mode: FollowUpModeConfig::default(),
+            structured_output_max_retries: default_structured_output_max_retries(),
+            approval_mode: ApprovalModeConfig::default(),
+            plan_mode_addendum: None,
+            cache_config: None,
+            extra: serde_json::Value::Null,
+        }
+    }
+
+    /// Set the routing-key names of tools to re-register on restore.
+    #[must_use]
+    pub fn with_tool_names(mut self, tool_names: Vec<String>) -> Self {
+        self.tool_names = tool_names;
+        self
+    }
+
+    /// Set the retry strategy parameters.
+    #[must_use]
+    pub fn with_retry(mut self, retry: RetryConfig) -> Self {
+        self.retry = retry;
+        self
+    }
+
+    /// Set the per-call stream options.
+    #[must_use]
+    pub fn with_stream_options(mut self, stream_options: StreamOptionsConfig) -> Self {
+        self.stream_options = stream_options;
+        self
+    }
+
+    /// Set the steering queue drain mode.
+    #[must_use]
+    pub const fn with_steering_mode(mut self, steering_mode: SteeringModeConfig) -> Self {
+        self.steering_mode = steering_mode;
+        self
+    }
+
+    /// Set the follow-up queue drain mode.
+    #[must_use]
+    pub const fn with_follow_up_mode(mut self, follow_up_mode: FollowUpModeConfig) -> Self {
+        self.follow_up_mode = follow_up_mode;
+        self
+    }
+
+    /// Set the max retries for structured output validation.
+    #[must_use]
+    pub const fn with_structured_output_max_retries(mut self, max_retries: usize) -> Self {
+        self.structured_output_max_retries = max_retries;
+        self
+    }
+
+    /// Set the approval mode for the tool gate.
+    #[must_use]
+    pub const fn with_approval_mode(mut self, approval_mode: ApprovalModeConfig) -> Self {
+        self.approval_mode = approval_mode;
+        self
+    }
+
+    /// Set the plan mode addendum appended to the system prompt.
+    #[must_use]
+    pub fn with_plan_mode_addendum(mut self, addendum: impl Into<String>) -> Self {
+        self.plan_mode_addendum = Some(addendum.into());
+        self
+    }
+
+    /// Set the context caching configuration.
+    #[must_use]
+    pub fn with_cache_config(mut self, cache_config: CacheConfigData) -> Self {
+        self.cache_config = Some(cache_config);
+        self
+    }
+
+    /// Set the arbitrary application-specific extension data.
+    #[must_use]
+    pub fn with_extra(mut self, extra: serde_json::Value) -> Self {
+        self.extra = extra;
+        self
+    }
+
     /// Restore an [`AgentOptions`](crate::AgentOptions) builder from this config.
     ///
     /// The caller must supply the required non-serializable arguments

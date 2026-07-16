@@ -19,8 +19,23 @@ pub trait TokenCounter: Send + Sync {
 ///
 /// `LlmMessage` variants: sums character lengths of all text-bearing content
 /// blocks and divides by 4. `CustomMessage` variants count as 100 tokens flat.
-#[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy)]
 pub struct DefaultTokenCounter;
+
+impl DefaultTokenCounter {
+    /// Create a new default token counter.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for DefaultTokenCounter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl TokenCounter for DefaultTokenCounter {
     fn count_tokens(&self, message: &AgentMessage) -> usize {
@@ -121,6 +136,7 @@ fn extend_anchor_for_tool_results(messages: &[AgentMessage], anchor_end: usize) 
 }
 
 /// Result of a context transformation pass.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactionReport {
     /// Number of messages that were removed during compaction.
@@ -138,6 +154,32 @@ pub struct CompactionReport {
     /// bare-closure transformers that don't have access to the dropped slice.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dropped_messages: Vec<LlmMessage>,
+}
+
+impl CompactionReport {
+    /// Create a new compaction report with no dropped messages recorded.
+    #[must_use]
+    pub const fn new(
+        dropped_count: usize,
+        tokens_before: usize,
+        tokens_after: usize,
+        overflow: bool,
+    ) -> Self {
+        Self {
+            dropped_count,
+            tokens_before,
+            tokens_after,
+            overflow,
+            dropped_messages: Vec::new(),
+        }
+    }
+
+    /// Attach the LLM messages that were dropped during this compaction pass.
+    #[must_use]
+    pub fn with_dropped_messages(mut self, dropped_messages: Vec<LlmMessage>) -> Self {
+        self.dropped_messages = dropped_messages;
+        self
+    }
 }
 
 /// Core sliding window compaction algorithm.

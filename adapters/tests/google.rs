@@ -560,15 +560,12 @@ async fn google_on_raw_payload_observes_runtime_sse_lines() {
 
     let observed = Arc::new(Mutex::new(Vec::<String>::new()));
     let callback_lines = Arc::clone(&observed);
-    let options = StreamOptions {
-        on_raw_payload: Some(Arc::new(move |line| {
-            callback_lines
-                .lock()
-                .expect("callback buffer poisoned")
-                .push(line.to_owned());
-        })),
-        ..StreamOptions::default()
-    };
+    let options = StreamOptions::default().with_on_raw_payload(Arc::new(move |line| {
+        callback_lines
+            .lock()
+            .expect("callback buffer poisoned")
+            .push(line.to_owned());
+    }));
 
     let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
     let events = collect_events_with_options(&stream_fn, options).await;
@@ -1323,10 +1320,9 @@ async fn google_extra_merges_into_generation_config() {
         .await;
 
     let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
-    let options = StreamOptions {
-        temperature: Some(0.7),
-        serving: swink_agent::ServingOptions {
-            extra: [
+    let options = StreamOptions::default().with_temperature(0.7).with_serving(
+        swink_agent::ServingOptions::default().with_extra(
+            [
                 ("topK".to_string(), serde_json::json!(40)),
                 ("seed".to_string(), serde_json::json!(7)),
                 // Colliding key: the typed `temperature` must win.
@@ -1334,10 +1330,8 @@ async fn google_extra_merges_into_generation_config() {
             ]
             .into_iter()
             .collect(),
-            ..swink_agent::ServingOptions::default()
-        },
-        ..StreamOptions::default()
-    };
+        ),
+    );
     let events = collect_events_with_options(&stream_fn, options).await;
     assert!(matches!(events[0], AssistantMessageEvent::Start));
 

@@ -1,38 +1,34 @@
 #![cfg(feature = "tiktoken")]
 
 use swink_agent::{
-    AgentMessage, AssistantMessage, ContentBlock, Cost, LlmMessage, StopReason, TiktokenCounter,
-    TokenCounter, Usage, UserMessage,
+    AgentMessage, AssistantMessage, ContentBlock, LlmMessage, StopReason, TiktokenCounter,
+    TokenCounter, UserMessage,
 };
 
 fn user_text_message(text: &str) -> AgentMessage {
-    AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text {
+    AgentMessage::Llm(LlmMessage::User(
+        UserMessage::new(vec![ContentBlock::Text {
             text: text.to_owned(),
-        }],
-        timestamp: 0,
-        cache_hint: None,
-    }))
+        }])
+        .with_timestamp(0),
+    ))
 }
 
 fn assistant_tool_call_message(name: &str, arguments: serde_json::Value) -> AgentMessage {
-    AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
-        content: vec![ContentBlock::ToolCall {
-            id: "tool-1".into(),
-            name: name.into(),
-            arguments,
-            partial_json: None,
-        }],
-        provider: "test".into(),
-        model_id: "test-model".into(),
-        usage: Usage::default(),
-        cost: Cost::default(),
-        stop_reason: StopReason::ToolUse,
-        error_message: None,
-        error_kind: None,
-        timestamp: 0,
-        cache_hint: None,
-    }))
+    AgentMessage::Llm(LlmMessage::Assistant(
+        AssistantMessage::new(
+            vec![ContentBlock::ToolCall {
+                id: "tool-1".into(),
+                name: name.into(),
+                arguments,
+                partial_json: None,
+            }],
+            "test",
+            "test-model",
+        )
+        .with_stop_reason(StopReason::ToolUse)
+        .with_timestamp(0),
+    ))
 }
 
 #[test]

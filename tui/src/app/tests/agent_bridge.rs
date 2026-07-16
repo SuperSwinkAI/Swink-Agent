@@ -3,8 +3,8 @@ use std::sync::Arc;
 use swink_agent::testing::ScriptedStreamFn;
 use swink_agent::testing::text_events;
 use swink_agent::{
-    AgentEvent, AgentToolResult, AssistantMessage, AssistantMessageEvent, ContentBlock, Cost,
-    LlmMessage, ModelSpec, StopReason, StreamFn, ToolResultMessage, TurnSnapshot, Usage,
+    AgentEvent, AgentToolResult, AssistantMessage, AssistantMessageEvent, ContentBlock, LlmMessage,
+    ModelSpec, StopReason, StreamFn, ToolResultMessage, TurnSnapshot, Usage,
 };
 
 use crate::config::TuiConfig;
@@ -138,25 +138,15 @@ async fn message_end_updates_context_tokens_used() {
     assert_eq!(app.context_budget, 100_000);
     assert_eq!(app.context_tokens_used, 0);
 
-    let message = AssistantMessage {
-        content: vec![],
-        provider: String::new(),
-        model_id: "mock-model".to_string(),
-        usage: Usage {
-            input: 50_000,
-            output: 200,
-            cache_read: 0,
-            cache_write: 0,
-            total: 50_200,
-            ..Default::default()
-        },
-        cost: Cost::default(),
-        stop_reason: StopReason::Stop,
-        error_message: None,
-        error_kind: None,
-        timestamp: 0,
-        cache_hint: None,
-    };
+    let message = AssistantMessage::new(vec![], String::new(), "mock-model")
+        .with_usage(
+            Usage::default()
+                .with_input(50_000)
+                .with_output(200)
+                .with_total(50_200),
+        )
+        .with_stop_reason(StopReason::Stop)
+        .with_timestamp(0);
 
     app.handle_agent_event(AgentEvent::MessageEnd { message });
     assert_eq!(app.context_tokens_used, 50_000);
@@ -291,57 +281,46 @@ async fn turn_end_renders_tool_results_with_diff_data_and_trims_old_turns() {
     let tool_content = format!("{long_first_line}\nsecond line");
 
     app.handle_agent_event(AgentEvent::TurnEnd {
-        assistant_message: AssistantMessage {
-            content: vec![ContentBlock::Text {
+        assistant_message: AssistantMessage::new(
+            vec![ContentBlock::Text {
                 text: "done".to_string(),
             }],
-            provider: "test".to_string(),
-            model_id: "mock-model".to_string(),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::Stop,
-            error_message: None,
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        },
-        tool_results: vec![ToolResultMessage {
-            tool_call_id: "call_1".to_string(),
-            content: vec![ContentBlock::Text {
-                text: tool_content.clone(),
-            }],
-            is_error: false,
-            timestamp: 0,
-            details: serde_json::json!({
+            "test",
+            "mock-model",
+        )
+        .with_stop_reason(StopReason::Stop)
+        .with_timestamp(0),
+        tool_results: vec![
+            ToolResultMessage::new(
+                "call_1",
+                vec![ContentBlock::Text {
+                    text: tool_content.clone(),
+                }],
+            )
+            .with_timestamp(0)
+            .with_details(serde_json::json!({
                 "path": "src/lib.rs",
                 "is_new_file": false,
                 "old_content": "before\nvalue",
                 "new_content": "after\nvalue",
-            }),
-            cache_hint: None,
-        }],
+            })),
+        ],
         reason: swink_agent::TurnEndReason::ToolsExecuted,
-        snapshot: TurnSnapshot {
-            turn_index: 20,
-            messages: Arc::new(vec![LlmMessage::Assistant(AssistantMessage {
-                content: vec![ContentBlock::Text {
-                    text: "done".to_string(),
-                }],
-                provider: "test".to_string(),
-                model_id: "mock-model".to_string(),
-                usage: Usage::default(),
-                cost: Cost::default(),
-                stop_reason: StopReason::Stop,
-                error_message: None,
-                error_kind: None,
-                timestamp: 0,
-                cache_hint: None,
-            })]),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::Stop,
-            state_delta: None,
-        },
+        snapshot: TurnSnapshot::new(
+            20,
+            Arc::new(vec![LlmMessage::Assistant(
+                AssistantMessage::new(
+                    vec![ContentBlock::Text {
+                        text: "done".to_string(),
+                    }],
+                    "test",
+                    "mock-model",
+                )
+                .with_stop_reason(StopReason::Stop)
+                .with_timestamp(0),
+            )]),
+            StopReason::Stop,
+        ),
     });
 
     let visible_users: Vec<_> = app

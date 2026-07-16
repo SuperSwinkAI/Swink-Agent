@@ -49,13 +49,13 @@ impl ArtifactStore for InMemoryArtifactStore {
 
             #[allow(clippy::cast_possible_truncation)]
             let next_version = versions.len() as u32 + 1;
-            let version = ArtifactVersion {
-                name: name.to_string(),
-                version: next_version,
-                created_at: Utc::now(),
-                size: data.content.len(),
-                content_type: data.content_type.clone(),
-            };
+            let version = ArtifactVersion::new(
+                name.to_string(),
+                next_version,
+                Utc::now(),
+                data.content.len(),
+                data.content_type.clone(),
+            );
 
             tracing::debug!(
                 session_id,
@@ -123,13 +123,13 @@ impl ArtifactStore for InMemoryArtifactStore {
             let mut metas = Vec::with_capacity(session.len());
             for (name, versions) in session {
                 if let (Some(first), Some(last)) = (versions.first(), versions.last()) {
-                    metas.push(ArtifactMeta {
-                        name: name.clone(),
-                        latest_version: last.0.version,
-                        created_at: first.0.created_at,
-                        updated_at: last.0.created_at,
-                        content_type: last.0.content_type.clone(),
-                    });
+                    metas.push(ArtifactMeta::new(
+                        name.clone(),
+                        last.0.version,
+                        first.0.created_at,
+                        last.0.created_at,
+                        last.0.content_type.clone(),
+                    ));
                 }
             }
 

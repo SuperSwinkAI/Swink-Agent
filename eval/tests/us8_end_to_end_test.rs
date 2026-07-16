@@ -58,16 +58,11 @@ fn sample_result() -> EvalSetResult {
             total_cases: 2,
             passed: 1,
             failed: 1,
-            total_cost: Cost {
-                total: 0.0205,
-                ..Default::default()
-            },
-            total_usage: Usage {
-                input: 190,
-                output: 130,
-                total: 320,
-                ..Default::default()
-            },
+            total_cost: Cost::default().with_total(0.0205),
+            total_usage: Usage::default()
+                .with_input(190)
+                .with_output(130)
+                .with_total(320),
             total_duration: Duration::from_millis(275),
         },
         timestamp: 1_713_901_234,

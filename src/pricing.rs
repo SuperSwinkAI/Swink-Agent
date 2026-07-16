@@ -30,18 +30,12 @@
 //!
 //! let table = PricingTable::new().with_model(
 //!     "my-local-llama",
-//!     ModelRates {
-//!         input_per_million: 0.10,
-//!         output_per_million: 0.40,
-//!         ..ModelRates::default()
-//!     },
+//!     ModelRates::default()
+//!         .with_input_per_million(0.10)
+//!         .with_output_per_million(0.40),
 //! );
 //!
-//! let usage = Usage {
-//!     input: 1_000_000,
-//!     output: 1_000_000,
-//!     ..Usage::default()
-//! };
+//! let usage = Usage::default().with_input(1_000_000).with_output(1_000_000);
 //! let cost = table.calculate("my-local-llama", &usage).unwrap();
 //! assert!((cost.total - 0.50).abs() < 1e-9);
 //! ```
@@ -66,6 +60,7 @@ use crate::types::{Cost, Usage};
 /// Unset categories default to `0.0`, which means "this category is free",
 /// not "fall back to the catalog". Fallback happens per-model, not per-field:
 /// see the module-level precedence rules.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct ModelRates {
@@ -80,6 +75,34 @@ pub struct ModelRates {
 }
 
 impl ModelRates {
+    /// Set the USD-per-million-input-token rate.
+    #[must_use]
+    pub const fn with_input_per_million(mut self, rate: f64) -> Self {
+        self.input_per_million = rate;
+        self
+    }
+
+    /// Set the USD-per-million-output-token rate.
+    #[must_use]
+    pub const fn with_output_per_million(mut self, rate: f64) -> Self {
+        self.output_per_million = rate;
+        self
+    }
+
+    /// Set the USD-per-million-cache-read-token rate.
+    #[must_use]
+    pub const fn with_cache_read_per_million(mut self, rate: f64) -> Self {
+        self.cache_read_per_million = rate;
+        self
+    }
+
+    /// Set the USD-per-million-cache-write-token rate.
+    #[must_use]
+    pub const fn with_cache_write_per_million(mut self, rate: f64) -> Self {
+        self.cache_write_per_million = rate;
+        self
+    }
+
     /// Price a [`Usage`] with these rates.
     #[must_use]
     pub fn cost_for(&self, usage: &Usage) -> Cost {

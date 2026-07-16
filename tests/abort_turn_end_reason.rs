@@ -23,7 +23,9 @@ type ConvertToLlmBoxed = Box<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send 
 fn default_convert_to_llm() -> ConvertToLlmBoxed {
     Box::new(|msg: &AgentMessage| match msg {
         AgentMessage::Llm(llm) => Some(llm.clone()),
-        AgentMessage::Custom(_) => None,
+        // Covers AgentMessage::Custom and, since AgentMessage is
+        // #[non_exhaustive], any future variant.
+        _ => None,
     })
 }
 

@@ -15,6 +15,7 @@ use crate::types::{Cost, Usage};
 // ─── ToolExecMetrics ────────────────────────────────────────────────────────
 
 /// Timing and outcome data for a single tool execution within a turn.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolExecMetrics {
     /// Name of the tool that was executed.
@@ -25,9 +26,22 @@ pub struct ToolExecMetrics {
     pub success: bool,
 }
 
+impl ToolExecMetrics {
+    /// Create a new tool execution metrics record.
+    #[must_use]
+    pub fn new(tool_name: impl Into<String>, duration: Duration, success: bool) -> Self {
+        Self {
+            tool_name: tool_name.into(),
+            duration,
+            success,
+        }
+    }
+}
+
 // ─── TurnMetrics ────────────────────────────────────────────────────────────
 
 /// Metrics snapshot emitted at the end of each agent loop turn.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TurnMetrics {
     /// Zero-based index of the turn within the current run.
@@ -42,6 +56,34 @@ pub struct TurnMetrics {
     pub cost: Cost,
     /// Total wall-clock duration of the entire turn (LLM + tools).
     pub turn_duration: Duration,
+}
+
+impl TurnMetrics {
+    /// Create a new turn metrics snapshot with no tool executions recorded.
+    #[must_use]
+    pub fn new(
+        turn_index: usize,
+        llm_call_duration: Duration,
+        usage: Usage,
+        cost: Cost,
+        turn_duration: Duration,
+    ) -> Self {
+        Self {
+            turn_index,
+            llm_call_duration,
+            tool_executions: Vec::new(),
+            usage,
+            cost,
+            turn_duration,
+        }
+    }
+
+    /// Attach per-tool execution metrics for this turn.
+    #[must_use]
+    pub fn with_tool_executions(mut self, tool_executions: Vec<ToolExecMetrics>) -> Self {
+        self.tool_executions = tool_executions;
+        self
+    }
 }
 
 // ─── MetricsCollector Trait ─────────────────────────────────────────────────

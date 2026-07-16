@@ -9,44 +9,33 @@ use std::sync::Arc;
 use serde_json::json;
 use swink_agent::{
     AgentEvent, AgentMessage, AgentToolResult, AssistantMessage, AssistantMessageDelta,
-    CompactionReport, ContentBlock, Cost, Emission, LlmMessage, ModelSpec, StopReason,
-    ToolResultMessage, TurnEndReason, TurnSnapshot, Usage, UserMessage,
+    CompactionReport, ContentBlock, Emission, LlmMessage, ModelSpec, StopReason, ToolResultMessage,
+    TurnEndReason, TurnSnapshot, UserMessage,
 };
 
 use common::default_model;
 
 /// Helper: build a minimal valid `AssistantMessage`.
 fn minimal_assistant_message() -> AssistantMessage {
-    AssistantMessage {
-        content: vec![ContentBlock::Text {
+    AssistantMessage::new(
+        vec![ContentBlock::Text {
             text: "hello".into(),
         }],
-        provider: "test".into(),
-        model_id: "test-model".into(),
-        usage: Usage::default(),
-        cost: Cost::default(),
-        stop_reason: StopReason::Stop,
-        error_message: None,
-        error_kind: None,
-        timestamp: 0,
-        cache_hint: None,
-    }
+        "test",
+        "test-model",
+    )
+    .with_timestamp(0)
 }
 
 /// Helper: build a minimal `TurnSnapshot`.
 fn minimal_snapshot() -> TurnSnapshot {
-    TurnSnapshot {
-        turn_index: 0,
-        messages: Arc::new(vec![LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text { text: "hi".into() }],
-            timestamp: 0,
-            cache_hint: None,
-        })]),
-        usage: Usage::default(),
-        cost: Cost::default(),
-        stop_reason: StopReason::Stop,
-        state_delta: None,
-    }
+    TurnSnapshot::new(
+        0,
+        Arc::new(vec![LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text { text: "hi".into() }]).with_timestamp(0),
+        )]),
+        StopReason::Stop,
+    )
 }
 
 #[test]
@@ -67,14 +56,10 @@ fn all_agent_event_variants_serialize_to_json() {
             "TurnEnd",
             AgentEvent::TurnEnd {
                 assistant_message: minimal_assistant_message(),
-                tool_results: vec![ToolResultMessage {
-                    tool_call_id: "tc1".into(),
-                    content: vec![ContentBlock::Text { text: "ok".into() }],
-                    is_error: false,
-                    timestamp: 0,
-                    details: json!(null),
-                    cache_hint: None,
-                }],
+                tool_results: vec![
+                    ToolResultMessage::new("tc1", vec![ContentBlock::Text { text: "ok".into() }])
+                        .with_timestamp(0),
+                ],
                 reason: TurnEndReason::Complete,
                 snapshot: minimal_snapshot(),
             },
@@ -83,11 +68,10 @@ fn all_agent_event_variants_serialize_to_json() {
             "BeforeLlmCall",
             AgentEvent::BeforeLlmCall {
                 system_prompt: "You are helpful.".into(),
-                messages: vec![LlmMessage::User(UserMessage {
-                    content: vec![ContentBlock::Text { text: "hi".into() }],
-                    timestamp: 0,
-                    cache_hint: None,
-                })],
+                messages: vec![LlmMessage::User(
+                    UserMessage::new(vec![ContentBlock::Text { text: "hi".into() }])
+                        .with_timestamp(0),
+                )],
                 model: model.clone(),
             },
         ),
@@ -169,13 +153,7 @@ fn all_agent_event_variants_serialize_to_json() {
         (
             "ContextCompacted",
             AgentEvent::ContextCompacted {
-                report: CompactionReport {
-                    dropped_count: 5,
-                    tokens_before: 10000,
-                    tokens_after: 5000,
-                    overflow: false,
-                    dropped_messages: Vec::new(),
-                },
+                report: CompactionReport::new(5, 10000, 5000, false),
             },
         ),
         (
@@ -254,13 +232,7 @@ fn tool_execution_start_serializes_with_expected_keys() {
 #[test]
 fn context_compacted_serializes_report_fields() {
     let event = AgentEvent::ContextCompacted {
-        report: CompactionReport {
-            dropped_count: 10,
-            tokens_before: 20000,
-            tokens_after: 8000,
-            overflow: true,
-            dropped_messages: Vec::new(),
-        },
+        report: CompactionReport::new(10, 20000, 8000, true),
     };
     let val = serde_json::to_value(&event).unwrap();
     assert_eq!(val["event"], "context_compacted");
@@ -355,14 +327,10 @@ fn agent_event_roundtrip_all_variants() {
             "TurnEnd",
             AgentEvent::TurnEnd {
                 assistant_message: minimal_assistant_message(),
-                tool_results: vec![ToolResultMessage {
-                    tool_call_id: "tc1".into(),
-                    content: vec![ContentBlock::Text { text: "ok".into() }],
-                    is_error: false,
-                    timestamp: 0,
-                    details: json!(null),
-                    cache_hint: None,
-                }],
+                tool_results: vec![
+                    ToolResultMessage::new("tc1", vec![ContentBlock::Text { text: "ok".into() }])
+                        .with_timestamp(0),
+                ],
                 reason: TurnEndReason::Complete,
                 snapshot: minimal_snapshot(),
             },
@@ -371,11 +339,10 @@ fn agent_event_roundtrip_all_variants() {
             "BeforeLlmCall",
             AgentEvent::BeforeLlmCall {
                 system_prompt: "You are helpful.".into(),
-                messages: vec![LlmMessage::User(UserMessage {
-                    content: vec![ContentBlock::Text { text: "hi".into() }],
-                    timestamp: 0,
-                    cache_hint: None,
-                })],
+                messages: vec![LlmMessage::User(
+                    UserMessage::new(vec![ContentBlock::Text { text: "hi".into() }])
+                        .with_timestamp(0),
+                )],
                 model: model.clone(),
             },
         ),
@@ -457,13 +424,7 @@ fn agent_event_roundtrip_all_variants() {
         (
             "ContextCompacted",
             AgentEvent::ContextCompacted {
-                report: CompactionReport {
-                    dropped_count: 5,
-                    tokens_before: 10000,
-                    tokens_after: 5000,
-                    overflow: false,
-                    dropped_messages: Vec::new(),
-                },
+                report: CompactionReport::new(5, 10000, 5000, false),
             },
         ),
         (

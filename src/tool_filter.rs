@@ -32,6 +32,7 @@ use crate::tool::AgentTool;
 /// - Strings starting with `^` or ending with `$` → [`Regex`](ToolPattern::Regex)
 /// - Strings containing `*` or `?` → [`Glob`](ToolPattern::Glob)
 /// - Everything else → [`Exact`](ToolPattern::Exact)
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum ToolPattern {
     /// Match the tool name exactly.

@@ -259,13 +259,12 @@ impl PipelineExecutor {
             // In pass_context mode, accumulate the user message and assistant response.
             if pass_context {
                 // Push the user message as an LlmMessage
-                context_messages.push(LlmMessage::User(swink_agent::UserMessage {
-                    content: vec![ContentBlock::Text {
+                context_messages.push(LlmMessage::User(
+                    swink_agent::UserMessage::new(vec![ContentBlock::Text {
                         text: current_input.clone(),
-                    }],
-                    timestamp: 0,
-                    cache_hint: None,
-                }));
+                    }])
+                    .with_timestamp(0),
+                ));
                 // Add the assistant messages from the result.
                 for msg in &result.messages {
                     if let AgentMessage::Llm(llm @ LlmMessage::Assistant(_)) = msg {
@@ -301,13 +300,12 @@ impl PipelineExecutor {
 
 /// Build a user message from text (local helper to avoid testkit dependency).
 fn user_msg(text: &str) -> AgentMessage {
-    AgentMessage::Llm(LlmMessage::User(swink_agent::UserMessage {
-        content: vec![ContentBlock::Text {
+    AgentMessage::Llm(LlmMessage::User(
+        swink_agent::UserMessage::new(vec![ContentBlock::Text {
             text: text.to_string(),
-        }],
-        timestamp: 0,
-        cache_hint: None,
-    }))
+        }])
+        .with_timestamp(0),
+    ))
 }
 
 /// Extract concatenated text content from an agent result's last assistant message.

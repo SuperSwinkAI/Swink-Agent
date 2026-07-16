@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use opentelemetry::Value;
 use opentelemetry_sdk::trace::SpanData;
-use swink_agent::{AssistantMessage, ContentBlock, Cost, ModelSpec, StopReason, Usage};
+use swink_agent::{AssistantMessage, ContentBlock, Cost, ModelSpec, Usage};
 use thiserror::Error;
 
 use crate::trace::provider::RawSession;
@@ -158,18 +158,9 @@ fn assistant_message(
     {
         content.push(ContentBlock::Text { text });
     }
-    AssistantMessage {
-        content,
-        provider: provider.to_string(),
-        model_id: model.to_string(),
-        usage,
-        cost: Cost::default(),
-        stop_reason: StopReason::Stop,
-        error_message: None,
-        error_kind: None,
-        timestamp: current_ts(),
-        cache_hint: None,
-    }
+    AssistantMessage::new(content, provider, model)
+        .with_usage(usage)
+        .with_timestamp(current_ts())
 }
 
 /// Extract `RecordedToolCall`s from tool-kind spans using the conventional
@@ -295,12 +286,10 @@ impl SessionMapper for OpenInferenceSessionMapper {
 
         let input = sum_u64_attr(spans, Self::INPUT_TOKENS_KEY)?;
         let output = sum_u64_attr(spans, Self::OUTPUT_TOKENS_KEY)?;
-        let usage = Usage {
-            input,
-            output,
-            total: input.saturating_add(output),
-            ..Usage::default()
-        };
+        let usage = Usage::default()
+            .with_input(input)
+            .with_output(output)
+            .with_total(input.saturating_add(output));
         let response = first_string_attr(spans, Self::RESPONSE_KEY);
 
         let tool_calls = extract_tool_calls(
@@ -358,12 +347,10 @@ impl SessionMapper for LangChainSessionMapper {
 
         let input = sum_u64_attr(spans, Self::INPUT_TOKENS_KEY)?;
         let output = sum_u64_attr(spans, Self::OUTPUT_TOKENS_KEY)?;
-        let usage = Usage {
-            input,
-            output,
-            total: input.saturating_add(output),
-            ..Usage::default()
-        };
+        let usage = Usage::default()
+            .with_input(input)
+            .with_output(output)
+            .with_total(input.saturating_add(output));
         let response = first_string_attr(spans, Self::RESPONSE_KEY);
 
         let tool_calls = extract_tool_calls(
@@ -500,12 +487,10 @@ impl SessionMapper for OtelGenAiSessionMapper {
 
         let input = sum_u64_attr(spans, tbl.input_tokens)?;
         let output = sum_u64_attr(spans, tbl.output_tokens)?;
-        let usage = Usage {
-            input,
-            output,
-            total: input.saturating_add(output),
-            ..Usage::default()
-        };
+        let usage = Usage::default()
+            .with_input(input)
+            .with_output(output)
+            .with_total(input.saturating_add(output));
         let response = first_string_attr(spans, tbl.response_text);
 
         let tool_calls = extract_tool_calls(

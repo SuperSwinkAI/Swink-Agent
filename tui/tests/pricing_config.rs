@@ -21,11 +21,7 @@ fn unpriced_response(input: u64, output: u64) -> Vec<AssistantMessageEvent> {
         AssistantMessageEvent::Start,
         AssistantMessageEvent::Done {
             stop_reason: StopReason::Stop,
-            usage: Usage {
-                input,
-                output,
-                ..Usage::default()
-            },
+            usage: Usage::default().with_input(input).with_output(output),
             cost: Cost::default(),
         },
     ]

@@ -265,19 +265,18 @@ pub async fn spawn_mock_connection(
     let mock_config = MockServerConfig::new(mock_tools);
     let service = spawn_mock_server_with_client(&mock_config).await;
 
-    let mcp_config = swink_agent_mcp::McpServerConfig {
-        name: server_name.to_string(),
-        transport: swink_agent_mcp::McpTransport::Stdio {
+    let mut mcp_config = swink_agent_mcp::McpServerConfig::new(
+        server_name,
+        swink_agent_mcp::McpTransport::Stdio {
             command: "mock".into(),
             args: vec![],
             env: HashMap::default(),
         },
-        tool_prefix: tool_prefix.map(String::from),
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
+    if let Some(prefix) = tool_prefix {
+        mcp_config = mcp_config.with_tool_prefix(prefix);
+    }
 
     swink_agent_mcp::McpConnection::from_service(mcp_config, service, None)
         .await

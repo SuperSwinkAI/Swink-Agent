@@ -208,10 +208,8 @@ async fn budget_exhaustion_returns_partial_result() {
     let tmp = tempfile::tempdir().unwrap();
     let target = OptimizationTarget::new("You are a helpful assistant.", vec![]);
     let set = make_eval_set(vec![low_score_case("c1")]);
-    let config = OptimizationConfig::new(set, tmp.path()).with_budget(CycleBudget::new(Cost {
-        total: 0.0,
-        ..Cost::default()
-    }));
+    let config =
+        OptimizationConfig::new(set, tmp.path()).with_budget(CycleBudget::new(Cost::default()));
     let mut runner = EvolutionRunner::new(target, config, Arc::new(EchoFactory), None);
 
     let result = runner.run_cycle().await.unwrap();

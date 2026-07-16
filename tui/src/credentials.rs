@@ -160,6 +160,7 @@ fn with_backend<R>(f: impl FnOnce(&dyn KeychainBackend) -> R) -> R {
 }
 
 /// Known provider configurations.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct ProviderInfo {
     pub name: &'static str,
@@ -169,37 +170,57 @@ pub struct ProviderInfo {
     pub requires_key: bool,
 }
 
+impl ProviderInfo {
+    /// Describe one provider's credential configuration.
+    #[must_use]
+    pub const fn new(
+        name: &'static str,
+        key_name: &'static str,
+        env_var: &'static str,
+        description: &'static str,
+        requires_key: bool,
+    ) -> Self {
+        Self {
+            name,
+            key_name,
+            env_var,
+            description,
+            requires_key,
+        }
+    }
+}
+
 /// All supported providers.
 pub fn providers() -> Vec<ProviderInfo> {
     vec![
-        ProviderInfo {
-            name: "Ollama",
-            key_name: "ollama",
-            env_var: "OLLAMA_HOST",
-            description: "Local Ollama instance (no API key needed)",
-            requires_key: false,
-        },
-        ProviderInfo {
-            name: "OpenAI",
-            key_name: "openai",
-            env_var: "OPENAI_API_KEY",
-            description: "OpenAI API (GPT-4, etc.)",
-            requires_key: true,
-        },
-        ProviderInfo {
-            name: "Anthropic",
-            key_name: "anthropic",
-            env_var: "ANTHROPIC_API_KEY",
-            description: "Anthropic API (Claude models)",
-            requires_key: true,
-        },
-        ProviderInfo {
-            name: "Custom Proxy",
-            key_name: "proxy",
-            env_var: "LLM_API_KEY",
-            description: "Custom SSE proxy endpoint",
-            requires_key: true,
-        },
+        ProviderInfo::new(
+            "Ollama",
+            "ollama",
+            "OLLAMA_HOST",
+            "Local Ollama instance (no API key needed)",
+            false,
+        ),
+        ProviderInfo::new(
+            "OpenAI",
+            "openai",
+            "OPENAI_API_KEY",
+            "OpenAI API (GPT-4, etc.)",
+            true,
+        ),
+        ProviderInfo::new(
+            "Anthropic",
+            "anthropic",
+            "ANTHROPIC_API_KEY",
+            "Anthropic API (Claude models)",
+            true,
+        ),
+        ProviderInfo::new(
+            "Custom Proxy",
+            "proxy",
+            "LLM_API_KEY",
+            "Custom SSE proxy endpoint",
+            true,
+        ),
     ]
 }
 

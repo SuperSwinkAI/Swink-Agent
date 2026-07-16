@@ -124,13 +124,12 @@ mod tests {
             sequence: 0,
         };
 
-        let entries = vec![SessionEntry::Message(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
+        let entries = vec![SessionEntry::Message(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text {
                 text: "hello".to_string(),
-            }],
-            timestamp: 0,
-            cache_hint: None,
-        }))];
+            }])
+            .with_timestamp(0),
+        ))];
 
         // Temporarily bump CURRENT_VERSION expectation by using run_migrations
         // with a migrator that goes 1→2. Since CURRENT_VERSION is 1, we need

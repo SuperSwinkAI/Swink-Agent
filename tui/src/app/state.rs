@@ -21,6 +21,7 @@ use crate::ui::input::InputEditor;
 use crate::ui::tool_panel::ToolPanel;
 
 /// Agent state as visible to the TUI.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentStatus {
     Idle,
@@ -37,6 +38,7 @@ pub enum Focus {
 }
 
 /// Operating mode for the TUI.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperatingMode {
     /// Normal execution mode — all tools available.
@@ -46,6 +48,7 @@ pub enum OperatingMode {
 }
 
 /// A follow-up prompt asking whether to always approve a tool for this session.
+#[non_exhaustive]
 #[derive(Debug)]
 pub struct TrustFollowUp {
     /// Name of the tool to potentially trust.
@@ -54,11 +57,23 @@ pub struct TrustFollowUp {
     pub expires_at: Instant,
 }
 
+impl TrustFollowUp {
+    /// Create a follow-up prompt for `tool_name`, dismissing itself at `expires_at`.
+    #[must_use]
+    pub fn new(tool_name: impl Into<String>, expires_at: Instant) -> Self {
+        Self {
+            tool_name: tool_name.into(),
+            expires_at,
+        }
+    }
+}
+
 /// An in-progress per-hunk review of a pending `write_file` approval.
 ///
 /// Entered with `h` from the tool approval prompt. The user walks the hunks
 /// one at a time; once every hunk has a decision the review finalizes and
 /// answers the still-pending approval request.
+#[non_exhaustive]
 #[derive(Debug)]
 pub struct HunkReview {
     /// Before/after content for the pending write.
@@ -72,6 +87,19 @@ pub struct HunkReview {
 }
 
 impl HunkReview {
+    /// Start a review of `hunks` derived from `diff`: every hunk starts
+    /// undecided, cursor on the first one.
+    #[must_use]
+    pub fn new(diff: crate::ui::diff::DiffData, hunks: Vec<crate::ui::diff::Hunk>) -> Self {
+        let decisions = vec![None; hunks.len()];
+        Self {
+            diff,
+            hunks,
+            decisions,
+            cursor: 0,
+        }
+    }
+
     /// Indices (1-based, for display) of hunks the user rejected.
     pub fn rejected_hunks(&self) -> Vec<usize> {
         self.decisions
@@ -133,6 +161,7 @@ impl Selection {
 pub type MessageRole = DisplayRole;
 
 /// A message formatted for display.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct DisplayMessage {
@@ -170,6 +199,56 @@ impl DisplayMessage {
         }
     }
 
+    /// Attach thinking content shown dimmed above the message.
+    #[must_use]
+    pub fn with_thinking(mut self, thinking: impl Into<String>) -> Self {
+        self.thinking = Some(thinking.into());
+        self
+    }
+
+    /// Mark the message as still streaming in.
+    #[must_use]
+    pub fn with_is_streaming(mut self, is_streaming: bool) -> Self {
+        self.is_streaming = is_streaming;
+        self
+    }
+
+    /// Collapse the message, showing `summary` in its place until expanded.
+    #[must_use]
+    pub fn with_collapsed(mut self, summary: impl Into<String>) -> Self {
+        self.collapsed = true;
+        self.summary = summary.into();
+        self
+    }
+
+    /// Mark the message as manually expanded by the user (prevents auto-collapse).
+    #[must_use]
+    pub fn with_user_expanded(mut self, user_expanded: bool) -> Self {
+        self.user_expanded = user_expanded;
+        self
+    }
+
+    /// Record when the message was expanded, for auto-collapse timing.
+    #[must_use]
+    pub fn with_expanded_at(mut self, expanded_at: Instant) -> Self {
+        self.expanded_at = Some(expanded_at);
+        self
+    }
+
+    /// Mark the message as produced in plan mode.
+    #[must_use]
+    pub fn with_plan_mode(mut self, plan_mode: bool) -> Self {
+        self.plan_mode = plan_mode;
+        self
+    }
+
+    /// Attach diff data for a file modification tool result.
+    #[must_use]
+    pub fn with_diff_data(mut self, diff_data: crate::ui::diff::DiffData) -> Self {
+        self.diff_data = Some(diff_data);
+        self
+    }
+
     /// Extract the assistant text/thinking payload shown by the TUI.
     pub fn assistant_content(message: &AssistantMessage) -> (String, Option<String>) {
         let mut text_parts = Vec::new();
@@ -203,6 +282,7 @@ impl DisplayMessage {
 /// from operator-declared rates or the compiled model catalog before the TUI
 /// sees it (see [`swink_agent::price_assistant_message_with`]). The TUI never
 /// prices anything itself, so `cost` is `0.0` for a model with neither.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub struct TurnUsage {
     /// Model that produced the response.
@@ -217,6 +297,28 @@ pub struct TurnUsage {
     pub cache_write_tokens: u64,
     /// Total cost of this response in USD, as priced by the agent loop.
     pub cost: f64,
+}
+
+impl TurnUsage {
+    /// Record one turn's token usage and (already-priced) cost.
+    #[must_use]
+    pub fn new(
+        model_id: impl Into<String>,
+        input_tokens: u64,
+        output_tokens: u64,
+        cache_read_tokens: u64,
+        cache_write_tokens: u64,
+        cost: f64,
+    ) -> Self {
+        Self {
+            model_id: model_id.into(),
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            cache_write_tokens,
+            cost,
+        }
+    }
 }
 
 /// Open `@path` completion popup.

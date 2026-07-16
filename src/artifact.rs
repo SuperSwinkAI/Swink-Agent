@@ -11,6 +11,7 @@ use futures::Stream;
 // ─── Error ──────────────────────────────────────────────────────────────────
 
 /// Errors from artifact operations.
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum ArtifactError {
     #[error("invalid artifact name '{name}': {reason}")]
@@ -32,6 +33,7 @@ pub enum ArtifactError {
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 /// Content payload for an artifact save operation.
+#[non_exhaustive]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ArtifactData {
     pub content: Vec<u8>,
@@ -40,7 +42,27 @@ pub struct ArtifactData {
     pub metadata: HashMap<String, String>,
 }
 
+impl ArtifactData {
+    /// Create new artifact content with empty metadata.
+    #[must_use]
+    pub fn new(content: Vec<u8>, content_type: impl Into<String>) -> Self {
+        Self {
+            content,
+            content_type: content_type.into(),
+            metadata: HashMap::new(),
+        }
+    }
+
+    /// Attach metadata key/value pairs.
+    #[must_use]
+    pub fn with_metadata(mut self, metadata: HashMap<String, String>) -> Self {
+        self.metadata = metadata;
+        self
+    }
+}
+
 /// Record describing a specific saved version.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ArtifactVersion {
     pub name: String,
@@ -50,7 +72,28 @@ pub struct ArtifactVersion {
     pub content_type: String,
 }
 
+impl ArtifactVersion {
+    /// Create a new artifact version record.
+    #[must_use]
+    pub fn new(
+        name: impl Into<String>,
+        version: u32,
+        created_at: DateTime<Utc>,
+        size: usize,
+        content_type: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            version,
+            created_at,
+            size,
+            content_type: content_type.into(),
+        }
+    }
+}
+
 /// Summary metadata for an artifact (used in list results).
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ArtifactMeta {
     pub name: String,
@@ -58,6 +101,26 @@ pub struct ArtifactMeta {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub content_type: String,
+}
+
+impl ArtifactMeta {
+    /// Create new artifact summary metadata.
+    #[must_use]
+    pub fn new(
+        name: impl Into<String>,
+        latest_version: u32,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
+        content_type: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            latest_version,
+            created_at,
+            updated_at,
+            content_type: content_type.into(),
+        }
+    }
 }
 
 // ─── Trait ───────────────────────────────────────────────────────────────────

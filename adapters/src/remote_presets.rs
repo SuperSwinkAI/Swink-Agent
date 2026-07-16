@@ -20,6 +20,7 @@ use crate::XAiStreamFn;
 #[cfg(feature = "azure")]
 use crate::{AzureAuth, AzureStreamFn};
 
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RemotePresetKey {
     pub provider_key: &'static str,
@@ -36,6 +37,7 @@ impl RemotePresetKey {
     }
 }
 
+#[non_exhaustive]
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum RemoteModelConnectionError {
     #[error("Unknown remote preset {provider_key}.{preset_id}")]

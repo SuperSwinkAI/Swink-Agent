@@ -414,10 +414,13 @@ fn resolve_thinking(model: &ModelSpec, max_tokens: u64) -> Option<AnthropicThink
         .unwrap_or_else(|| match model.thinking_level {
             ThinkingLevel::Minimal => 1024,
             ThinkingLevel::Low => 2048,
-            ThinkingLevel::Medium => 5000,
             ThinkingLevel::High => 10_000,
             ThinkingLevel::ExtraHigh => 20_000,
             ThinkingLevel::Off => unreachable!(),
+            // Covers ThinkingLevel::Medium and, since ThinkingLevel is
+            // #[non_exhaustive], any future variant not yet known to this
+            // adapter — both fall back to the Medium-tier budget.
+            _ => 5000,
         });
 
     // Anthropic requires `budget_tokens` to be strictly less than `max_tokens`.
@@ -527,6 +530,10 @@ fn convert_messages(
                     content: vec![block],
                 });
             }
+            // Unknown future LlmMessage variant: nothing sensible to send to
+            // Anthropic, so drop it — same as messages skipped elsewhere in
+            // this loop (e.g. non-LLM AgentMessage variants).
+            &_ => {}
         }
     }
 
@@ -1677,24 +1684,19 @@ mod tests {
     fn convert_messages_sanitized_tool_use_becomes_empty_object_input() {
         use swink_agent::AssistantMessage;
 
-        let mut assistant = AssistantMessage {
-            content: vec![ContentBlock::ToolCall {
+        let mut assistant = AssistantMessage::new(
+            vec![ContentBlock::ToolCall {
                 id: "toolu_01".into(),
                 name: "read_file".into(),
                 // Simulate an incomplete-tool-use block surviving Done(Length):
                 arguments: Value::Null,
                 partial_json: Some(r#"{"path": "/tm"#.into()),
             }],
-            provider: "anthropic".into(),
-            model_id: "claude-sonnet-4-6".into(),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::Length,
-            error_message: None,
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        };
+            "anthropic",
+            "claude-sonnet-4-6",
+        )
+        .with_stop_reason(StopReason::Length)
+        .with_timestamp(0);
 
         // Loop-level scrub runs before the adapter sees the history.
         swink_agent::sanitize_incomplete_tool_calls(&mut assistant);

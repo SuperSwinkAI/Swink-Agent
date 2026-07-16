@@ -19,6 +19,7 @@ use crate::runner::{LlamaRunner, RunnerConfig};
 // ─── EmbeddingConfig ────────────────────────────────────────────────────────
 
 /// Configuration for a local embedding model.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmbeddingConfig {
     /// `HuggingFace` repository ID for the embedding model.
@@ -29,6 +30,27 @@ pub struct EmbeddingConfig {
 
     /// Output embedding dimensions (default 768, configurable 128–768).
     pub dimensions: usize,
+}
+
+impl EmbeddingConfig {
+    /// Creates a new `EmbeddingConfig` for the given repository and GGUF
+    /// filename. `dimensions` defaults to `768`; use [`Self::with_dimensions`]
+    /// to override.
+    #[must_use]
+    pub fn new(repo_id: impl Into<String>, filename: impl Into<String>) -> Self {
+        Self {
+            repo_id: repo_id.into(),
+            filename: filename.into(),
+            dimensions: 768,
+        }
+    }
+
+    /// Sets the output embedding dimensions (128–768).
+    #[must_use]
+    pub fn with_dimensions(mut self, dimensions: usize) -> Self {
+        self.dimensions = dimensions;
+        self
+    }
 }
 
 impl Default for EmbeddingConfig {

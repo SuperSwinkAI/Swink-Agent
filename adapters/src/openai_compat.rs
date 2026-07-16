@@ -181,16 +181,14 @@ impl OaiUsage {
             collect_numeric_usage_fields(key.clone(), value, &mut extra);
         }
 
-        Usage {
-            input: self.prompt_tokens,
-            output: self.completion_tokens,
-            cache_read: 0,
-            cache_write: 0,
-            total: self
-                .total_tokens
-                .unwrap_or(self.prompt_tokens + self.completion_tokens),
-            extra,
-        }
+        Usage::default()
+            .with_input(self.prompt_tokens)
+            .with_output(self.completion_tokens)
+            .with_total(
+                self.total_tokens
+                    .unwrap_or(self.prompt_tokens + self.completion_tokens),
+            )
+            .with_extra(extra)
     }
 }
 
@@ -1017,23 +1015,18 @@ mod tests {
     fn assistant_message_sanitized_tool_call_serializes_empty_object_string() {
         use swink_agent::AssistantMessage;
 
-        let mut assistant = AssistantMessage {
-            content: vec![ContentBlock::ToolCall {
+        let mut assistant = AssistantMessage::new(
+            vec![ContentBlock::ToolCall {
                 id: "call_01".into(),
                 name: "read_file".into(),
                 arguments: Value::Null,
                 partial_json: Some(r#"{"path": "/tm"#.into()),
             }],
-            provider: "openai".into(),
-            model_id: "gpt-4o-mini".into(),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::Length,
-            error_message: None,
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        };
+            "openai",
+            "gpt-4o-mini",
+        )
+        .with_stop_reason(StopReason::Length)
+        .with_timestamp(0);
 
         swink_agent::sanitize_incomplete_tool_calls(&mut assistant);
 

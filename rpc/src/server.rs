@@ -321,11 +321,10 @@ async fn run_prompt(
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         .to_string();
 
-    let user_msg = AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text { text: params.text }],
-        timestamp: now_timestamp(),
-        cache_hint: None,
-    }));
+    let user_msg = AgentMessage::Llm(LlmMessage::User(
+        UserMessage::new(vec![ContentBlock::Text { text: params.text }])
+            .with_timestamp(now_timestamp()),
+    ));
 
     let stream = agent
         .prompt_stream(vec![user_msg])

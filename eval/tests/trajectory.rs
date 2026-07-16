@@ -34,61 +34,36 @@ fn assistant_msg(
             },
         );
     }
-    AssistantMessage {
-        content,
-        provider: "test".to_string(),
-        model_id: "test-model".to_string(),
-        usage: Usage {
-            total: 100,
-            ..Default::default()
-        },
-        cost: Cost {
-            total: 0.01,
-            ..Default::default()
-        },
-        stop_reason: stop,
-        error_message: None,
-        error_kind: None,
-        timestamp: 0,
-        cache_hint: None,
-    }
+    AssistantMessage::new(content, "test", "test-model")
+        .with_usage(Usage::default().with_total(100))
+        .with_cost(Cost::default().with_total(0.01))
+        .with_stop_reason(stop)
+        .with_timestamp(0)
 }
 
 fn empty_snapshot() -> TurnSnapshot {
-    TurnSnapshot {
-        turn_index: 0,
-        messages: Arc::new(vec![]),
-        usage: Usage::default(),
-        cost: Cost::default(),
-        stop_reason: StopReason::Stop,
-        state_delta: None,
-    }
+    TurnSnapshot::new(0, Arc::new(vec![]), StopReason::Stop)
 }
 
 fn tool_result(id: &str, content: &str) -> swink_agent::ToolResultMessage {
-    swink_agent::ToolResultMessage {
-        tool_call_id: id.to_string(),
-        content: vec![ContentBlock::Text {
+    swink_agent::ToolResultMessage::new(
+        id.to_string(),
+        vec![ContentBlock::Text {
             text: content.to_string(),
         }],
-        is_error: false,
-        timestamp: 0,
-        details: serde_json::Value::Null,
-        cache_hint: None,
-    }
+    )
+    .with_timestamp(0)
 }
 
 fn tool_result_error(id: &str, content: &str) -> swink_agent::ToolResultMessage {
-    swink_agent::ToolResultMessage {
-        tool_call_id: id.to_string(),
-        content: vec![ContentBlock::Text {
+    swink_agent::ToolResultMessage::new(
+        id.to_string(),
+        vec![ContentBlock::Text {
             text: content.to_string(),
         }],
-        is_error: true,
-        timestamp: 0,
-        details: serde_json::Value::Null,
-        cache_hint: None,
-    }
+    )
+    .with_is_error(true)
+    .with_timestamp(0)
 }
 
 /// AS-1.1: Multi-tool invocations captured with name, inputs, and result.

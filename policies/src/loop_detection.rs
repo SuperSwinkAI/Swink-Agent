@@ -6,10 +6,11 @@ use std::sync::Mutex;
 
 use swink_agent::{
     AgentMessage, ContentBlock, LlmMessage, PolicyContext, PolicyVerdict, PostTurnPolicy,
-    TurnPolicyContext, UserMessage, now_timestamp,
+    TurnPolicyContext, UserMessage,
 };
 
 /// What to do when a repeated tool call pattern is detected.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum LoopDetectionAction {
     /// Stop the loop entirely.
@@ -156,13 +157,11 @@ impl PostTurnPolicy for LoopDetectionPolicy {
                     PolicyVerdict::Stop("loop detected: repeated tool call pattern".to_string())
                 }
                 LoopDetectionAction::Inject(message) => {
-                    let steering_msg = AgentMessage::Llm(LlmMessage::User(UserMessage {
-                        content: vec![ContentBlock::Text {
+                    let steering_msg = AgentMessage::Llm(LlmMessage::User(UserMessage::new(vec![
+                        ContentBlock::Text {
                             text: message.clone(),
-                        }],
-                        timestamp: now_timestamp(),
-                        cache_hint: None,
-                    }));
+                        },
+                    ])));
                     PolicyVerdict::Inject(vec![steering_msg])
                 }
             }
@@ -182,15 +181,7 @@ mod tests {
         cost: &'a Cost,
         state: &'a swink_agent::SessionState,
     ) -> PolicyContext<'a> {
-        PolicyContext {
-            turn_index: 0,
-            accumulated_usage: usage,
-            accumulated_cost: cost,
-            message_count: 0,
-            overflow_signal: false,
-            new_messages: &[],
-            state,
-        }
+        PolicyContext::new(0, usage, cost, 0, false, &[], state)
     }
 
     fn make_turn_ctx<'a>(
@@ -199,50 +190,30 @@ mod tests {
     ) -> TurnPolicyContext<'a> {
         static MODEL: std::sync::LazyLock<swink_agent::ModelSpec> =
             std::sync::LazyLock::new(|| swink_agent::ModelSpec::new("test", "test-model"));
-        TurnPolicyContext {
-            assistant_message: msg,
-            tool_results: results,
-            stop_reason: StopReason::Stop,
-            system_prompt: "",
-            model_spec: &MODEL,
-            context_messages: &[],
-        }
+        TurnPolicyContext::new(msg, results, StopReason::Stop, "", &MODEL, &[])
     }
 
     fn msg_with_tool_calls(calls: &[(&str, &str, serde_json::Value)]) -> AssistantMessage {
-        AssistantMessage {
-            content: calls
-                .iter()
-                .map(|(id, name, args)| ContentBlock::ToolCall {
-                    id: id.to_string(),
-                    name: name.to_string(),
-                    arguments: args.clone(),
-                    partial_json: None,
-                })
-                .collect(),
-            provider: String::new(),
-            model_id: String::new(),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::Stop,
-            error_message: None,
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        }
+        let content = calls
+            .iter()
+            .map(|(id, name, args)| ContentBlock::ToolCall {
+                id: id.to_string(),
+                name: name.to_string(),
+                arguments: args.clone(),
+                partial_json: None,
+            })
+            .collect();
+        AssistantMessage::new(content, String::new(), String::new()).with_timestamp(0)
     }
 
     fn tool_result(id: &str, text: &str) -> swink_agent::ToolResultMessage {
-        swink_agent::ToolResultMessage {
-            tool_call_id: id.to_string(),
-            content: vec![ContentBlock::Text {
+        swink_agent::ToolResultMessage::new(
+            id.to_string(),
+            vec![ContentBlock::Text {
                 text: text.to_string(),
             }],
-            is_error: false,
-            timestamp: 0,
-            details: serde_json::Value::Null,
-            cache_hint: None,
-        }
+        )
+        .with_timestamp(0)
     }
 
     #[test]

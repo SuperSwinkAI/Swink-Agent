@@ -364,10 +364,10 @@ impl App {
                         let _ = responder.send(ToolApproval::Approved);
                         // In Smart mode, offer trust follow-up
                         if self.approval_mode() == ApprovalMode::Smart {
-                            self.trust_follow_up = Some(TrustFollowUp {
-                                tool_name: req.tool_name,
-                                expires_at: Instant::now() + Duration::from_secs(3),
-                            });
+                            self.trust_follow_up = Some(TrustFollowUp::new(
+                                req.tool_name,
+                                Instant::now() + Duration::from_secs(3),
+                            ));
                         }
                     }
                     self.dirty = true;
@@ -963,7 +963,10 @@ impl App {
                             MessageRole::Assistant => "Assistant",
                             MessageRole::ToolResult => "Tool",
                             MessageRole::Error => "Error",
-                            MessageRole::System => "System",
+                            // Covers MessageRole::System and, since
+                            // DisplayRole is #[non_exhaustive], any unknown
+                            // future role.
+                            _ => "System",
                         };
                         format!("{role}: {}", message.content)
                     })

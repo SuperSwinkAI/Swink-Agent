@@ -323,7 +323,9 @@ type ConvertToLlmBoxed = Box<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send 
 fn default_convert_to_llm() -> ConvertToLlmBoxed {
     Box::new(|msg: &AgentMessage| match msg {
         AgentMessage::Llm(llm) => Some(llm.clone()),
-        AgentMessage::Custom(_) => None,
+        // Covers AgentMessage::Custom and, since AgentMessage is
+        // #[non_exhaustive], any future variant.
+        _ => None,
     })
 }
 
@@ -421,6 +423,7 @@ impl PostTurnPolicy for RecordingPostTurnPolicy {
             Some(AgentMessage::Llm(LlmMessage::User(_))) => "user",
             Some(AgentMessage::Custom(_)) => "custom",
             None => "none",
+            _ => "unknown",
         };
 
         self.observations.lock().unwrap().push(RecordedTurnContext {
@@ -463,7 +466,9 @@ impl PreTurnPolicy for RecordingPreTurnPolicy {
                 AgentMessage::Llm(LlmMessage::ToolResult(result)) => {
                     Some(ContentBlock::extract_text(&result.content))
                 }
-                AgentMessage::Custom(_) => None,
+                // Covers AgentMessage::Custom and, since AgentMessage is
+                // #[non_exhaustive], any future variant.
+                _ => None,
             })
             .collect();
         self.observations
@@ -497,13 +502,12 @@ impl PreTurnPolicy for InjectingOncePreTurnPolicy {
         if self.injected.swap(true, Ordering::SeqCst) {
             PolicyVerdict::Continue
         } else {
-            PolicyVerdict::Inject(vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+            PolicyVerdict::Inject(vec![AgentMessage::Llm(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: self.text.clone(),
-                }],
-                timestamp: 0,
-                cache_hint: None,
-            }))])
+                }])
+                .with_timestamp(0),
+            ))])
         }
     }
 }
@@ -517,13 +521,12 @@ impl PostTurnPolicy for InjectingOncePostTurnPolicy {
         if self.injected.swap(true, Ordering::SeqCst) {
             PolicyVerdict::Continue
         } else {
-            PolicyVerdict::Inject(vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+            PolicyVerdict::Inject(vec![AgentMessage::Llm(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: self.text.clone(),
-                }],
-                timestamp: 0,
-                cache_hint: None,
-            }))])
+                }])
+                .with_timestamp(0),
+            ))])
         }
     }
 }
@@ -709,7 +712,9 @@ async fn transform_context_ordering() {
         );
         match msg {
             AgentMessage::Llm(llm) => Some(llm.clone()),
-            AgentMessage::Custom(_) => None,
+            // Covers AgentMessage::Custom and, since AgentMessage is
+            // #[non_exhaustive], any future variant.
+            _ => None,
         }
     });
 
@@ -1189,13 +1194,12 @@ async fn steering_interrupt() {
     config.message_provider = Some(Arc::new(MockMessageProvider::steering_only(move || {
         let count = steering_count_clone.fetch_add(1, Ordering::SeqCst);
         if count == 0 {
-            vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+            vec![AgentMessage::Llm(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: "steering: change direction".to_string(),
-                }],
-                timestamp: 0,
-                cache_hint: None,
-            }))]
+                }])
+                .with_timestamp(0),
+            ))]
         } else {
             vec![]
         }
@@ -1273,13 +1277,12 @@ async fn steering_interrupt_aborts_cancellation_unaware_tools() {
     config.message_provider = Some(Arc::new(MockMessageProvider::steering_only(move || {
         let count = steering_count_clone.fetch_add(1, Ordering::SeqCst);
         if count == 0 {
-            vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+            vec![AgentMessage::Llm(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: "steering: change direction".to_string(),
-                }],
-                timestamp: 0,
-                cache_hint: None,
-            }))]
+                }])
+                .with_timestamp(0),
+            ))]
         } else {
             vec![]
         }
@@ -1314,13 +1317,12 @@ async fn follow_up() {
     config.message_provider = Some(Arc::new(MockMessageProvider::follow_up_only(move || {
         let count = follow_up_clone.fetch_add(1, Ordering::SeqCst);
         if count == 0 {
-            vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+            vec![AgentMessage::Llm(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: "follow up question".to_string(),
-                }],
-                timestamp: 0,
-                cache_hint: None,
-            }))]
+                }])
+                .with_timestamp(0),
+            ))]
         } else {
             vec![]
         }
@@ -1701,17 +1703,18 @@ async fn convert_to_llm_filter() {
     let mut config = default_config(stream_fn);
     config.convert_to_llm = Box::new(|msg: &AgentMessage| match msg {
         AgentMessage::Llm(llm) => Some(llm.clone()),
-        AgentMessage::Custom(_) => None,
+        // Covers AgentMessage::Custom and, since AgentMessage is
+        // #[non_exhaustive], any future variant.
+        _ => None,
     });
 
     let messages = vec![
-        AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
+        AgentMessage::Llm(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text {
                 text: "hello".to_string(),
-            }],
-            timestamp: 0,
-            cache_hint: None,
-        })),
+            }])
+            .with_timestamp(0),
+        )),
         AgentMessage::Custom(Box::new(CustomMsg)),
     ];
 
@@ -2073,13 +2076,12 @@ async fn follow_up_turn_after_no_tool_turn_advances_turn_index() {
     config.message_provider = Some(Arc::new(MockMessageProvider::follow_up_only(move || {
         let count = follow_up_clone.fetch_add(1, Ordering::SeqCst);
         if count == 0 {
-            vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+            vec![AgentMessage::Llm(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: "follow up question".to_string(),
-                }],
-                timestamp: 0,
-                cache_hint: None,
-            }))]
+                }])
+                .with_timestamp(0),
+            ))]
         } else {
             vec![]
         }
@@ -2123,13 +2125,12 @@ async fn steering_turn_after_no_tool_turn_continues_inner_loop() {
     config.message_provider = Some(Arc::new(MockMessageProvider::steering_only(move || {
         let count = steering_count_clone.fetch_add(1, Ordering::SeqCst);
         if count == 0 {
-            vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+            vec![AgentMessage::Llm(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: "steering follow up".to_string(),
-                }],
-                timestamp: 0,
-                cache_hint: None,
-            }))]
+                }])
+                .with_timestamp(0),
+            ))]
         } else {
             vec![]
         }
@@ -2230,21 +2231,9 @@ async fn post_turn_inject_without_tool_calls_continues_inner_loop() {
 
 #[tokio::test]
 async fn turn_snapshot_serializes_to_json() {
-    let snapshot = TurnSnapshot {
-        turn_index: 3,
-        messages: Arc::new(vec![]),
-        usage: Usage {
-            input: 100,
-            output: 50,
-            ..Default::default()
-        },
-        cost: Cost {
-            total: 0.05,
-            ..Default::default()
-        },
-        stop_reason: StopReason::Stop,
-        state_delta: None,
-    };
+    let snapshot = TurnSnapshot::new(3, Arc::new(vec![]), StopReason::Stop)
+        .with_usage(Usage::default().with_input(100).with_output(50))
+        .with_cost(Cost::default().with_total(0.05));
 
     let json = serde_json::to_string(&snapshot).expect("TurnSnapshot should serialize");
     let parsed: TurnSnapshot =
@@ -2274,20 +2263,23 @@ impl PostTurnPolicy for ReplacingPostTurnPolicy {
 
     fn evaluate(&self, _ctx: &PolicyContext<'_>, turn: &TurnPolicyContext<'_>) -> PolicyVerdict {
         let orig = turn.assistant_message;
-        let msg = AssistantMessage {
-            content: vec![ContentBlock::Text {
+        let mut msg = AssistantMessage::new(
+            vec![ContentBlock::Text {
                 text: self.replacement_text.clone(),
             }],
-            provider: orig.provider.clone(),
-            model_id: orig.model_id.clone(),
-            usage: orig.usage.clone(),
-            cost: orig.cost.clone(),
-            stop_reason: orig.stop_reason,
-            error_message: orig.error_message.clone(),
-            error_kind: orig.error_kind,
-            timestamp: orig.timestamp,
-            cache_hint: None,
-        };
+            orig.provider.clone(),
+            orig.model_id.clone(),
+        )
+        .with_usage(orig.usage.clone())
+        .with_cost(orig.cost.clone())
+        .with_stop_reason(orig.stop_reason)
+        .with_timestamp(orig.timestamp);
+        if let Some(ref error_message) = orig.error_message {
+            msg = msg.with_error_message(error_message.clone());
+        }
+        if let Some(error_kind) = orig.error_kind {
+            msg = msg.with_error_kind(error_kind);
+        }
         PolicyVerdict::Inject(vec![AgentMessage::Llm(LlmMessage::Assistant(msg))])
     }
 }
@@ -2301,23 +2293,26 @@ impl PostTurnPolicy for ToolInjectingPostTurnPolicy {
 
     fn evaluate(&self, _ctx: &PolicyContext<'_>, turn: &TurnPolicyContext<'_>) -> PolicyVerdict {
         let orig = turn.assistant_message;
-        let msg = AssistantMessage {
-            content: vec![ContentBlock::ToolCall {
+        let mut msg = AssistantMessage::new(
+            vec![ContentBlock::ToolCall {
                 id: "call_injected".to_string(),
                 name: "noop".to_string(),
                 arguments: json!({}),
                 partial_json: None,
             }],
-            provider: orig.provider.clone(),
-            model_id: orig.model_id.clone(),
-            usage: orig.usage.clone(),
-            cost: orig.cost.clone(),
-            stop_reason: orig.stop_reason,
-            error_message: orig.error_message.clone(),
-            error_kind: orig.error_kind,
-            timestamp: orig.timestamp,
-            cache_hint: None,
-        };
+            orig.provider.clone(),
+            orig.model_id.clone(),
+        )
+        .with_usage(orig.usage.clone())
+        .with_cost(orig.cost.clone())
+        .with_stop_reason(orig.stop_reason)
+        .with_timestamp(orig.timestamp);
+        if let Some(ref error_message) = orig.error_message {
+            msg = msg.with_error_message(error_message.clone());
+        }
+        if let Some(error_kind) = orig.error_kind {
+            msg = msg.with_error_kind(error_kind);
+        }
         PolicyVerdict::Inject(vec![AgentMessage::Llm(LlmMessage::Assistant(msg))])
     }
 }
@@ -2707,13 +2702,12 @@ async fn post_turn_stop_skips_follow_up_polling_without_tool_calls() {
     config.post_turn_policies = vec![Arc::new(StoppingPostTurnPolicy)];
     config.message_provider = Some(Arc::new(MockMessageProvider::follow_up_only(move || {
         follow_up_polled_clone.store(true, Ordering::SeqCst);
-        vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
+        vec![AgentMessage::Llm(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text {
                 text: "follow up question".to_string(),
-            }],
-            timestamp: 0,
-            cache_hint: None,
-        }))]
+            }])
+            .with_timestamp(0),
+        ))]
     })));
 
     let events = collect_events(agent_loop(
@@ -2749,13 +2743,12 @@ async fn post_turn_stop_skips_follow_up_polling_after_tool_calls() {
     config.post_turn_policies = vec![Arc::new(StoppingPostTurnPolicy)];
     config.message_provider = Some(Arc::new(MockMessageProvider::follow_up_only(move || {
         follow_up_polled_clone.store(true, Ordering::SeqCst);
-        vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
+        vec![AgentMessage::Llm(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text {
                 text: "follow up question".to_string(),
-            }],
-            timestamp: 0,
-            cache_hint: None,
-        }))]
+            }])
+            .with_timestamp(0),
+        ))]
     })));
 
     let events = collect_events(agent_loop(

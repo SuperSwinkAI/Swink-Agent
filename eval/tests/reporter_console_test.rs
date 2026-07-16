@@ -55,10 +55,7 @@ fn sample_result() -> EvalSetResult {
             total_cases: 2,
             passed: 1,
             failed: 1,
-            total_cost: Cost {
-                total: 0.0046,
-                ..Default::default()
-            },
+            total_cost: Cost::default().with_total(0.0046),
             total_usage: Usage::default(),
             total_duration: Duration::from_millis(220),
         },

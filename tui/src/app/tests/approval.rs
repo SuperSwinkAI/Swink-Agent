@@ -28,13 +28,8 @@ async fn smart_mode_auto_approves_trusted_tool() {
     app.session_trusted_tools.insert("bash".to_string());
 
     let (tx, rx) = tokio::sync::oneshot::channel();
-    let request = ToolApprovalRequest {
-        tool_call_id: "call_1".into(),
-        tool_name: "bash".into(),
-        arguments: serde_json::json!({"command": "ls"}),
-        requires_approval: true,
-        context: None,
-    };
+    let request =
+        ToolApprovalRequest::new("call_1", "bash", serde_json::json!({"command": "ls"}), true);
 
     app.approval_tx.send((request, tx)).await.unwrap();
 
@@ -50,13 +45,7 @@ async fn smart_mode_prompts_for_untrusted_tool() {
     let mut app = make_app_with_mode(ApprovalMode::Smart);
 
     let (tx, _rx) = tokio::sync::oneshot::channel();
-    let request = ToolApprovalRequest {
-        tool_call_id: "call_2".into(),
-        tool_name: "write_file".into(),
-        arguments: serde_json::json!({}),
-        requires_approval: true,
-        context: None,
-    };
+    let request = ToolApprovalRequest::new("call_2", "write_file", serde_json::json!({}), true);
 
     app.handle_approval_request(request, tx);
 
@@ -68,13 +57,7 @@ async fn always_approve_adds_to_trusted_set() {
     let mut app = App::new(TuiConfig::default());
 
     let (tx, rx) = tokio::sync::oneshot::channel();
-    let request = ToolApprovalRequest {
-        tool_call_id: "call_3".into(),
-        tool_name: "bash".into(),
-        arguments: serde_json::json!({}),
-        requires_approval: true,
-        context: None,
-    };
+    let request = ToolApprovalRequest::new("call_3", "bash", serde_json::json!({}), true);
     app.pending_approval = Some((request, tx));
 
     let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
@@ -147,13 +130,7 @@ async fn smart_mode_auto_approves_untrusted_readonly_tool() {
     let mut app = make_app_with_mode(ApprovalMode::Smart);
 
     let (tx, rx) = tokio::sync::oneshot::channel();
-    let request = ToolApprovalRequest {
-        tool_call_id: "call_ro".into(),
-        tool_name: "read_file".into(),
-        arguments: serde_json::json!({}),
-        requires_approval: false,
-        context: None,
-    };
+    let request = ToolApprovalRequest::new("call_ro", "read_file", serde_json::json!({}), false);
 
     app.handle_approval_request(request, tx);
 
@@ -166,13 +143,7 @@ async fn smart_mode_prompts_for_write_tool() {
     let mut app = make_app_with_mode(ApprovalMode::Smart);
 
     let (tx, _rx) = tokio::sync::oneshot::channel();
-    let request = ToolApprovalRequest {
-        tool_call_id: "call_w".into(),
-        tool_name: "write_file".into(),
-        arguments: serde_json::json!({}),
-        requires_approval: true,
-        context: None,
-    };
+    let request = ToolApprovalRequest::new("call_w", "write_file", serde_json::json!({}), true);
 
     app.handle_approval_request(request, tx);
     assert!(app.pending_approval.is_some());
@@ -183,13 +154,7 @@ async fn enabled_mode_prompts_for_all_tools() {
     let mut app = make_app_with_mode(ApprovalMode::Enabled);
 
     let (tx, _rx) = tokio::sync::oneshot::channel();
-    let request = ToolApprovalRequest {
-        tool_call_id: "call_r".into(),
-        tool_name: "read_file".into(),
-        arguments: serde_json::json!({}),
-        requires_approval: false,
-        context: None,
-    };
+    let request = ToolApprovalRequest::new("call_r", "read_file", serde_json::json!({}), false);
 
     app.handle_approval_request(request, tx);
     assert!(
@@ -228,13 +193,7 @@ async fn trust_follow_up_triggers_after_approval_in_smart_mode() {
     let mut app = make_app_with_mode(ApprovalMode::Smart);
 
     let (tx, _rx) = tokio::sync::oneshot::channel();
-    let request = ToolApprovalRequest {
-        tool_call_id: "call_t".into(),
-        tool_name: "bash".into(),
-        arguments: serde_json::json!({}),
-        requires_approval: true,
-        context: None,
-    };
+    let request = ToolApprovalRequest::new("call_t", "bash", serde_json::json!({}), true);
     app.pending_approval = Some((request, tx));
 
     // Press 'y' to approve
@@ -253,13 +212,7 @@ async fn trust_follow_up_not_triggered_in_enabled_mode() {
     let mut app = make_app_with_mode(ApprovalMode::Enabled);
 
     let (tx, _rx) = tokio::sync::oneshot::channel();
-    let request = ToolApprovalRequest {
-        tool_call_id: "call_e".into(),
-        tool_name: "bash".into(),
-        arguments: serde_json::json!({}),
-        requires_approval: true,
-        context: None,
-    };
+    let request = ToolApprovalRequest::new("call_e", "bash", serde_json::json!({}), true);
     app.pending_approval = Some((request, tx));
 
     let key = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
@@ -329,13 +282,7 @@ async fn trusted_tool_auto_approves_in_smart_mode() {
     app.session_trusted_tools.insert("bash".to_string());
 
     let (tx, rx) = tokio::sync::oneshot::channel();
-    let request = ToolApprovalRequest {
-        tool_call_id: "call_trusted".into(),
-        tool_name: "bash".into(),
-        arguments: serde_json::json!({}),
-        requires_approval: true,
-        context: None,
-    };
+    let request = ToolApprovalRequest::new("call_trusted", "bash", serde_json::json!({}), true);
 
     app.handle_approval_request(request, tx);
 
@@ -352,13 +299,7 @@ async fn trusted_tool_still_prompts_in_enabled_mode() {
     app.session_trusted_tools.insert("bash".to_string());
 
     let (tx, _rx) = tokio::sync::oneshot::channel();
-    let request = ToolApprovalRequest {
-        tool_call_id: "call_te".into(),
-        tool_name: "bash".into(),
-        arguments: serde_json::json!({}),
-        requires_approval: true,
-        context: None,
-    };
+    let request = ToolApprovalRequest::new("call_te", "bash", serde_json::json!({}), true);
 
     app.handle_approval_request(request, tx);
 
@@ -445,13 +386,7 @@ async fn trust_follow_up_cleared_on_new_approval() {
     });
 
     let (tx, _rx) = tokio::sync::oneshot::channel();
-    let request = ToolApprovalRequest {
-        tool_call_id: "call_new".into(),
-        tool_name: "new_tool".into(),
-        arguments: serde_json::json!({}),
-        requires_approval: true,
-        context: None,
-    };
+    let request = ToolApprovalRequest::new("call_new", "new_tool", serde_json::json!({}), true);
 
     app.handle_approval_request(request, tx);
 
@@ -468,13 +403,7 @@ async fn concurrent_plan_and_tool_approval_plan_takes_precedence() {
     app.pending_plan_approval = true;
 
     let (tx, _rx) = tokio::sync::oneshot::channel();
-    let request = ToolApprovalRequest {
-        tool_call_id: "call_c".into(),
-        tool_name: "bash".into(),
-        arguments: serde_json::json!({}),
-        requires_approval: true,
-        context: None,
-    };
+    let request = ToolApprovalRequest::new("call_c", "bash", serde_json::json!({}), true);
     app.pending_approval = Some((request, tx));
 
     // Press 'y' — plan approval should take precedence

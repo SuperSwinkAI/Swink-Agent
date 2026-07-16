@@ -35,25 +35,15 @@ pub fn mock_invocation(
         }]
     });
 
-    let assistant_message = AssistantMessage {
-        content,
-        provider: "test".to_string(),
-        model_id: "test-model".to_string(),
-        usage: Usage {
-            input: token_total,
-            total: token_total,
-            ..Default::default()
-        },
-        cost: Cost {
-            total: cost_total,
-            ..Default::default()
-        },
-        stop_reason: StopReason::Stop,
-        error_message: None,
-        error_kind: None,
-        timestamp: 0,
-        cache_hint: None,
-    };
+    let assistant_message = AssistantMessage::new(content, "test", "test-model")
+        .with_usage(
+            Usage::default()
+                .with_input(token_total)
+                .with_total(token_total),
+        )
+        .with_cost(Cost::default().with_total(cost_total))
+        .with_stop_reason(StopReason::Stop)
+        .with_timestamp(0);
 
     Invocation {
         turns: vec![TurnRecord {
@@ -63,15 +53,10 @@ pub fn mock_invocation(
             tool_results: vec![],
             duration: Duration::from_millis(100),
         }],
-        total_usage: Usage {
-            input: token_total,
-            total: token_total,
-            ..Default::default()
-        },
-        total_cost: Cost {
-            total: cost_total,
-            ..Default::default()
-        },
+        total_usage: Usage::default()
+            .with_input(token_total)
+            .with_total(token_total),
+        total_cost: Cost::default().with_total(cost_total),
         total_duration: Duration::from_millis(100),
         final_response: final_response.map(String::from),
         stop_reason: StopReason::Stop,
@@ -150,18 +135,9 @@ pub fn mock_invocation_multi_turn(turns: &[&[(&str, serde_json::Value)]]) -> Inv
                 .collect();
             TurnRecord {
                 turn_index: i,
-                assistant_message: AssistantMessage {
-                    content: vec![],
-                    provider: "test".to_string(),
-                    model_id: "test-model".to_string(),
-                    usage: Usage::default(),
-                    cost: Cost::default(),
-                    stop_reason: StopReason::Stop,
-                    error_message: None,
-                    error_kind: None,
-                    timestamp: 0,
-                    cache_hint: None,
-                },
+                assistant_message: AssistantMessage::new(vec![], "test", "test-model")
+                    .with_stop_reason(StopReason::Stop)
+                    .with_timestamp(0),
                 tool_calls,
                 tool_results: vec![],
                 duration: Duration::from_millis(50),

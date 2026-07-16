@@ -23,14 +23,7 @@ async fn load_session_restores_error_messages_with_role_and_content() {
 
     let session_id = "error-session";
     let now = swink_agent_memory::now_utc();
-    let meta = SessionMeta {
-        id: session_id.to_string(),
-        title: "mock-model".to_string(),
-        created_at: now,
-        updated_at: now,
-        version: 1,
-        sequence: 0,
-    };
+    let meta = SessionMeta::new(session_id, "mock-model", now, now);
     store.save(session_id, &meta, &messages).unwrap();
 
     let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
@@ -68,34 +61,23 @@ async fn load_session_error_with_text_content_uses_text() {
     let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
 
     let error_msg = swink_agent::AgentMessage::Llm(swink_agent::LlmMessage::Assistant(
-        swink_agent::AssistantMessage {
-            content: vec![swink_agent::ContentBlock::Text {
+        swink_agent::AssistantMessage::new(
+            vec![swink_agent::ContentBlock::Text {
                 text: "partial response before error".to_string(),
             }],
-            provider: "test".to_string(),
-            model_id: "mock-model".to_string(),
-            usage: swink_agent::Usage::default(),
-            cost: swink_agent::Cost::default(),
-            stop_reason: swink_agent::StopReason::Error,
-            error_message: Some("connection reset".to_string()),
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        },
+            "test",
+            "mock-model",
+        )
+        .with_stop_reason(swink_agent::StopReason::Error)
+        .with_error_message("connection reset")
+        .with_timestamp(0),
     ));
 
     let messages = vec![make_user_agent_message("hello"), error_msg];
 
     let session_id = "error-with-text";
     let now = swink_agent_memory::now_utc();
-    let meta = SessionMeta {
-        id: session_id.to_string(),
-        title: "mock-model".to_string(),
-        created_at: now,
-        updated_at: now,
-        version: 1,
-        sequence: 0,
-    };
+    let meta = SessionMeta::new(session_id, "mock-model", now, now);
     store.save(session_id, &meta, &messages).unwrap();
 
     let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
@@ -122,8 +104,8 @@ async fn load_session_restores_assistant_thinking_blocks() {
     let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
 
     let thinking_msg = swink_agent::AgentMessage::Llm(swink_agent::LlmMessage::Assistant(
-        swink_agent::AssistantMessage {
-            content: vec![
+        swink_agent::AssistantMessage::new(
+            vec![
                 swink_agent::ContentBlock::Thinking {
                     thinking: "step one\nstep two".to_string(),
                     signature: None,
@@ -132,30 +114,18 @@ async fn load_session_restores_assistant_thinking_blocks() {
                     text: "final answer".to_string(),
                 },
             ],
-            provider: "test".to_string(),
-            model_id: "mock-model".to_string(),
-            usage: swink_agent::Usage::default(),
-            cost: swink_agent::Cost::default(),
-            stop_reason: swink_agent::StopReason::Stop,
-            error_message: None,
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        },
+            "test",
+            "mock-model",
+        )
+        .with_stop_reason(swink_agent::StopReason::Stop)
+        .with_timestamp(0),
     ));
 
     let messages = vec![make_user_agent_message("hello"), thinking_msg];
 
     let session_id = "thinking-session";
     let now = swink_agent_memory::now_utc();
-    let meta = SessionMeta {
-        id: session_id.to_string(),
-        title: "mock-model".to_string(),
-        created_at: now,
-        updated_at: now,
-        version: 1,
-        sequence: 0,
-    };
+    let meta = SessionMeta::new(session_id, "mock-model", now, now);
     store.save(session_id, &meta, &messages).unwrap();
 
     let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
@@ -183,30 +153,21 @@ async fn load_session_restores_tool_result_error_role() {
     let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
 
     let tool_error = swink_agent::AgentMessage::Llm(swink_agent::LlmMessage::ToolResult(
-        swink_agent::ToolResultMessage {
-            tool_call_id: "call_1".to_string(),
-            content: vec![swink_agent::ContentBlock::Text {
+        swink_agent::ToolResultMessage::new(
+            "call_1",
+            vec![swink_agent::ContentBlock::Text {
                 text: "permission denied".to_string(),
             }],
-            is_error: true,
-            timestamp: 0,
-            details: serde_json::Value::Null,
-            cache_hint: None,
-        },
+        )
+        .with_is_error(true)
+        .with_timestamp(0),
     ));
 
     let messages = vec![make_user_agent_message("hello"), tool_error];
 
     let session_id = "tool-error-session";
     let now = swink_agent_memory::now_utc();
-    let meta = SessionMeta {
-        id: session_id.to_string(),
-        title: "mock-model".to_string(),
-        created_at: now,
-        updated_at: now,
-        version: 1,
-        sequence: 0,
-    };
+    let meta = SessionMeta::new(session_id, "mock-model", now, now);
     store.save(session_id, &meta, &messages).unwrap();
 
     let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
@@ -272,14 +233,7 @@ async fn load_session_restores_agent_session_state() {
     let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
     let session_id = "state-load-session";
     let now = swink_agent_memory::now_utc();
-    let meta = SessionMeta {
-        id: session_id.to_string(),
-        title: "mock-model".to_string(),
-        created_at: now,
-        updated_at: now,
-        version: 1,
-        sequence: 0,
-    };
+    let meta = SessionMeta::new(session_id, "mock-model", now, now);
 
     store
         .save(session_id, &meta, &[make_user_agent_message("hello")])
@@ -311,14 +265,7 @@ async fn load_session_without_saved_state_clears_existing_agent_session_state() 
     let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
     let session_id = "state-clear-session";
     let now = swink_agent_memory::now_utc();
-    let meta = SessionMeta {
-        id: session_id.to_string(),
-        title: "mock-model".to_string(),
-        created_at: now,
-        updated_at: now,
-        version: 1,
-        sequence: 0,
-    };
+    let meta = SessionMeta::new(session_id, "mock-model", now, now);
 
     store
         .save(session_id, &meta, &[make_user_agent_message("hello")])
@@ -353,14 +300,7 @@ async fn load_session_with_corrupted_saved_state_keeps_in_memory_state_and_repor
     let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
     let session_id = "state-corrupt-session";
     let now = swink_agent_memory::now_utc();
-    let meta = SessionMeta {
-        id: session_id.to_string(),
-        title: "mock-model".to_string(),
-        created_at: now,
-        updated_at: now,
-        version: 1,
-        sequence: 0,
-    };
+    let meta = SessionMeta::new(session_id, "mock-model", now, now);
 
     store
         .save(session_id, &meta, &[make_user_agent_message("hello")])

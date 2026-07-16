@@ -24,10 +24,7 @@ fn unpriced_response(input: u64) -> Vec<AssistantMessageEvent> {
         AssistantMessageEvent::Start,
         AssistantMessageEvent::Done {
             stop_reason: StopReason::Stop,
-            usage: Usage {
-                input,
-                ..Usage::default()
-            },
+            usage: Usage::default().with_input(input),
             cost: Cost::default(),
         },
     ]
@@ -74,10 +71,7 @@ async fn message_end_carries_catalog_pricing() {
 async fn message_end_carries_operator_declared_pricing() {
     let table = PricingTable::new().with_model(
         "claude-sonnet-4-6",
-        ModelRates {
-            input_per_million: 1.0,
-            ..ModelRates::default()
-        },
+        ModelRates::default().with_input_per_million(1.0),
     );
     let cost = message_end_cost("claude-sonnet-4-6", |options| {
         options.with_pricing_table(table)
@@ -94,10 +88,7 @@ async fn message_end_carries_operator_declared_pricing() {
 async fn message_end_carries_closure_supplied_pricing() {
     let cost = message_end_cost("my-local-llama", |options| {
         options.with_cost_calculator(|model_id: &str, _usage: &Usage| {
-            (model_id == "my-local-llama").then(|| Cost {
-                total: 0.75,
-                ..Cost::default()
-            })
+            (model_id == "my-local-llama").then(|| Cost::default().with_total(0.75))
         })
     })
     .await;
