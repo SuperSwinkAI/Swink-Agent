@@ -35,11 +35,18 @@ jobs:
       - name: Run tarpaulin
         run: cargo tarpaulin --exclude swink-agent-local-llm
 
+      # Never hard-fail on a missing report: this workflow is informational,
+      # and tarpaulin already printed the percentage to the step log above.
       - name: Coverage summary
         run: |
-          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
-          import json
-          with open("target/tarpaulin/tarpaulin-report.json") as f:
+          report=$(find . -name 'tarpaulin-report.json' -not -path './.git/*' | head -1)
+          if [ -z "$report" ]; then
+            echo "## Coverage: report JSON not found (see tarpaulin step log for the percentage)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          python3 - "$report" <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, sys
+          with open(sys.argv[1]) as f:
               data = json.load(f)
           files = data.get("files", [])
           covered = sum(len([t for t in f["traces"] if t["stats"]["Line"] > 0]) for f in files)
