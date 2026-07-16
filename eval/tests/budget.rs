@@ -26,7 +26,7 @@ fn passes_within_budget() {
             .with_max_turns(5),
     );
     let invocation = mock_invocation(&["read"], Some("done"), 0.5, 500);
-    let result = BudgetEvaluator.evaluate(&case, &invocation).unwrap();
+    let result = BudgetEvaluator::new().evaluate(&case, &invocation).unwrap();
     assert_eq!(result.score.verdict(), Verdict::Pass);
 }
 
@@ -34,7 +34,7 @@ fn passes_within_budget() {
 fn fails_on_cost_exceeded() {
     let case = case_with_budget(BudgetConstraints::default().with_max_cost(0.001));
     let invocation = mock_invocation(&["read"], Some("done"), 0.01, 100);
-    let result = BudgetEvaluator.evaluate(&case, &invocation).unwrap();
+    let result = BudgetEvaluator::new().evaluate(&case, &invocation).unwrap();
     assert_eq!(result.score.verdict(), Verdict::Fail);
     assert!(result.details.unwrap().contains("cost"));
 }
@@ -43,7 +43,7 @@ fn fails_on_cost_exceeded() {
 fn fails_on_input_exceeded() {
     let case = case_with_budget(BudgetConstraints::default().with_max_input(50));
     let invocation = mock_invocation(&["read"], Some("done"), 0.01, 100);
-    let result = BudgetEvaluator.evaluate(&case, &invocation).unwrap();
+    let result = BudgetEvaluator::new().evaluate(&case, &invocation).unwrap();
     assert_eq!(result.score.verdict(), Verdict::Fail);
     assert!(result.details.unwrap().contains("input"));
 }
@@ -54,7 +54,7 @@ fn fails_on_output_exceeded() {
     let invocation = Invocation::new(StopReason::Stop, ModelSpec::new("test", "test-model"))
         .with_total_usage(Usage::default().with_output(11).with_total(11))
         .with_total_duration(Duration::from_secs(1));
-    let result = BudgetEvaluator.evaluate(&case, &invocation).unwrap();
+    let result = BudgetEvaluator::new().evaluate(&case, &invocation).unwrap();
     assert_eq!(result.score.verdict(), Verdict::Fail);
     assert!(result.details.unwrap().contains("output"));
 }

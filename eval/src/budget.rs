@@ -10,7 +10,17 @@ use crate::types::{EvalCase, EvalMetricResult, Invocation};
 /// Evaluator that checks cost, token, and turn budgets.
 ///
 /// Returns `None` when the case has no `budget` constraints defined.
+#[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
 pub struct BudgetEvaluator;
+
+impl BudgetEvaluator {
+    /// Create a new `BudgetEvaluator`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 impl Evaluator for BudgetEvaluator {
     fn name(&self) -> &'static str {

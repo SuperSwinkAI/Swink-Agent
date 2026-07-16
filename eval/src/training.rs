@@ -219,8 +219,17 @@ pub trait TrainingExporter: Send + Sync {
 /// `{id, type, function: {name, arguments}}` objects, matching the OpenAI
 /// tool-call schema so downstream fine-tuning pipelines can parse them
 /// without additional transformation.
+#[non_exhaustive]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ChatMlExporter;
+
+impl ChatMlExporter {
+    /// Create a new `ChatMlExporter`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 impl TrainingExporter for ChatMlExporter {
     fn export(&self, traces: &[ScoredTrace], opts: &ExportOptions) -> Result<Vec<u8>, ExportError> {
@@ -398,8 +407,17 @@ fn extract_assistant_text(msg: &swink_agent::AssistantMessage) -> String {
 /// ```json
 /// {"case_id": "...", "chosen": {...chatml record...}, "rejected": {...chatml record...}}
 /// ```
+#[non_exhaustive]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct DpoExporter;
+
+impl DpoExporter {
+    /// Create a new `DpoExporter`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 /// A single DPO pair (one JSONL record).
 #[derive(Serialize)]
@@ -476,8 +494,17 @@ impl TrainingExporter for DpoExporter {
 ///   {"from": "gpt",    "value": "..."}
 /// ]}
 /// ```
+#[non_exhaustive]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ShareGptExporter;
+
+impl ShareGptExporter {
+    /// Create a new `ShareGptExporter`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 #[derive(Serialize)]
 struct ShareGptRecord {

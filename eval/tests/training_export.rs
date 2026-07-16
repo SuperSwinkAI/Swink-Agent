@@ -50,7 +50,7 @@ fn make_case_result(case_id: &str, score_val: f64) -> EvalCaseResult {
 fn chatml_export_produces_valid_jsonl_with_correct_turn_structure() {
     let traces = vec![make_trace("case-1", 1.0, Some("Hello world"))];
     let opts = ExportOptions::chatml_sft(0.0);
-    let bytes = ChatMlExporter
+    let bytes = ChatMlExporter::new()
         .export(&traces, &opts)
         .expect("export should succeed");
 
@@ -82,7 +82,7 @@ fn chatml_export_produces_valid_jsonl_with_correct_turn_structure() {
 fn chatml_export_includes_tool_calls_on_assistant_turns() {
     let traces = vec![make_trace("case-2", 1.0, Some("done"))];
     let opts = ExportOptions::chatml_sft(0.0);
-    let bytes = ChatMlExporter.export(&traces, &opts).unwrap();
+    let bytes = ChatMlExporter::new().export(&traces, &opts).unwrap();
     let output = String::from_utf8(bytes).unwrap();
     let line = output.lines().next().unwrap();
     let record: serde_json::Value = serde_json::from_str(line).unwrap();
@@ -113,7 +113,7 @@ fn chatml_export_includes_metadata_when_requested() {
         .with_format(TrainingFormat::ChatMlSft)
         .with_quality_threshold(0.0)
         .with_include_metadata(true);
-    let bytes = ChatMlExporter.export(&traces, &opts).unwrap();
+    let bytes = ChatMlExporter::new().export(&traces, &opts).unwrap();
     let output = String::from_utf8(bytes).unwrap();
     let record: serde_json::Value = serde_json::from_str(output.lines().next().unwrap()).unwrap();
 
@@ -130,7 +130,7 @@ fn chatml_export_omits_metadata_when_not_requested() {
         .with_format(TrainingFormat::ChatMlSft)
         .with_quality_threshold(0.0)
         .with_include_metadata(false);
-    let bytes = ChatMlExporter.export(&traces, &opts).unwrap();
+    let bytes = ChatMlExporter::new().export(&traces, &opts).unwrap();
     let output = String::from_utf8(bytes).unwrap();
     let record: serde_json::Value = serde_json::from_str(output.lines().next().unwrap()).unwrap();
     assert!(
@@ -149,7 +149,7 @@ fn quality_threshold_filters_low_score_traces() {
         make_trace("case-2", 0.3, Some("bad")),
     ];
     let opts = ExportOptions::chatml_sft(0.5);
-    let bytes = ChatMlExporter.export(&traces, &opts).unwrap();
+    let bytes = ChatMlExporter::new().export(&traces, &opts).unwrap();
     let output = String::from_utf8(bytes).unwrap();
     let lines: Vec<&str> = output.lines().collect();
 
@@ -167,7 +167,7 @@ fn export_empty_when_all_traces_below_threshold() {
         make_trace("case-2", 0.1, Some("lower")),
     ];
     let opts = ExportOptions::chatml_sft(0.5);
-    let err = ChatMlExporter
+    let err = ChatMlExporter::new()
         .export(&traces, &opts)
         .expect_err("should fail when all traces are below threshold");
     assert!(
@@ -181,7 +181,7 @@ fn export_empty_when_all_traces_below_threshold() {
 fn export_empty_slice_returns_nothing_to_export() {
     let traces: Vec<ScoredTrace> = vec![];
     let opts = ExportOptions::chatml_sft(0.0);
-    let err = ChatMlExporter
+    let err = ChatMlExporter::new()
         .export(&traces, &opts)
         .expect_err("empty slice should fail");
     assert!(matches!(err, ExportError::NothingToExport { .. }));
@@ -197,7 +197,7 @@ fn dpo_pairs_created_from_high_and_low_score_on_same_case() {
         make_trace("case-A", 0.2, Some("poor answer")),
     ];
     let opts = ExportOptions::dpo_pairs(0.0);
-    let bytes = DpoExporter.export(&traces, &opts).unwrap();
+    let bytes = DpoExporter::new().export(&traces, &opts).unwrap();
     let output = String::from_utf8(bytes).unwrap();
     let lines: Vec<&str> = output.lines().collect();
     assert_eq!(lines.len(), 1, "one case → one DPO pair");
@@ -213,7 +213,7 @@ fn dpo_pairs_created_from_high_and_low_score_on_same_case() {
 fn dpo_pairs_emits_nothing_for_single_trace_case() {
     let traces = vec![make_trace("solo-case", 0.8, Some("only one"))];
     let opts = ExportOptions::dpo_pairs(0.0);
-    let err = DpoExporter
+    let err = DpoExporter::new()
         .export(&traces, &opts)
         .expect_err("single-trace case should produce NothingToExport");
     assert!(matches!(err, ExportError::NothingToExport { .. }));
@@ -228,7 +228,7 @@ fn dpo_pairs_uses_highest_and_lowest_score_traces() {
         make_trace("case-X", 0.1, Some("worst")),
     ];
     let opts = ExportOptions::dpo_pairs(0.0);
-    let bytes = DpoExporter.export(&traces, &opts).unwrap();
+    let bytes = DpoExporter::new().export(&traces, &opts).unwrap();
     let output = String::from_utf8(bytes).unwrap();
     let line = output.lines().next().unwrap();
     let pair: serde_json::Value = serde_json::from_str(line).unwrap();
@@ -249,7 +249,7 @@ fn dpo_pairs_uses_highest_and_lowest_score_traces() {
 fn sharegpt_export_produces_valid_jsonl_with_human_gpt_turns() {
     let traces = vec![make_trace_no_tools("case-sg", 1.0, "Hi there!")];
     let opts = ExportOptions::sharegpt();
-    let bytes = ShareGptExporter.export(&traces, &opts).unwrap();
+    let bytes = ShareGptExporter::new().export(&traces, &opts).unwrap();
     let output = String::from_utf8(bytes).unwrap();
     let lines: Vec<&str> = output.lines().collect();
     assert_eq!(lines.len(), 1);
@@ -302,7 +302,7 @@ fn chatml_multiple_traces_produce_one_line_each() {
         make_trace("c", 1.0, Some("resp-c")),
     ];
     let opts = ExportOptions::chatml_sft(0.0);
-    let bytes = ChatMlExporter.export(&traces, &opts).unwrap();
+    let bytes = ChatMlExporter::new().export(&traces, &opts).unwrap();
     let output = String::from_utf8(bytes).unwrap();
     let lines: Vec<&str> = output.lines().collect();
     assert_eq!(lines.len(), 3);

@@ -125,7 +125,7 @@ async fn record_reload_and_score_bit_identical() {
         .fetch_session("sess-1")
         .await
         .expect("session found");
-    let reloaded = OpenInferenceSessionMapper.map(&raw).expect("map ok");
+    let reloaded = OpenInferenceSessionMapper::new().map(&raw).expect("map ok");
     assert_eq!(reloaded.final_response.as_deref(), Some(response));
 
     // Score the reloaded session with the same evaluator.
@@ -178,7 +178,7 @@ async fn swarm_and_graph_extractors_traverse_reloaded_session() {
     exporter.export(spans).await.expect("export");
 
     let raw = provider.fetch_session(session_id).await.expect("session");
-    let mut invocation = OpenInferenceSessionMapper.map(&raw).expect("map ok");
+    let mut invocation = OpenInferenceSessionMapper::new().map(&raw).expect("map ok");
     // Give each turn a distinct model_id so GraphExtractor has something to
     // partition on (OpenInferenceMapper collapses the session into one
     // AssistantMessage; reinstate per-turn model_ids for the extractor test).

@@ -23,7 +23,7 @@ impl JudgeClient for FixedVerdict {
         Box::pin(async move {
             *self.last_prompt.lock().unwrap() = Some(prompt.to_string());
             let mut verdict = JudgeVerdict::new(self.score, self.pass);
-            verdict.reason = self.reason.clone();
+            verdict.reason.clone_from(&self.reason);
             Ok(verdict)
         })
     }
@@ -75,7 +75,7 @@ async fn materialize_case_attachments_decodes_base64_variant() {
         bytes: TINY_PNG.to_vec(),
     };
     let case = make_case_with_attachments(vec![attachment]);
-    let filter = DefaultUrlFilter;
+    let filter = DefaultUrlFilter::new();
     let materialized = materialize_case_attachments(&case, std::path::Path::new("."), &filter)
         .await
         .expect("materialize succeeds");

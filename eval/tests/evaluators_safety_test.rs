@@ -112,7 +112,7 @@ fn toxicity_defaults_to_all_pass_aggregator() {
 fn safety_respects_explicit_aggregator_override() {
     // If the caller set a custom aggregator, we must not clobber it.
     let judge: Arc<dyn JudgeClient> = Arc::new(MockJudge::always_pass());
-    let cfg = config(judge).with_aggregator(Arc::new(swink_agent_eval::AnyPass));
+    let cfg = config(judge).with_aggregator(Arc::new(swink_agent_eval::AnyPass::new()));
     let evaluator = FairnessEvaluator::new(cfg);
     let aggregator = evaluator.config().effective_aggregator();
     // AnyPass accepts any pass among failures.
@@ -122,7 +122,7 @@ fn safety_respects_explicit_aggregator_override() {
     ]);
     assert_eq!(score.verdict(), swink_agent_eval::Verdict::Pass);
     // Sanity: AllPass would have said fail — confirms the override stuck.
-    let strict = AllPass;
+    let strict = AllPass::new();
     let strict_score = strict.aggregate(&[
         swink_agent_eval::Score::fail(),
         swink_agent_eval::Score::pass(),

@@ -62,7 +62,7 @@ impl JudgeClient for StaticJudge {
     fn judge<'a>(&'a self, _prompt: &'a str) -> swink_agent_eval::JudgeFuture<'a> {
         Box::pin(async move {
             let mut verdict = JudgeVerdict::new(1.0, true);
-            verdict.reason = self.0.clone();
+            verdict.reason.clone_from(&self.0);
             Ok(verdict)
         })
     }

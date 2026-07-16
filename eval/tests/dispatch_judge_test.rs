@@ -27,7 +27,7 @@ impl JudgeClient for CannedJudge {
             // Preserve the raw (possibly out-of-range) score; `new()` clamps to
             // [0,1] but these tests exercise downstream clamping in dispatch.
             verdict.score = self.score;
-            verdict.reason = self.reason.clone();
+            verdict.reason.clone_from(&self.reason);
             Ok(verdict)
         })
     }

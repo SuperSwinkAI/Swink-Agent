@@ -30,7 +30,7 @@ async fn materializes_path_attachment_relative_to_eval_root() {
 
     let attachment = Attachment::Path(PathBuf::from("fixtures/image.png"));
     let materialized = attachment
-        .materialize(root.path(), &DefaultUrlFilter)
+        .materialize(root.path(), &DefaultUrlFilter::new())
         .await
         .unwrap();
 
@@ -47,7 +47,7 @@ async fn materializes_base64_attachment_with_supported_mime() {
     };
 
     let materialized = attachment
-        .materialize(root.path(), &DefaultUrlFilter)
+        .materialize(root.path(), &DefaultUrlFilter::new())
         .await
         .unwrap();
 
@@ -74,7 +74,7 @@ async fn url_attachment_applies_ssrf_filter() {
     let attachment = Attachment::Url("https://127.0.0.1/image.png".to_string());
 
     let err = attachment
-        .materialize(root.path(), &DefaultUrlFilter)
+        .materialize(root.path(), &DefaultUrlFilter::new())
         .await
         .expect_err("loopback URL should be blocked");
 
@@ -90,7 +90,7 @@ async fn unsupported_mime_is_structured_error() {
     };
 
     let err = attachment
-        .materialize(root.path(), &DefaultUrlFilter)
+        .materialize(root.path(), &DefaultUrlFilter::new())
         .await
         .expect_err("pdf is not a supported multimodal image MIME");
 

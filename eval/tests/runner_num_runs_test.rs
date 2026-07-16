@@ -75,7 +75,7 @@ impl Evaluator for AllPassSequenceEvaluator {
     }
 
     fn aggregator(&self) -> Arc<dyn swink_agent_eval::Aggregator> {
-        Arc::new(swink_agent_eval::AllPass)
+        Arc::new(swink_agent_eval::AllPass::new())
     }
 }
 

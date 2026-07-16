@@ -15,7 +15,17 @@ use crate::types::{EvalCase, EvalMetricResult, Invocation, ResponseCriteria};
 /// Evaluator that scores the final response text against expected criteria.
 ///
 /// Returns `None` when the case has no `expected_response` defined.
+#[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
 pub struct ResponseMatcher;
+
+impl ResponseMatcher {
+    /// Create a new `ResponseMatcher`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 impl Evaluator for ResponseMatcher {
     fn name(&self) -> &'static str {

@@ -32,7 +32,7 @@ fn all_named_states_match_passes() {
     }));
 
     let invocation = mock_invocation_with_response(&[], "done");
-    let result = EnvironmentStateEvaluator
+    let result = EnvironmentStateEvaluator::new()
         .evaluate(&case, &invocation)
         .expect("evaluator should apply");
 
@@ -56,7 +56,7 @@ fn missing_expected_name_fails() {
         )]
     }));
 
-    let result = EnvironmentStateEvaluator
+    let result = EnvironmentStateEvaluator::new()
         .evaluate(&case, &mock_invocation_with_response(&[], "done"))
         .expect("evaluator should apply");
 
@@ -79,7 +79,7 @@ fn mismatched_value_fails_with_expected_and_actual() {
         vec![EnvironmentState::new("row_count", serde_json::json!(2))]
     }));
 
-    let result = EnvironmentStateEvaluator
+    let result = EnvironmentStateEvaluator::new()
         .evaluate(&case, &mock_invocation_with_response(&[], "done"))
         .expect("evaluator should apply");
 
@@ -99,7 +99,7 @@ fn missing_state_capture_returns_none() {
     )]);
 
     assert!(
-        EnvironmentStateEvaluator
+        EnvironmentStateEvaluator::new()
             .evaluate(&case, &mock_invocation_with_response(&[], "done"))
             .is_none()
     );
@@ -116,7 +116,7 @@ fn state_capture_panic_becomes_failure() {
         panic!("capture exploded");
     }));
 
-    let result = EnvironmentStateEvaluator
+    let result = EnvironmentStateEvaluator::new()
         .evaluate(&case, &mock_invocation_with_response(&[], "done"))
         .expect("evaluator should apply");
 
@@ -143,7 +143,7 @@ fn extra_captured_states_are_ignored() {
         ]
     }));
 
-    let result = EnvironmentStateEvaluator
+    let result = EnvironmentStateEvaluator::new()
         .evaluate(&case, &mock_invocation_with_response(&[], "done"))
         .expect("evaluator should apply");
 

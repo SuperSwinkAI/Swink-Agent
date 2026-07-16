@@ -55,15 +55,6 @@ pub struct CargoOutcome {
 }
 
 impl CargoOutcome {
-    /// Construct a cargo outcome from a success flag and message.
-    #[must_use]
-    pub fn new(success: bool, message: impl Into<String>) -> Self {
-        Self {
-            success,
-            message: message.into(),
-        }
-    }
-
     pub fn into_metric_result(self, evaluator_name: &'static str) -> EvalMetricResult {
         EvalMetricResult {
             evaluator_name: evaluator_name.to_string(),

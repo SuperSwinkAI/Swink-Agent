@@ -129,7 +129,7 @@ async fn langfuse_missing_attribute_surfaces_as_mapping_error() {
         .await
         .expect("session found");
 
-    let err = OpenInferenceSessionMapper
+    let err = OpenInferenceSessionMapper::new()
         .map(&raw)
         .expect_err("provider attribute missing");
     match err {

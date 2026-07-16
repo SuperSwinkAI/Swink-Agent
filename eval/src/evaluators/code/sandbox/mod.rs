@@ -255,8 +255,17 @@ pub trait SandboxRunner: Send + Sync {
 /// a Rust crate and `cargo run`), but the shell runner keeps the evaluator
 /// useful out of the box and — crucially — self-contained for tests (no
 /// compilers, no `cc`).
+#[non_exhaustive]
 #[derive(Debug, Default, Clone)]
 pub struct ShellRunner;
+
+impl ShellRunner {
+    /// Create a new `ShellRunner`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 impl SandboxRunner for ShellRunner {
     fn command(&self, code: &str, workdir: &std::path::Path) -> std::io::Result<Command> {

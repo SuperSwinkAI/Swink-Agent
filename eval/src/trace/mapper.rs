@@ -255,8 +255,17 @@ fn build_invocation(
 /// * `llm.token_count.prompt`, `llm.token_count.completion` — optional usage.
 /// * `output.value` — optional final response text.
 /// * Tool spans: `tool.name`, `tool.parameters`, `tool.call_id`.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OpenInferenceSessionMapper;
+
+impl OpenInferenceSessionMapper {
+    /// Create a new `OpenInferenceSessionMapper`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 impl OpenInferenceSessionMapper {
     pub const PROVIDER_KEY: &'static str = "llm.provider";
@@ -316,8 +325,17 @@ impl SessionMapper for OpenInferenceSessionMapper {
 ///   — optional usage.
 /// * `langchain.llm.output_text` — optional final response.
 /// * Tool spans: `langchain.tool.name`, `langchain.tool.input`.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LangChainSessionMapper;
+
+impl LangChainSessionMapper {
+    /// Create a new `LangChainSessionMapper`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 impl LangChainSessionMapper {
     pub const PROVIDER_KEY: &'static str = "langchain.llm.provider";
