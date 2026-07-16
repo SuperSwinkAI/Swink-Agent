@@ -175,7 +175,7 @@ async fn run_loop_inner(
         }
 
         let mut state = LoopState {
-            context_messages: initial_messages,
+            context_messages: ContextMessages::new(initial_messages),
             pending_messages: Vec::new(),
             initial_new_messages_len,
             overflow_signal: false,
@@ -255,7 +255,7 @@ async fn run_loop_inner(
                         let _ = emit(
                             &tx,
                             AgentEvent::AgentEnd {
-                                messages: Arc::new(state.context_messages),
+                                messages: Arc::new(state.context_messages.into_vec()),
                             },
                         )
                         .await;
@@ -288,7 +288,7 @@ async fn run_loop_inner(
             let _ = emit(
                 &tx,
                 AgentEvent::AgentEnd {
-                    messages: Arc::new(state.context_messages),
+                    messages: Arc::new(state.context_messages.into_vec()),
                 },
             )
             .await;

@@ -238,8 +238,6 @@ pub struct Agent {
     stream_options: StreamOptions,
     structured_output_max_retries: usize,
     idle_notify: Arc<Notify>,
-    in_flight_llm_messages: Option<Vec<AgentMessage>>,
-    in_flight_messages: Option<Vec<AgentMessage>>,
     pending_message_snapshot: Arc<crate::pause_state::PendingMessageSnapshot>,
     loop_context_snapshot: Arc<crate::pause_state::LoopContextSnapshot>,
     approve_tool: Option<ApproveToolArc>,
@@ -354,8 +352,6 @@ impl Agent {
             stream_options: options.stream_options,
             structured_output_max_retries: options.structured_output_max_retries,
             idle_notify: Arc::new(Notify::new()),
-            in_flight_llm_messages: None,
-            in_flight_messages: None,
             pending_message_snapshot: Arc::new(
                 crate::pause_state::PendingMessageSnapshot::default(),
             ),

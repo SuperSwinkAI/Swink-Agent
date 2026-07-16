@@ -261,7 +261,7 @@ Delta entries collapse: set-then-set keeps the last value, set-then-remove yield
 | Field | Type | Notes |
 |-------|------|-------|
 | `turn_index` | `usize` | Zero-based within the current run |
-| `messages` | `Arc<Vec<LlmMessage>>` | `Arc`-wrapped to avoid cloning per subscriber; custom (de)serialized |
+| `messages` | `Arc<Vec<Arc<LlmMessage>>>` | Per-message `Arc`s are shared with neighbouring snapshots (structural sharing — building a snapshot re-clones only messages touched since the last turn); the outer `Arc` avoids cloning per subscriber; serializes as a plain message array |
 | `usage` / `cost` | `Usage` / `Cost` | Accumulated up to and including this turn |
 | `stop_reason` | `StopReason` | From the assistant message ending the turn |
 | `state_delta` | `Option<StateDelta>` | Session-state changes during this turn, if any |

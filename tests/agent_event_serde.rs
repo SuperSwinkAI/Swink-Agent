@@ -31,9 +31,9 @@ fn minimal_assistant_message() -> AssistantMessage {
 fn minimal_snapshot() -> TurnSnapshot {
     TurnSnapshot::new(
         0,
-        Arc::new(vec![LlmMessage::User(
+        Arc::new(vec![Arc::new(LlmMessage::User(
             UserMessage::new(vec![ContentBlock::Text { text: "hi".into() }]).with_timestamp(0),
-        )]),
+        ))]),
         StopReason::Stop,
     )
 }
