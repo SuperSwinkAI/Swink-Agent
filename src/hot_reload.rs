@@ -36,7 +36,11 @@ use crate::tool_filter::ToolFilter;
 // ─── ScriptTool ────────────────────────────────────────────────────────────
 
 /// A tool definition parsed from a file (TOML or JSON).
+///
+/// Construct with [`ScriptToolDef::new`] plus `with_*` builders, or
+/// deserialize from a TOML/JSON definition file.
 #[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
 pub struct ScriptToolDef {
     /// Unique tool name.
     pub name: String,
@@ -47,6 +51,30 @@ pub struct ScriptToolDef {
     /// Optional JSON Schema for parameters.
     #[serde(default = "default_schema")]
     pub parameters_schema: Value,
+}
+
+impl ScriptToolDef {
+    /// Create a definition with a permissive parameters schema.
+    #[must_use]
+    pub fn new(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        command: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            description: description.into(),
+            command: command.into(),
+            parameters_schema: default_schema(),
+        }
+    }
+
+    /// Set the JSON Schema describing the tool's parameters.
+    #[must_use]
+    pub fn with_parameters_schema(mut self, schema: Value) -> Self {
+        self.parameters_schema = schema;
+        self
+    }
 }
 
 fn default_schema() -> Value {
