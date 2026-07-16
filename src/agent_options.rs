@@ -108,6 +108,28 @@ pub struct AgentOptions {
     /// Optional async context transformer (runs before the sync transformer).
     pub async_transform_context: Option<AsyncTransformContextArc>,
     /// Optional checkpoint store for persisting agent state.
+    ///
+    /// `None` by default — the framework never persists conversation history
+    /// on its own. For crash safety, opt in with two lines: a durable store
+    /// (e.g. `swink-agent-memory`'s `FileCheckpointStore`, whose
+    /// `default_dir()` gives the conventional location) plus a post-turn
+    /// checkpoint policy from `swink-agent-policies`:
+    ///
+    /// ```rust,ignore
+    /// let dir = FileCheckpointStore::default_dir().expect("config dir");
+    /// let store: Arc<dyn CheckpointStore> = Arc::new(FileCheckpointStore::new(dir)?);
+    /// let options = options
+    ///     .with_post_turn_policy(RollingCheckpointPolicy::new(store).with_session_id(&session));
+    /// ```
+    ///
+    /// Set `checkpoint_store` itself (via
+    /// [`with_checkpoint_store`](Self::with_checkpoint_store)) to enable the
+    /// agent's own `checkpoint()` / `load_and_restore_checkpoint` restore
+    /// paths against the same directory.
+    ///
+    /// `RollingCheckpointPolicy` overwrites one checkpoint per turn (crash
+    /// recovery loses at most one turn); `CheckpointPolicy` keeps one
+    /// checkpoint per turn (time-travel, at O(N²) disk cost for N turns).
     pub checkpoint_store: Option<CheckpointStoreArc>,
     /// Optional registry used to deserialize persisted [`CustomMessage`](crate::types::CustomMessage)
     /// values when restoring from a [`Checkpoint`](crate::checkpoint::Checkpoint) or

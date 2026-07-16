@@ -26,6 +26,7 @@ pub async fn verify_all(tasks: Vec<VerifyTask>) -> Vec<VerifyRow> {
         let entry = groups.entry(key).or_insert_with(|| (endpoint, Vec::new()));
         entry.1.push(task);
     }
+    ensure_default_crypto_provider();
     let client = Client::new();
     let futs = groups.into_values().map(|(endpoint, group_tasks)| {
         let client = client.clone();
@@ -186,6 +187,15 @@ fn extract_array_ids(json: &Value, array_key: &str, id_key: &str) -> HashSet<Str
         .unwrap_or_default()
 }
 
+/// Ensure a process-wide default rustls crypto provider is installed.
+///
+/// The workspace builds reqwest with `rustls-no-provider` (#1110), so a
+/// `reqwest::Client` cannot be constructed until a process default
+/// rustls `CryptoProvider` exists. Installs ring; idempotent.
+fn ensure_default_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -196,6 +206,13 @@ mod tests {
     use serde_json::json;
 
     use crate::catalog::{ProviderEndpoint, VerifyTask};
+
+    /// Install the ring crypto provider before building a bare client —
+    /// required under `rustls-no-provider` (#1110).
+    fn test_client() -> reqwest::Client {
+        super::ensure_default_crypto_provider();
+        reqwest::Client::new()
+    }
 
     fn task(model_id: &str) -> VerifyTask {
         VerifyTask {
@@ -314,7 +331,7 @@ mod tests {
         let server = TestHttpServer::new(vec![r#"{"data":[{"id":"claude-a"},{"id":"claude-b"}]}"#]);
 
         let url = format!("{}/v1/models", server.base_url());
-        let ids = super::fetch_anthropic_models(&reqwest::Client::new(), &url, "test-key")
+        let ids = super::fetch_anthropic_models(&test_client(), &url, "test-key")
             .await
             .expect("anthropic model list should parse");
         let requests = server.join();
@@ -334,7 +351,7 @@ mod tests {
         let server = TestHttpServer::new(vec![r#"{"data":[{"id":"gpt-a"},{"id":"gpt-b"}]}"#]);
 
         let url = format!("{}/v1/models", server.base_url());
-        let ids = super::fetch_openai_models(&reqwest::Client::new(), &url, "test-key")
+        let ids = super::fetch_openai_models(&test_client(), &url, "test-key")
             .await
             .expect("openai-compatible model list should parse");
         let requests = server.join();
@@ -353,7 +370,7 @@ mod tests {
         ]);
 
         let url = format!("{}/v1beta/models", server.base_url());
-        let ids = super::fetch_google_models(&reqwest::Client::new(), &url, "test-key")
+        let ids = super::fetch_google_models(&test_client(), &url, "test-key")
             .await
             .expect("google model list should parse");
         let requests = server.join();

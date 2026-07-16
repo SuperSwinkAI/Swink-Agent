@@ -45,6 +45,7 @@
     allow(dead_code)
 )]
 mod base;
+pub use base::ensure_default_crypto_provider;
 #[cfg_attr(
     not(any(
         feature = "anthropic",

@@ -88,6 +88,12 @@ pub struct OaiChatRequest {
     pub max_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f64>,
+    /// Structured-output constraint ([`ServingOptions::format`]), pre-wrapped
+    /// in the protocol's `{"type": …}` envelope by the caller.
+    ///
+    /// [`ServingOptions::format`]: swink_agent::ServingOptions::format
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<Value>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<OaiTool>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -88,6 +88,7 @@ impl OpenSearchTraceProvider {
         base_url: impl Into<String>,
         index: impl Into<String>,
     ) -> Result<Self, TraceProviderError> {
+        crate::ensure_default_crypto_provider();
         let http = Client::builder()
             .timeout(DEFAULT_TIMEOUT)
             .build()

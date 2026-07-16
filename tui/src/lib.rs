@@ -20,6 +20,7 @@ mod editor;
 mod format;
 mod mentions;
 mod session;
+mod skills;
 mod theme;
 mod ui;
 
@@ -56,16 +57,17 @@ use swink_agent::{Agent, ToolApproval, ToolApprovalRequest};
 
 pub use app::{
     AgentStatus, App, DisplayMessage, HunkReview, MessageRole, OperatingMode, PathCompletion,
-    TrustFollowUp, TurnUsage,
+    SkillCompletion, TrustFollowUp, TurnUsage,
 };
 pub use config::TuiConfig;
 pub use error::TuiError;
 pub use extensions::{
     CustomCommandFn, CustomCommandOutcome, MentionResolverFn, PathCandidate, PathCompletionFn,
-    TuiExtensions,
+    SkillCandidate, SkillCompletionFn, SkillDetailsFn, SkillResolverFn, TuiExtensions,
 };
 pub use mentions::{PathMention, parse_mentions};
 pub use session::JsonlSessionStore;
+pub use skills::{SkillInvocation, parse_skill_invocation};
 pub use swink_agent::{ApprovalMode, ModelRates, PricingTable};
 pub use transport::{InProcessTransport, TransportError, TuiTransport, UserInput};
 pub use ui::conversation::ConversationView;

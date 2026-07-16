@@ -16,8 +16,8 @@ use tracing::{debug, error, warn};
 use swink_agent::ContentBlock;
 use swink_agent::{
     AgentContext, AssistantMessage as HarnessAssistantMessage, AssistantMessageEvent, Cost,
-    ModelSpec, StopReason, StreamFn, StreamOptions, ThinkingLevel, ToolResultMessage, Usage,
-    UserMessage,
+    ModelSpec, ResponseFormat, StopReason, StreamFn, StreamOptions, ThinkingLevel,
+    ToolResultMessage, Usage, UserMessage,
 };
 
 use crate::convert::{self, MessageConverter, extract_tool_schemas};
@@ -71,10 +71,25 @@ struct OllamaChatRequest {
     options: Option<serde_json::Map<String, Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     keep_alive: Option<String>,
+    /// Structured-output constraint. Top-level like `keep_alive`, *not* an
+    /// `options.*` entry — Ollama ignores `options.format`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<Value>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<OllamaTool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     think: Option<bool>,
+}
+
+/// Map [`ResponseFormat`] onto Ollama's top-level `format` field.
+///
+/// `Json` becomes the literal string `"json"`; `Schema` passes the JSON Schema
+/// through verbatim, which is exactly what Ollama expects.
+fn response_format(options: &StreamOptions) -> Option<Value> {
+    options.serving.format.as_ref().map(|format| match format {
+        ResponseFormat::Json => Value::from("json"),
+        ResponseFormat::Schema(schema) => schema.clone(),
+    })
 }
 
 /// Build Ollama's `options` object from the stream/serving options.
@@ -278,6 +293,7 @@ async fn send_request(
         stream: true,
         options: generation_options(options),
         keep_alive: options.serving.keep_alive.clone(),
+        format: response_format(options),
         tools,
         think: if model.thinking_level == ThinkingLevel::Off {
             None
@@ -839,6 +855,7 @@ mod tests {
             }
         });
 
+        crate::base::ensure_default_crypto_provider();
         let client = reqwest::Client::new();
         let resp = client
             .get(format!("http://{addr}/"))

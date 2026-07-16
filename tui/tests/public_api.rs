@@ -9,8 +9,8 @@ use swink_agent::{
     Usage,
 };
 use swink_agent_tui::{
-    App, CustomCommandOutcome, InProcessTransport, MessageRole, PathCandidate, TuiConfig,
-    TuiExtensions, TuiTransport, UserInput, parse_mentions,
+    App, CustomCommandOutcome, InProcessTransport, MessageRole, PathCandidate, SkillCandidate,
+    TuiConfig, TuiExtensions, TuiTransport, UserInput, parse_mentions, parse_skill_invocation,
 };
 
 #[test]
@@ -275,4 +275,112 @@ async fn a_host_resolver_expands_mentions_only_on_submit() {
         .find(|message| message.role == MessageRole::User)
         .expect("user message should be displayed");
     assert_eq!(displayed.content, "read @notes.md");
+}
+
+// ─── /skill discovery (issue #1092) ──────────────────────────────────────
+
+/// All three skill seams have to be usable from outside the crate: a
+/// downstream host registers completion, details, and resolver providers and
+/// drives the popup — all through the public API, with no `pub(crate)`
+/// reach-in.
+#[test]
+fn a_host_can_drive_skill_completion_through_the_public_api() {
+    let extensions = TuiExtensions::new()
+        .with_skill_completions(|query| {
+            [("deploy", "Ship a release"), ("review", "Review a diff")]
+                .into_iter()
+                .filter(|(name, _)| name.starts_with(query))
+                .map(|(name, summary)| SkillCandidate::new(name).with_description(summary))
+                .collect()
+        })
+        .with_skill_details(|name| Some(format!("{name} docs")))
+        .with_skill_resolver(|_text, _invocation| None);
+    assert!(extensions.has_skill_completions());
+    assert!(extensions.has_skill_details());
+    assert!(extensions.has_skill_resolver());
+
+    let mut app = App::new(TuiConfig::default()).with_extensions(extensions);
+
+    // The host's provider is consulted as the invocation is typed.
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+
+    let completion = app
+        .skill_completion
+        .as_ref()
+        .expect("popup should be open on a public App");
+    assert_eq!(completion.candidates.len(), 2);
+    assert_eq!(
+        completion.selected_candidate().map(|c| c.name.as_str()),
+        Some("deploy")
+    );
+    assert_eq!(
+        completion.selected_details(),
+        Some("deploy docs"),
+        "tier-2 details for the highlighted candidate are observable"
+    );
+
+    // ...and the host can select and accept through the same public surface.
+    app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(app.input.lines(), ["/review "]);
+    assert!(app.skill_completion.is_none());
+}
+
+/// `parse_skill_invocation` is public so a host's resolver can reuse the TUI's
+/// parsing rather than re-deriving what counts as an invocation.
+#[test]
+fn parse_skill_invocation_is_reusable_by_a_host_resolver() {
+    let invocation = parse_skill_invocation("/deploy prod").expect("leading /name parses");
+    assert_eq!(invocation.name, "deploy");
+    assert_eq!(invocation.args, "prod");
+    assert_eq!(&"/deploy prod"[invocation.start..invocation.end], "/deploy");
+    assert!(parse_skill_invocation("not /a command").is_none());
+}
+
+/// The whole point of the seam: the host reads the skill files, and only at
+/// submit.
+#[tokio::test]
+async fn a_host_skill_resolver_expands_only_on_submit() {
+    let resolved = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&resolved);
+
+    let extensions = TuiExtensions::new()
+        .with_skill_completions(|_| vec![SkillCandidate::new("deploy")])
+        .with_skill_resolver(move |text, invocation| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            let mut out = text.to_string();
+            out.replace_range(invocation.start..invocation.end, "EXPANDED");
+            Some(out)
+        });
+
+    let mut app = App::new(TuiConfig::default()).with_extensions(extensions);
+    app.set_agent(Agent::new(AgentOptions::new_simple(
+        "system",
+        ModelSpec::new("mock", "test"),
+        Arc::new(SimpleMockStreamFn::from_text("hi")),
+    )));
+
+    for ch in "/deploy now".chars() {
+        app.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+    assert_eq!(
+        resolved.load(Ordering::SeqCst),
+        0,
+        "typing an invocation must not read any skill files"
+    );
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(
+        resolved.load(Ordering::SeqCst),
+        1,
+        "submitting resolves exactly once"
+    );
+
+    // The transcript still shows what the user typed, not the expansion.
+    let displayed = app
+        .messages
+        .iter()
+        .find(|message| message.role == MessageRole::User)
+        .expect("user message should be displayed");
+    assert_eq!(displayed.content, "/deploy now");
 }

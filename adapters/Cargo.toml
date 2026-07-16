@@ -35,6 +35,10 @@ swink-agent = { path = "..", version = "0.12.0", default-features = false }
 swink-agent-auth = { path = "../auth", version = "0.12.0", optional = true }
 chrono.workspace = true
 reqwest.workspace = true
+# Supplies the `ring` crypto provider, installed as the process default
+# before any reqwest client is built (workspace reqwest is
+# `rustls-no-provider`; see the root Cargo.toml).
+rustls.workspace = true
 tokio = { workspace = true, features = ["macros"] }
 tokio-util.workspace = true
 futures.workspace = true

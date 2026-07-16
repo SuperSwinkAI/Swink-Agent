@@ -289,7 +289,7 @@ async fn live_multi_turn_context() {
                     text: "Nice to meet you, Zephyrine!".into(),
                 }],
                 provider: "bedrock".into(),
-                model_id: "".into(),
+                model_id: String::new(),
                 stop_reason: StopReason::Stop,
                 usage: Usage::default(),
                 cost: Cost::default(),

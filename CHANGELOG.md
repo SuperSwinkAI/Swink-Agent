@@ -19,11 +19,22 @@ are folded in here rather than kept as a phantom release.
 - Mirrors the loop pipeline exactly: async transformer first, sync second, one `AgentEvent::ContextCompacted` per transformer that compacts — dispatched through the normal subscriber/forwarder path, so existing host event rendering picks it up unchanged. Returns `Ok(None)` when no transformer is configured or the history is already under budget (no event emitted), and `Err(AgentError::AlreadyRunning)` while a loop is active, since compacting mid-turn would race the loop's view of the history.
 - Spec 006 amended additively (new FR-020 plus a Session 2026-07-15 clarification): manual invocation means `overflow = true` no longer implies a provider overflow error occurred.
 
+### Added — TUI skills discovery (#1092)
+
+- **`swink-agent-tui`**: three new `TuiExtensions` seams for pluggable skill discovery with progressive disclosure — `with_skill_completions` (`SkillCandidate` list as a leading `/name` is typed), `with_skill_details` (SKILL.md body on highlight, cached per popup so arrow-key travel never re-invokes the callback), and `with_skill_resolver` (expansion at submit only, via the new `SkillInvocation`/`parse_skill_invocation`). Plus `App::skill_completion`/`SkillCompletion`, `InputEditor::slash_query`, and a preview block in the completion popup.
+- Submit precedence is secrets → host commands → skills → built-ins: a known skill submits as a prompt (raw `/deploy` stays in the transcript; the model receives the expansion) instead of hitting the Unknown-command fallback. `@path` mentions expand on the raw text first, so a skill body is never mention-scanned.
+- New off-by-default **`skills` cargo feature**: `TuiExtensions::with_skill_dirs` eagerly indexes `<dir>/<name>/SKILL.md` (YAML frontmatter `name`/`description`, directory-name fallback) under explicitly passed directories only — no implicit default paths — and wires all three seams over that index.
+
+### Added — checkpoint hardening: session-scoped IDs, retention, RollingCheckpointPolicy (#1070)
+
+- Default-on crash-safety checkpointing was considered and **rejected** (FR-019 stands: no policy is enabled by default); the opt-in path was hardened instead. `CheckpointPolicy::with_session_id` scopes IDs to `"{session}-turn-{n}"` — without it, the per-run turn index means a second `prompt()` run silently overwrites the first run's checkpoints, and "restore the highest turn" can resurrect stale history. The unscoped format remains the default for backward compatibility.
+- **`swink-agent-memory`**: `FileCheckpointStore::with_max_checkpoints(n)` prunes the oldest checkpoints (by `created_at`) after each save; the default stays unlimited, and pruning never deletes files that don't parse as checkpoints.
+- **`swink-agent-policies`**: new `RollingCheckpointPolicy` (same `checkpoint` feature) overwrites one stable checkpoint — optionally `"{session}-rolling"` — via the store's atomic save path. Recommended for long-session crash-safety: `CheckpointPolicy` writes the full history under a new ID every turn (O(N²) bytes for N turns); rolling keeps disk at O(context) and loses at most one turn on crash, giving up time-travel. Documented in a new "Crash Safety" section of the policies README and on `AgentOptions::checkpoint_store`.
+
 ### Fixed — `swink-agentd` honors `LLM_SYSTEM_PROMPT` / `LLM_MODEL` (#931)
 
 - The daemon loads `.env` via dotenvy but its clap args used baked-in `default_value`s, so `LLM_SYSTEM_PROMPT` and `LLM_MODEL` from the environment were silently ignored — set in `.env`, the TUI honored them and `swink-agentd` didn't. Both args are now `Option<String>` resolved as CLI flag > env var > shared default, mirroring the TUI's tested `resolve_system_prompt` chain.
 - The duplicated default literals are promoted to shared core constants `swink_agent::{DEFAULT_SYSTEM_PROMPT, DEFAULT_MODEL}` (additive), and the TUI's proxy-mode model fallback now uses the documented `claude-sonnet-4-6` alias instead of the dated `claude-sonnet-4-20250514` snapshot.
-
 
 ### Added — TUI cost/usage display with pluggable pricing (#1084, #1108)
 
@@ -60,6 +71,14 @@ are folded in here rather than kept as a phantom release.
 
 - **`AgentLoopConfig` gains a `cost_calculator` field.** It is an externally-constructible struct with public fields, so exhaustive struct-literal construction breaks — add `cost_calculator: None` or use `..Default::default()`. This is the 0.12.0 version driver (`cargo semver-checks`: `constructible_struct_adds_field`), the same class of break that drove 0.11.0.
 - **`AgentEvent::MessageEnd` now carries a non-zero `cost`** for catalog-known models. Code asserting `cost == 0` there will now observe real values. This is the intended fix, but it is a behavior change.
+
+### Changed — TLS backend: ring replaces aws-lc-rs (#1110)
+
+- **Consumers no longer need a C/C++ toolchain to build.** rustls's crypto provider is now the pure-Rust `ring` instead of the default `aws-lc-rs`, whose `aws-lc-sys` build required `cc` + CMake (+ NASM on Windows) in every downstream project. `cargo tree -i aws-lc-sys` is empty for a default-features consumer; `aws-lc-rs`, `aws-lc-sys`, `cmake`, and `quinn` (the subject of RUSTSEC-2026-0185, above) all leave the dependency tree.
+- Workspace `reqwest` drops default features for an explicit list: `charset`, `form`, `http2`, `json`, `rustls-no-provider`, `stream`, `system-proxy` — functionally identical to before minus the aws-lc provider. Root trust is unchanged: `rustls-platform-verifier` (OS-native root store), which reqwest 0.13 uses for all rustls configurations.
+- Every reqwest-consuming crate takes a direct `rustls` dependency with the `ring` feature and installs ring as the process-default `CryptoProvider` immediately before constructing a client — under `rustls-no-provider`, reqwest panics at `Client` construction until a default is installed. The install is idempotent and loses ties deliberately: a provider already installed by the host application (e.g. aws-lc-rs for FIPS) wins. New public API: `swink_agent_adapters::ensure_default_crypto_provider()`, for hosts that build their own `reqwest::Client` against the workspace's feature unification.
+- `jsonschema` also drops default features: its defaults pulled `resolve-http` (a second reqwest + rustls + aws-lc edge) and `resolve-file` for external `$ref` resolution, which nothing in this workspace uses — schemas are compiled inline only. External `$ref`s now fail at validator build instead of silently fetching.
+- Behavior note: ring offers no post-quantum key exchange (rustls's `prefer-post-quantum` requires aws-lc), so TLS handshakes negotiate classical X25519 instead of X25519MLKEM768 where servers supported it.
 
 ### Fixed — `BudgetPolicy.max_cost` was inert (#1100, #1103)
 

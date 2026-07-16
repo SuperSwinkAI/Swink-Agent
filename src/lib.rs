@@ -144,8 +144,8 @@ pub use schema::schema_for;
 pub use schemars::JsonSchema;
 pub use state::{SessionState, StateDelta};
 pub use stream::{
-    AssistantMessageDelta, AssistantMessageEvent, CacheStrategy, OnRawPayload, ServingOptions,
-    StreamErrorKind, StreamFn, StreamOptions, StreamTransport, accumulate_message,
+    AssistantMessageDelta, AssistantMessageEvent, CacheStrategy, OnRawPayload, ResponseFormat,
+    ServingOptions, StreamErrorKind, StreamFn, StreamOptions, StreamTransport, accumulate_message,
     sanitize_incomplete_tool_calls,
 };
 pub use stream_middleware::StreamMiddleware;

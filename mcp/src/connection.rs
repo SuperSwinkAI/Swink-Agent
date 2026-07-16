@@ -76,6 +76,7 @@ struct ResolverBackedSseHttpClient {
 
 impl ResolverBackedSseHttpClient {
     fn new(bearer_auth: SseBearerAuth, credential_resolver: Arc<dyn CredentialResolver>) -> Self {
+        crate::ensure_default_crypto_provider();
         Self {
             inner: reqwest::Client::default(),
             bearer_auth,
@@ -421,6 +422,7 @@ impl McpConnection {
         headers: &HashMap<String, String>,
         server_name: &str,
     ) -> Result<RunningService<RoleClient, ClientInfo>, McpError> {
+        crate::ensure_default_crypto_provider();
         let mut config = StreamableHttpClientTransportConfig::with_uri(url);
         if let Some(token) = bearer_token {
             config = config.auth_header(token.to_owned());
