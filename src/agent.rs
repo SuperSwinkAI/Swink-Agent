@@ -90,6 +90,12 @@ pub struct AgentState {
     /// Available tools.
     pub tools: Vec<Arc<dyn AgentTool>>,
     /// Full conversation history.
+    ///
+    /// While a loop is running this holds the pre-run context plus any turns
+    /// already written back from drained events; it is replaced with the
+    /// loop's final context on `AgentEnd`. Dropping an event stream before
+    /// `AgentEnd` therefore never empties the history (see the "Stream
+    /// lifecycle" section on [`Agent::prompt_stream`]).
     pub messages: Vec<AgentMessage>,
     /// Whether the agent loop is currently executing.
     pub is_running: bool,

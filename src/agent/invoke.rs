@@ -28,6 +28,15 @@ use super::{Agent, SharedRetryStrategy};
 /// This ensures the agent becomes idle even if the caller drops the stream
 /// without draining it to `AgentEnd`. A generation counter prevents a stale
 /// guard from clearing the flag for a newer run.
+///
+/// Note on history preservation: this guard deliberately does **not** touch
+/// `state.messages`. `start_loop` keeps a snapshot of the full pre-run
+/// context in `state.messages` (rather than leaving it empty after moving
+/// the history into the loop task), so an early drop has nothing to restore
+/// — the history was never removed from observable state. Attempting a
+/// restore from `Drop` would also be unsound: the guard has no access to
+/// `&mut Agent`, and the spawned loop task may still be running when `Drop`
+/// executes (cancellation is signalled here, not joined).
 struct LoopGuardStream {
     inner: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>,
     cancellation_token: CancellationToken,
@@ -64,6 +73,23 @@ impl Drop for LoopGuardStream {
 
 impl Agent {
     /// Start a new loop with input messages, returning an event stream.
+    ///
+    /// # Stream lifecycle
+    ///
+    /// - On start, the conversation history (plus `input`) moves into the
+    ///   spawned loop task. [`Agent::state`]'s `messages` retains a snapshot
+    ///   of that same pre-run context (custom messages that cannot be
+    ///   snapshotted are dropped with a warning).
+    /// - As the caller drains events through [`Agent::handle_stream_event`],
+    ///   completed turns are appended to `state.messages`; on `AgentEnd`,
+    ///   `state.messages` is replaced with the loop's final context.
+    /// - Dropping the stream **before** `AgentEnd` cancels the loop.
+    ///   `state.messages` keeps the pre-run history plus any turns already
+    ///   processed by the caller — nothing already observable is lost. Turns
+    ///   the loop task completed but that were never drained from the stream
+    ///   are discarded along with it.
+    /// - Draining to `AgentEnd` is the reliable way to observe the complete
+    ///   final history.
     ///
     /// # Errors
     ///
@@ -164,6 +190,15 @@ impl Agent {
     }
 
     /// Continue from existing messages, returning an event stream.
+    ///
+    /// # Stream lifecycle
+    ///
+    /// The returned stream follows the same lifecycle as
+    /// [`prompt_stream`](Self::prompt_stream): the history (plus any drained
+    /// steering/follow-up messages) moves into the loop task while
+    /// `state.messages` retains an equivalent snapshot, so dropping the
+    /// stream before `AgentEnd` does not lose the conversation. Drain to
+    /// `AgentEnd` to observe the complete final history.
     ///
     /// # Errors
     ///
@@ -278,6 +313,18 @@ impl Agent {
             msgs
         };
         let in_flight_messages = clone_messages_for_send(&messages_for_loop);
+
+        // History-loss guard: `messages_for_loop` (which now owns the entire
+        // conversation history) moves into the spawned loop task below. Leave
+        // an equivalent snapshot in `state.messages` so that dropping the
+        // returned stream before `AgentEnd` cannot silently empty the
+        // observable history. Every completion path (`collect_stream` and
+        // `handle_stream_event` on `AgentEnd`) replaces `state.messages`
+        // wholesale, so this snapshot is never double-counted. Custom
+        // messages that cannot be snapshotted by `clone_messages_for_send`
+        // are dropped here with a warning — the same limitation every other
+        // state-rebuild path already has.
+        self.state.messages = clone_messages_for_send(&in_flight_messages);
 
         let raw_stream = if is_continue {
             agent_loop_continue(
