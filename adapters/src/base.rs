@@ -138,6 +138,7 @@ pub fn cancelled_error(message: impl Into<String>) -> swink_agent::AssistantMess
 
 /// If `started` is false, mark it true and prefix `event` with a synthetic
 /// `Start` (via [`pre_stream_error`]); otherwise return `event` unprefixed.
+#[cfg(any(feature = "bedrock", feature = "proxy"))]
 #[must_use]
 pub fn prefix_start_if_unstarted(
     event: swink_agent::AssistantMessageEvent,
