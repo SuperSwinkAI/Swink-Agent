@@ -25,6 +25,10 @@ use proc_macro::TokenStream;
 /// (`/// …`) are automatically picked up as field descriptions by schemars.
 /// Use `#[schemars(description = "…")]` to override a field description.
 ///
+/// `#[tool(...)]` is **not** a helper attribute of this derive: schema
+/// customization goes through `schemars` attributes exclusively. Putting
+/// `#[tool(...)]` on a field is a compile error rather than a silent no-op.
+///
 /// All Rust types supported by `schemars` are accepted — there is no
 /// restricted subset of primitives.
 ///
@@ -42,7 +46,11 @@ use proc_macro::TokenStream;
 ///     limit: Option<u32>,
 /// }
 /// ```
-#[proc_macro_derive(ToolSchema, attributes(tool))]
+// No `attributes(tool)` here: the derive never read a `#[tool(...)]` helper
+// attribute, so registering it made `#[tool(description = "...")]` on a field
+// a silent no-op. Without the registration, misuse is a compile error and the
+// user is pointed at `#[schemars(description = "...")]`, which works.
+#[proc_macro_derive(ToolSchema)]
 pub fn derive_tool_schema(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     tool_schema::derive_tool_schema_impl(&input).into()

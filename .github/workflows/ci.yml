@@ -21,21 +21,26 @@ jobs:
   # smoke's test+build still catches.
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+      - uses: ./.github/actions/rust-setup
         with:
-          components: clippy, rustfmt
-
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+          cache-key: check
 
       - run: cargo fmt --check
 
       - name: Spell check
         uses: crate-ci/typos@bee27e3a4fd1ea2111cf90ab89cd076c870fce14 # v1
 
-      - run: cargo clippy --workspace --locked -- -D warnings
+      # --all-features so feature-gated modules are linted too: lints like
+      # exhaustive_structs/exhaustive_enums can't flag code that never
+      # compiles (this is exactly how adapters::AzureAuth escaped the sweep).
+      # Mirrors release.yml's clippy coverage. local-llm is excluded because
+      # its metal/cuda/cudnn/vulkan features need GPU toolchains unavailable
+      # on hosted runners.
+      - run: cargo clippy --workspace --all-features --exclude swink-agent-local-llm --all-targets --locked -- -D warnings
 
       - uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
 
@@ -62,12 +67,13 @@ jobs:
   # `check` on ubuntu; repeating them here at 10x billing bought nothing.
   check-macos:
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: ./.github/actions/rust-setup
+        with:
+          cache-key: check-macos
 
       - uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
 
@@ -80,6 +86,7 @@ jobs:
   # ── MSRV gate: build against the declared minimum supported Rust ────────
   msrv:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -89,11 +96,10 @@ jobs:
           version=$(awk -F'"' '/^rust-version = / { print $2; exit }' Cargo.toml)
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+      - uses: ./.github/actions/rust-setup
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
-
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+          cache-key: msrv
 
       - run: cargo check --workspace --all-targets --locked
 
@@ -106,12 +112,13 @@ jobs:
   # Job name stays `features` because branch protection requires that context.
   features:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: ./.github/actions/rust-setup
+        with:
+          cache-key: features
 
       # Feature-smoke sentinels
       - name: Adapters no-default-features sentinel
@@ -138,6 +145,7 @@ jobs:
   # ── Dependency policy ───────────────────────────────────────────────────
   deny:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -149,9 +157,13 @@ jobs:
   audit:
     name: cargo audit
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      # Inline toolchain (not ./.github/actions/rust-setup): cargo-audit only
+      # reads Cargo.lock — no build, so the composite's rust-cache would be
+      # pure overhead.
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
@@ -170,12 +182,13 @@ jobs:
     name: Windows smoke (cargo check)
     if: github.event_name == 'pull_request'
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: ./.github/actions/rust-setup
+        with:
+          cache-key: check-windows
 
       - run: cargo check --workspace --all-targets --locked
 
@@ -183,14 +196,13 @@ jobs:
   check-platform:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+      - uses: ./.github/actions/rust-setup
         with:
-          components: clippy, rustfmt
-
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+          cache-key: check-platform
 
       - run: cargo fmt --check
 
@@ -221,14 +233,15 @@ jobs:
   # pattern is preserved, it just keys off releases instead of branch state.
   semver:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
 
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: ./.github/actions/rust-setup
+        with:
+          cache-key: semver
 
       - uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
 

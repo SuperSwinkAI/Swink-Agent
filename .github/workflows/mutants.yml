@@ -8,10 +8,15 @@ on:
 jobs:
   mutants:
     runs-on: ubuntu-latest
+    # cargo-mutants rebuilds and re-tests the workspace per mutant, so a full
+    # run takes hours — but it must not sit on the 360-minute GitHub default
+    # when wedged.
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: ./.github/actions/rust-setup
+        with:
+          cache-key: mutants
       - uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
       - run: cargo binstall --no-confirm cargo-mutants
       - run: cargo mutants --workspace

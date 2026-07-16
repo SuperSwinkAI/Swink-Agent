@@ -41,7 +41,7 @@ pub const TEMPLATES: &[(&str, &str)] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_yaml::Value;
+    use serde_yaml_ng::Value;
 
     #[test]
     fn every_template_is_non_empty() {
@@ -53,7 +53,7 @@ mod tests {
     #[test]
     fn every_template_parses_as_yaml() {
         for (name, body) in TEMPLATES {
-            let parsed: Value = serde_yaml::from_str(body)
+            let parsed: Value = serde_yaml_ng::from_str(body)
                 .unwrap_or_else(|err| panic!("{name} is invalid YAML: {err}"));
             assert!(
                 parsed.is_mapping(),

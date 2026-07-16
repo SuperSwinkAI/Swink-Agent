@@ -12,7 +12,8 @@ Proc macros for [`swink-agent`](https://crates.io/crates/swink-agent) — turn a
 - **`#[derive(ToolSchema)]`** — implements `ToolParameters` for any struct that also derives `schemars::JsonSchema`
 - Doc comments on fields (`///`) become parameter descriptions in the generated schema
 - All types supported by `schemars` are accepted — no custom primitive subset
-- `#[schemars(description = "...")]` and other `schemars` attributes pass through unchanged
+- `#[schemars(description = "...")]` and other `schemars` attributes pass through unchanged — schema customization is delegated entirely to the `schemars` SDK, this crate adds no attribute language of its own
+- `#[tool(...)]` applies only to async functions; on a struct field it is a compile error (it is not a helper attribute of `#[derive(ToolSchema)]`)
 
 ## Quick Start
 

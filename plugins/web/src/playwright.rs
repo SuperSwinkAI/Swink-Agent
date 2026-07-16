@@ -41,22 +41,6 @@ pub struct ExtractedElement {
     pub attributes: HashMap<String, String>,
 }
 
-impl ExtractedElement {
-    /// Construct a new `ExtractedElement`.
-    #[must_use]
-    pub fn new(
-        tag: impl Into<String>,
-        text: impl Into<String>,
-        attributes: HashMap<String, String>,
-    ) -> Self {
-        Self {
-            tag: tag.into(),
-            text: text.into(),
-            attributes,
-        }
-    }
-}
-
 /// Screenshot response plus the browser's final URL after redirects.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScreenshotOutput {

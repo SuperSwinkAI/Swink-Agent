@@ -17,6 +17,10 @@ tokio-util = "0.7.18"
 tokio-stream = "0.1.18"
 futures = "0.3.32"
 tracing = "0.1.44"
+# Base pin only — no feature opinions here. Each crate opts into the features
+# it needs (fmt, env-filter, registry) at its own dependency entry.
+tracing-subscriber = "0.3.23"
+url = "2.5.8"
 uuid = { version = "1.23.3", features = ["v4"] }
 # TLS is rustls with the pure-Rust `ring` provider — NOT the default
 # aws-lc-rs, whose aws-lc-sys build requires cc/cmake (+ NASM on Windows)
@@ -44,7 +48,9 @@ criterion = { version = "0.8.2", features = ["html_reports"] }
 tempfile = "3.27.0"
 trybuild = "1.0.116"
 wiremock = "0.6.5"
-serde_yaml = "0.9.34"
+# serde_yaml is unmaintained (archived by its author); serde_yaml_ng is the
+# maintained fork with the same from_str/Value/Error API surface.
+serde_yaml_ng = "0.10.0"
 minijinja = "2.20.0"
 backon = "1.6.0"
 strsim = "0.11.1"
@@ -180,7 +186,7 @@ tracing-opentelemetry = { version = "0.33.0", optional = true }
 opentelemetry = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, features = ["rt-tokio"], optional = true }
 opentelemetry-otlp = { workspace = true, features = ["grpc-tonic"], optional = true }
-tracing-subscriber = { version = "0.3.23", features = ["registry"], optional = true }
+tracing-subscriber = { workspace = true, features = ["registry"], optional = true }
 
 [[bench]]
 name = "context"
@@ -198,7 +204,7 @@ insta.workspace = true
 opentelemetry.workspace = true
 opentelemetry_sdk = { workspace = true, features = ["testing", "rt-tokio"] }
 tracing-opentelemetry = "0.33.0"
-tracing-subscriber = { version = "0.3.23", features = ["registry"] }
+tracing-subscriber = { workspace = true, features = ["registry"] }
 
 [lints]
 workspace = true

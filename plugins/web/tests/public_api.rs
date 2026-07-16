@@ -1,7 +1,7 @@
 use swink_agent_plugin_web::{
-    DomainFilter, DomainFilterError, ExtractedElement, ExtractionPreset, FetchedContent,
-    SearchError, SearchProvider, SearchProviderKind, SearchResult, Viewport, WebPlugin,
-    WebPluginConfig, WebPluginConfigBuilder, WebPluginError,
+    DomainFilter, DomainFilterError, FetchedContent, SearchError, SearchProvider,
+    SearchProviderKind, SearchResult, WebPlugin, WebPluginConfig, WebPluginConfigBuilder,
+    WebPluginError,
 };
 
 #[test]
@@ -17,9 +17,9 @@ fn root_reexports_remain_consumable() {
     let _ = std::any::type_name::<FetchedContent>();
     let _ = std::any::type_name::<DomainFilter>();
     let _ = std::any::type_name::<DomainFilterError>();
-    let _ = std::any::type_name::<ExtractionPreset>();
-    let _ = std::any::type_name::<ExtractedElement>();
-    let _ = std::any::type_name::<Viewport>();
+    // ExtractedElement / ExtractionPreset / Viewport are intentionally not
+    // part of the public API: no public function takes or returns them (see
+    // the note in src/lib.rs).
 }
 
 #[test]
