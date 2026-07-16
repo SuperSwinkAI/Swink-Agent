@@ -27,6 +27,10 @@ mod tools;
 pub use config::{SearchProviderKind, WebPluginConfig, WebPluginConfigBuilder};
 pub use content::FetchedContent;
 pub use domain::{DomainFilter, DomainFilterError};
-pub use playwright::{ExtractedElement, ExtractionPreset, Viewport};
+// playwright::{ExtractedElement, ExtractionPreset, Viewport} are deliberately
+// NOT re-exported: no public function takes or returns them, so exporting
+// them was dead public surface (a semver liability with zero utility). The
+// types stay in the private `playwright` module for future wiring; re-export
+// them only once a public API actually accepts or produces them.
 pub use plugin::{WebPlugin, WebPluginError};
 pub use search::{SearchError, SearchProvider, SearchResult};

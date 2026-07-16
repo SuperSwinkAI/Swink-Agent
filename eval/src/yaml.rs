@@ -16,7 +16,7 @@ use crate::types::{EvalSet, validate_eval_set};
 /// [`EvalError::InvalidCase`] pointing at the offending name.
 pub fn load_eval_set_yaml(path: &Path) -> Result<EvalSet, EvalError> {
     let contents = fs::read_to_string(path)?;
-    let set: EvalSet = serde_yaml::from_str(&contents)?;
+    let set: EvalSet = serde_yaml_ng::from_str(&contents)?;
     validate_eval_set(&set)?;
     Ok(set)
 }

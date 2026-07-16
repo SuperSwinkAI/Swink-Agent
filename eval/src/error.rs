@@ -53,7 +53,7 @@ pub enum EvalError {
     #[error("yaml error")]
     Yaml {
         #[source]
-        source: serde_yaml::Error,
+        source: serde_yaml_ng::Error,
     },
 }
 
@@ -103,8 +103,8 @@ impl From<swink_agent::AgentError> for EvalError {
 }
 
 #[cfg(feature = "yaml")]
-impl From<serde_yaml::Error> for EvalError {
-    fn from(source: serde_yaml::Error) -> Self {
+impl From<serde_yaml_ng::Error> for EvalError {
+    fn from(source: serde_yaml_ng::Error) -> Self {
         Self::Yaml { source }
     }
 }

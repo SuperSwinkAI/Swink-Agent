@@ -28,6 +28,15 @@ llama-cpp-2 = "0.1.146"
 # build dep) and ureq (a second, sync HTTP client). We only use the tokio
 # async API, and rustls-tls keeps TLS on the same ring/rustls stack as the
 # rest of the workspace — no C toolchain for `local` builds (#1110's goal).
+#
+# ACCEPTED DUPLICATION: hf-hub 0.5 pins reqwest 0.12, so this crate carries a
+# second reqwest stack alongside the workspace's 0.13 (against the
+# single-TLS-stack effort). hf-hub 1.0.0 (2026-07-10) does track reqwest 0.13,
+# but it is a ground-up rewrite — the `api::tokio` module (whose `Api`,
+# `ApiError`, and `Progress` trait src/progress.rs builds on) is gone and the
+# `tokio` feature no longer exists — so the bump needs a dedicated migration,
+# not a pin change. Until then this duplication is deliberate and contained
+# to the optional local-llm crate.
 hf-hub = { version = "0.5.0", default-features = false, features = ["tokio", "rustls-tls"] }
 tokio = { workspace = true, features = ["rt", "sync"] }
 tokio-util.workspace = true

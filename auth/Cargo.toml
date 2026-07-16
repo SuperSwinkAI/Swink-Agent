@@ -42,4 +42,4 @@ keyring = { workspace = true, optional = true }
 wiremock.workspace = true
 pretty_assertions.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
-tracing-subscriber = { version = "0.3.23", features = ["fmt"] }
+tracing-subscriber = { workspace = true, features = ["fmt"] }

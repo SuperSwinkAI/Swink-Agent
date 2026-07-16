@@ -8,7 +8,7 @@ license.workspace = true
 
 [dependencies]
 swink-agent = { path = "..", default-features = false }
-clap = { version = "4.6.1", features = ["derive"] }
+clap.workspace = true
 futures.workspace = true
 reqwest = { workspace = true, features = ["json", "query"] }
 # Supplies the `ring` crypto provider, installed as the process default

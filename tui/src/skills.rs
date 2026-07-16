@@ -137,7 +137,7 @@ pub(crate) mod discovery {
 
         let (yaml, body) = split_frontmatter(&content)?;
         let frontmatter: Frontmatter = match yaml {
-            Some(yaml) => serde_yaml::from_str(yaml).ok()?,
+            Some(yaml) => serde_yaml_ng::from_str(yaml).ok()?,
             None => Frontmatter::default(),
         };
 
