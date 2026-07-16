@@ -620,11 +620,16 @@ pub struct JudgeVerdict {
 }
 
 impl JudgeVerdict {
-    /// Create a verdict with the given score (clamped to `[0.0, 1.0]`) and pass flag; reason, label, and cost default to `None`.
+    /// Create a verdict with the given raw score and pass flag; reason, label,
+    /// and cost default to `None`.
+    ///
+    /// The score is stored verbatim — clamping to `[0.0, 1.0]` (and recording a
+    /// `ScoreClamped` detail, FR-021) is `dispatch_judge`'s job. Clamping here
+    /// would hide out-of-range judge scores from that instrumentation.
     #[must_use]
     pub fn new(score: f64, pass: bool) -> Self {
         Self {
-            score: score.clamp(0.0, 1.0),
+            score,
             pass,
             reason: None,
             label: None,
