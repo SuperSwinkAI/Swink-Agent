@@ -11,7 +11,9 @@
 //! - **`deny-list`**: `ToolDenyListPolicy` — rejects tool calls by name
 //! - **`sandbox`**: `SandboxPolicy` — restricts file paths to an allowed root directory
 //! - **`loop-detection`**: `LoopDetectionPolicy` — detects repeated tool call patterns
-//! - **`checkpoint`**: `CheckpointPolicy` — persists agent state after each turn
+//! - **`checkpoint`**: `CheckpointPolicy` — persists agent state after each turn;
+//!   `RollingCheckpointPolicy` — overwrites one checkpoint per turn (crash-safety
+//!   for long sessions at O(context) disk cost instead of O(N²))
 //! - **`recommended`**: `RecommendedPolicies` — one-call preset bundling the four
 //!   production guardrails (budget, max-turns, sandbox, deny-list), plus
 //!   `verify_production_guardrails` / `assert_production_guardrails` contract
@@ -57,7 +59,7 @@ pub use loop_detection::{LoopDetectionAction, LoopDetectionPolicy};
 #[cfg(feature = "checkpoint")]
 mod checkpoint;
 #[cfg(feature = "checkpoint")]
-pub use checkpoint::CheckpointPolicy;
+pub use checkpoint::{CheckpointPolicy, RollingCheckpointPolicy};
 
 #[cfg(feature = "recommended")]
 mod recommended;

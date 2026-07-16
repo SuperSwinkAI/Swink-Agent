@@ -5481,6 +5481,7 @@ dependencies = [
  "serde",
  "serde_json",
  "swink-agent",
+ "swink-agent-memory",
  "tempfile",
  "tokio",
  "tokio-util",
