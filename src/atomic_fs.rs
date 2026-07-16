@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use tempfile::NamedTempFile;
 
@@ -110,6 +110,23 @@ fn sync_parent_dir(parent: &Path) -> io::Result<()> {
     std::fs::File::open(parent)?.sync_all()
 }
 
+/// Prune dead lock-map entries once the map grows past this many entries.
+///
+/// Entries whose lock is currently held (or waited on) are never pruned, so
+/// the map stays bounded by roughly this threshold plus the number of
+/// concurrently in-flight writes.
+const LOCK_MAP_PRUNE_THRESHOLD: usize = 64;
+
+/// The global per-target lock map.
+///
+/// Values are `Weak` so that a lock is owned only by the in-flight writes
+/// using it; once the last `Arc` returned by [`lock_for_target`] is dropped
+/// the entry is dead and eligible for pruning.
+fn lock_map() -> &'static Mutex<HashMap<PathBuf, Weak<Mutex<()>>>> {
+    static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+    LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 /// Per-target serialization guard.
 ///
 /// Two overlapping atomic rewrites of the same path inside one process must
@@ -117,16 +134,38 @@ fn sync_parent_dir(parent: &Path) -> io::Result<()> {
 /// because the replace sequence is not a single kernel operation. We key a
 /// global mutex map on the target path so writes to different sessions remain
 /// fully concurrent.
+///
+/// The map does not grow without bound over the process lifetime: dead
+/// entries (no outstanding `Arc`) are pruned opportunistically whenever the
+/// map exceeds `LOCK_MAP_PRUNE_THRESHOLD` entries.
+///
+/// Serialization safety: the lookup-or-insert below runs entirely under the
+/// map mutex. A dead `Weak` (upgrade fails) means no thread holds — or can
+/// come to hold — the old `Arc`, because entering the critical section
+/// requires holding an `Arc` for its whole duration; replacing a dead entry
+/// therefore can never yield two live mutexes for the same path.
 pub fn lock_for_target(target: &Path) -> Arc<Mutex<()>> {
-    static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
-    let map = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = map
+    let mut guard = lock_map()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    guard
-        .entry(target.to_path_buf())
-        .or_insert_with(|| Arc::new(Mutex::new(())))
-        .clone()
+    if guard.len() >= LOCK_MAP_PRUNE_THRESHOLD {
+        guard.retain(|_, weak| weak.strong_count() > 0);
+    }
+    if let Some(lock) = guard.get(target).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(Mutex::new(()));
+    guard.insert(target.to_path_buf(), Arc::downgrade(&lock));
+    lock
+}
+
+/// Current number of entries (live or dead) in the lock map.
+#[cfg(test)]
+fn lock_map_len() -> usize {
+    lock_map()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .len()
 }
 
 #[cfg(test)]
@@ -193,6 +232,38 @@ mod tests {
         // File should contain one complete writer's output (no corruption).
         let content = fs::read_to_string(&target).unwrap();
         assert!(content.starts_with("writer-"));
+    }
+
+    #[test]
+    fn lock_map_does_not_grow_unboundedly_across_distinct_paths() {
+        // Acquire (and immediately release) locks for many more distinct
+        // paths than the prune threshold. Dead entries must be evicted
+        // rather than accumulating for the process lifetime.
+        for i in 0..10_000 {
+            let path = PathBuf::from(format!("/lock-map-growth-test/{i}"));
+            drop(lock_for_target(&path));
+        }
+
+        // Bound: the threshold, plus entries inserted since the last pruning
+        // pass, plus locks concurrently held by other tests in this process.
+        assert!(
+            lock_map_len() <= 2 * LOCK_MAP_PRUNE_THRESHOLD,
+            "lock map should stay bounded, got {} entries",
+            lock_map_len()
+        );
+    }
+
+    #[test]
+    fn lock_for_target_returns_same_lock_while_held() {
+        // Serialization invariant: while one Arc is live, a second call for
+        // the same path must return the SAME mutex (never a fresh one).
+        let path = PathBuf::from("/lock-map-identity-test/target");
+        let first = lock_for_target(&path);
+        let second = lock_for_target(&path);
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "concurrent acquirers of one path must share a single mutex"
+        );
     }
 
     #[cfg(unix)]
