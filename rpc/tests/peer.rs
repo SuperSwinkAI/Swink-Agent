@@ -254,8 +254,9 @@ async fn request_times_out_when_no_response_arrives() {
 
     let sender = a.sender().with_request_timeout(Duration::from_millis(50));
 
-    let result: Result<serde_json::Value, RpcError> =
-        sender.request("never.answered", &serde_json::Value::Null).await;
+    let result: Result<serde_json::Value, RpcError> = sender
+        .request("never.answered", &serde_json::Value::Null)
+        .await;
 
     let err = result.unwrap_err();
     assert_eq!(err.code, RpcError::TIMEOUT);

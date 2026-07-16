@@ -503,8 +503,7 @@ impl McpConnection {
                         .await
                     }
                     None => {
-                        Self::connect_sse(url, bearer_token.as_deref(), headers, &config.name)
-                            .await
+                        Self::connect_sse(url, bearer_token.as_deref(), headers, &config.name).await
                     }
                 }
             }

@@ -529,9 +529,11 @@ mod tests {
         let (mut client, mut server) = make_peer_pair();
 
         let server_task = tokio::spawn(async move {
-            run_session(&mut server, &|| Ok(test_agent_options("hello from rpc server")))
-                .await
-                .unwrap();
+            run_session(&mut server, &|| {
+                Ok(test_agent_options("hello from rpc server"))
+            })
+            .await
+            .unwrap();
         });
 
         initialize(&mut client).await;

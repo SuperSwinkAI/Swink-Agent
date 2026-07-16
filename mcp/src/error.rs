@@ -87,9 +87,9 @@ impl std::error::Error for McpError {
         match self {
             Self::SpawnFailed { source, .. } => Some(source),
             Self::ProtocolError { source, .. } => Some(source.as_ref()),
-            Self::ConnectionFailed { source, .. } | Self::ToolCallFailed { source, .. } => {
-                source.as_deref().map(|s| s as &(dyn std::error::Error + 'static))
-            }
+            Self::ConnectionFailed { source, .. } | Self::ToolCallFailed { source, .. } => source
+                .as_deref()
+                .map(|s| s as &(dyn std::error::Error + 'static)),
             Self::ToolNameCollision { .. } => None,
         }
     }
