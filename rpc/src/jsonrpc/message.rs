@@ -66,6 +66,8 @@ impl RpcError {
     pub const DISCONNECTED: i64 = -32097;
     /// Application: Transport not available on this platform.
     pub const UNAVAILABLE: i64 = -32096;
+    /// Application: Request timed out waiting for a response.
+    pub const TIMEOUT: i64 = -32095;
 
     pub fn parse_error(msg: impl Into<String>) -> Self {
         Self {
@@ -127,6 +129,14 @@ impl RpcError {
         Self {
             code: Self::UNAVAILABLE,
             message: msg.into(),
+            data: None,
+        }
+    }
+
+    pub fn timeout() -> Self {
+        Self {
+            code: Self::TIMEOUT,
+            message: "request timed out".into(),
             data: None,
         }
     }

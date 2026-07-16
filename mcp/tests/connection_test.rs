@@ -314,7 +314,7 @@ async fn from_service_discovers_tools() {
 async fn connect_sse_to_unreachable_url_returns_error() {
     let config = McpServerConfig::new(
         "sse-unreachable",
-        McpTransport::Sse {
+        McpTransport::StreamableHttp {
             url: "http://127.0.0.1:1/mcp".into(),
             bearer_token: Some("test-bearer-token-123".into()),
             bearer_auth: None,
@@ -349,7 +349,7 @@ async fn connect_sse_sends_bearer_and_custom_headers() {
 
     let config = McpServerConfig::new(
         "sse-header-test",
-        McpTransport::Sse {
+        McpTransport::StreamableHttp {
             url: format!("http://{address}/mcp"),
             bearer_token: Some("test-bearer-token-123".into()),
             bearer_auth: None,
@@ -405,7 +405,7 @@ async fn connect_sse_uses_resolved_bearer_auth_over_static_token() {
 
     let config = McpServerConfig::new(
         "sse-resolver-auth",
-        McpTransport::Sse {
+        McpTransport::StreamableHttp {
             url: format!("http://{address}/mcp"),
             bearer_token: Some("static-token".into()),
             bearer_auth: Some(SseBearerAuth::new("mcp-sse-token", CredentialType::ApiKey)),
@@ -443,7 +443,7 @@ async fn connect_sse_uses_resolved_bearer_auth_over_static_token() {
 async fn connect_sse_with_resolver_auth_requires_resolver() {
     let config = McpServerConfig::new(
         "sse-missing-resolver",
-        McpTransport::Sse {
+        McpTransport::StreamableHttp {
             url: "http://127.0.0.1:1/mcp".into(),
             bearer_token: None,
             bearer_auth: Some(SseBearerAuth::new("mcp-sse-token", CredentialType::Bearer)),
@@ -506,7 +506,7 @@ async fn sse_resolver_auth_refreshes_during_session_recovery() {
     ));
     let config = McpServerConfig::new(
         "sse-refresh-auth",
-        McpTransport::Sse {
+        McpTransport::StreamableHttp {
             url: format!("http://{address}/mcp"),
             bearer_token: Some("stale-static-token".into()),
             bearer_auth: Some(SseBearerAuth::new("mcp-sse-token", CredentialType::Bearer)),

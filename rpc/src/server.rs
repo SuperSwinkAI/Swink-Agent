@@ -12,7 +12,7 @@ use swink_agent::AgentOptions;
 /// `session in use` error.
 pub struct AgentServer {
     path: PathBuf,
-    factory: Arc<dyn Fn() -> AgentOptions + Send + Sync>,
+    factory: Arc<dyn Fn() -> Result<AgentOptions, String> + Send + Sync>,
 }
 
 impl AgentServer {
@@ -26,7 +26,7 @@ impl AgentServer {
     /// Returns `Err` if the path already exists or binding fails.
     pub fn bind(
         path: impl AsRef<Path>,
-        factory: impl Fn() -> AgentOptions + Send + Sync + 'static,
+        factory: impl Fn() -> Result<AgentOptions, String> + Send + Sync + 'static,
     ) -> std::io::Result<Self> {
         let path = path.as_ref().to_owned();
         if path.exists() {
@@ -51,7 +51,7 @@ impl AgentServer {
     /// Returns `Err` if binding fails.
     pub fn bind_force(
         path: impl AsRef<Path>,
-        factory: impl Fn() -> AgentOptions + Send + Sync + 'static,
+        factory: impl Fn() -> Result<AgentOptions, String> + Send + Sync + 'static,
     ) -> Self {
         let path = path.as_ref().to_owned();
         let _ = std::fs::remove_file(&path);
@@ -85,11 +85,13 @@ impl AgentServer {
         let shutdown = Arc::new(Notify::new());
         let shutdown2 = Arc::clone(&shutdown);
 
-        tokio::spawn(async move {
-            use tokio::signal::unix::{SignalKind, signal};
+        // Install the SIGTERM handler here, before spawning, so a failure to
+        // install it propagates as an error from `serve()` immediately rather
+        // than silently failing inside a detached task.
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut sigterm = signal(SignalKind::terminate())?;
 
-            let mut sigterm =
-                signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+        tokio::spawn(async move {
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {}
                 _ = sigterm.recv() => {}
@@ -153,7 +155,7 @@ impl Drop for SocketCleanup {
 async fn handle_connection(
     stream: tokio::net::UnixStream,
     session_active: Arc<std::sync::atomic::AtomicBool>,
-    factory: Arc<dyn Fn() -> AgentOptions + Send + Sync>,
+    factory: Arc<dyn Fn() -> Result<AgentOptions, String> + Send + Sync>,
 ) {
     use std::sync::atomic::Ordering;
 
@@ -204,7 +206,7 @@ async fn handle_connection(
 #[cfg(any(unix, test))]
 async fn run_session(
     peer: &mut crate::jsonrpc::JsonRpcPeer,
-    factory: &(dyn Fn() -> AgentOptions + Send + Sync),
+    factory: &(dyn Fn() -> Result<AgentOptions, String> + Send + Sync),
 ) -> Result<(), crate::jsonrpc::RpcError> {
     use crate::dto::{
         InitializedParams, PROTOCOL_VERSION, ServerInfo, ToolApprovalDto, ToolApprovalRequestDto,
@@ -242,7 +244,18 @@ async fn run_session(
 
     // Wire up tool-approval callback before building the Agent.
     let approval_sender = peer.sender();
-    let options = factory().with_approve_tool_async(move |req| {
+    let options = match factory() {
+        Ok(options) => options,
+        Err(reason) => {
+            warn!("failed to build agent options: {reason}");
+            let _ = peer
+                .sender()
+                .notify("error", &RpcError::internal(reason.clone()))
+                .await;
+            return Err(RpcError::internal(reason));
+        }
+    };
+    let options = options.with_approve_tool_async(move |req| {
         let sender = approval_sender.clone();
         async move {
             let dto = ToolApprovalRequestDto::from(&req);
@@ -278,11 +291,12 @@ async fn run_session(
             }) if m == method::PROMPT => match run_prompt(peer, &mut agent, params).await {
                 Ok(turn_id) => {
                     peer.sender()
-                        .respond_ok(id, crate::dto::PromptResult { turn_id })?;
+                        .respond_ok(id, crate::dto::PromptResult { turn_id })
+                        .await?;
                 }
                 Err(e) => {
                     let end_session = e.code == RpcError::DISCONNECTED;
-                    peer.sender().respond_err(id, e)?;
+                    peer.sender().respond_err(id, e).await?;
                     if end_session {
                         break;
                     }
@@ -290,7 +304,8 @@ async fn run_session(
             },
             Some(IncomingMessage::Request { id, method: m, .. }) => {
                 peer.sender()
-                    .respond_err(id, RpcError::method_not_found(&m))?;
+                    .respond_err(id, RpcError::method_not_found(&m))
+                    .await?;
             }
             Some(IncomingMessage::Notification { method: m, .. }) => {
                 debug!("ignoring unknown notification: {m}");
@@ -355,7 +370,9 @@ async fn run_prompt(
                         return Err(RpcError::disconnected());
                     }
                     Some(IncomingMessage::Request { id, method: m, .. }) => {
-                        peer.sender().respond_err(id, RpcError::method_not_found(&m))?;
+                        peer.sender()
+                            .respond_err(id, RpcError::method_not_found(&m))
+                            .await?;
                     }
                     Some(_) => {}
                 }
@@ -455,7 +472,7 @@ mod tests {
         let path = temp.path().join("swink.sock");
         std::fs::write(&path, b"stale socket placeholder").unwrap();
 
-        let err = match AgentServer::bind(&path, || test_agent_options("unused")) {
+        let err = match AgentServer::bind(&path, || Ok(test_agent_options("unused"))) {
             Ok(_) => panic!("bind should reject existing socket path"),
             Err(err) => err,
         };
@@ -477,7 +494,7 @@ mod tests {
         let path = temp.path().join("swink.sock");
         std::fs::write(&path, b"stale socket placeholder").unwrap();
 
-        let _server = AgentServer::bind_force(&path, || test_agent_options("unused"));
+        let _server = AgentServer::bind_force(&path, || Ok(test_agent_options("unused")));
 
         assert!(
             !path.exists(),
@@ -512,9 +529,11 @@ mod tests {
         let (mut client, mut server) = make_peer_pair();
 
         let server_task = tokio::spawn(async move {
-            run_session(&mut server, &|| test_agent_options("hello from rpc server"))
-                .await
-                .unwrap();
+            run_session(&mut server, &|| {
+                Ok(test_agent_options("hello from rpc server"))
+            })
+            .await
+            .unwrap();
         });
 
         initialize(&mut client).await;
@@ -573,7 +592,7 @@ mod tests {
         let (mut client, mut server) = make_peer_pair();
 
         let server_task = tokio::spawn(async move {
-            run_session(&mut server, &|| test_agent_options("valid follow-up"))
+            run_session(&mut server, &|| Ok(test_agent_options("valid follow-up")))
                 .await
                 .unwrap();
         });
@@ -646,7 +665,7 @@ mod tests {
         let (mut client, mut server) = make_peer_pair();
 
         let server_task = tokio::spawn(async move {
-            run_session(&mut server, &|| test_agent_options("unused"))
+            run_session(&mut server, &|| Ok(test_agent_options("unused")))
                 .await
                 .unwrap();
         });
@@ -674,7 +693,7 @@ mod tests {
         let (mut client, mut server) = make_peer_pair();
 
         let server_task = tokio::spawn(async move {
-            run_session(&mut server, &|| test_agent_options("after idle cancel"))
+            run_session(&mut server, &|| Ok(test_agent_options("after idle cancel")))
                 .await
                 .unwrap();
         });
@@ -734,7 +753,7 @@ mod tests {
         let (mut client, mut server) = make_peer_pair();
 
         let server_task = tokio::spawn(async move {
-            run_session(&mut server, &|| approval_blocking_agent_options())
+            run_session(&mut server, &|| Ok(approval_blocking_agent_options()))
                 .await
                 .unwrap();
         });
@@ -801,13 +820,13 @@ mod tests {
 
         let server_task = tokio::spawn(async move {
             let factory = || {
-                AgentOptions::new(
+                Ok(AgentOptions::new(
                     "test system",
                     swink_agent::testing::default_model(),
                     Arc::clone(&stream_fn),
                     swink_agent::testing::default_convert,
                 )
-                .with_tools(vec![Arc::clone(&tool) as Arc<dyn AgentTool>])
+                .with_tools(vec![Arc::clone(&tool) as Arc<dyn AgentTool>]))
             };
 
             run_session(&mut server, &factory).await.unwrap();
@@ -829,13 +848,14 @@ mod tests {
                 result = &mut prompt => {
                     let result = result.unwrap();
                     while let Some(incoming) = client.try_recv_incoming() {
-                        handle_prompt_incoming(incoming, &sender, &mut events, &mut approvals);
+                        handle_prompt_incoming(incoming, &sender, &mut events, &mut approvals)
+                            .await;
                     }
                     break result;
                 }
                 incoming = client.recv_incoming() => {
                     let incoming = incoming.expect("server should stay connected while prompt runs");
-                    handle_prompt_incoming(incoming, &sender, &mut events, &mut approvals);
+                    handle_prompt_incoming(incoming, &sender, &mut events, &mut approvals).await;
                 }
             }
         };
@@ -864,7 +884,7 @@ mod tests {
         let (mut client, mut server) = make_peer_pair();
 
         let server_task = tokio::spawn(async move {
-            run_session(&mut server, &|| test_agent_options("unused"))
+            run_session(&mut server, &|| Ok(test_agent_options("unused")))
                 .await
                 .unwrap_err()
         });
@@ -896,7 +916,7 @@ mod tests {
         events.push(event);
     }
 
-    fn handle_prompt_incoming(
+    async fn handle_prompt_incoming(
         incoming: IncomingMessage,
         sender: &crate::jsonrpc::PeerSender,
         events: &mut Vec<AgentEvent>,
@@ -925,7 +945,10 @@ mod tests {
                 assert!(request.requires_approval);
 
                 *approvals += 1;
-                sender.respond_ok(id, ToolApprovalDto::Approved).unwrap();
+                sender
+                    .respond_ok(id, ToolApprovalDto::Approved)
+                    .await
+                    .unwrap();
             }
         }
     }
@@ -933,7 +956,7 @@ mod tests {
     #[cfg(not(unix))]
     #[tokio::test]
     async fn serve_reports_unix_transport_unavailable_on_non_unix_hosts() {
-        let server = AgentServer::bind_force("unused.sock", || test_agent_options("unused"));
+        let server = AgentServer::bind_force("unused.sock", || Ok(test_agent_options("unused")));
 
         let err = server.serve().await.unwrap_err();
 

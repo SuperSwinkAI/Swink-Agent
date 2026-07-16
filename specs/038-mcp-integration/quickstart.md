@@ -78,7 +78,7 @@ let configs = vec![
     },
     McpServerConfig {
         name: "web_search".into(),
-        transport: McpTransport::Sse {
+        transport: McpTransport::StreamableHttp {
             url: "https://mcp.example.com/sse".into(),
             bearer_token: Some("sk-...".into()),
             headers: [("x-api-key".into(), "api-key-123".into())].into(),

@@ -12,7 +12,7 @@ Describes how to connect to an MCP server.
 | Variant | Fields | Description |
 |---------|--------|-------------|
 | Stdio | `command: String`, `args: Vec<String>`, `env: HashMap<String, String>` | Subprocess spawned with stdin/stdout communication. The child starts from an empty environment; only entries from `env` are passed through. |
-| Sse | `url: String`, `bearer_token: Option<String>`, `bearer_auth: Option<SseBearerAuth>`, `headers: HashMap<String, String>` | HTTP connection using Server-Sent Events. `bearer_token` is a static token; `bearer_auth` instead resolves the bearer secret from the credential store at connect time (see `SseBearerAuth` below). Plus additional custom headers on every request. |
+| StreamableHttp | `url: String`, `bearer_token: Option<String>`, `bearer_auth: Option<SseBearerAuth>`, `headers: HashMap<String, String>` | HTTP connection using the MCP Streamable HTTP transport. `bearer_token` is a static token; `bearer_auth` instead resolves the bearer secret from the credential store at connect time (see `SseBearerAuth` below). Plus additional custom headers on every request. |
 
 ### SseBearerAuth
 
@@ -30,7 +30,7 @@ Configuration for a single MCP server connection.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | name | String | Yes | Unique identifier for this server (used in events and error messages). |
-| transport | McpTransport | Yes | How to connect (Stdio or Sse). |
+| transport | McpTransport | Yes | How to connect (Stdio or StreamableHttp). |
 | tool_prefix | Option\<String\> | No | If set, all tool names from this server are prefixed with `{prefix}_`. |
 | tool_filter | Option\<ToolFilter\> | No | Controls which discovered tools are exposed to the agent. |
 | requires_approval | bool | No (default: true) | Whether tools from this server require user approval before execution. |

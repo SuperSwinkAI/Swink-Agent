@@ -40,8 +40,8 @@ pub enum McpTransport {
         #[serde(default)]
         env: HashMap<String, String>,
     },
-    /// HTTP Server-Sent Events.
-    Sse {
+    /// MCP Streamable HTTP transport.
+    StreamableHttp {
         url: String,
         bearer_token: Option<String>,
         #[serde(default)]
@@ -60,13 +60,13 @@ impl fmt::Debug for McpTransport {
                 .field("args", args)
                 .field("env", &RedactedStringMap(env))
                 .finish(),
-            Self::Sse {
+            Self::StreamableHttp {
                 url,
                 bearer_token,
                 bearer_auth,
                 headers,
             } => f
-                .debug_struct("McpTransport::Sse")
+                .debug_struct("McpTransport::StreamableHttp")
                 .field("url", url)
                 .field("bearer_token", &bearer_token.as_ref().map(|_| "[REDACTED]"))
                 .field("bearer_auth", bearer_auth)
@@ -247,7 +247,7 @@ mod tests {
 
     #[test]
     fn sse_transport_debug_redacts_bearer_and_sensitive_headers() {
-        let transport = McpTransport::Sse {
+        let transport = McpTransport::StreamableHttp {
             url: "https://mcp.example/sse".to_string(),
             bearer_token: Some("bearer-secret-token".to_string()),
             bearer_auth: None,

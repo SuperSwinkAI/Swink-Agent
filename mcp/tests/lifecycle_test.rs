@@ -183,7 +183,7 @@ async fn repeated_connect_all_replaces_prior_live_connections() {
 
     let config = McpServerConfig::new(
         "connect-all-reset-server",
-        McpTransport::Sse {
+        McpTransport::StreamableHttp {
             url: format!("http://{addr}/mcp"),
             bearer_token: None,
             bearer_auth: None,
@@ -391,7 +391,7 @@ async fn sse_session_expiry_recovers_without_wrapper_disconnect() {
     let conn = McpConnection::connect(
         McpServerConfig::new(
             "sse-recovery-server",
-            McpTransport::Sse {
+            McpTransport::StreamableHttp {
                 url: format!("http://{addr}/mcp"),
                 bearer_token: None,
                 bearer_auth: None,
