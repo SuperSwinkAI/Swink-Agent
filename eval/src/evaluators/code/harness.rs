@@ -12,6 +12,7 @@ use crate::score::Score;
 use crate::types::EvalMetricResult;
 
 /// How a harness writes an extracted snippet to disk before invoking cargo.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct CargoHarness {
     /// Absolute or PATH-resolvable cargo binary name.
@@ -47,6 +48,7 @@ impl CargoHarness {
 }
 
 /// Outcome returned by `cargo` shell-outs.
+#[non_exhaustive]
 pub struct CargoOutcome {
     pub success: bool,
     pub message: String,

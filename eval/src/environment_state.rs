@@ -14,7 +14,17 @@ use crate::types::{EvalCase, EvalMetricResult, Invocation};
 ///
 /// Returns `None` when either `expected_environment_state` or `state_capture`
 /// is absent on the case.
+#[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
 pub struct EnvironmentStateEvaluator;
+
+impl EnvironmentStateEvaluator {
+    /// Create a new `EnvironmentStateEvaluator`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 impl Evaluator for EnvironmentStateEvaluator {
     fn name(&self) -> &'static str {

@@ -150,48 +150,28 @@ impl Evaluator for PassingEvaluator {
     }
 
     fn evaluate(&self, _case: &EvalCase, _invocation: &Invocation) -> Option<EvalMetricResult> {
-        Some(EvalMetricResult {
-            evaluator_name: self.name().to_string(),
-            score: Score::pass(),
-            details: None,
-        })
+        Some(EvalMetricResult::new(self.name(), Score::pass()))
     }
 }
 
 fn make_case(id: &str) -> EvalCase {
-    EvalCase {
-        id: id.to_string(),
-        name: format!("Case {id}"),
-        description: None,
-        system_prompt: "You are a test agent.".to_string(),
-        user_messages: vec!["Hello".to_string()],
-        expected_trajectory: None,
-        expected_response: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new(
+        id,
+        format!("Case {id}"),
+        "You are a test agent.",
+        vec!["Hello".to_string()],
+    )
 }
 
 #[tokio::test]
 async fn run_set_multi_case_produces_per_case_scores() {
     let factory = MockFactory::new(vec!["Hello", " world"]);
     let runner = EvalRunner::with_defaults();
-    let eval_set = EvalSet {
-        id: "suite".to_string(),
-        name: "Test Suite".to_string(),
-        description: None,
-        cases: vec![make_case("a"), make_case("b"), make_case("c")],
-    };
+    let eval_set = EvalSet::new(
+        "suite",
+        "Test Suite",
+        vec![make_case("a"), make_case("b"), make_case("c")],
+    );
 
     let result = runner.run_set(&eval_set, &factory).await.unwrap();
     assert_eq!(result.case_results.len(), 3);
@@ -214,12 +194,7 @@ async fn run_set_multi_case_produces_per_case_scores() {
 async fn empty_suite_returns_empty_report() {
     let factory = MockFactory::new(vec!["Hello"]);
     let runner = EvalRunner::with_defaults();
-    let eval_set = EvalSet {
-        id: "empty".to_string(),
-        name: "Empty Suite".to_string(),
-        description: None,
-        cases: vec![],
-    };
+    let eval_set = EvalSet::new("empty", "Empty Suite", vec![]);
 
     let result = runner.run_set(&eval_set, &factory).await.unwrap();
     assert!(result.case_results.is_empty());
@@ -233,12 +208,11 @@ async fn case_failure_recorded_and_suite_continues() {
     // FailingFactory causes every case to error, but run_set should record
     // each as a failed result and continue rather than aborting.
     let runner = EvalRunner::with_defaults();
-    let eval_set = EvalSet {
-        id: "suite".to_string(),
-        name: "Failing Suite".to_string(),
-        description: None,
-        cases: vec![make_case("a"), make_case("b"), make_case("c")],
-    };
+    let eval_set = EvalSet::new(
+        "suite",
+        "Failing Suite",
+        vec![make_case("a"), make_case("b"), make_case("c")],
+    );
 
     let result = runner.run_set(&eval_set, &FailingFactory).await.unwrap();
 
@@ -279,12 +253,7 @@ async fn mixed_success_and_failure() {
     let runner = EvalRunner::with_defaults();
 
     // Run a single successful case.
-    let eval_set = EvalSet {
-        id: "mixed".to_string(),
-        name: "Mixed Suite".to_string(),
-        description: None,
-        cases: vec![make_case("success")],
-    };
+    let eval_set = EvalSet::new("mixed", "Mixed Suite", vec![make_case("success")]);
 
     let result = runner.run_set(&eval_set, &factory).await.unwrap();
     assert_eq!(result.case_results.len(), 1);
@@ -354,12 +323,11 @@ async fn panicking_evaluator_records_failure_and_suite_continues() {
     registry.register(PanicEvaluator);
     registry.register(PassingEvaluator);
     let runner = EvalRunner::new(registry);
-    let eval_set = EvalSet {
-        id: "panic-safe".to_string(),
-        name: "Panic Safe Suite".to_string(),
-        description: None,
-        cases: vec![make_case("a"), make_case("b")],
-    };
+    let eval_set = EvalSet::new(
+        "panic-safe",
+        "Panic Safe Suite",
+        vec![make_case("a"), make_case("b")],
+    );
 
     let result = runner.run_set(&eval_set, &factory).await.unwrap();
 

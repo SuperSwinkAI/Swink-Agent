@@ -32,27 +32,12 @@ fn judge_config(judge: Arc<dyn JudgeClient>) -> JudgeEvaluatorConfig {
 }
 
 fn base_case(id: &str) -> EvalCase {
-    EvalCase {
-        id: id.to_string(),
-        name: format!("Case {id}"),
-        description: None,
-        system_prompt: "You are a test agent.".to_string(),
-        user_messages: vec!["test prompt".to_string()],
-        expected_trajectory: None,
-        expected_response: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new(
+        id,
+        format!("Case {id}"),
+        "You are a test agent.",
+        vec!["test prompt".to_string()],
+    )
 }
 
 fn metric<'a>(results: &'a [EvalMetricResult], name: &str) -> &'a EvalMetricResult {
@@ -107,11 +92,10 @@ fn assert_baseline_results(registry: &EvaluatorRegistry) {
 fn assert_rag_results(registry: &EvaluatorRegistry) {
     let mut rag_case = base_case("rag");
     rag_case.evaluators = vec!["rag_groundedness".into()];
-    rag_case.few_shot_examples = vec![swink_agent_eval::FewShotExample {
-        input: "Paris is the capital of France.".into(),
-        expected: "retrieved passage".into(),
-        reasoning: None,
-    }];
+    rag_case.few_shot_examples = vec![swink_agent_eval::FewShotExample::new(
+        "Paris is the capital of France.",
+        "retrieved passage",
+    )];
     let rag_invocation =
         common::mock_invocation_with_response(&[], "Paris is the capital of France.");
     let rag_results = registry.evaluate(&rag_case, &rag_invocation);
@@ -122,10 +106,10 @@ fn assert_rag_results(registry: &EvaluatorRegistry) {
 fn assert_agent_results(registry: &EvaluatorRegistry) {
     let mut agent_case = base_case("agent");
     agent_case.evaluators = vec!["task_completion".into()];
-    agent_case.expected_assertion = Some(Assertion {
-        description: "The task should be completed.".into(),
-        kind: AssertionKind::GoalCompleted,
-    });
+    agent_case.expected_assertion = Some(Assertion::new(
+        "The task should be completed.",
+        AssertionKind::GoalCompleted,
+    ));
     let agent_invocation = common::mock_invocation_with_response(&[], "The task is complete.");
     let agent_results = registry.evaluate(&agent_case, &agent_invocation);
     assert_eq!(agent_results.len(), 1);

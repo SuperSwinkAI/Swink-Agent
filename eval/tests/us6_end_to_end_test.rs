@@ -22,7 +22,7 @@ use opentelemetry_sdk::trace::{
     InMemorySpanExporter, SpanData, SpanEvents, SpanExporter, SpanLinks,
 };
 
-use swink_agent::{AssistantMessage, ContentBlock, Cost, ModelSpec, StopReason, Usage};
+use swink_agent::{AssistantMessage, ContentBlock, ModelSpec, StopReason};
 use swink_agent_eval::trace::{
     EvaluationLevel, ExtractedInput, GraphExtractor, OpenInferenceSessionMapper,
     OtelInMemoryTraceProvider, SessionMapper, SwarmExtractor, TraceExtractor, TraceProvider,
@@ -66,27 +66,12 @@ fn span(
 }
 
 fn make_case() -> swink_agent_eval::EvalCase {
-    swink_agent_eval::EvalCase {
-        id: "us6-e2e".into(),
-        name: "US6 e2e".into(),
-        description: None,
-        system_prompt: "You are a test agent.".into(),
-        user_messages: vec!["what is 2+2?".into()],
-        expected_trajectory: None,
-        expected_response: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    swink_agent_eval::EvalCase::new(
+        "us6-e2e",
+        "US6 e2e",
+        "You are a test agent.",
+        vec!["what is 2+2?".into()],
+    )
 }
 
 fn in_process_invocation(response: &str) -> Invocation {
@@ -99,21 +84,11 @@ fn in_process_invocation(response: &str) -> Invocation {
     )
     .with_stop_reason(StopReason::Stop)
     .with_timestamp(0);
-    Invocation {
-        turns: vec![TurnRecord {
-            turn_index: 0,
-            assistant_message: msg,
-            tool_calls: vec![],
-            tool_results: vec![],
-            duration: Duration::from_millis(5),
-        }],
-        total_usage: Usage::default(),
-        total_cost: Cost::default(),
-        total_duration: Duration::from_millis(5),
-        final_response: Some(response.into()),
-        stop_reason: StopReason::Stop,
-        model: ModelSpec::new("test", "test-model"),
-    }
+    let turn = TurnRecord::new(0, msg).with_duration(Duration::from_millis(5));
+    Invocation::new(StopReason::Stop, ModelSpec::new("test", "test-model"))
+        .with_turns(vec![turn])
+        .with_total_duration(Duration::from_millis(5))
+        .with_final_response(response)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -150,7 +125,7 @@ async fn record_reload_and_score_bit_identical() {
         .fetch_session("sess-1")
         .await
         .expect("session found");
-    let reloaded = OpenInferenceSessionMapper.map(&raw).expect("map ok");
+    let reloaded = OpenInferenceSessionMapper::new().map(&raw).expect("map ok");
     assert_eq!(reloaded.final_response.as_deref(), Some(response));
 
     // Score the reloaded session with the same evaluator.
@@ -203,7 +178,7 @@ async fn swarm_and_graph_extractors_traverse_reloaded_session() {
     exporter.export(spans).await.expect("export");
 
     let raw = provider.fetch_session(session_id).await.expect("session");
-    let mut invocation = OpenInferenceSessionMapper.map(&raw).expect("map ok");
+    let mut invocation = OpenInferenceSessionMapper::new().map(&raw).expect("map ok");
     // Give each turn a distinct model_id so GraphExtractor has something to
     // partition on (OpenInferenceMapper collapses the session into one
     // AssistantMessage; reinstate per-turn model_ids for the extractor test).

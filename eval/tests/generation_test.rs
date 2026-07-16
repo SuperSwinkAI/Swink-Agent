@@ -9,13 +9,7 @@ use swink_agent_eval::generation::{ExperimentGenerator, GenerationRequest, ToolD
 use swink_agent_eval::testing::MockJudge;
 
 fn verdict_json(body: &str) -> JudgeVerdict {
-    JudgeVerdict {
-        score: 1.0,
-        pass: true,
-        reason: Some(body.to_string()),
-        label: None,
-        cost: None,
-    }
+    JudgeVerdict::new(1.0, true).with_reason(body)
 }
 
 fn topic_list_verdict(topics: &[&str]) -> JudgeVerdict {
@@ -45,17 +39,12 @@ async fn twenty_cases_across_five_topics_have_even_distribution() {
     let planner = Arc::new(TopicPlanner::new(judge.clone(), "planner-model"));
     let generator = ExperimentGenerator::new(judge, "gen-model", planner);
 
-    let request = GenerationRequest {
-        context: "multi-tool agent".into(),
-        task: "help the user".into(),
-        desired_count: 20,
-        num_topics: 5,
-        include_expected_output: true,
-        include_expected_trajectory: false,
-        include_expected_interactions: false,
-        include_metadata: false,
-        agent_tools: None,
-    };
+    let request = GenerationRequest::default()
+        .with_context("multi-tool agent")
+        .with_task("help the user")
+        .with_desired_count(20)
+        .with_num_topics(5)
+        .with_include_expected_output(true);
     let set = generator.generate(request).await.unwrap();
     assert_eq!(
         set.cases.len(),
@@ -92,17 +81,13 @@ async fn trajectories_are_scoped_to_provided_tools() {
     let planner = Arc::new(TopicPlanner::new(judge.clone(), "planner-model"));
     let generator = ExperimentGenerator::new(judge, "gen-model", planner);
 
-    let request = GenerationRequest {
-        context: "ctx".into(),
-        task: "t".into(),
-        desired_count: 1,
-        num_topics: 1,
-        include_expected_output: false,
-        include_expected_trajectory: true,
-        include_expected_interactions: false,
-        include_metadata: false,
-        agent_tools: Some(vec![ToolDef::new("allowed_tool", "the allowed tool")]),
-    };
+    let request = GenerationRequest::default()
+        .with_context("ctx")
+        .with_task("t")
+        .with_desired_count(1)
+        .with_num_topics(1)
+        .with_include_expected_trajectory(true)
+        .with_agent_tools(vec![ToolDef::new("allowed_tool", "the allowed tool")]);
     let set = generator.generate(request).await.unwrap();
     assert_eq!(set.cases.len(), 1);
     let trajectory = set.cases[0]
@@ -124,11 +109,9 @@ async fn generator_retries_past_malformed_judge_output() {
     let planner = Arc::new(TopicPlanner::new(judge.clone(), "planner-model"));
     let generator = ExperimentGenerator::new(judge, "gen-model", planner).with_retry_cap(3);
 
-    let request = GenerationRequest {
-        desired_count: 1,
-        num_topics: 1,
-        ..GenerationRequest::default()
-    };
+    let request = GenerationRequest::default()
+        .with_desired_count(1)
+        .with_num_topics(1);
     let set = generator.generate(request).await.unwrap();
     assert_eq!(set.cases.len(), 1);
     assert!(set.cases[0].name.contains("recovered"));
@@ -149,11 +132,9 @@ async fn generator_validates_every_emitted_case() {
     let planner = Arc::new(TopicPlanner::new(judge.clone(), "planner-model"));
     let generator = ExperimentGenerator::new(judge, "gen-model", planner).with_retry_cap(3);
 
-    let request = GenerationRequest {
-        desired_count: 1,
-        num_topics: 1,
-        ..GenerationRequest::default()
-    };
+    let request = GenerationRequest::default()
+        .with_desired_count(1)
+        .with_num_topics(1);
     let set = generator.generate(request).await.unwrap();
     assert_eq!(set.cases.len(), 0, "malformed draft must not appear");
 }

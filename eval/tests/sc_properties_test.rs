@@ -15,7 +15,7 @@
 use std::process::Command;
 use std::sync::Arc;
 
-use swink_agent::{Cost, ModelSpec, StopReason, Usage};
+use swink_agent::{ModelSpec, StopReason};
 #[cfg(feature = "evaluator-safety")]
 use swink_agent_eval::{
     CorrectnessEvaluator, Evaluator, HelpfulnessEvaluator, JudgeVerdict, MockJudge,
@@ -24,40 +24,14 @@ use swink_agent_eval::{
 use swink_agent_eval::{EvalCase, Invocation, JudgeClient, JudgeEvaluatorConfig, JudgeRegistry};
 
 fn case() -> EvalCase {
-    EvalCase {
-        id: "c".into(),
-        name: "c".into(),
-        description: None,
-        system_prompt: "agent".into(),
-        user_messages: vec!["q".into()],
-        expected_trajectory: None,
-        expected_response: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new("c", "c", "agent", vec!["q".into()])
 }
 
 fn invocation() -> Invocation {
     use std::time::Duration;
-    Invocation {
-        turns: vec![],
-        total_usage: Usage::default(),
-        total_cost: Cost::default(),
-        total_duration: Duration::from_millis(1),
-        final_response: Some("ok".into()),
-        stop_reason: StopReason::Stop,
-        model: ModelSpec::new("t", "m"),
-    }
+    Invocation::new(StopReason::Stop, ModelSpec::new("t", "m"))
+        .with_total_duration(Duration::from_millis(1))
+        .with_final_response("ok")
 }
 
 fn config_for_model(judge: Arc<dyn JudgeClient>, model_id: &str) -> JudgeEvaluatorConfig {
@@ -92,48 +66,12 @@ fn build_all_families(
 async fn sc_004_judge_model_swap_is_single_arg_change() {
     let judge: Arc<dyn JudgeClient> = Arc::new(MockJudge::with_verdicts(vec![
         // Two rounds: one for `gpt-4o`, one for `claude-3-opus`.
-        JudgeVerdict {
-            score: 0.9,
-            pass: true,
-            reason: Some("gpt".into()),
-            label: None,
-            cost: None,
-        },
-        JudgeVerdict {
-            score: 0.9,
-            pass: true,
-            reason: Some("gpt".into()),
-            label: None,
-            cost: None,
-        },
-        JudgeVerdict {
-            score: 0.9,
-            pass: true,
-            reason: Some("gpt".into()),
-            label: None,
-            cost: None,
-        },
-        JudgeVerdict {
-            score: 0.9,
-            pass: true,
-            reason: Some("claude".into()),
-            label: None,
-            cost: None,
-        },
-        JudgeVerdict {
-            score: 0.9,
-            pass: true,
-            reason: Some("claude".into()),
-            label: None,
-            cost: None,
-        },
-        JudgeVerdict {
-            score: 0.9,
-            pass: true,
-            reason: Some("claude".into()),
-            label: None,
-            cost: None,
-        },
+        JudgeVerdict::new(0.9, true).with_reason("gpt"),
+        JudgeVerdict::new(0.9, true).with_reason("gpt"),
+        JudgeVerdict::new(0.9, true).with_reason("gpt"),
+        JudgeVerdict::new(0.9, true).with_reason("claude"),
+        JudgeVerdict::new(0.9, true).with_reason("claude"),
+        JudgeVerdict::new(0.9, true).with_reason("claude"),
     ]));
 
     // Round 1: gpt-4o.

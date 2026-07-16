@@ -205,6 +205,7 @@ impl Reporter for LangSmithExporter {
 }
 
 /// Structured LangSmith export failures.
+#[non_exhaustive]
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum LangSmithExportError {
     /// Authentication was missing or rejected.

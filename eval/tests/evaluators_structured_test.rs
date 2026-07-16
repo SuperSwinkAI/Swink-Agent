@@ -6,45 +6,20 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::json;
-use swink_agent::{Cost, ModelSpec, StopReason, Usage};
+use swink_agent::{ModelSpec, StopReason};
 use swink_agent_eval::{
     EvalCase, Evaluator, Invocation, JsonMatchEvaluator, JsonSchemaEvaluator, KeyStrategy,
 };
 
 fn make_case() -> EvalCase {
-    EvalCase {
-        id: "case".into(),
-        name: "Case".into(),
-        description: None,
-        system_prompt: "s".into(),
-        user_messages: vec!["hi".into()],
-        expected_trajectory: None,
-        expected_response: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new("case", "Case", "s", vec!["hi".into()])
 }
 
 fn make_invocation(response: Option<&str>) -> Invocation {
-    Invocation {
-        turns: vec![],
-        total_usage: Usage::default(),
-        total_cost: Cost::default(),
-        total_duration: Duration::from_millis(1),
-        final_response: response.map(str::to_string),
-        stop_reason: StopReason::Stop,
-        model: ModelSpec::new("test", "m"),
-    }
+    let mut invocation = Invocation::new(StopReason::Stop, ModelSpec::new("test", "m"))
+        .with_total_duration(Duration::from_millis(1));
+    invocation.final_response = response.map(str::to_string);
+    invocation
 }
 
 #[test]

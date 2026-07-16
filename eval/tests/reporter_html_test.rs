@@ -20,82 +20,75 @@ use swink_agent_eval::{
 use common::mock_invocation;
 
 fn sample_result() -> EvalSetResult {
-    let case_pass = EvalCaseResult {
-        case_id: "case_alpha".into(),
-        invocation: mock_invocation(&[], Some("ok"), 0.01, 120),
-        metric_results: vec![EvalMetricResult {
-            evaluator_name: "helpfulness".into(),
-            score: Score::new(0.82, 0.5),
-            details: Some("looks good".into()),
-        }],
-        verdict: Verdict::Pass,
-    };
-    let case_fail = EvalCaseResult {
-        case_id: "case_beta".into(),
-        invocation: mock_invocation(&[], Some("bad"), 0.02, 140),
-        metric_results: vec![EvalMetricResult {
-            evaluator_name: "correctness".into(),
-            score: Score::new(0.12, 0.6),
-            details: Some("off-topic".into()),
-        }],
-        verdict: Verdict::Fail,
-    };
-    EvalSetResult {
-        eval_set_id: "demo-set".into(),
-        case_results: vec![case_pass, case_fail],
-        summary: EvalSummary {
-            total_cases: 2,
-            passed: 1,
-            failed: 1,
-            total_cost: Cost::default().with_total(0.03),
-            total_usage: Usage::default()
-                .with_input(120)
-                .with_output(140)
-                .with_total(260),
-            total_duration: Duration::from_millis(220),
-        },
-        timestamp: 42,
-    }
+    let case_pass = EvalCaseResult::new(
+        "case_alpha",
+        mock_invocation(&[], Some("ok"), 0.01, 120),
+        Verdict::Pass,
+    )
+    .with_metric_results(vec![
+        EvalMetricResult::new("helpfulness", Score::new(0.82, 0.5)).with_details("looks good"),
+    ]);
+    let case_fail = EvalCaseResult::new(
+        "case_beta",
+        mock_invocation(&[], Some("bad"), 0.02, 140),
+        Verdict::Fail,
+    )
+    .with_metric_results(vec![
+        EvalMetricResult::new("correctness", Score::new(0.12, 0.6)).with_details("off-topic"),
+    ]);
+    EvalSetResult::new(
+        "demo-set",
+        vec![case_pass, case_fail],
+        EvalSummary::default()
+            .with_total_cases(2)
+            .with_passed(1)
+            .with_failed(1)
+            .with_total_cost(Cost::default().with_total(0.03))
+            .with_total_usage(
+                Usage::default()
+                    .with_input(120)
+                    .with_output(140)
+                    .with_total(260),
+            )
+            .with_total_duration(Duration::from_millis(220)),
+        42,
+    )
 }
 
 fn large_result(case_count: usize) -> EvalSetResult {
     let total_cost = (0..case_count).fold(0.0, |acc, _| acc + 0.001);
     let case_results = (0..case_count)
-        .map(|idx| EvalCaseResult {
-            case_id: format!("case_{idx}"),
-            invocation: mock_invocation(&[], Some("ok"), 0.001, 10),
-            metric_results: vec![
-                EvalMetricResult {
-                    evaluator_name: "helpfulness".into(),
-                    score: Score::new(0.82, 0.5),
-                    details: Some("looks good".into()),
-                },
-                EvalMetricResult {
-                    evaluator_name: "correctness".into(),
-                    score: Score::new(0.91, 0.6),
-                    details: Some("on target".into()),
-                },
-            ],
-            verdict: Verdict::Pass,
+        .map(|idx| {
+            EvalCaseResult::new(
+                format!("case_{idx}"),
+                mock_invocation(&[], Some("ok"), 0.001, 10),
+                Verdict::Pass,
+            )
+            .with_metric_results(vec![
+                EvalMetricResult::new("helpfulness", Score::new(0.82, 0.5))
+                    .with_details("looks good"),
+                EvalMetricResult::new("correctness", Score::new(0.91, 0.6))
+                    .with_details("on target"),
+            ])
         })
         .collect();
 
-    EvalSetResult {
-        eval_set_id: "large-set".into(),
+    EvalSetResult::new(
+        "large-set",
         case_results,
-        summary: EvalSummary {
-            total_cases: case_count,
-            passed: case_count,
-            failed: 0,
-            total_cost: Cost::default().with_total(total_cost),
-            total_usage: Usage::default()
-                .with_input(case_count as u64 * 5)
-                .with_output(case_count as u64 * 5)
-                .with_total(case_count as u64 * 10),
-            total_duration: Duration::from_secs(case_count as u64),
-        },
-        timestamp: 99,
-    }
+        EvalSummary::default()
+            .with_total_cases(case_count)
+            .with_passed(case_count)
+            .with_total_cost(Cost::default().with_total(total_cost))
+            .with_total_usage(
+                Usage::default()
+                    .with_input(case_count as u64 * 5)
+                    .with_output(case_count as u64 * 5)
+                    .with_total(case_count as u64 * 10),
+            )
+            .with_total_duration(Duration::from_secs(case_count as u64)),
+        99,
+    )
 }
 
 fn render_html(result: &EvalSetResult) -> (PathBuf, String) {

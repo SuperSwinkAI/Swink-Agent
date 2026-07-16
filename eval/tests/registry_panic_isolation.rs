@@ -60,37 +60,26 @@ impl JudgeClient for PanickingJudge {
 }
 
 fn panic_case() -> EvalCase {
-    EvalCase {
-        id: "panic-isolation".into(),
-        name: "Panic isolation".into(),
-        description: None,
-        system_prompt: "You are a test agent.".into(),
-        user_messages: vec!["Read the project-alpha config.".into()],
-        expected_trajectory: None,
-        expected_response: Some(ResponseCriteria::Custom(Arc::new(|_: &str| -> Score {
-            panic!("panicking response closure");
-        }))),
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: Some(vec![EnvironmentState {
-            name: "created_file".into(),
-            state: serde_json::json!("out.md"),
-        }]),
-        expected_tool_intent: Some(ToolIntent {
-            intent: "read config for project-alpha".into(),
-            tool_name: Some("read_file".into()),
-        }),
-        semantic_tool_selection: true,
-        state_capture: Some(Arc::new(|_| -> Vec<EnvironmentState> {
-            panic!("panicking state capture");
-        })),
-    }
+    EvalCase::new(
+        "panic-isolation",
+        "Panic isolation",
+        "You are a test agent.",
+        vec!["Read the project-alpha config.".into()],
+    )
+    .with_expected_response(ResponseCriteria::Custom(Arc::new(|_: &str| -> Score {
+        panic!("panicking response closure");
+    })))
+    .with_expected_environment_state(vec![EnvironmentState::new(
+        "created_file",
+        serde_json::json!("out.md"),
+    )])
+    .with_expected_tool_intent(
+        ToolIntent::new("read config for project-alpha").with_tool_name("read_file"),
+    )
+    .with_semantic_tool_selection(true)
+    .with_state_capture(Arc::new(|_| -> Vec<EnvironmentState> {
+        panic!("panicking state capture");
+    }))
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

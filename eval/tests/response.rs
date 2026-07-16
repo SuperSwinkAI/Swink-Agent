@@ -14,7 +14,7 @@ fn exact_match_passes() {
         expected: "hello world".to_string(),
     });
     let invocation = mock_invocation(&[], Some("hello world"), 0.0, 0);
-    let result = ResponseMatcher.evaluate(&case, &invocation).unwrap();
+    let result = ResponseMatcher::new().evaluate(&case, &invocation).unwrap();
     assert_eq!(result.score.verdict(), Verdict::Pass);
 }
 
@@ -24,7 +24,7 @@ fn exact_match_fails() {
         expected: "hello world".to_string(),
     });
     let invocation = mock_invocation(&[], Some("hello"), 0.0, 0);
-    let result = ResponseMatcher.evaluate(&case, &invocation).unwrap();
+    let result = ResponseMatcher::new().evaluate(&case, &invocation).unwrap();
     assert_eq!(result.score.verdict(), Verdict::Fail);
 }
 
@@ -34,7 +34,7 @@ fn contains_match_passes() {
         substring: "world".to_string(),
     });
     let invocation = mock_invocation(&[], Some("hello world"), 0.0, 0);
-    let result = ResponseMatcher.evaluate(&case, &invocation).unwrap();
+    let result = ResponseMatcher::new().evaluate(&case, &invocation).unwrap();
     assert_eq!(result.score.verdict(), Verdict::Pass);
 }
 
@@ -44,7 +44,7 @@ fn regex_match_passes() {
         pattern: r"hello \w+".to_string(),
     });
     let invocation = mock_invocation(&[], Some("hello world"), 0.0, 0);
-    let result = ResponseMatcher.evaluate(&case, &invocation).unwrap();
+    let result = ResponseMatcher::new().evaluate(&case, &invocation).unwrap();
     assert_eq!(result.score.verdict(), Verdict::Pass);
 }
 
@@ -58,7 +58,7 @@ fn custom_scorer() {
         }
     })));
     let invocation = mock_invocation(&[], Some("hello!"), 0.0, 0);
-    let result = ResponseMatcher.evaluate(&case, &invocation).unwrap();
+    let result = ResponseMatcher::new().evaluate(&case, &invocation).unwrap();
     assert_eq!(result.score.verdict(), Verdict::Pass);
 }
 
@@ -73,7 +73,7 @@ fn us4_exact_match_pass_and_fail() {
 
     let pass = mock_invocation_with_response(&[], "42");
     assert_eq!(
-        ResponseMatcher
+        ResponseMatcher::new()
             .evaluate(&case, &pass)
             .unwrap()
             .score
@@ -83,7 +83,7 @@ fn us4_exact_match_pass_and_fail() {
 
     let fail = mock_invocation_with_response(&[], "43");
     assert_eq!(
-        ResponseMatcher
+        ResponseMatcher::new()
             .evaluate(&case, &fail)
             .unwrap()
             .score
@@ -101,7 +101,7 @@ fn us4_contains_match_pass_and_fail() {
 
     let pass = mock_invocation_with_response(&[], "operation success!");
     assert_eq!(
-        ResponseMatcher
+        ResponseMatcher::new()
             .evaluate(&case, &pass)
             .unwrap()
             .score
@@ -111,7 +111,7 @@ fn us4_contains_match_pass_and_fail() {
 
     let fail = mock_invocation_with_response(&[], "operation failed");
     assert_eq!(
-        ResponseMatcher
+        ResponseMatcher::new()
             .evaluate(&case, &fail)
             .unwrap()
             .score
@@ -129,7 +129,7 @@ fn us4_regex_match_pass_and_fail() {
 
     let pass = mock_invocation_with_response(&[], "42 files processed");
     assert_eq!(
-        ResponseMatcher
+        ResponseMatcher::new()
             .evaluate(&case, &pass)
             .unwrap()
             .score
@@ -139,7 +139,7 @@ fn us4_regex_match_pass_and_fail() {
 
     let fail = mock_invocation_with_response(&[], "no files");
     assert_eq!(
-        ResponseMatcher
+        ResponseMatcher::new()
             .evaluate(&case, &fail)
             .unwrap()
             .score
@@ -161,7 +161,7 @@ fn us4_custom_fn_pass_and_fail() {
 
     let pass = mock_invocation_with_response(&[], "task done");
     assert_eq!(
-        ResponseMatcher
+        ResponseMatcher::new()
             .evaluate(&case, &pass)
             .unwrap()
             .score
@@ -171,7 +171,7 @@ fn us4_custom_fn_pass_and_fail() {
 
     let fail = mock_invocation_with_response(&[], "task in progress");
     assert_eq!(
-        ResponseMatcher
+        ResponseMatcher::new()
             .evaluate(&case, &fail)
             .unwrap()
             .score
@@ -195,7 +195,7 @@ fn us4_custom_composite_criterion() {
 
     let pass = mock_invocation_with_response(&[], "Summary: done. total: 5");
     assert_eq!(
-        ResponseMatcher
+        ResponseMatcher::new()
             .evaluate(&case, &pass)
             .unwrap()
             .score
@@ -205,7 +205,7 @@ fn us4_custom_composite_criterion() {
 
     let fail = mock_invocation_with_response(&[], "Summary: done.");
     assert_eq!(
-        ResponseMatcher
+        ResponseMatcher::new()
             .evaluate(&case, &fail)
             .unwrap()
             .score
@@ -221,7 +221,7 @@ fn us4_invalid_regex_fails_with_diagnostic() {
         pattern: "[invalid".to_string(),
     });
     let invocation = mock_invocation_with_response(&[], "anything");
-    let result = ResponseMatcher.evaluate(&case, &invocation).unwrap();
+    let result = ResponseMatcher::new().evaluate(&case, &invocation).unwrap();
     assert_eq!(result.score.verdict(), Verdict::Fail);
     let details = result.details.unwrap();
     assert!(
@@ -237,7 +237,7 @@ fn us4_custom_fn_panic_caught() {
         panic!("oops");
     })));
     let invocation = mock_invocation_with_response(&[], "anything");
-    let result = ResponseMatcher.evaluate(&case, &invocation).unwrap();
+    let result = ResponseMatcher::new().evaluate(&case, &invocation).unwrap();
     assert_eq!(result.score.verdict(), Verdict::Fail);
     let details = result.details.unwrap();
     assert!(
@@ -257,7 +257,7 @@ fn us4_none_response_falls_back_to_empty() {
         expected: String::new(),
     });
     let invocation = mock_invocation(&[], None, 0.0, 0);
-    let result = ResponseMatcher.evaluate(&case, &invocation).unwrap();
+    let result = ResponseMatcher::new().evaluate(&case, &invocation).unwrap();
     assert_eq!(
         result.score.verdict(),
         Verdict::Pass,

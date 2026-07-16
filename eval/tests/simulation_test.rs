@@ -11,13 +11,9 @@ use swink_agent_eval::simulation::{
 use swink_agent_eval::testing::MockJudge;
 
 fn verdict(reason: &str, label: Option<&str>) -> JudgeVerdict {
-    JudgeVerdict {
-        score: 1.0,
-        pass: true,
-        reason: Some(reason.into()),
-        label: label.map(str::to_string),
-        cost: None,
-    }
+    let mut v = JudgeVerdict::new(1.0, true).with_reason(reason);
+    v.label = label.map(str::to_string);
+    v
 }
 
 #[tokio::test]
@@ -77,12 +73,12 @@ async fn max_turns_reached_without_goal_terminates_gracefully() {
 fn state_bucket_fifo_enforces_history_cap() {
     let mut bucket = StateBucket::with_capacity(3);
     for i in 0..5 {
-        bucket.record(ToolCallRecord {
-            tool: format!("tool{i}"),
-            args: serde_json::json!({"i": i}),
-            result: serde_json::Value::Null,
-            timestamp: std::time::SystemTime::now(),
-        });
+        bucket.record(ToolCallRecord::new(
+            format!("tool{i}"),
+            serde_json::json!({"i": i}),
+            serde_json::Value::Null,
+            std::time::SystemTime::now(),
+        ));
     }
     assert_eq!(bucket.history.len(), 3);
     assert_eq!(bucket.history.front().unwrap().tool, "tool2");

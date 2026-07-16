@@ -90,8 +90,17 @@ pub trait TraceExtractor: Send + Sync {
 /// invocation. At the `Trace` and `Session` levels it falls through to
 /// the invocation-wide payload so evaluators that want every
 /// granularity wired up still receive a non-empty vector.
+#[non_exhaustive]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ToolLevelExtractor;
+
+impl ToolLevelExtractor {
+    /// Create a new `ToolLevelExtractor`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 impl TraceExtractor for ToolLevelExtractor {
     fn extract(&self, inv: &Invocation, level: EvaluationLevel) -> Vec<ExtractedInput> {

@@ -61,12 +61,11 @@ impl AgentFactory for BlockingFactory {
 }
 
 fn eval_set(ids: &[&str]) -> EvalSet {
-    EvalSet {
-        id: "cancel-suite".into(),
-        name: "cancel suite".into(),
-        description: None,
-        cases: ids.iter().map(|id| common::make_case(id)).collect(),
-    }
+    EvalSet::new(
+        "cancel-suite",
+        "cancel suite",
+        ids.iter().map(|id| common::make_case(id)).collect(),
+    )
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -13,6 +13,7 @@ use crate::types::Invocation;
 ///
 /// **Note:** `serde_json::Value` map key order is insertion-dependent, so audit
 /// trails verify same-instance integrity, not cross-process reproducibility.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditedInvocation {
     /// The original invocation trace.

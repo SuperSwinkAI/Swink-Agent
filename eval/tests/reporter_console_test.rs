@@ -9,7 +9,7 @@ mod common;
 
 use std::time::Duration;
 
-use swink_agent::{Cost, Usage};
+use swink_agent::Cost;
 use swink_agent_eval::{
     ConsoleReporter, EvalCaseResult, EvalMetricResult, EvalSetResult, EvalSummary, Reporter,
     ReporterOutput, Score, Verdict,
@@ -18,49 +18,38 @@ use swink_agent_eval::{
 use common::mock_invocation;
 
 fn sample_result() -> EvalSetResult {
-    let case_pass = EvalCaseResult {
-        case_id: "case_alpha".into(),
-        invocation: mock_invocation(&[], Some("ok"), 0.0012, 32),
-        metric_results: vec![
-            EvalMetricResult {
-                evaluator_name: "helpfulness".into(),
-                score: Score::new(0.82, 0.5),
-                details: Some("looks good".into()),
-            },
-            EvalMetricResult {
-                evaluator_name: "correctness".into(),
-                score: Score::new(0.91, 0.6),
-                details: None,
-            },
-        ],
-        verdict: Verdict::Pass,
-    };
+    let case_pass = EvalCaseResult::new(
+        "case_alpha",
+        mock_invocation(&[], Some("ok"), 0.0012, 32),
+        Verdict::Pass,
+    )
+    .with_metric_results(vec![
+        EvalMetricResult::new("helpfulness", Score::new(0.82, 0.5)).with_details("looks good"),
+        EvalMetricResult::new("correctness", Score::new(0.91, 0.6)),
+    ]);
 
-    let case_fail = EvalCaseResult {
-        case_id: "case_beta".into(),
-        invocation: mock_invocation(&[], Some("nope"), 0.0034, 48),
-        metric_results: vec![EvalMetricResult {
-            evaluator_name: "helpfulness".into(),
-            score: Score::new(0.12, 0.5),
-            // Contains an embedded newline — the reporter MUST strip it.
-            details: Some("off-topic\nmultiline".into()),
-        }],
-        verdict: Verdict::Fail,
-    };
+    let case_fail = EvalCaseResult::new(
+        "case_beta",
+        mock_invocation(&[], Some("nope"), 0.0034, 48),
+        Verdict::Fail,
+    )
+    .with_metric_results(vec![
+        // Contains an embedded newline — the reporter MUST strip it.
+        EvalMetricResult::new("helpfulness", Score::new(0.12, 0.5))
+            .with_details("off-topic\nmultiline"),
+    ]);
 
-    EvalSetResult {
-        eval_set_id: "demo-set".into(),
-        case_results: vec![case_pass, case_fail],
-        summary: EvalSummary {
-            total_cases: 2,
-            passed: 1,
-            failed: 1,
-            total_cost: Cost::default().with_total(0.0046),
-            total_usage: Usage::default(),
-            total_duration: Duration::from_millis(220),
-        },
-        timestamp: 0,
-    }
+    EvalSetResult::new(
+        "demo-set",
+        vec![case_pass, case_fail],
+        EvalSummary::default()
+            .with_total_cases(2)
+            .with_passed(1)
+            .with_failed(1)
+            .with_total_cost(Cost::default().with_total(0.0046))
+            .with_total_duration(Duration::from_millis(220)),
+        0,
+    )
 }
 
 fn render_console(result: &EvalSetResult) -> String {
@@ -170,19 +159,7 @@ fn console_output_is_deterministic_across_two_renders() {
 
 #[test]
 fn console_output_handles_empty_eval_set() {
-    let empty = EvalSetResult {
-        eval_set_id: "empty".into(),
-        case_results: vec![],
-        summary: EvalSummary {
-            total_cases: 0,
-            passed: 0,
-            failed: 0,
-            total_cost: Cost::default(),
-            total_usage: Usage::default(),
-            total_duration: Duration::ZERO,
-        },
-        timestamp: 0,
-    };
+    let empty = EvalSetResult::new("empty", vec![], EvalSummary::default(), 0);
     let out = render_console(&empty);
     assert!(out.lines().count() == 2, "header + summary only:\n{out}");
     assert!(out.contains("0/0 passed"));

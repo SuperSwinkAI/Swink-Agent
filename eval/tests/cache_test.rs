@@ -45,12 +45,7 @@ impl AgentFactory for CountingFactory {
 }
 
 fn set_with(cases: Vec<EvalCase>) -> EvalSet {
-    EvalSet {
-        id: "cache-suite".into(),
-        name: "cache suite".into(),
-        description: None,
-        cases,
-    }
+    EvalSet::new("cache-suite", "cache suite", cases)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

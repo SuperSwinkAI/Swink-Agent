@@ -16,6 +16,7 @@ use thiserror::Error;
 use crate::types::{CacheFingerprint, Invocation};
 
 /// Agent-side inputs that bind the cache key beyond the static case body.
+#[non_exhaustive]
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct FingerprintContext {
     /// Initial `SessionState` JSON (`None` when no `initial_session_file`).
@@ -24,6 +25,29 @@ pub struct FingerprintContext {
     pub tool_set_hash: Option<String>,
     /// Model identifier, e.g. `"anthropic/claude-3-5-sonnet"`.
     pub agent_model: Option<String>,
+}
+
+impl FingerprintContext {
+    /// Set the initial `SessionState` JSON.
+    #[must_use]
+    pub fn with_initial_session(mut self, initial_session: serde_json::Value) -> Self {
+        self.initial_session = Some(initial_session);
+        self
+    }
+
+    /// Set the SHA-256 tool-set hash (lowercase hex).
+    #[must_use]
+    pub fn with_tool_set_hash(mut self, tool_set_hash: impl Into<String>) -> Self {
+        self.tool_set_hash = Some(tool_set_hash.into());
+        self
+    }
+
+    /// Set the agent model identifier.
+    #[must_use]
+    pub fn with_agent_model(mut self, agent_model: impl Into<String>) -> Self {
+        self.agent_model = Some(agent_model.into());
+        self
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -109,6 +133,7 @@ fn hex_lower(bytes: &[u8]) -> String {
 }
 
 /// Structured errors returned by [`EvaluationDataStore`] implementations.
+#[non_exhaustive]
 #[derive(Debug, Error)]
 pub enum StoreError {
     /// Filesystem or IO error during persistence.

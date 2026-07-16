@@ -11,8 +11,17 @@ pub trait Aggregator: Send + Sync {
 }
 
 /// Default arithmetic-mean aggregator.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Average;
+
+impl Average {
+    /// Create a new `Average`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 impl Aggregator for Average {
     fn aggregate(&self, samples: &[Score]) -> Score {
@@ -21,8 +30,17 @@ impl Aggregator for Average {
 }
 
 /// Passes only when every sample passes.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AllPass;
+
+impl AllPass {
+    /// Create a new `AllPass`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 impl Aggregator for AllPass {
     fn aggregate(&self, samples: &[Score]) -> Score {
@@ -39,8 +57,17 @@ impl Aggregator for AllPass {
 }
 
 /// Passes when any sample passes.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AnyPass;
+
+impl AnyPass {
+    /// Create a new `AnyPass`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 impl Aggregator for AnyPass {
     fn aggregate(&self, samples: &[Score]) -> Score {
@@ -61,9 +88,18 @@ impl Aggregator for AnyPass {
 /// When the configured weight count does not match the sample count, the
 /// aggregator falls back to the unweighted mean rather than silently dropping
 /// or over-reading samples.
+#[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct Weighted {
     pub weights: Vec<f64>,
+}
+
+impl Weighted {
+    /// Create a weighted aggregator from the given per-sample weights.
+    #[must_use]
+    pub fn new(weights: Vec<f64>) -> Self {
+        Self { weights }
+    }
 }
 
 impl Aggregator for Weighted {

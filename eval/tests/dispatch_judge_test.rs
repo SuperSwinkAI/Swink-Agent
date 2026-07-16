@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use swink_agent::{Cost, ModelSpec, StopReason, Usage};
+use swink_agent::{ModelSpec, StopReason};
 use swink_agent_eval::{
     Detail, EvalCase, Invocation, JudgeClient, JudgeEvaluatorConfig, JudgePromptTemplate,
     JudgeRegistry, JudgeVerdict, MinijinjaTemplate, PromptContext, PromptFamily,
@@ -23,51 +23,24 @@ impl JudgeClient for CannedJudge {
     fn judge<'a>(&'a self, prompt: &'a str) -> swink_agent_eval::JudgeFuture<'a> {
         Box::pin(async move {
             self.prompts.lock().unwrap().push(prompt.to_string());
-            Ok(JudgeVerdict {
-                score: self.score,
-                pass: (0.5..=1.0).contains(&self.score),
-                reason: self.reason.clone(),
-                label: None,
-                cost: None,
-            })
+            let mut verdict = JudgeVerdict::new(self.score, (0.5..=1.0).contains(&self.score));
+            // Preserve the raw (possibly out-of-range) score; `new()` clamps to
+            // [0,1] but these tests exercise downstream clamping in dispatch.
+            verdict.score = self.score;
+            verdict.reason.clone_from(&self.reason);
+            Ok(verdict)
         })
     }
 }
 
 fn base_case() -> EvalCase {
-    EvalCase {
-        id: "case-1".into(),
-        name: "Case One".into(),
-        description: None,
-        system_prompt: "answer".into(),
-        user_messages: vec!["hi".into()],
-        expected_trajectory: None,
-        expected_response: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new("case-1", "Case One", "answer", vec!["hi".into()])
 }
 
 fn base_invocation() -> Invocation {
-    Invocation {
-        turns: vec![],
-        total_usage: Usage::default(),
-        total_cost: Cost::default(),
-        total_duration: Duration::from_millis(1),
-        final_response: Some("42".into()),
-        stop_reason: StopReason::Stop,
-        model: ModelSpec::new("test", "judge-target"),
-    }
+    Invocation::new(StopReason::Stop, ModelSpec::new("test", "judge-target"))
+        .with_total_duration(Duration::from_millis(1))
+        .with_final_response("42")
 }
 
 fn registry_for(score: f64) -> (Arc<JudgeRegistry>, Arc<CannedJudge>) {

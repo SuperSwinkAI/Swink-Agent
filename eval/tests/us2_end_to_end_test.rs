@@ -49,14 +49,13 @@ impl AgentFactory for SlowFactory {
 }
 
 fn build_set(count: usize) -> EvalSet {
-    EvalSet {
-        id: "us2-e2e".into(),
-        name: "US2 e2e".into(),
-        description: None,
-        cases: (0..count)
+    EvalSet::new(
+        "us2-e2e",
+        "US2 e2e",
+        (0..count)
             .map(|i| common::make_case(&format!("case-{i:02}")))
             .collect(),
-    }
+    )
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

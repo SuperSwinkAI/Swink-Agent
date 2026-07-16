@@ -18,40 +18,17 @@ use common::{mock_invocation, mock_invocation_with_response};
 /// Build an `EvalCase` with `semantic_tool_selection = true`, no expected
 /// trajectory (the semantic evaluator does not consume one).
 fn case_with_semantic_flag(id: &str, user_goal: &str, enabled: bool) -> EvalCase {
-    EvalCase {
-        id: id.to_string(),
-        name: id.to_string(),
-        description: None,
-        system_prompt: "be helpful".to_string(),
-        user_messages: vec![user_goal.to_string()],
-        expected_trajectory: None,
-        expected_response: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: enabled,
-        state_capture: None,
-    }
+    EvalCase::new(id, id, "be helpful", vec![user_goal.to_string()])
+        .with_semantic_tool_selection(enabled)
 }
 
 // ── AS-5.1 ─────────────────────────────────────────────────────────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn semantically_equivalent_tool_accepted() {
-    let verdict = JudgeVerdict {
-        score: 1.0,
-        pass: true,
-        reason: Some("fetch_document is equivalent to read_file".into()),
-        label: Some("equivalent".into()),
-        cost: None,
-    };
+    let verdict = JudgeVerdict::new(1.0, true)
+        .with_reason("fetch_document is equivalent to read_file")
+        .with_label("equivalent");
     let judge: Arc<dyn JudgeClient> = Arc::new(MockJudge::with_verdicts(vec![verdict]));
     let evaluator = SemanticToolSelectionEvaluator::new(Arc::clone(&judge));
 
@@ -134,13 +111,7 @@ async fn transport_error_fails_case_but_registry_continues() {
     // registry+judge pair can run both cases.
     let judge: Arc<dyn JudgeClient> = Arc::new(MockJudge::mixed_sequence(vec![
         Err(JudgeError::Transport("connection refused".into())),
-        Ok(JudgeVerdict {
-            score: 1.0,
-            pass: true,
-            reason: Some("ok".into()),
-            label: None,
-            cost: None,
-        }),
+        Ok(JudgeVerdict::new(1.0, true).with_reason("ok")),
     ]));
     let registry = EvaluatorRegistry::with_defaults_and_judge(Arc::clone(&judge));
 
@@ -241,13 +212,7 @@ async fn empty_trajectory_returns_none() {
 
 #[test]
 fn evaluates_from_plain_sync_context_without_panic() {
-    let verdict = JudgeVerdict {
-        score: 1.0,
-        pass: true,
-        reason: Some("ok".into()),
-        label: None,
-        cost: None,
-    };
+    let verdict = JudgeVerdict::new(1.0, true).with_reason("ok");
     let judge: Arc<dyn JudgeClient> = Arc::new(MockJudge::with_verdicts(vec![verdict]));
     let evaluator = SemanticToolSelectionEvaluator::new(judge);
     let case = case_with_semantic_flag("sync-ctx", "do the thing", true);

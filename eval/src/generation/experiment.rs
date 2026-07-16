@@ -25,6 +25,7 @@ use crate::types::{
 pub const DEFAULT_RETRY_CAP: u32 = 3;
 
 /// Description of a tool available to the generated agent.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolDef {
     pub name: String,
@@ -42,6 +43,7 @@ impl ToolDef {
 }
 
 /// Request sent to [`ExperimentGenerator::generate`].
+#[non_exhaustive]
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Default)]
 pub struct GenerationRequest {
@@ -57,6 +59,78 @@ pub struct GenerationRequest {
     pub agent_tools: Option<Vec<ToolDef>>,
 }
 
+impl GenerationRequest {
+    /// Set the generation context.
+    #[must_use]
+    pub fn with_context(mut self, context: impl Into<String>) -> Self {
+        self.context = context.into();
+        self
+    }
+
+    /// Set the generation task.
+    #[must_use]
+    pub fn with_task(mut self, task: impl Into<String>) -> Self {
+        self.task = task.into();
+        self
+    }
+
+    /// Set the desired case count.
+    #[must_use]
+    pub const fn with_desired_count(mut self, desired_count: u32) -> Self {
+        self.desired_count = desired_count;
+        self
+    }
+
+    /// Set the number of topics to plan.
+    #[must_use]
+    pub const fn with_num_topics(mut self, num_topics: u32) -> Self {
+        self.num_topics = num_topics;
+        self
+    }
+
+    /// Toggle inclusion of expected output.
+    #[must_use]
+    pub const fn with_include_expected_output(mut self, include_expected_output: bool) -> Self {
+        self.include_expected_output = include_expected_output;
+        self
+    }
+
+    /// Toggle inclusion of the expected trajectory.
+    #[must_use]
+    pub const fn with_include_expected_trajectory(
+        mut self,
+        include_expected_trajectory: bool,
+    ) -> Self {
+        self.include_expected_trajectory = include_expected_trajectory;
+        self
+    }
+
+    /// Toggle inclusion of expected interactions.
+    #[must_use]
+    pub const fn with_include_expected_interactions(
+        mut self,
+        include_expected_interactions: bool,
+    ) -> Self {
+        self.include_expected_interactions = include_expected_interactions;
+        self
+    }
+
+    /// Toggle inclusion of metadata.
+    #[must_use]
+    pub const fn with_include_metadata(mut self, include_metadata: bool) -> Self {
+        self.include_metadata = include_metadata;
+        self
+    }
+
+    /// Restrict trajectories to the given tool set.
+    #[must_use]
+    pub fn with_agent_tools(mut self, agent_tools: Vec<ToolDef>) -> Self {
+        self.agent_tools = Some(agent_tools);
+        self
+    }
+}
+
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum GenerationError {
     #[error("judge error: {0}")]

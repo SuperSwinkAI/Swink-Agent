@@ -113,7 +113,7 @@ async fn missing_attribute_surfaces_as_mapping_error() {
     exporter.export(vec![llm]).await.unwrap();
 
     let raw = provider.fetch_session("sess-2").await.unwrap();
-    let err = OpenInferenceSessionMapper
+    let err = OpenInferenceSessionMapper::new()
         .map(&raw)
         .expect_err("provider attribute missing");
     match err {

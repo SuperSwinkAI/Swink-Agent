@@ -21,40 +21,20 @@ impl AgentFactory for EchoFactory {
 }
 
 fn case_with_custom_score(id: &str, score_value: f64) -> EvalCase {
-    EvalCase {
-        id: id.to_string(),
-        name: id.to_string(),
-        description: None,
-        system_prompt: "You are a test assistant.".to_string(),
-        user_messages: vec!["hello".to_string()],
-        expected_response: Some(ResponseCriteria::Custom(Arc::new(move |_: &str| Score {
-            value: score_value,
-            threshold: 0.5,
-        }))),
-        expected_trajectory: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new(
+        id,
+        id,
+        "You are a test assistant.",
+        vec!["hello".to_string()],
+    )
+    .with_expected_response(ResponseCriteria::Custom(Arc::new(move |_: &str| {
+        Score::new(score_value, 0.5)
+    })))
 }
 
 fn make_runner(cases: Vec<EvalCase>) -> EvolutionRunner {
     let target = OptimizationTarget::new("You are helpful.", vec![]);
-    let eval_set = EvalSet {
-        id: "test".into(),
-        name: "Test".into(),
-        description: None,
-        cases,
-    };
+    let eval_set = EvalSet::new("test", "Test", cases);
     let config = OptimizationConfig::new(eval_set, "/tmp/evolve-baseline-test");
     EvolutionRunner::new(target, config, Arc::new(EchoFactory), None)
 }
@@ -93,29 +73,15 @@ async fn baseline_aggregate_is_arithmetic_mean() {
 #[tokio::test]
 async fn baseline_records_failures_with_details() {
     // Mock returns "ok" but case expects "match me" — ResponseMatcher produces failure details.
-    let failing_case = EvalCase {
-        id: "failing".to_string(),
-        name: "Failing".to_string(),
-        description: None,
-        system_prompt: "You are a test assistant.".to_string(),
-        user_messages: vec!["hello".to_string()],
-        expected_response: Some(ResponseCriteria::Exact {
-            expected: "this will not match".to_string(),
-        }),
-        expected_trajectory: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    };
+    let failing_case = EvalCase::new(
+        "failing",
+        "Failing",
+        "You are a test assistant.",
+        vec!["hello".to_string()],
+    )
+    .with_expected_response(ResponseCriteria::Exact {
+        expected: "this will not match".to_string(),
+    });
     let runner = make_runner(vec![failing_case]);
     let baseline = runner.baseline().await.unwrap();
     assert_eq!(baseline.results.len(), 1);

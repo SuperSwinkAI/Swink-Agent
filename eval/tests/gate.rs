@@ -16,32 +16,29 @@ fn make_eval_set_result(passed: usize, failed: usize, cost: f64) -> EvalSetResul
 
     for i in 0..total {
         let is_pass = i < passed;
-        case_results.push(EvalCaseResult {
-            case_id: format!("case_{i}"),
-            #[allow(clippy::cast_precision_loss)]
-            invocation: mock_invocation(&[], Some("response"), cost / total as f64, 100),
-            metric_results: Vec::new(),
-            verdict: if is_pass {
-                Verdict::Pass
-            } else {
-                Verdict::Fail
-            },
-        });
+        let verdict = if is_pass {
+            Verdict::Pass
+        } else {
+            Verdict::Fail
+        };
+        #[allow(clippy::cast_precision_loss)]
+        let invocation = mock_invocation(&[], Some("response"), cost / total as f64, 100);
+        case_results.push(EvalCaseResult::new(
+            format!("case_{i}"),
+            invocation,
+            verdict,
+        ));
     }
 
-    EvalSetResult {
-        eval_set_id: "test-set".to_string(),
-        case_results,
-        summary: EvalSummary {
-            total_cases: total,
-            passed,
-            failed,
-            total_cost: Cost::default().with_total(cost),
-            total_usage: Usage::default(),
-            total_duration: Duration::from_millis(100),
-        },
-        timestamp: 0,
-    }
+    let summary = EvalSummary::default()
+        .with_total_cases(total)
+        .with_passed(passed)
+        .with_failed(failed)
+        .with_total_cost(Cost::default().with_total(cost))
+        .with_total_usage(Usage::default())
+        .with_total_duration(Duration::from_millis(100));
+
+    EvalSetResult::new("test-set", case_results, summary, 0)
 }
 
 #[test]

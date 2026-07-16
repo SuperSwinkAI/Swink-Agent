@@ -31,50 +31,52 @@ fn structured_details(prompt_version: &str, feedback_key: Option<&str>, note: &s
 }
 
 fn sample_result() -> EvalSetResult {
-    EvalSetResult {
-        eval_set_id: "demo-set".into(),
-        case_results: vec![
-            EvalCaseResult {
-                case_id: "case-alpha".into(),
-                invocation: mock_invocation(&[], Some("alpha"), 0.01, 120),
-                metric_results: vec![EvalMetricResult {
-                    evaluator_name: "correctness".into(),
-                    score: Score::new(0.91, 0.5),
-                    details: Some(structured_details(
+    EvalSetResult::new(
+        "demo-set",
+        vec![
+            EvalCaseResult::new(
+                "case-alpha",
+                mock_invocation(&[], Some("alpha"), 0.01, 120),
+                Verdict::Pass,
+            )
+            .with_metric_results(vec![
+                EvalMetricResult::new("correctness", Score::new(0.91, 0.5)).with_details(
+                    structured_details(
                         "correctness_v0",
                         Some("quality.correctness"),
                         "alpha looks correct",
-                    )),
-                }],
-                verdict: Verdict::Pass,
-            },
-            EvalCaseResult {
-                case_id: "case-beta".into(),
-                invocation: mock_invocation(&[], Some("beta"), 0.01, 120),
-                metric_results: vec![EvalMetricResult {
-                    evaluator_name: "harmfulness".into(),
-                    score: Score::new(0.2, 0.5),
-                    details: Some(structured_details("harmfulness_v0", None, "beta is risky")),
-                }],
-                verdict: Verdict::Fail,
-            },
+                    ),
+                ),
+            ]),
+            EvalCaseResult::new(
+                "case-beta",
+                mock_invocation(&[], Some("beta"), 0.01, 120),
+                Verdict::Fail,
+            )
+            .with_metric_results(vec![
+                EvalMetricResult::new("harmfulness", Score::new(0.2, 0.5))
+                    .with_details(structured_details("harmfulness_v0", None, "beta is risky")),
+            ]),
         ],
-        summary: EvalSummary {
-            total_cases: 2,
-            passed: 1,
-            failed: 1,
-            total_cost: Cost::default()
-                .with_input(0.01)
-                .with_output(0.01)
-                .with_total(0.02),
-            total_usage: Usage::default()
-                .with_input(120)
-                .with_output(120)
-                .with_total(240),
-            total_duration: Duration::from_millis(220),
-        },
-        timestamp: 1_700_000_000,
-    }
+        EvalSummary::default()
+            .with_total_cases(2)
+            .with_passed(1)
+            .with_failed(1)
+            .with_total_cost(
+                Cost::default()
+                    .with_input(0.01)
+                    .with_output(0.01)
+                    .with_total(0.02),
+            )
+            .with_total_usage(
+                Usage::default()
+                    .with_input(120)
+                    .with_output(120)
+                    .with_total(240),
+            )
+            .with_total_duration(Duration::from_millis(220)),
+        1_700_000_000,
+    )
 }
 
 #[test]

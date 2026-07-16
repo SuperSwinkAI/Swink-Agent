@@ -77,6 +77,7 @@ pub trait AgentFactory: Send + Sync {
 /// Aggregated per-(case, evaluator) sample surfaced by
 /// [`EvalRunner::with_num_runs`]. `std_dev` over the samples quantifies judge
 /// non-determinism (research §R-013).
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunnerMetricSample {
     /// Name of the evaluator.

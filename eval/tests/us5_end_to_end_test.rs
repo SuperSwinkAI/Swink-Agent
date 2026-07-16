@@ -14,13 +14,7 @@ use swink_agent_eval::testing::MockJudge;
 use swink_agent_eval::validate_eval_set;
 
 fn verdict(body: &str) -> JudgeVerdict {
-    JudgeVerdict {
-        score: 1.0,
-        pass: true,
-        reason: Some(body.to_string()),
-        label: None,
-        cost: None,
-    }
+    JudgeVerdict::new(1.0, true).with_reason(body)
 }
 
 #[tokio::test]
@@ -36,12 +30,12 @@ async fn generated_set_validates_and_is_runner_ready() {
     let planner = Arc::new(TopicPlanner::new(judge.clone(), "planner-model"));
     let generator = ExperimentGenerator::new(judge, "gen-model", planner);
     let set = generator
-        .generate(GenerationRequest {
-            desired_count: 1,
-            num_topics: 1,
-            include_expected_output: true,
-            ..GenerationRequest::default()
-        })
+        .generate(
+            GenerationRequest::default()
+                .with_desired_count(1)
+                .with_num_topics(1)
+                .with_include_expected_output(true),
+        )
         .await
         .expect("generate succeeds");
 
@@ -66,13 +60,13 @@ async fn tool_scoped_trajectory_is_respected_when_agent_tools_provided() {
     let planner = Arc::new(TopicPlanner::new(judge.clone(), "planner-model"));
     let generator = ExperimentGenerator::new(judge, "gen-model", planner);
     let set = generator
-        .generate(GenerationRequest {
-            desired_count: 1,
-            num_topics: 1,
-            include_expected_trajectory: true,
-            agent_tools: Some(vec![ToolDef::new("ok_tool", "scoped tool")]),
-            ..GenerationRequest::default()
-        })
+        .generate(
+            GenerationRequest::default()
+                .with_desired_count(1)
+                .with_num_topics(1)
+                .with_include_expected_trajectory(true)
+                .with_agent_tools(vec![ToolDef::new("ok_tool", "scoped tool")]),
+        )
         .await
         .expect("generate succeeds");
 

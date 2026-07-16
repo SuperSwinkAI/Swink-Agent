@@ -6,12 +6,14 @@
 //! more than N". Real providers introduce await points inside the agent
 //! stream that will exercise actual concurrency in production.
 
-use std::pin::Pin;
+use std::pin::{Pin, pin};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::Duration;
 
 use futures::{Stream, StreamExt};
 use tokio::sync::Notify;
+use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
@@ -21,6 +23,11 @@ use swink_agent::{
 use swink_agent_eval::{AgentFactory, EvalCase, EvalError, EvalRunner, EvalSet};
 
 mod common;
+
+/// Generous upper bound on every gate/notify wait in this file. A correct run
+/// clears each wait in milliseconds; reaching this limit means a lost wakeup,
+/// so the test fails loudly instead of hanging CI indefinitely.
+const WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Wraps `SimpleMockStreamFn` with a deterministic gate so the resulting
 /// stream has a real await point. The in-flight counter increments before the
@@ -52,13 +59,26 @@ impl StreamFn for GatedStream {
             let n = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
             peak.fetch_max(n, Ordering::SeqCst);
             gate.progress.notify_waiters();
-            loop {
-                let notified = gate.progress.notified();
-                if gate.open.load(Ordering::SeqCst) {
-                    break;
+            let wait_for_open = async {
+                loop {
+                    // Register this waiter with `enable()` BEFORE checking the
+                    // condition: `notify_waiters()` only wakes futures that are
+                    // already registered, and a `Notified` future does not
+                    // register until first polled. Without `enable()`, a
+                    // release firing between the condition check and the
+                    // `.await` is lost and the wait hangs forever (tokio
+                    // `Notify::notified` docs pattern).
+                    let mut notified = pin!(gate.progress.notified());
+                    notified.as_mut().enable();
+                    if gate.open.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    notified.await;
                 }
-                notified.await;
-            }
+            };
+            timeout(WAIT_TIMEOUT, wait_for_open)
+                .await
+                .expect("gate never released within WAIT_TIMEOUT — lost wakeup?");
             in_flight.fetch_sub(1, Ordering::SeqCst);
         })
         .filter_map(|()| async { Option::<AssistantMessageEvent>::None });
@@ -87,13 +107,22 @@ impl GateState {
     }
 
     async fn wait_for_started(&self, expected: usize) {
-        loop {
-            let notified = self.progress.notified();
-            if self.started.load(Ordering::SeqCst) >= expected {
-                return;
+        let wait = async {
+            loop {
+                // Same lost-wakeup guard as the stream gate: register with
+                // `enable()` before checking, so a `notify_waiters()` firing
+                // between the check and the `.await` is not missed.
+                let mut notified = pin!(self.progress.notified());
+                notified.as_mut().enable();
+                if self.started.load(Ordering::SeqCst) >= expected {
+                    return;
+                }
+                notified.await;
             }
-            notified.await;
-        }
+        };
+        timeout(WAIT_TIMEOUT, wait)
+            .await
+            .expect("streams never reached expected start count — lost wakeup?");
     }
 }
 
@@ -153,12 +182,11 @@ async fn run_gated_set(parallelism: usize, ids: &[&str]) -> (Arc<ConcurrentFacto
 }
 
 fn eval_set(ids: &[&str]) -> EvalSet {
-    EvalSet {
-        id: "parallelism-suite".into(),
-        name: "parallelism suite".into(),
-        description: None,
-        cases: ids.iter().map(|id| common::make_case(id)).collect(),
-    }
+    EvalSet::new(
+        "parallelism-suite",
+        "parallelism suite",
+        ids.iter().map(|id| common::make_case(id)).collect(),
+    )
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
