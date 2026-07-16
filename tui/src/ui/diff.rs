@@ -13,6 +13,7 @@ use crate::ui::tool_panel::truncate_with_ellipsis;
 const MAX_DIFF_LINES: usize = 50;
 
 /// A parsed diff from tool result details.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct DiffData {
     /// File path that was modified.
@@ -26,6 +27,25 @@ pub struct DiffData {
 }
 
 impl DiffData {
+    /// Create diff data from before/after content for `path`.
+    ///
+    /// Set `is_new_file` when there is no prior content (pass an empty
+    /// `old_content` in that case).
+    #[must_use]
+    pub fn new(
+        path: impl Into<String>,
+        is_new_file: bool,
+        old_content: impl Into<String>,
+        new_content: impl Into<String>,
+    ) -> Self {
+        Self {
+            path: path.into(),
+            is_new_file,
+            old_content: old_content.into(),
+            new_content: new_content.into(),
+        }
+    }
+
     /// Try to parse diff data from a tool result's details JSON.
     ///
     /// Returns `None` if the JSON does not contain the expected fields.
@@ -48,6 +68,7 @@ impl DiffData {
 /// Ranges are half-open line indices into the respective `lines()` split.
 /// Hunks are separated by at least one unchanged (common) line, so the text
 /// between two hunks is identical in both versions.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Hunk {
     /// Start of the removed range in the old content (inclusive).
@@ -61,6 +82,20 @@ pub struct Hunk {
 }
 
 impl Hunk {
+    /// Create a hunk from half-open line ranges into the old and new content.
+    ///
+    /// `old_start..old_end` is the removed range; `new_start..new_end` is the
+    /// added range.
+    #[must_use]
+    pub const fn new(old_start: usize, old_end: usize, new_start: usize, new_end: usize) -> Self {
+        Self {
+            old_start,
+            old_end,
+            new_start,
+            new_end,
+        }
+    }
+
     /// Number of lines removed by this hunk.
     pub const fn removed_count(&self) -> usize {
         self.old_end - self.old_start
@@ -507,6 +542,26 @@ mod tests {
         assert!(!diff.is_new_file);
         assert_eq!(diff.old_content, "hello\nworld");
         assert_eq!(diff.new_content, "hello\nrust");
+    }
+
+    #[test]
+    fn diff_data_new_sets_every_field() {
+        let diff = DiffData::new("/tmp/test.rs", true, "", "hello\n");
+        assert_eq!(diff.path, "/tmp/test.rs");
+        assert!(diff.is_new_file);
+        assert_eq!(diff.old_content, "");
+        assert_eq!(diff.new_content, "hello\n");
+    }
+
+    #[test]
+    fn hunk_new_sets_ranges() {
+        let hunk = Hunk::new(1, 3, 1, 5);
+        assert_eq!(hunk.old_start, 1);
+        assert_eq!(hunk.old_end, 3);
+        assert_eq!(hunk.new_start, 1);
+        assert_eq!(hunk.new_end, 5);
+        assert_eq!(hunk.removed_count(), 2);
+        assert_eq!(hunk.added_count(), 4);
     }
 
     #[test]

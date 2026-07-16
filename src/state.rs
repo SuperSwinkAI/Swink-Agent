@@ -24,6 +24,31 @@ pub struct StateDelta {
 }
 
 impl StateDelta {
+    /// Create an empty delta.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Build a delta from a complete change map.
+    ///
+    /// `Some(value)` entries mean the key was set to `value`; `None` entries
+    /// mean the key was removed.
+    #[must_use]
+    pub fn from_changes(changes: HashMap<String, Option<Value>>) -> Self {
+        Self { changes }
+    }
+
+    /// Record a single change, chainable builder-style.
+    ///
+    /// Pass `Some(value)` to record a set/update of `key`, or `None` to
+    /// record its removal.
+    #[must_use]
+    pub fn with_change(mut self, key: impl Into<String>, value: Option<Value>) -> Self {
+        self.changes.insert(key.into(), value);
+        self
+    }
+
     /// True if no changes recorded.
     pub fn is_empty(&self) -> bool {
         self.changes.is_empty()
@@ -199,6 +224,32 @@ mod tests {
         assert_eq!(d2.len(), 2);
         assert_eq!(d2.changes["a"], Some(json!(1)));
         assert_eq!(d2.changes["b"], None);
+    }
+
+    #[test]
+    fn delta_new_is_empty() {
+        assert!(StateDelta::new().is_empty());
+    }
+
+    #[test]
+    fn delta_with_change_chains() {
+        let d = StateDelta::new()
+            .with_change("a", Some(json!(1)))
+            .with_change("b", None);
+        assert_eq!(d.len(), 2);
+        assert_eq!(d.changes["a"], Some(json!(1)));
+        assert_eq!(d.changes["b"], None);
+    }
+
+    #[test]
+    fn delta_from_changes_takes_map() {
+        let d = StateDelta::from_changes(HashMap::from([
+            ("a".to_string(), Some(json!(1))),
+            ("b".to_string(), None),
+        ]));
+        assert_eq!(d.len(), 2);
+        assert_eq!(d.changes["a"], Some(json!(1)));
+        assert_eq!(d.changes["b"], None);
     }
 
     // ── SessionState get/set/remove ──

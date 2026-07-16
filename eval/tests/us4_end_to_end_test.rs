@@ -110,7 +110,12 @@ async fn simulated_conversation_scores_equivalent_to_real_invocation() {
         .expect("real invocation is scorable");
 
     assert_eq!(simulated_metric.evaluator_name, real_metric.evaluator_name);
-    assert_eq!(simulated_metric.score.value, real_metric.score.value);
+    assert!(
+        (simulated_metric.score.value - real_metric.score.value).abs() < f64::EPSILON,
+        "scores differ: {} vs {}",
+        simulated_metric.score.value,
+        real_metric.score.value
+    );
     assert_eq!(
         simulated_metric.score.verdict(),
         real_metric.score.verdict()

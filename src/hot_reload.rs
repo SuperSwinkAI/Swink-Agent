@@ -36,7 +36,11 @@ use crate::tool_filter::ToolFilter;
 // ─── ScriptTool ────────────────────────────────────────────────────────────
 
 /// A tool definition parsed from a file (TOML or JSON).
+///
+/// Construct with [`ScriptToolDef::new`] plus `with_*` builders, or
+/// deserialize from a TOML/JSON definition file.
 #[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
 pub struct ScriptToolDef {
     /// Unique tool name.
     pub name: String,
@@ -47,6 +51,30 @@ pub struct ScriptToolDef {
     /// Optional JSON Schema for parameters.
     #[serde(default = "default_schema")]
     pub parameters_schema: Value,
+}
+
+impl ScriptToolDef {
+    /// Create a definition with a permissive parameters schema.
+    #[must_use]
+    pub fn new(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        command: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            description: description.into(),
+            command: command.into(),
+            parameters_schema: default_schema(),
+        }
+    }
+
+    /// Set the JSON Schema describing the tool's parameters.
+    #[must_use]
+    pub fn with_parameters_schema(mut self, schema: Value) -> Self {
+        self.parameters_schema = schema;
+        self
+    }
 }
 
 fn default_schema() -> Value {
@@ -396,12 +424,12 @@ mod tests {
 
     #[test]
     fn script_tool_from_toml() {
-        let toml = r#"
+        let definition = r#"
 name = "greet"
 description = "Greet someone"
 command = "echo Hello {name}"
 "#;
-        let tool = ScriptTool::from_toml(toml).unwrap();
+        let tool = ScriptTool::from_toml(definition).unwrap();
         assert_eq!(tool.name(), "greet");
         assert_eq!(tool.description(), "Greet someone");
         assert!(tool.requires_approval());
@@ -409,7 +437,7 @@ command = "echo Hello {name}"
 
     #[test]
     fn script_tool_from_toml_with_parameter_schema_section() {
-        let toml = r#"
+        let definition = r#"
 name = "greet"
 description = "Greet a person by name"
 command = "echo 'Hello, {name}!'"
@@ -423,7 +451,7 @@ type = "string"
 description = "The name to greet"
 "#;
 
-        let tool = ScriptTool::from_toml(toml).unwrap();
+        let tool = ScriptTool::from_toml(definition).unwrap();
         assert_eq!(tool.parameters_schema()["required"], json!(["name"]));
         assert_eq!(
             tool.parameters_schema()["properties"]["name"]["description"],
@@ -446,12 +474,12 @@ description = "The name to greet"
 
     #[test]
     fn script_tool_escapes_parameters() {
-        let toml = r#"
+        let definition = r#"
 name = "run"
 description = "Run command"
 command = "echo {input}"
 "#;
-        let tool = ScriptTool::from_toml(toml).unwrap();
+        let tool = ScriptTool::from_toml(definition).unwrap();
         // Input contains a single quote to exercise the '\'' escape path
         let cmd = tool.interpolate_command(&json!({"input": "it's; rm -rf /"}));
         assert!(
@@ -463,12 +491,12 @@ command = "echo {input}"
 
     #[tokio::test]
     async fn script_tool_executes_command() {
-        let toml = r#"
+        let definition = r#"
 name = "echo_test"
 description = "Echo test"
 command = "echo hello"
 "#;
-        let tool = ScriptTool::from_toml(toml).unwrap();
+        let tool = ScriptTool::from_toml(definition).unwrap();
         let result = tool
             .execute(
                 "call_1",

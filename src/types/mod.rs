@@ -231,6 +231,12 @@ impl AssistantMessage {
     }
 }
 
+/// Returns a message whose `provider` and `model_id` are **empty strings**.
+///
+/// This is convenient as a builder base in tests, but it is not a valid
+/// provider response on its own — pricing and telemetry keyed on those
+/// identifiers will not resolve. Construct real messages with
+/// [`AssistantMessage::new`], which requires both identifiers.
 impl Default for AssistantMessage {
     fn default() -> Self {
         Self::new(Vec::new(), String::new(), String::new())

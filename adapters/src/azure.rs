@@ -22,6 +22,7 @@ use crate::oai_transport::{
 use crate::openai_compat::OaiParserOptions;
 
 /// Authentication method for Azure `OpenAI` deployments.
+#[non_exhaustive]
 #[derive(Clone)]
 pub enum AzureAuth {
     /// API key authentication via the `api-key` header.
@@ -35,6 +36,7 @@ pub enum AzureAuth {
 }
 
 /// Azure authority host selection for Entra ID token acquisition.
+#[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AzureCloud {
     /// Azure public cloud.

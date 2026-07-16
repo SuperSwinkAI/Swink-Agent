@@ -40,6 +40,12 @@ pub enum ToolPattern {
     /// Match using glob syntax (`*` = any chars, `?` = single char).
     Glob(String),
     /// Match using a regular expression.
+    ///
+    /// Note: this variant embeds [`regex::Regex`] directly, so constructing
+    /// or destructuring it couples downstream code to the same `regex` crate
+    /// version this crate depends on. Prefer [`ToolPattern::parse`], which
+    /// builds the variant from a plain string, when that coupling is
+    /// undesirable.
     Regex(Regex),
 }
 

@@ -162,6 +162,9 @@ impl App {
                         }
                         // Covers AssistantMessageDelta::ToolCall and, since
                         // that enum is #[non_exhaustive], any future variant.
+                        // TRACKING: new delta variants added in core will
+                        // silently no-op in the UI until they get an arm
+                        // here — audit this match when core grows the enum.
                         _ => {}
                     }
                 }
