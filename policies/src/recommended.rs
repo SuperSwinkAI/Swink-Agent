@@ -16,10 +16,10 @@
 //! use swink_agent_policies::RecommendedPolicies;
 //!
 //! let options = RecommendedPolicies::builder()
-//!     .max_cost(10.0)
-//!     .max_turns(50)
-//!     .sandbox_root("/srv/agent-workspace")
-//!     .deny_tools(["bash"])
+//!     .with_max_cost(10.0)
+//!     .with_max_turns(50)
+//!     .with_sandbox_root("/srv/agent-workspace")
+//!     .with_deny_tools(["bash"])
 //!     .apply(options);
 //! ```
 #![forbid(unsafe_code)]
@@ -60,7 +60,7 @@ pub struct RecommendedPolicies {
 }
 
 impl RecommendedPolicies {
-    /// Default cost ceiling in USD ([`BudgetPolicy::max_cost`]).
+    /// Default cost ceiling in USD ([`BudgetPolicy::with_max_cost`]).
     pub const DEFAULT_MAX_COST: f64 = 10.0;
     /// Default turn ceiling ([`MaxTurnsPolicy`]).
     pub const DEFAULT_MAX_TURNS: usize = 50;
@@ -89,28 +89,28 @@ impl RecommendedPolicies {
 
     /// Set the maximum total cost in USD (default: [`Self::DEFAULT_MAX_COST`]).
     #[must_use]
-    pub const fn max_cost(mut self, limit: f64) -> Self {
+    pub const fn with_max_cost(mut self, limit: f64) -> Self {
         self.max_cost = limit;
         self
     }
 
     /// Set a maximum accumulated input-token limit (default: none).
     #[must_use]
-    pub const fn max_input_tokens(mut self, limit: u64) -> Self {
+    pub const fn with_max_input_tokens(mut self, limit: u64) -> Self {
         self.max_input_tokens = Some(limit);
         self
     }
 
     /// Set a maximum accumulated output-token limit (default: none).
     #[must_use]
-    pub const fn max_output_tokens(mut self, limit: u64) -> Self {
+    pub const fn with_max_output_tokens(mut self, limit: u64) -> Self {
         self.max_output_tokens = Some(limit);
         self
     }
 
     /// Set the maximum number of turns (default: [`Self::DEFAULT_MAX_TURNS`]).
     #[must_use]
-    pub const fn max_turns(mut self, limit: usize) -> Self {
+    pub const fn with_max_turns(mut self, limit: usize) -> Self {
         self.max_turns = limit;
         self
     }
@@ -118,14 +118,14 @@ impl RecommendedPolicies {
     /// Set the sandbox root directory (default: `.`, the process working
     /// directory, resolved at tool-call time).
     #[must_use]
-    pub fn sandbox_root(mut self, root: impl Into<PathBuf>) -> Self {
+    pub fn with_sandbox_root(mut self, root: impl Into<PathBuf>) -> Self {
         self.sandbox_root = root.into();
         self
     }
 
     /// Replace the denied tool list (default: [`Self::DEFAULT_DENIED_TOOLS`]).
     #[must_use]
-    pub fn deny_tools(mut self, tools: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub fn with_deny_tools(mut self, tools: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.denied_tools = tools.into_iter().map(Into::into).collect();
         self
     }
@@ -137,12 +137,12 @@ impl RecommendedPolicies {
     /// [`SandboxPolicy`] and [`ToolDenyListPolicy`] as pre-dispatch policies.
     #[must_use]
     pub fn apply(self, options: AgentOptions) -> AgentOptions {
-        let mut budget = BudgetPolicy::new().max_cost(self.max_cost);
+        let mut budget = BudgetPolicy::new().with_max_cost(self.max_cost);
         if let Some(limit) = self.max_input_tokens {
-            budget = budget.max_input(limit);
+            budget = budget.with_max_input(limit);
         }
         if let Some(limit) = self.max_output_tokens {
-            budget = budget.max_output(limit);
+            budget = budget.with_max_output(limit);
         }
 
         options
@@ -387,12 +387,12 @@ mod tests {
     #[test]
     fn builder_overrides_work() {
         let preset = RecommendedPolicies::builder()
-            .max_cost(2.5)
-            .max_input_tokens(100_000)
-            .max_output_tokens(50_000)
-            .max_turns(7)
-            .sandbox_root("/srv/workspace")
-            .deny_tools(["bash", "write_file"]);
+            .with_max_cost(2.5)
+            .with_max_input_tokens(100_000)
+            .with_max_output_tokens(50_000)
+            .with_max_turns(7)
+            .with_sandbox_root("/srv/workspace")
+            .with_deny_tools(["bash", "write_file"]);
         assert!((preset.max_cost - 2.5).abs() < f64::EPSILON);
         assert_eq!(preset.max_input_tokens, Some(100_000));
         assert_eq!(preset.max_output_tokens, Some(50_000));
@@ -444,7 +444,7 @@ mod tests {
     fn contract_passes_on_preset_wiring() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let options = RecommendedPolicies::builder()
-            .sandbox_root(tempdir.path())
+            .with_sandbox_root(tempdir.path())
             .apply(bare_options());
         assert!(verify_production_guardrails(&options, "bash").is_ok());
     }
@@ -478,8 +478,8 @@ mod tests {
     fn contract_rejects_deny_list_missing_expected_tool() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let options = RecommendedPolicies::builder()
-            .sandbox_root(tempdir.path())
-            .deny_tools(["write_file"])
+            .with_sandbox_root(tempdir.path())
+            .with_deny_tools(["write_file"])
             .apply(bare_options());
         let violations = verify_production_guardrails(&options, "bash").expect_err("must fail");
         assert_eq!(violations.len(), 1);
