@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 // ─── Credential ─────────────────────────────────────────────────────────────
 
 /// A secret value with type information for tool authentication.
+#[non_exhaustive]
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Credential {
@@ -98,6 +99,7 @@ impl Credential {
 ///
 /// Does NOT contain refresh tokens, client secrets, or token endpoints.
 /// Tools receive only the secret they need for the authenticated request.
+#[non_exhaustive]
 #[derive(Clone)]
 pub enum ResolvedCredential {
     /// A resolved API key.
@@ -133,6 +135,7 @@ impl std::fmt::Debug for ResolvedCredential {
 ///
 /// Returned by [`AgentTool::auth_config()`](crate::AgentTool::auth_config) to
 /// declare that a tool needs credentials resolved before execution.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct AuthConfig {
     /// Key to look up in the credential store.
@@ -143,9 +146,26 @@ pub struct AuthConfig {
     pub credential_type: CredentialType,
 }
 
+impl AuthConfig {
+    /// Create a new auth config from its required fields.
+    #[must_use]
+    pub fn new(
+        credential_key: impl Into<String>,
+        auth_scheme: AuthScheme,
+        credential_type: CredentialType,
+    ) -> Self {
+        Self {
+            credential_key: credential_key.into(),
+            auth_scheme,
+            credential_type,
+        }
+    }
+}
+
 // ─── AuthScheme ─────────────────────────────────────────────────────────────
 
 /// How a resolved credential is attached to the outbound request.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum AuthScheme {
     /// `Authorization: Bearer {token}`
@@ -159,6 +179,7 @@ pub enum AuthScheme {
 // ─── CredentialType ─────────────────────────────────────────────────────────
 
 /// Credential type discriminant for mismatch checking (FR-018).
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CredentialType {
@@ -176,6 +197,7 @@ pub enum CredentialType {
 ///
 /// All variants include the credential key for diagnostics but NEVER include
 /// secret values (FR-016).
+#[non_exhaustive]
 pub enum CredentialError {
     /// Credential not found in the store.
     NotFound {
@@ -411,6 +433,7 @@ pub trait AuthorizationHandler: Send + Sync {
 /// secret the client polls the token endpoint with — is deliberately NOT
 /// included: handlers display a prompt, they do not participate in polling,
 /// so they never need it.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct DeviceCodePrompt {
     /// The short code the user types at the verification URI, e.g. `WDJB-MJHT`.
@@ -422,6 +445,36 @@ pub struct DeviceCodePrompt {
     pub verification_uri_complete: Option<String>,
     /// Lifetime of `user_code` in seconds, if the provider reported one.
     pub expires_in: Option<i64>,
+}
+
+impl DeviceCodePrompt {
+    /// Create a new device code prompt from its required fields.
+    #[must_use]
+    pub fn new(user_code: impl Into<String>, verification_uri: impl Into<String>) -> Self {
+        Self {
+            user_code: user_code.into(),
+            verification_uri: verification_uri.into(),
+            verification_uri_complete: None,
+            expires_in: None,
+        }
+    }
+
+    /// Set the URL that embeds `user_code` (RFC 8628 §3.3.1).
+    #[must_use]
+    pub fn with_verification_uri_complete(
+        mut self,
+        verification_uri_complete: impl Into<String>,
+    ) -> Self {
+        self.verification_uri_complete = Some(verification_uri_complete.into());
+        self
+    }
+
+    /// Set the lifetime of `user_code` in seconds.
+    #[must_use]
+    pub const fn with_expires_in(mut self, expires_in: i64) -> Self {
+        self.expires_in = Some(expires_in);
+        self
+    }
 }
 
 /// Pluggable callback for the `OAuth2` device authorization grant

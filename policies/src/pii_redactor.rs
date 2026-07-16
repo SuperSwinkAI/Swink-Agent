@@ -10,6 +10,7 @@ use swink_agent::{
 };
 
 /// Behaviour when PII is detected.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PiiMode {
     /// Replace matched text with a placeholder (default).
@@ -20,6 +21,7 @@ pub enum PiiMode {
 }
 
 /// A named regex pattern used for PII detection.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct PiiPattern {
     pub name: String,
@@ -146,18 +148,21 @@ impl PostTurnPolicy for PiiRedactor {
                 }
 
                 let orig = &turn.assistant_message;
-                let msg = AssistantMessage {
-                    content: vec![ContentBlock::Text { text: redacted }],
-                    provider: orig.provider.clone(),
-                    model_id: orig.model_id.clone(),
-                    usage: orig.usage.clone(),
-                    cost: orig.cost.clone(),
-                    stop_reason: orig.stop_reason,
-                    error_message: orig.error_message.clone(),
-                    error_kind: orig.error_kind,
-                    timestamp: orig.timestamp,
-                    cache_hint: None,
-                };
+                let mut msg = AssistantMessage::new(
+                    vec![ContentBlock::Text { text: redacted }],
+                    orig.provider.clone(),
+                    orig.model_id.clone(),
+                )
+                .with_usage(orig.usage.clone())
+                .with_cost(orig.cost.clone())
+                .with_stop_reason(orig.stop_reason)
+                .with_timestamp(orig.timestamp);
+                if let Some(error_kind) = orig.error_kind {
+                    msg = msg.with_error_kind(error_kind);
+                }
+                if let Some(error_message) = orig.error_message.clone() {
+                    msg = msg.with_error_message(error_message);
+                }
 
                 PolicyVerdict::Inject(vec![AgentMessage::Llm(LlmMessage::Assistant(msg))])
             }
@@ -175,18 +180,12 @@ mod tests {
     };
 
     fn make_turn_ctx(text: &str) -> (AssistantMessage, Vec<ToolResultMessage>) {
-        let msg = AssistantMessage {
-            content: vec![ContentBlock::Text { text: text.into() }],
-            provider: "test".into(),
-            model_id: "test-model".into(),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::Stop,
-            error_message: None,
-            error_kind: None,
-            timestamp: 12345,
-            cache_hint: None,
-        };
+        let msg = AssistantMessage::new(
+            vec![ContentBlock::Text { text: text.into() }],
+            "test",
+            "test-model",
+        )
+        .with_timestamp(12345);
         (msg, vec![])
     }
 
@@ -198,25 +197,10 @@ mod tests {
         let (msg, results) = make_turn_ctx(text);
         let (usage, cost) = make_policy_ctx();
         let state = swink_agent::SessionState::new();
-        let ctx = PolicyContext {
-            turn_index: 0,
-            accumulated_usage: &usage,
-            accumulated_cost: &cost,
-            message_count: 1,
-            overflow_signal: false,
-            new_messages: &[],
-            state: &state,
-        };
+        let ctx = PolicyContext::new(0, &usage, &cost, 1, false, &[], &state);
         static MODEL: std::sync::LazyLock<swink_agent::ModelSpec> =
             std::sync::LazyLock::new(|| swink_agent::ModelSpec::new("test", "test-model"));
-        let turn = TurnPolicyContext {
-            assistant_message: &msg,
-            tool_results: &results,
-            stop_reason: StopReason::Stop,
-            system_prompt: "",
-            model_spec: &MODEL,
-            context_messages: &[],
-        };
+        let turn = TurnPolicyContext::new(&msg, &results, StopReason::Stop, "", &MODEL, &[]);
         policy.evaluate(&ctx, &turn)
     }
 

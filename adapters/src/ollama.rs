@@ -3,7 +3,6 @@
 //! Implements [`StreamFn`] for the Ollama `/api/chat` endpoint.
 //! Ollama streams newline-delimited JSON (NDJSON), not SSE.
 
-use std::collections::HashMap;
 use std::pin::Pin;
 
 use futures::stream::{self, Stream, StreamExt as _};
@@ -86,10 +85,17 @@ struct OllamaChatRequest {
 /// `Json` becomes the literal string `"json"`; `Schema` passes the JSON Schema
 /// through verbatim, which is exactly what Ollama expects.
 fn response_format(options: &StreamOptions) -> Option<Value> {
-    options.serving.format.as_ref().map(|format| match format {
-        ResponseFormat::Json => Value::from("json"),
-        ResponseFormat::Schema(schema) => schema.clone(),
-    })
+    options
+        .serving
+        .format
+        .as_ref()
+        .and_then(|format| match format {
+            ResponseFormat::Json => Some(Value::from("json")),
+            ResponseFormat::Schema(schema) => Some(schema.clone()),
+            // Unknown future variant: we don't know how to represent it on the
+            // wire, so omit `format` entirely rather than sending something wrong.
+            _ => None,
+        })
 }
 
 /// Build Ollama's `options` object from the stream/serving options.
@@ -542,23 +548,12 @@ fn parse_ndjson_stream(
 
                                 events.push(AssistantMessageEvent::Done {
                                     stop_reason,
-                                    usage: Usage {
-                                        input: input_tokens,
-                                        output: output_tokens,
-                                        cache_read: 0,
-                                        cache_write: 0,
-                                        total: input_tokens + output_tokens,
-                                        extra: HashMap::new(),
-                                    },
+                                    usage: Usage::default()
+                                        .with_input(input_tokens)
+                                        .with_output(output_tokens)
+                                        .with_total(input_tokens + output_tokens),
                                     // Ollama is free / local — no cost
-                                    cost: Cost {
-                                        input: 0.0,
-                                        output: 0.0,
-                                        cache_read: 0.0,
-                                        cache_write: 0.0,
-                                        total: 0.0,
-                                        extra: HashMap::new(),
-                                    },
+                                    cost: Cost::default(),
                                 });
                             }
 
@@ -709,8 +704,8 @@ mod tests {
     use futures::StreamExt;
     use futures::stream;
     use swink_agent::{
-        AgentMessage, AssistantMessage as HarnessAssistantMessage, ContentBlock, Cost, LlmMessage,
-        StopReason, ToolResultMessage, Usage, UserMessage,
+        AgentMessage, AssistantMessage as HarnessAssistantMessage, ContentBlock, LlmMessage,
+        StopReason, ToolResultMessage, UserMessage,
     };
 
     // ─── trailing slash normalization ────────────────────────────────────
@@ -731,13 +726,12 @@ mod tests {
 
     #[test]
     fn convert_user_and_system_messages() {
-        let messages = vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
+        let messages = vec![AgentMessage::Llm(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text {
                 text: "hello".to_string(),
-            }],
-            timestamp: 0,
-            cache_hint: None,
-        }))];
+            }])
+            .with_timestamp(0),
+        ))];
 
         let result = convert_messages::<OllamaConverter>(&messages, "test sys");
 
@@ -935,23 +929,18 @@ mod tests {
     #[test]
     fn convert_assistant_with_tool_calls() {
         let messages = vec![AgentMessage::Llm(LlmMessage::Assistant(
-            HarnessAssistantMessage {
-                content: vec![ContentBlock::ToolCall {
+            HarnessAssistantMessage::new(
+                vec![ContentBlock::ToolCall {
                     id: "tc_1".to_string(),
                     name: "my_tool".to_string(),
                     arguments: serde_json::json!({"key": "val"}),
                     partial_json: None,
                 }],
-                provider: "ollama".to_string(),
-                model_id: "test".to_string(),
-                usage: Usage::default(),
-                cost: Cost::default(),
-                stop_reason: StopReason::ToolUse,
-                error_message: None,
-                error_kind: None,
-                timestamp: 0,
-                cache_hint: None,
-            },
+                "ollama",
+                "test",
+            )
+            .with_stop_reason(StopReason::ToolUse)
+            .with_timestamp(0),
         ))];
 
         let result = convert_messages::<OllamaConverter>(&messages, "");
@@ -975,16 +964,13 @@ mod tests {
     #[test]
     fn convert_tool_result_message() {
         let messages = vec![AgentMessage::Llm(LlmMessage::ToolResult(
-            ToolResultMessage {
-                tool_call_id: "tc_1".to_string(),
-                content: vec![ContentBlock::Text {
+            ToolResultMessage::new(
+                "tc_1",
+                vec![ContentBlock::Text {
                     text: "result text".to_string(),
                 }],
-                is_error: false,
-                timestamp: 0,
-                details: serde_json::Value::Null,
-                cache_hint: None,
-            },
+            )
+            .with_timestamp(0),
         ))];
 
         let result = convert_messages::<OllamaConverter>(&messages, "");
@@ -1008,13 +994,12 @@ mod tests {
 
         let messages = vec![
             AgentMessage::Custom(Box::new(TestCustom)),
-            AgentMessage::Llm(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+            AgentMessage::Llm(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: "after custom".to_string(),
-                }],
-                timestamp: 0,
-                cache_hint: None,
-            })),
+                }])
+                .with_timestamp(0),
+            )),
         ];
 
         let result = convert_messages::<OllamaConverter>(&messages, "");
@@ -1093,11 +1078,7 @@ mod tests {
     async fn pre_cancelled_stream_aborts_before_request_send() {
         let ollama = OllamaStreamFn::new("http://127.0.0.1:1");
         let model = ModelSpec::new("ollama", "llama3.2");
-        let context = AgentContext {
-            system_prompt: String::new(),
-            messages: vec![],
-            tools: vec![],
-        };
+        let context = AgentContext::new(String::new(), vec![], vec![]);
         let options = StreamOptions::default();
         let token = CancellationToken::new();
         token.cancel();

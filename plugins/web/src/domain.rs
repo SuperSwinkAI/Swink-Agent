@@ -4,6 +4,7 @@ use thiserror::Error;
 use url::Url;
 
 /// Errors from domain filtering.
+#[non_exhaustive]
 #[derive(Debug, Error)]
 pub enum DomainFilterError {
     #[error("URL scheme '{0}' is not allowed; only http and https are permitted")]
@@ -21,6 +22,7 @@ pub enum DomainFilterError {
 }
 
 /// Domain allowlist/denylist with built-in SSRF protection.
+#[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct DomainFilter {
     pub allowlist: Vec<String>,

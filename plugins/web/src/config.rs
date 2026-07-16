@@ -5,6 +5,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 /// Which search backend to use.
+#[non_exhaustive]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub enum SearchProviderKind {
     #[default]
@@ -14,6 +15,7 @@ pub enum SearchProviderKind {
 }
 
 /// Configuration for the web plugin.
+#[non_exhaustive]
 #[derive(Clone)]
 pub struct WebPluginConfig {
     pub search_provider_kind: SearchProviderKind,

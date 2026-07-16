@@ -30,19 +30,19 @@ use swink_agent_mcp::{McpManager, McpServerConfig, McpTransport};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let configs = vec![McpServerConfig {
-        name: "filesystem".into(),
-        transport: McpTransport::Stdio {
-            command: "npx".into(),
-            args: vec!["-y".into(), "@modelcontextprotocol/server-filesystem".into()],
-            env: Default::default(),
-    },
-    tool_prefix: Some("fs".into()),
-    tool_filter: None,
-    requires_approval: true,
-    connect_timeout_ms: Some(5_000),
-    discovery_timeout_ms: Some(5_000),
-}];
+    let configs = vec![
+        McpServerConfig::new(
+            "filesystem",
+            McpTransport::Stdio {
+                command: "npx".into(),
+                args: vec!["-y".into(), "@modelcontextprotocol/server-filesystem".into()],
+                env: Default::default(),
+            },
+        )
+        .with_tool_prefix("fs")
+        .with_connect_timeout_ms(5_000)
+        .with_discovery_timeout_ms(5_000),
+    ];
 
     let mut mcp = McpManager::new(configs);
     mcp.connect_all().await?;

@@ -124,18 +124,8 @@ mod tests {
                     .collect();
                 TurnRecord {
                     turn_index: i,
-                    assistant_message: AssistantMessage {
-                        content: vec![],
-                        provider: "test".to_string(),
-                        model_id: "test-model".to_string(),
-                        usage: Usage::default(),
-                        cost: Cost::default(),
-                        stop_reason: StopReason::Stop,
-                        error_message: None,
-                        error_kind: None,
-                        timestamp: 0,
-                        cache_hint: None,
-                    },
+                    assistant_message: AssistantMessage::new(vec![], "test", "test-model")
+                        .with_timestamp(0),
                     tool_calls,
                     tool_results: vec![],
                     duration: Duration::from_millis(50),

@@ -7,13 +7,12 @@ use swink_agent::{
 fn make_messages(n: usize, text: &str) -> Vec<AgentMessage> {
     (0..n)
         .map(|i| {
-            AgentMessage::Llm(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+            AgentMessage::Llm(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: format!("{text} {i}"),
-                }],
-                timestamp: 0,
-                cache_hint: None,
-            }))
+                }])
+                .with_timestamp(0),
+            ))
         })
         .collect()
 }

@@ -222,17 +222,25 @@ pub(crate) fn classify_oai_error_body(
 /// itself live only under a consuming adapter feature.
 #[allow(dead_code)]
 fn oai_response_format(options: &StreamOptions) -> Option<serde_json::Value> {
-    options.serving.format.as_ref().map(|format| match format {
-        ResponseFormat::Json => serde_json::json!({ "type": "json_object" }),
-        ResponseFormat::Schema(schema) => serde_json::json!({
-            "type": "json_schema",
-            "json_schema": {
-                "name": "response",
-                "strict": true,
-                "schema": schema,
-            },
-        }),
-    })
+    options
+        .serving
+        .format
+        .as_ref()
+        .and_then(|format| match format {
+            ResponseFormat::Json => Some(serde_json::json!({ "type": "json_object" })),
+            ResponseFormat::Schema(schema) => Some(serde_json::json!({
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "response",
+                    "strict": true,
+                    "schema": schema,
+                },
+            })),
+            // Unknown future variant: we don't know how to represent it on the
+            // wire, so omit `response_format` entirely rather than sending
+            // something wrong.
+            _ => None,
+        })
 }
 
 /// Build a standard OAI-compatible HTTP request (without auth headers).

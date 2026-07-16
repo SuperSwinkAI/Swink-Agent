@@ -38,7 +38,9 @@ type ConvertToLlmBoxed = Box<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send 
 fn default_convert_to_llm() -> ConvertToLlmBoxed {
     Box::new(|msg: &AgentMessage| match msg {
         AgentMessage::Llm(llm) => Some(llm.clone()),
-        AgentMessage::Custom(_) => None,
+        // Covers AgentMessage::Custom and, since AgentMessage is
+        // #[non_exhaustive], any future variant.
+        _ => None,
     })
 }
 
@@ -55,11 +57,9 @@ fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
 fn large_user_msg(label: &str, token_count: usize) -> AgentMessage {
     let padding = "x".repeat(token_count * 4);
     let text = format!("{label}:{padding}");
-    AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text { text }],
-        timestamp: 0,
-        cache_hint: None,
-    }))
+    AgentMessage::Llm(LlmMessage::User(
+        UserMessage::new(vec![ContentBlock::Text { text }]).with_timestamp(0),
+    ))
 }
 
 async fn collect_events(stream: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>) -> Vec<AgentEvent> {
@@ -101,6 +101,7 @@ impl PostTurnPolicy for RecordingPostTurnPolicy {
             Some(AgentMessage::Llm(LlmMessage::User(_))) => "user",
             Some(AgentMessage::Custom(_)) => "custom",
             None => "none",
+            _ => "unknown",
         };
 
         self.observations
@@ -161,7 +162,9 @@ fn user_text(message: &LlmMessage) -> Option<&str> {
 fn agent_user_text(message: &AgentMessage) -> Option<String> {
     match message {
         AgentMessage::Llm(llm_message) => user_text(llm_message).map(ToString::to_string),
-        AgentMessage::Custom(_) => None,
+        // Covers AgentMessage::Custom and, since AgentMessage is
+        // #[non_exhaustive], any future variant.
+        _ => None,
     }
 }
 
@@ -185,13 +188,12 @@ impl swink_agent::AsyncContextTransformer for MockAsyncTransformer {
             if overflow && compact && messages.len() > 1 {
                 let removed = messages.len() - 1;
                 messages.truncate(1);
-                Some(swink_agent::CompactionReport {
-                    dropped_count: removed,
-                    tokens_before: removed * 100,
-                    tokens_after: 100,
-                    overflow: true,
-                    dropped_messages: Vec::new(),
-                })
+                Some(swink_agent::CompactionReport::new(
+                    removed,
+                    removed * 100,
+                    100,
+                    true,
+                ))
             } else {
                 None
             }

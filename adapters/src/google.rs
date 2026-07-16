@@ -240,7 +240,9 @@ impl GeminiStreamFn {
     const fn api_version_path(&self) -> &'static str {
         match self.api_version {
             ApiVersion::V1 => "v1",
-            ApiVersion::V1beta => "v1beta",
+            // ApiVersion is #[non_exhaustive]; treat unknown future variants
+            // like V1beta, where Google ships new API surface first.
+            _ => "v1beta",
         }
     }
 }
@@ -516,6 +518,10 @@ fn convert_messages(messages: &[AgentMessage]) -> Vec<GeminiContent> {
                     parts: vec![part],
                 });
             }
+            // Unknown future LlmMessage variant: nothing sensible to send to
+            // Gemini, so drop it — same as messages skipped elsewhere in
+            // this loop (e.g. non-LLM AgentMessage variants).
+            &_ => {}
         }
     }
 
@@ -741,12 +747,10 @@ fn process_chunk(
     events: &mut Vec<AssistantMessageEvent>,
 ) {
     if let Some(usage) = chunk.usage_metadata {
-        state.usage = Usage {
-            input: usage.prompt_token_count,
-            output: usage.candidates_token_count,
-            total: usage.total_token_count,
-            ..Usage::default()
-        };
+        state.usage = Usage::default()
+            .with_input(usage.prompt_token_count)
+            .with_output(usage.candidates_token_count)
+            .with_total(usage.total_token_count);
     }
 
     let Some(candidate) = chunk.candidates.into_iter().next() else {
@@ -982,23 +986,18 @@ mod tests {
     /// replayed history on the next turn.
     #[test]
     fn convert_messages_sanitized_tool_use_becomes_empty_object_args() {
-        let mut assistant = HarnessAssistantMessage {
-            content: vec![ContentBlock::ToolCall {
+        let mut assistant = HarnessAssistantMessage::new(
+            vec![ContentBlock::ToolCall {
                 id: "call_1".into(),
                 name: "read_file".into(),
                 arguments: Value::Null,
                 partial_json: Some(r#"{"path": "/tm"#.into()),
             }],
-            provider: "google".into(),
-            model_id: "gemini-2.0-flash".into(),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::Length,
-            error_message: None,
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        };
+            "google",
+            "gemini-2.0-flash",
+        )
+        .with_stop_reason(StopReason::Length)
+        .with_timestamp(0);
 
         swink_agent::sanitize_incomplete_tool_calls(&mut assistant);
 
@@ -1074,11 +1073,7 @@ mod tests {
     async fn pre_cancelled_stream_aborts_before_request_send() {
         let gemini = GeminiStreamFn::new("http://127.0.0.1:1", "api-key", ApiVersion::V1beta);
         let model = ModelSpec::new("google", "gemini-2.0-flash");
-        let context = AgentContext {
-            system_prompt: String::new(),
-            messages: vec![],
-            tools: vec![],
-        };
+        let context = AgentContext::new(String::new(), vec![], vec![]);
         let options = StreamOptions::default();
         let token = CancellationToken::new();
         token.cancel();

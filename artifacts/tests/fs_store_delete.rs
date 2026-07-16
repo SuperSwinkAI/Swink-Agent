@@ -1,14 +1,8 @@
-use std::collections::HashMap;
-
 use swink_agent::{ArtifactData, ArtifactStore};
 use swink_agent_artifacts::FileArtifactStore;
 
 fn text_data(content: &str) -> ArtifactData {
-    ArtifactData {
-        content: content.as_bytes().to_vec(),
-        content_type: "text/plain".to_string(),
-        metadata: HashMap::new(),
-    }
+    ArtifactData::new(content.as_bytes().to_vec(), "text/plain".to_string())
 }
 
 // T071: fs_delete_removes_files

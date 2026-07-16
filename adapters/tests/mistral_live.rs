@@ -38,17 +38,16 @@ fn cheap_model() -> ModelSpec {
 }
 
 fn simple_context(prompt: &str) -> AgentContext {
-    AgentContext {
-        system_prompt: "Reply in one word.".into(),
-        messages: vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
+    AgentContext::new(
+        "Reply in one word.",
+        vec![AgentMessage::Llm(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text {
                 text: prompt.to_string(),
-            }],
-            timestamp: 0,
-            cache_hint: None,
-        }))],
-        tools: Vec::new(),
-    }
+            }])
+            .with_timestamp(0),
+        ))],
+        Vec::new(),
+    )
 }
 
 async fn collect_events(
@@ -114,16 +113,7 @@ impl AgentTool for WeatherTool {
         _state: std::sync::Arc<std::sync::RwLock<swink_agent::SessionState>>,
         _credential: Option<swink_agent::ResolvedCredential>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = AgentToolResult> + Send + '_>> {
-        Box::pin(async {
-            AgentToolResult {
-                content: vec![ContentBlock::Text {
-                    text: "72°F, sunny".into(),
-                }],
-                details: json!({}),
-                is_error: false,
-                transfer_signal: None,
-            }
-        })
+        Box::pin(async { AgentToolResult::text("72°F, sunny") })
     }
 }
 
@@ -160,18 +150,16 @@ async fn live_text_stream() {
 async fn live_tool_use_stream() {
     let key = mistral_key();
     let sf = MistralStreamFn::new("https://api.mistral.ai", &key);
-    let context = AgentContext {
-        system_prompt: "You must use the get_weather tool to answer. Do not reply with text only."
-            .into(),
-        messages: vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
+    let context = AgentContext::new(
+        "You must use the get_weather tool to answer. Do not reply with text only.",
+        vec![AgentMessage::Llm(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text {
                 text: "What's the weather in Paris?".into(),
-            }],
-            timestamp: 0,
-            cache_hint: None,
-        }))],
-        tools: vec![Arc::new(WeatherTool)],
-    };
+            }])
+            .with_timestamp(0),
+        ))],
+        vec![Arc::new(WeatherTool)],
+    );
 
     let events = timeout(TIMEOUT, collect_events(&sf, &context))
         .await

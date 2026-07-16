@@ -52,12 +52,7 @@ pub fn call_result_to_agent_result(result: &CallToolResult) -> AgentToolResult {
         return AgentToolResult::text("");
     }
 
-    AgentToolResult {
-        content,
-        details: Value::Null,
-        is_error,
-        transfer_signal: None,
-    }
+    AgentToolResult::new(content, is_error)
 }
 
 /// Extract tool definition fields from an `rmcp` `Tool`.

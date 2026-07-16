@@ -25,18 +25,18 @@ fn make_app() -> App {
 }
 
 fn write_file_request(old: &str, new: &str, is_new_file: bool) -> ToolApprovalRequest {
-    ToolApprovalRequest {
-        tool_call_id: "call_1".into(),
-        tool_name: "write_file".into(),
-        arguments: serde_json::json!({"path": "/tmp/test.rs", "content": new}),
-        requires_approval: true,
-        context: Some(serde_json::json!({
-            "path": "/tmp/test.rs",
-            "is_new_file": is_new_file,
-            "old_content": old,
-            "new_content": new,
-        })),
-    }
+    ToolApprovalRequest::new(
+        "call_1",
+        "write_file",
+        serde_json::json!({"path": "/tmp/test.rs", "content": new}),
+        true,
+    )
+    .with_context(serde_json::json!({
+        "path": "/tmp/test.rs",
+        "is_new_file": is_new_file,
+        "old_content": old,
+        "new_content": new,
+    }))
 }
 
 /// Park a pending write_file approval on the app and return its response channel.
@@ -77,13 +77,7 @@ async fn h_is_ignored_without_diff_context() {
     let mut app = make_app();
     let (tx, _rx) = tokio::sync::oneshot::channel();
     app.handle_approval_request(
-        ToolApprovalRequest {
-            tool_call_id: "call_1".into(),
-            tool_name: "bash".into(),
-            arguments: serde_json::json!({"command": "ls"}),
-            requires_approval: true,
-            context: None,
-        },
+        ToolApprovalRequest::new("call_1", "bash", serde_json::json!({"command": "ls"}), true),
         tx,
     );
 
@@ -130,13 +124,7 @@ async fn reviewable_diff_is_advertised_only_when_a_review_is_available() {
     let mut app = make_app();
     let (tx, _rx) = tokio::sync::oneshot::channel();
     app.handle_approval_request(
-        ToolApprovalRequest {
-            tool_call_id: "call_1".into(),
-            tool_name: "bash".into(),
-            arguments: serde_json::json!({"command": "ls"}),
-            requires_approval: true,
-            context: None,
-        },
+        ToolApprovalRequest::new("call_1", "bash", serde_json::json!({"command": "ls"}), true),
         tx,
     );
     assert!(!app.pending_approval_has_reviewable_diff());

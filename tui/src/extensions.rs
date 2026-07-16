@@ -33,6 +33,7 @@ use crate::skills::{SkillInvocation, parse_skill_invocation};
 ///
 /// Deliberately narrow: hosts render information, they do not drive the event
 /// loop. Further variants can be added as the need is demonstrated.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum CustomCommandOutcome {
     /// Show this text in the conversation as a system message.
@@ -48,6 +49,7 @@ pub enum CustomCommandOutcome {
 pub type CustomCommandFn = Arc<dyn Fn(&App, &str) -> CustomCommandOutcome + Send + Sync>;
 
 /// A project-relative path offered while the user is typing an `@path` mention.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PathCandidate {
     /// Path text inserted (after an `@`) when the candidate is accepted.

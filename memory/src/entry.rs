@@ -12,6 +12,7 @@ use swink_agent::{LlmMessage, ModelSpec};
 /// Serialized with an adjacently-tagged representation: `{"entry_type": "...", "data": {...}}`.
 /// Old-format lines (raw `LlmMessage` without `entry_type`) are deserialized as
 /// [`SessionEntry::Message`] via a custom fallback in [`SessionEntry::parse`].
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "entry_type", content = "data", rename_all = "snake_case")]
 pub enum SessionEntry {
@@ -102,11 +103,15 @@ impl SessionEntry {
     /// `Message` entries derive their timestamp from the inner `LlmMessage`.
     pub const fn timestamp(&self) -> Option<u64> {
         match self {
-            Self::Message(msg) => Some(match msg {
-                LlmMessage::User(m) => m.timestamp,
-                LlmMessage::Assistant(m) => m.timestamp,
-                LlmMessage::ToolResult(m) => m.timestamp,
-            }),
+            // `LlmMessage` is `#[non_exhaustive]`: a variant this build
+            // doesn't recognise carries no known timestamp field, so report
+            // `None` rather than guessing at one.
+            Self::Message(msg) => match msg {
+                LlmMessage::User(m) => Some(m.timestamp),
+                LlmMessage::Assistant(m) => Some(m.timestamp),
+                LlmMessage::ToolResult(m) => Some(m.timestamp),
+                _ => None,
+            },
             Self::ModelChange { timestamp, .. }
             | Self::ThinkingLevelChange { timestamp, .. }
             | Self::Compaction { timestamp, .. }
@@ -128,13 +133,12 @@ mod tests {
 
     #[test]
     fn session_entry_serde_roundtrip_message() {
-        let entry = SessionEntry::Message(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
+        let entry = SessionEntry::Message(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text {
                 text: "hello".to_string(),
-            }],
-            timestamp: 42,
-            cache_hint: None,
-        }));
+            }])
+            .with_timestamp(42),
+        ));
 
         let json = serde_json::to_string(&entry).unwrap();
         let parsed: SessionEntry = serde_json::from_str(&json).unwrap();
@@ -144,16 +148,8 @@ mod tests {
     #[test]
     fn session_entry_serde_roundtrip_model_change() {
         let entry = SessionEntry::ModelChange {
-            from: ModelSpec {
-                provider: "openai".to_string(),
-                model_id: "gpt-4".to_string(),
-                ..ModelSpec::new("", "")
-            },
-            to: ModelSpec {
-                provider: "anthropic".to_string(),
-                model_id: "claude-3".to_string(),
-                ..ModelSpec::new("", "")
-            },
+            from: ModelSpec::new("openai", "gpt-4"),
+            to: ModelSpec::new("anthropic", "claude-3"),
             timestamp: 100,
         };
 
@@ -242,13 +238,12 @@ mod tests {
     #[test]
     fn parse_old_format_as_message() {
         // Old-format: raw LlmMessage without entry_type
-        let old_line = serde_json::to_string(&LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
+        let old_line = serde_json::to_string(&LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text {
                 text: "old format".to_string(),
-            }],
-            timestamp: 0,
-            cache_hint: None,
-        }))
+            }])
+            .with_timestamp(0),
+        ))
         .unwrap();
 
         let entry = SessionEntry::parse(&old_line).unwrap();
@@ -265,13 +260,12 @@ mod tests {
     #[test]
     fn rich_entries_excluded_from_llm_context() {
         let entries = vec![
-            SessionEntry::Message(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+            SessionEntry::Message(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: "hello".to_string(),
-                }],
-                timestamp: 0,
-                cache_hint: None,
-            })),
+                }])
+                .with_timestamp(0),
+            )),
             SessionEntry::ModelChange {
                 from: ModelSpec::new("test", "test"),
                 to: ModelSpec::new("test", "test"),
@@ -293,13 +287,12 @@ mod tests {
                 data: serde_json::json!({}),
                 timestamp: 4,
             },
-            SessionEntry::Message(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+            SessionEntry::Message(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: "world".to_string(),
-                }],
-                timestamp: 5,
-                cache_hint: None,
-            })),
+                }])
+                .with_timestamp(5),
+            )),
         ];
 
         let messages = SessionEntry::messages(&entries);

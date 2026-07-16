@@ -17,6 +17,7 @@ const DEFAULT_MAX_RESULTS: usize = 50;
 const SNIPPET_CONTEXT_BYTES: usize = 72;
 
 /// Options for searching persisted sessions.
+#[non_exhaustive]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionSearchOptions {
     /// Restrict search to these session IDs.
@@ -32,12 +33,54 @@ pub struct SessionSearchOptions {
 }
 
 impl SessionSearchOptions {
+    /// Creates a new `SessionSearchOptions` with no filters applied.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Restricts search to the given session IDs.
+    #[must_use]
+    pub fn with_session_ids(mut self, session_ids: Vec<String>) -> Self {
+        self.session_ids = Some(session_ids);
+        self
+    }
+
+    /// Restricts search to entry discriminator names such as `"message"` or `"label"`.
+    #[must_use]
+    pub fn with_entry_types(mut self, entry_types: Vec<String>) -> Self {
+        self.entry_types = Some(entry_types);
+        self
+    }
+
+    /// Includes only entries at or after this timestamp.
+    #[must_use]
+    pub fn with_start_time(mut self, start_time: DateTime<Utc>) -> Self {
+        self.start_time = Some(start_time);
+        self
+    }
+
+    /// Includes only entries at or before this timestamp.
+    #[must_use]
+    pub fn with_end_time(mut self, end_time: DateTime<Utc>) -> Self {
+        self.end_time = Some(end_time);
+        self
+    }
+
+    /// Sets the maximum number of hits to return (defaults to 50).
+    #[must_use]
+    pub fn with_max_results(mut self, max_results: usize) -> Self {
+        self.max_results = Some(max_results);
+        self
+    }
+
     pub(crate) fn limit(&self) -> usize {
         self.max_results.unwrap_or(DEFAULT_MAX_RESULTS)
     }
 }
 
 /// A single cross-session search result.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct SessionHit {
     /// ID of the session containing the match.
@@ -50,6 +93,26 @@ pub struct SessionHit {
     pub score: usize,
     /// Compact preview around the first matched term.
     pub snippet: String,
+}
+
+impl SessionHit {
+    /// Creates a new search hit.
+    #[must_use]
+    pub fn new(
+        session_id: impl Into<String>,
+        session_title: impl Into<String>,
+        entry: SessionEntry,
+        score: usize,
+        snippet: impl Into<String>,
+    ) -> Self {
+        Self {
+            session_id: session_id.into(),
+            session_title: session_title.into(),
+            entry,
+            score,
+            snippet: snippet.into(),
+        }
+    }
 }
 
 #[cfg(not(feature = "search"))]
@@ -176,6 +239,10 @@ fn message_text(message: &LlmMessage) -> String {
             }
             text
         }
+        // `LlmMessage` is `#[non_exhaustive]`: a variant this build doesn't
+        // recognise contributes no searchable text rather than guessing at
+        // a shape it doesn't understand.
+        _ => String::new(),
     }
 }
 

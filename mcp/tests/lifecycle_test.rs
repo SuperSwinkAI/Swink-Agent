@@ -38,19 +38,15 @@ async fn drop_manager_cleans_up_without_panic() {
 /// Verifies graceful degradation when MCP server is unavailable.
 #[tokio::test]
 async fn call_tool_on_disconnected_connection_returns_error() {
-    let config = McpServerConfig {
-        name: "disconnected-server".into(),
-        transport: McpTransport::Stdio {
+    let config = McpServerConfig::new(
+        "disconnected-server",
+        McpTransport::Stdio {
             command: "mock".into(),
             args: vec![],
             env: HashMap::default(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
     let conn = McpConnection::disconnected(config);
 
     let result = conn
@@ -120,19 +116,15 @@ async fn explicit_shutdown_emits_disconnect_event() {
     let service =
         common::spawn_mock_server_with_client(&common::MockServerConfig::new(vec![])).await;
 
-    let config = McpServerConfig {
-        name: "explicit-shutdown-server".into(),
-        transport: McpTransport::Stdio {
+    let config = McpServerConfig::new(
+        "explicit-shutdown-server",
+        McpTransport::Stdio {
             command: "mock".into(),
             args: vec![],
             env: HashMap::default(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
 
     let conn = McpConnection::from_service(config, service, Some(event_tx))
         .await
@@ -189,20 +181,16 @@ async fn repeated_connect_all_replaces_prior_live_connections() {
         }
     });
 
-    let config = McpServerConfig {
-        name: "connect-all-reset-server".into(),
-        transport: McpTransport::Sse {
+    let config = McpServerConfig::new(
+        "connect-all-reset-server",
+        McpTransport::Sse {
             url: format!("http://{addr}/mcp"),
             bearer_token: None,
             bearer_auth: None,
             headers: HashMap::new(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
 
     let mut manager = McpManager::new(vec![config]);
     manager
@@ -288,19 +276,15 @@ async fn monitor_detects_transport_close_and_emits_event() {
         .await
         .expect("client should connect");
 
-    let config = McpServerConfig {
-        name: "crash-test-server".into(),
-        transport: McpTransport::Stdio {
+    let config = McpServerConfig::new(
+        "crash-test-server",
+        McpTransport::Stdio {
             command: "mock".into(),
             args: vec![],
             env: HashMap::default(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
 
     let conn = McpConnection::from_service(config, service, Some(event_tx))
         .await
@@ -405,20 +389,16 @@ async fn sse_session_expiry_recovers_without_wrapper_disconnect() {
     });
 
     let conn = McpConnection::connect(
-        McpServerConfig {
-            name: "sse-recovery-server".into(),
-            transport: McpTransport::Sse {
+        McpServerConfig::new(
+            "sse-recovery-server",
+            McpTransport::Sse {
                 url: format!("http://{addr}/mcp"),
                 bearer_token: None,
                 bearer_auth: None,
                 headers: HashMap::new(),
             },
-            tool_prefix: None,
-            tool_filter: None,
-            requires_approval: false,
-            connect_timeout_ms: None,
-            discovery_timeout_ms: None,
-        },
+        )
+        .with_requires_approval(false),
         Some(event_tx),
     )
     .await
@@ -485,19 +465,15 @@ async fn connected_event_emitted_after_handshake() {
     let mock_cfg = common::MockServerConfig::new(vec![]);
     let service = common::spawn_mock_server_with_client(&mock_cfg).await;
 
-    let config = McpServerConfig {
-        name: "connect-event-server".into(),
-        transport: McpTransport::Stdio {
+    let config = McpServerConfig::new(
+        "connect-event-server",
+        McpTransport::Stdio {
             command: "mock".into(),
             args: vec![],
             env: HashMap::default(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
 
     let _conn = McpConnection::from_service(config, service, Some(event_tx))
         .await
@@ -521,19 +497,15 @@ async fn tools_discovered_event_emitted_after_discovery() {
     let mock_cfg = common::MockServerConfig::new(vec![]);
     let service = common::spawn_mock_server_with_client(&mock_cfg).await;
 
-    let config = McpServerConfig {
-        name: "discovery-event-server".into(),
-        transport: McpTransport::Stdio {
+    let config = McpServerConfig::new(
+        "discovery-event-server",
+        McpTransport::Stdio {
             command: "mock".into(),
             args: vec![],
             env: HashMap::default(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
 
     let conn = McpConnection::from_service(config, service, Some(event_tx))
         .await
@@ -575,19 +547,15 @@ async fn tool_call_events_bracket_successful_call() {
     let mock_cfg = common::MockServerConfig::new(vec![]);
     let service = common::spawn_mock_server_with_client(&mock_cfg).await;
 
-    let config = McpServerConfig {
-        name: "call-event-server".into(),
-        transport: McpTransport::Stdio {
+    let config = McpServerConfig::new(
+        "call-event-server",
+        McpTransport::Stdio {
             command: "mock".into(),
             args: vec![],
             env: HashMap::default(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
 
     let conn = McpConnection::from_service(config, service, Some(event_tx))
         .await
@@ -669,19 +637,15 @@ async fn tool_call_completed_event_reports_error_on_failure() {
     let mock_cfg = common::MockServerConfig::new(vec![]);
     let service = common::spawn_mock_server_with_client(&mock_cfg).await;
 
-    let config = McpServerConfig {
-        name: "error-call-event-server".into(),
-        transport: McpTransport::Stdio {
+    let config = McpServerConfig::new(
+        "error-call-event-server",
+        McpTransport::Stdio {
             command: "mock".into(),
             args: vec![],
             env: HashMap::default(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
 
     let conn = McpConnection::from_service(config, service, Some(event_tx))
         .await
@@ -755,19 +719,15 @@ async fn mcp_tool_execute_on_disconnected_returns_error_result() {
     let tools = client.peer().list_all_tools().await.unwrap();
     let echo_def = tools.iter().find(|t| t.name == "echo").unwrap();
 
-    let config = McpServerConfig {
-        name: "disconnected-server".into(),
-        transport: McpTransport::Stdio {
+    let config = McpServerConfig::new(
+        "disconnected-server",
+        McpTransport::Stdio {
             command: "mock".into(),
             args: vec![],
             env: HashMap::default(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
     let conn = Arc::new(McpConnection::disconnected(config));
     let tool = McpTool::new(echo_def, None, "disconnected-server", false, conn);
 

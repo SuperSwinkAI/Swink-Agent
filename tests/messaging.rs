@@ -10,13 +10,12 @@ use swink_agent::{
 };
 
 fn user_message(text: &str) -> AgentMessage {
-    AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![swink_agent::ContentBlock::Text {
+    AgentMessage::Llm(LlmMessage::User(
+        UserMessage::new(vec![swink_agent::ContentBlock::Text {
             text: text.to_string(),
-        }],
-        timestamp: 0,
-        cache_hint: None,
-    }))
+        }])
+        .with_timestamp(0),
+    ))
 }
 
 #[tokio::test]

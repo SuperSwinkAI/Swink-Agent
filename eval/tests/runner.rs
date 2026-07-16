@@ -118,13 +118,12 @@ impl AgentFactory for BusyFactory {
         let options = AgentOptions::new_simple(&case.system_prompt, model, stream_fn);
         let mut agent = Agent::new(options);
         let stream = agent
-            .prompt_stream(vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+            .prompt_stream(vec![AgentMessage::Llm(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: "already running".to_string(),
-                }],
-                timestamp: swink_agent::now_timestamp(),
-                cache_hint: None,
-            }))])
+                }])
+                .with_timestamp(swink_agent::now_timestamp()),
+            ))])
             .expect("precondition stream should start");
         std::mem::forget(stream);
         Ok((agent, cancel))

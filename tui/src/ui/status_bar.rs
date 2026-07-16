@@ -122,25 +122,11 @@ mod tests {
     /// it before the TUI ever saw it.
     fn stubbed_turn(input: u64, output: u64, cost: f64) -> AgentEvent {
         AgentEvent::MessageEnd {
-            message: AssistantMessage {
-                content: vec![],
-                provider: "anthropic".to_string(),
-                model_id: "claude-sonnet-4-6".to_string(),
-                usage: Usage {
-                    input,
-                    output,
-                    ..Usage::default()
-                },
-                cost: Cost {
-                    total: cost,
-                    ..Cost::default()
-                },
-                stop_reason: StopReason::Stop,
-                error_message: None,
-                error_kind: None,
-                timestamp: 0,
-                cache_hint: None,
-            },
+            message: AssistantMessage::new(vec![], "anthropic", "claude-sonnet-4-6")
+                .with_usage(Usage::default().with_input(input).with_output(output))
+                .with_cost(Cost::default().with_total(cost))
+                .with_stop_reason(StopReason::Stop)
+                .with_timestamp(0),
         }
     }
 

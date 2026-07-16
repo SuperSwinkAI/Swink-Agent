@@ -800,22 +800,20 @@ async fn ollama_serving_options_serialize_into_request_body() {
     let ollama = OllamaStreamFn::new(server.uri());
     let model = test_model();
     let context = test_context();
-    let options = StreamOptions {
-        serving: ServingOptions {
-            context_length: Some(8192),
-            top_p: Some(0.9),
-            keep_alive: Some("5m".to_string()),
-            format: None,
-            // The colliding `num_ctx` must lose to the typed `context_length`.
-            extra: [
+    // The colliding `num_ctx` must lose to the typed `context_length`.
+    let serving = ServingOptions::default()
+        .with_context_length(8192)
+        .with_top_p(0.9)
+        .with_keep_alive("5m")
+        .with_extra(
+            [
                 ("repeat_penalty".to_string(), serde_json::json!(1.1)),
                 ("num_ctx".to_string(), serde_json::json!(1)),
             ]
             .into_iter()
             .collect(),
-        },
-        ..StreamOptions::default()
-    };
+        );
+    let options = StreamOptions::default().with_serving(serving);
     let token = CancellationToken::new();
     let events: Vec<_> = ollama
         .stream(&model, &context, &options, token)
@@ -875,10 +873,7 @@ async fn body_for_serving(serving: ServingOptions) -> String {
         .await;
 
     let ollama = OllamaStreamFn::new(server.uri());
-    let options = StreamOptions {
-        serving,
-        ..StreamOptions::default()
-    };
+    let options = StreamOptions::default().with_serving(serving);
     let _events: Vec<_> = ollama
         .stream(
             &test_model(),
@@ -897,11 +892,7 @@ async fn body_for_serving(serving: ServingOptions) -> String {
 /// field. Ollama ignores `options.format`, so it must never land there.
 #[tokio::test]
 async fn ollama_response_format_json_is_top_level() {
-    let body = body_for_serving(ServingOptions {
-        format: Some(ResponseFormat::Json),
-        ..ServingOptions::default()
-    })
-    .await;
+    let body = body_for_serving(ServingOptions::default().with_format(ResponseFormat::Json)).await;
 
     let json: serde_json::Value = serde_json::from_str(&body).expect("valid JSON body");
     assert_eq!(json["format"], serde_json::json!("json"), "body: {body}");
@@ -920,12 +911,12 @@ async fn ollama_response_format_schema_is_top_level_verbatim() {
         "properties": { "name": { "type": "string" } },
         "required": ["name"],
     });
-    let body = body_for_serving(ServingOptions {
-        format: Some(ResponseFormat::Schema(schema.clone())),
-        // A sampling knob so `options` exists and can be checked for leakage.
-        top_p: Some(0.9),
-        ..ServingOptions::default()
-    })
+    // A sampling knob so `options` exists and can be checked for leakage.
+    let body = body_for_serving(
+        ServingOptions::default()
+            .with_format(ResponseFormat::Schema(schema.clone()))
+            .with_top_p(0.9),
+    )
     .await;
 
     let json: serde_json::Value = serde_json::from_str(&body).expect("valid JSON body");

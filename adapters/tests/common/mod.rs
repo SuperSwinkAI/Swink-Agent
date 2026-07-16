@@ -96,9 +96,5 @@ pub fn notify_on_request(response: ResponseTemplate) -> (impl Respond, Arc<Notif
 
 /// Build a minimal `AgentContext` for testing.
 pub fn test_context() -> AgentContext {
-    AgentContext {
-        system_prompt: "You are a test assistant.".into(),
-        messages: Vec::new(),
-        tools: Vec::new(),
-    }
+    AgentContext::new("You are a test assistant.", Vec::new(), Vec::new())
 }

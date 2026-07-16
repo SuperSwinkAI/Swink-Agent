@@ -58,6 +58,7 @@ pub trait RetryStrategy: Send + Sync {
 /// | `max_delay` | 60 seconds |
 /// | `multiplier` | 2.0 |
 /// | `jitter` | `true` |
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct DefaultRetryStrategy {
     /// Maximum number of attempts (including the first). The strategy returns

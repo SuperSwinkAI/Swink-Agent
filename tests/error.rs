@@ -275,10 +275,7 @@ fn error_stream_error_source_chain() {
 
 #[test]
 fn downcast_error_display() {
-    let err = DowncastError {
-        expected: "MyCustomType",
-        actual: "OtherType".into(),
-    };
+    let err = DowncastError::new("MyCustomType", "OtherType");
     let display = err.to_string();
     assert!(
         display.contains("MyCustomType"),

@@ -332,13 +332,7 @@ async fn selective_approve_skips_non_requiring_tools() {
         Box::pin(async { ToolApproval::Rejected }) // would reject if called
     });
 
-    let req = ToolApprovalRequest {
-        tool_call_id: "tc1".into(),
-        tool_name: "safe_tool".into(),
-        arguments: serde_json::json!({}),
-        requires_approval: false,
-        context: None,
-    };
+    let req = ToolApprovalRequest::new("tc1", "safe_tool", serde_json::json!({}), false);
 
     let result = wrapped(req).await;
     assert_eq!(result, ToolApproval::Approved);
@@ -359,13 +353,7 @@ async fn selective_approve_calls_inner_for_requiring_tools() {
         Box::pin(async { ToolApproval::Rejected })
     });
 
-    let req = ToolApprovalRequest {
-        tool_call_id: "tc1".into(),
-        tool_name: "bash".into(),
-        arguments: serde_json::json!({}),
-        requires_approval: true,
-        context: None,
-    };
+    let req = ToolApprovalRequest::new("tc1", "bash", serde_json::json!({}), true);
 
     let result = wrapped(req).await;
     assert_eq!(result, ToolApproval::Rejected);

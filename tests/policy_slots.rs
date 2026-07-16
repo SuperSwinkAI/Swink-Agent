@@ -264,16 +264,11 @@ impl PostLoopPolicy for RecordingPostLoop {
 
 #[tokio::test]
 async fn post_loop_policy_observes_final_accumulated_state() {
-    let scripted_usage = Usage {
-        input: 100,
-        output: 42,
-        total: 142,
-        ..Usage::default()
-    };
-    let scripted_cost = Cost {
-        total: 3.5,
-        ..Cost::default()
-    };
+    let scripted_usage = Usage::default()
+        .with_input(100)
+        .with_output(42)
+        .with_total(142);
+    let scripted_cost = Cost::default().with_total(3.5);
     let stream_fn = Arc::new(MockStreamFn::new(vec![done_with_usage(
         scripted_usage.clone(),
         scripted_cost.clone(),

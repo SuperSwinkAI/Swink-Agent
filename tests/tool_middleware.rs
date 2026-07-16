@@ -80,11 +80,11 @@ impl AgentTool for AuthCapturingTool {
     }
 
     fn auth_config(&self) -> Option<AuthConfig> {
-        Some(AuthConfig {
-            credential_key: "weather-api".to_string(),
-            auth_scheme: AuthScheme::ApiKeyHeader("X-Api-Key".to_string()),
-            credential_type: CredentialType::ApiKey,
-        })
+        Some(AuthConfig::new(
+            "weather-api".to_string(),
+            AuthScheme::ApiKeyHeader("X-Api-Key".to_string()),
+            CredentialType::ApiKey,
+        ))
     }
 
     fn execute(

@@ -21,11 +21,7 @@ async fn collect_events(stream_fn: &XAiStreamFn) -> Vec<AssistantMessageEvent> {
     stream_fn
         .stream(
             &test_model(),
-            &AgentContext {
-                system_prompt: String::new(),
-                messages: Vec::new(),
-                tools: Vec::new(),
-            },
+            &AgentContext::new(String::new(), Vec::new(), Vec::new()),
             &StreamOptions::default(),
             CancellationToken::new(),
         )

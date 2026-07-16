@@ -31,6 +31,7 @@ use crate::config::{McpServerConfig, McpTransport, SseBearerAuth};
 use crate::error::McpError;
 
 /// Status of an MCP server connection.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum McpConnectionStatus {
     /// Connected and ready to serve tool calls.
@@ -57,6 +58,8 @@ enum SseBearerResolutionError {
         expected: CredentialType,
         actual: CredentialType,
     },
+    #[error("unsupported credential type resolved for {key}")]
+    UnsupportedCredential { key: String },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -622,7 +625,7 @@ async fn resolve_sse_bearer_secret(
             key: bearer_auth.credential_key.clone(),
         })??;
 
-    let actual_type = resolved_credential_type(&credential);
+    let actual_type = resolved_credential_type(&credential, &bearer_auth.credential_key)?;
     if actual_type != bearer_auth.credential_type {
         return Err(SseBearerResolutionError::TypeMismatch {
             key: bearer_auth.credential_key.clone(),
@@ -631,7 +634,7 @@ async fn resolve_sse_bearer_secret(
         });
     }
 
-    Ok(resolved_credential_secret(&credential).to_string())
+    Ok(resolved_credential_secret(&credential, &bearer_auth.credential_key)?.to_string())
 }
 
 fn sse_bearer_resolution_error(error: SseBearerResolutionError, server_name: &str) -> McpError {
@@ -650,6 +653,9 @@ fn sse_bearer_resolution_error(error: SseBearerResolutionError, server_name: &st
             format!(
                 "SSE credential type mismatch for `{key}`: expected {expected:?}, got {actual:?}"
             )
+        }
+        SseBearerResolutionError::UnsupportedCredential { key } => {
+            format!("unsupported credential type resolved for `{key}`")
         }
     };
 
@@ -698,19 +704,31 @@ fn map_reqwest_streamable_http_error(
     }
 }
 
-const fn resolved_credential_type(credential: &ResolvedCredential) -> CredentialType {
+fn resolved_credential_type(
+    credential: &ResolvedCredential,
+    key: &str,
+) -> Result<CredentialType, SseBearerResolutionError> {
     match credential {
-        ResolvedCredential::ApiKey(_) => CredentialType::ApiKey,
-        ResolvedCredential::Bearer(_) => CredentialType::Bearer,
-        ResolvedCredential::OAuth2AccessToken(_) => CredentialType::OAuth2,
+        ResolvedCredential::ApiKey(_) => Ok(CredentialType::ApiKey),
+        ResolvedCredential::Bearer(_) => Ok(CredentialType::Bearer),
+        ResolvedCredential::OAuth2AccessToken(_) => Ok(CredentialType::OAuth2),
+        &_ => Err(SseBearerResolutionError::UnsupportedCredential {
+            key: key.to_string(),
+        }),
     }
 }
 
-fn resolved_credential_secret(credential: &ResolvedCredential) -> &str {
+fn resolved_credential_secret<'a>(
+    credential: &'a ResolvedCredential,
+    key: &str,
+) -> Result<&'a str, SseBearerResolutionError> {
     match credential {
         ResolvedCredential::ApiKey(secret)
         | ResolvedCredential::Bearer(secret)
-        | ResolvedCredential::OAuth2AccessToken(secret) => secret,
+        | ResolvedCredential::OAuth2AccessToken(secret) => Ok(secret),
+        &_ => Err(SseBearerResolutionError::UnsupportedCredential {
+            key: key.to_string(),
+        }),
     }
 }
 

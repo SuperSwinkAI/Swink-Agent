@@ -193,16 +193,12 @@ mod tests {
     use serde_json::json;
     use swink_agent::testing::{assistant_msg, tool_result_msg, user_msg};
     use swink_agent::{
-        AgentMessage, AssistantMessage, ContentBlock, Cost, LlmMessage, StopReason,
-        ToolResultMessage, Usage, UserMessage,
+        AgentMessage, AssistantMessage, ContentBlock, LlmMessage, StopReason, ToolResultMessage,
+        UserMessage,
     };
 
     fn make_context(system: &str, messages: Vec<AgentMessage>) -> AgentContext {
-        AgentContext {
-            system_prompt: system.to_string(),
-            messages,
-            tools: vec![],
-        }
+        AgentContext::new(system.to_string(), messages, vec![])
     }
 
     fn smollm_config() -> ModelConfig {
@@ -271,18 +267,9 @@ mod tests {
 
     #[test]
     fn empty_assistant_message_no_panic() {
-        let msg = AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
-            content: vec![],
-            provider: String::new(),
-            model_id: String::new(),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::Stop,
-            error_message: None,
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        }));
+        let msg = AgentMessage::Llm(LlmMessage::Assistant(
+            AssistantMessage::new(vec![], String::new(), String::new()).with_timestamp(0),
+        ));
         let ctx = make_context("sys", vec![msg]);
         let msgs = convert_context_messages(&ctx, &smollm_config(), false);
         assert_eq!(msgs[1].role, "assistant");
@@ -290,28 +277,25 @@ mod tests {
 
     #[test]
     fn assistant_tool_calls_preserved() {
-        let msg = AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
-            content: vec![
-                ContentBlock::Text {
-                    text: "I need to inspect the file.".to_string(),
-                },
-                ContentBlock::ToolCall {
-                    id: "tc-1".to_string(),
-                    name: "read_file".to_string(),
-                    arguments: json!({ "path": "Cargo.toml" }),
-                    partial_json: None,
-                },
-            ],
-            provider: String::new(),
-            model_id: String::new(),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::ToolUse,
-            error_message: None,
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        }));
+        let msg = AgentMessage::Llm(LlmMessage::Assistant(
+            AssistantMessage::new(
+                vec![
+                    ContentBlock::Text {
+                        text: "I need to inspect the file.".to_string(),
+                    },
+                    ContentBlock::ToolCall {
+                        id: "tc-1".to_string(),
+                        name: "read_file".to_string(),
+                        arguments: json!({ "path": "Cargo.toml" }),
+                        partial_json: None,
+                    },
+                ],
+                String::new(),
+                String::new(),
+            )
+            .with_stop_reason(StopReason::ToolUse)
+            .with_timestamp(0),
+        ));
         let ctx = make_context("sys", vec![msg]);
         let msgs = convert_context_messages(&ctx, &smollm_config(), false);
 
@@ -331,18 +315,17 @@ mod tests {
 
     #[test]
     fn multiple_content_blocks_concatenated() {
-        let msg = AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![
+        let msg = AgentMessage::Llm(LlmMessage::User(
+            UserMessage::new(vec![
                 ContentBlock::Text {
                     text: "Hello ".to_string(),
                 },
                 ContentBlock::Text {
                     text: "world!".to_string(),
                 },
-            ],
-            timestamp: 0,
-            cache_hint: None,
-        }));
+            ])
+            .with_timestamp(0),
+        ));
         let ctx = make_context("sys", vec![msg]);
         let msgs = convert_context_messages(&ctx, &smollm_config(), false);
         assert_eq!(msgs[1].content, "Hello world!");
@@ -350,8 +333,8 @@ mod tests {
 
     #[test]
     fn non_text_content_blocks_ignored() {
-        let msg = AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![
+        let msg = AgentMessage::Llm(LlmMessage::User(
+            UserMessage::new(vec![
                 ContentBlock::Text {
                     text: "text part".to_string(),
                 },
@@ -365,10 +348,9 @@ mod tests {
                     arguments: json!({}),
                     partial_json: None,
                 },
-            ],
-            timestamp: 0,
-            cache_hint: None,
-        }));
+            ])
+            .with_timestamp(0),
+        ));
         let ctx = make_context("sys", vec![msg]);
         let msgs = convert_context_messages(&ctx, &smollm_config(), false);
         assert_eq!(msgs[1].content, "text part");
@@ -376,16 +358,16 @@ mod tests {
 
     #[test]
     fn tool_result_error_message_no_panic() {
-        let msg = AgentMessage::Llm(LlmMessage::ToolResult(ToolResultMessage {
-            tool_call_id: "tc-err".to_string(),
-            content: vec![ContentBlock::Text {
-                text: "error: command failed".to_string(),
-            }],
-            is_error: true,
-            timestamp: 0,
-            details: serde_json::Value::Null,
-            cache_hint: None,
-        }));
+        let msg = AgentMessage::Llm(LlmMessage::ToolResult(
+            ToolResultMessage::new(
+                "tc-err",
+                vec![ContentBlock::Text {
+                    text: "error: command failed".to_string(),
+                }],
+            )
+            .with_is_error(true)
+            .with_timestamp(0),
+        ));
         let ctx = make_context("", vec![msg]);
         let _msgs = convert_context_messages(&ctx, &smollm_config(), false);
     }
@@ -395,16 +377,13 @@ mod tests {
     fn tool_result_formatting() {
         use swink_agent::ToolResultMessage;
 
-        let result = ToolResultMessage {
-            tool_call_id: "read_file".to_string(),
-            content: vec![ContentBlock::Text {
+        let result = ToolResultMessage::new(
+            "read_file",
+            vec![ContentBlock::Text {
                 text: "file contents".to_string(),
             }],
-            is_error: false,
-            timestamp: 0,
-            details: serde_json::Value::Null,
-            cache_hint: None,
-        };
+        )
+        .with_timestamp(0);
 
         let msg = Gemma4LocalConverter::tool_result_message(&result);
         assert_eq!(

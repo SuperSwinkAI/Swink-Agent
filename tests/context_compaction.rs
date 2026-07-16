@@ -43,7 +43,7 @@ impl StreamFn for MockMessageCapturingStreamFn {
             .iter()
             .filter_map(|m| match m {
                 AgentMessage::Llm(llm) => Some(llm.clone()),
-                AgentMessage::Custom(_) => None,
+                _ => None,
             })
             .collect();
         self.captured_messages.lock().unwrap().push(llm_msgs);
@@ -70,7 +70,7 @@ type ConvertToLlmBoxed = Box<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send 
 fn default_convert_to_llm() -> ConvertToLlmBoxed {
     Box::new(|msg: &AgentMessage| match msg {
         AgentMessage::Llm(llm) => Some(llm.clone()),
-        AgentMessage::Custom(_) => None,
+        _ => None,
     })
 }
 
@@ -89,11 +89,9 @@ fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
 fn large_user_msg(label: &str, token_count: usize) -> AgentMessage {
     let padding = "x".repeat(token_count * 4);
     let text = format!("{label}:{padding}");
-    AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text { text }],
-        timestamp: 0,
-        cache_hint: None,
-    }))
+    AgentMessage::Llm(LlmMessage::User(
+        UserMessage::new(vec![ContentBlock::Text { text }]).with_timestamp(0),
+    ))
 }
 
 /// Collect all events from a loop stream.
@@ -231,11 +229,11 @@ async fn compacted_context_preserves_anchors() {
     // Verify anchor messages survived
     let first_text = match &post_overflow[0] {
         LlmMessage::User(u) => ContentBlock::extract_text(&u.content),
-        LlmMessage::Assistant(_) | LlmMessage::ToolResult(_) => String::new(),
+        _ => String::new(),
     };
     let second_text = match &post_overflow[1] {
         LlmMessage::User(u) => ContentBlock::extract_text(&u.content),
-        LlmMessage::Assistant(_) | LlmMessage::ToolResult(_) => String::new(),
+        _ => String::new(),
     };
     assert!(
         first_text.contains("ANCHOR_ONE"),

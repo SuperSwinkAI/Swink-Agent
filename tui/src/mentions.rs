@@ -24,6 +24,7 @@ const TRAILING_PUNCTUATION: &[char] = &[',', ';', ':', '!', '?', ')', ']', '}', 
 /// `start`/`end` are byte offsets into the text the mention was parsed from,
 /// so a host can splice replacements in without re-scanning:
 /// `&text[mention.start..mention.end]` is the mention including its `@`.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PathMention {
     /// The mentioned path, without the leading `@` and without trailing
@@ -34,6 +35,18 @@ pub struct PathMention {
     pub start: usize,
     /// Byte offset one past the end of the mention.
     pub end: usize,
+}
+
+impl PathMention {
+    /// Build a mention spanning `start..end` in the text it was parsed from.
+    #[must_use]
+    pub fn new(path: impl Into<String>, start: usize, end: usize) -> Self {
+        Self {
+            path: path.into(),
+            start,
+            end,
+        }
+    }
 }
 
 /// Find every `@path` mention in `text`, in source order.
@@ -77,11 +90,11 @@ pub fn parse_mentions(text: &str) -> Vec<PathMention> {
             continue;
         }
 
-        mentions.push(PathMention {
-            path: path.to_string(),
+        mentions.push(PathMention::new(
+            path,
             start,
-            end: start + ch.len_utf8() + path.len(),
-        });
+            start + ch.len_utf8() + path.len(),
+        ));
     }
 
     mentions

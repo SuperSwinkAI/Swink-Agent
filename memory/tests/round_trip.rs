@@ -9,8 +9,7 @@ use swink_agent::{
     AgentMessage, CustomMessageRegistry, LlmMessage, ModelSpec, SerializedCustomMessage,
 };
 use swink_agent_memory::{
-    InterruptState, JsonlSessionStore, LoadOptions, PendingToolCall, SessionEntry, SessionMeta,
-    SessionStore,
+    InterruptState, JsonlSessionStore, LoadOptions, PendingToolCall, SessionEntry, SessionStore,
 };
 
 use common::{
@@ -48,11 +47,9 @@ fn save_overwrites_existing_session() {
     store.save("overwrite_test", &meta1, &msgs1).unwrap();
 
     // Load to get updated sequence after first save
-    let (saved_meta, _) = store.load("overwrite_test", None).unwrap();
-    let meta2 = SessionMeta {
-        title: "Version 2".to_string(),
-        ..saved_meta
-    };
+    let (mut saved_meta, _) = store.load("overwrite_test", None).unwrap();
+    saved_meta.title = "Version 2".to_string();
+    let meta2 = saved_meta;
     let msgs2 = vec![user_message("second"), user_message("third")];
     store.save("overwrite_test", &meta2, &msgs2).unwrap();
 
@@ -207,16 +204,8 @@ fn rich_entries_roundtrip() {
     let entries = vec![
         SessionEntry::Message(llm_user_message("hello")),
         SessionEntry::ModelChange {
-            from: ModelSpec {
-                provider: "openai".to_string(),
-                model_id: "gpt-4".to_string(),
-                ..ModelSpec::new("", "")
-            },
-            to: ModelSpec {
-                provider: "anthropic".to_string(),
-                model_id: "claude-3".to_string(),
-                ..ModelSpec::new("", "")
-            },
+            from: ModelSpec::new("openai", "gpt-4"),
+            to: ModelSpec::new("anthropic", "claude-3"),
             timestamp: 100,
         },
         SessionEntry::Label {
@@ -386,24 +375,20 @@ fn unsupported_future_version_returns_error() {
 // --- US8: Interrupt State Persistence ---
 
 fn sample_interrupt() -> InterruptState {
-    InterruptState {
-        interrupted_at: 1_710_500_000,
-        pending_tool_calls: vec![
-            PendingToolCall {
-                tool_call_id: "tc_1".to_string(),
-                tool_name: "bash".to_string(),
-                arguments: serde_json::json!({"command": "ls -la"}),
-            },
-            PendingToolCall {
-                tool_call_id: "tc_2".to_string(),
-                tool_name: "read_file".to_string(),
-                arguments: serde_json::json!({"path": "/tmp/foo.txt"}),
-            },
+    InterruptState::new(
+        1_710_500_000,
+        vec![
+            PendingToolCall::new("tc_1", "bash", serde_json::json!({"command": "ls -la"})),
+            PendingToolCall::new(
+                "tc_2",
+                "read_file",
+                serde_json::json!({"path": "/tmp/foo.txt"}),
+            ),
         ],
-        context_snapshot: vec![llm_user_message("hello"), llm_assistant_message("hi")],
-        system_prompt: "You are a helpful assistant.".to_string(),
-        model: ModelSpec::new("openai", "gpt-4"),
-    }
+        vec![llm_user_message("hello"), llm_assistant_message("hi")],
+        "You are a helpful assistant.",
+        ModelSpec::new("openai", "gpt-4"),
+    )
 }
 
 #[test]
@@ -512,10 +497,7 @@ fn load_last_n_entries() {
 
     store.save_entries("filter_n", &meta, &entries).unwrap();
 
-    let options = LoadOptions {
-        last_n_entries: Some(10),
-        ..Default::default()
-    };
+    let options = LoadOptions::new().with_last_n_entries(10);
     let (_, loaded) = store.load_with_options("filter_n", &options).unwrap();
     assert_eq!(loaded.len(), 10);
 
@@ -538,10 +520,7 @@ fn load_after_timestamp() {
     store.save_entries("filter_ts", &meta, &entries).unwrap();
 
     let after = DateTime::from_timestamp(25, 0).unwrap().to_utc();
-    let options = LoadOptions {
-        after_timestamp: Some(after),
-        ..Default::default()
-    };
+    let options = LoadOptions::new().with_after_timestamp(after);
     let (_, loaded) = store.load_with_options("filter_ts", &options).unwrap();
     assert_eq!(loaded.len(), 25); // entries with timestamps 26..50
 
@@ -574,10 +553,7 @@ fn load_by_entry_type() {
 
     store.save_entries("filter_type", &meta, &entries).unwrap();
 
-    let options = LoadOptions {
-        entry_types: Some(vec!["message".to_string()]),
-        ..Default::default()
-    };
+    let options = LoadOptions::new().with_entry_types(vec!["message".to_string()]);
     let (_, loaded) = store.load_with_options("filter_type", &options).unwrap();
     assert_eq!(loaded.len(), 2);
     assert!(loaded.iter().all(|e| matches!(e, SessionEntry::Message(_))));

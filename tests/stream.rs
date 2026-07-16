@@ -35,22 +35,18 @@ fn accumulate_text_and_tool_call() {
         AssistantMessageEvent::ToolCallEnd { content_index: 1 },
         AssistantMessageEvent::Done {
             stop_reason: StopReason::ToolUse,
-            usage: Usage {
-                input: 100,
-                output: 50,
-                cache_read: 0,
-                cache_write: 0,
-                total: 150,
-                ..Default::default()
-            },
-            cost: Cost {
-                input: 0.01,
-                output: 0.02,
-                cache_read: 0.0,
-                cache_write: 0.0,
-                total: 0.03,
-                ..Default::default()
-            },
+            usage: Usage::default()
+                .with_input(100)
+                .with_output(50)
+                .with_cache_read(0)
+                .with_cache_write(0)
+                .with_total(150),
+            cost: Cost::default()
+                .with_input(0.01)
+                .with_output(0.02)
+                .with_cache_read(0.0)
+                .with_cache_write(0.0)
+                .with_total(0.03),
         },
     ];
 
@@ -134,14 +130,12 @@ fn accumulate_interleaved_text_and_tool_calls() {
         AssistantMessageEvent::ToolCallEnd { content_index: 3 },
         AssistantMessageEvent::Done {
             stop_reason: StopReason::ToolUse,
-            usage: Usage {
-                input: 200,
-                output: 100,
-                cache_read: 10,
-                cache_write: 5,
-                total: 315,
-                ..Default::default()
-            },
+            usage: Usage::default()
+                .with_input(200)
+                .with_output(100)
+                .with_cache_read(10)
+                .with_cache_write(5)
+                .with_total(315),
             cost: Cost::default(),
         },
     ];
@@ -210,10 +204,7 @@ fn stream_options_defaults() {
 
 #[test]
 fn stream_options_debug_redacts_api_key() {
-    let opts = StreamOptions {
-        api_key: Some("secret-key-123".to_string()),
-        ..StreamOptions::default()
-    };
+    let opts = StreamOptions::default().with_api_key("secret-key-123".to_string());
     let debug = format!("{opts:?}");
     assert!(debug.contains("[REDACTED]"));
     assert!(!debug.contains("secret-key-123"));
@@ -247,14 +238,14 @@ fn accumulate_error_event() {
             error_message: "connection lost".into(),
             error_kind: None,
             retry_after: None,
-            usage: Some(Usage {
-                input: 50,
-                output: 10,
-                cache_read: 0,
-                cache_write: 0,
-                total: 60,
-                ..Default::default()
-            }),
+            usage: Some(
+                Usage::default()
+                    .with_input(50)
+                    .with_output(10)
+                    .with_cache_read(0)
+                    .with_cache_write(0)
+                    .with_total(60),
+            ),
         },
     ];
 
@@ -428,14 +419,14 @@ fn error_event_with_usage() {
             error_message: "overloaded".into(),
             error_kind: None,
             retry_after: None,
-            usage: Some(Usage {
-                input: 42,
-                output: 7,
-                cache_read: 0,
-                cache_write: 0,
-                total: 49,
-                ..Default::default()
-            }),
+            usage: Some(
+                Usage::default()
+                    .with_input(42)
+                    .with_output(7)
+                    .with_cache_read(0)
+                    .with_cache_write(0)
+                    .with_total(49),
+            ),
         },
     ];
 

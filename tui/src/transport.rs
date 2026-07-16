@@ -21,6 +21,7 @@ use tokio::sync::mpsc;
 use swink_agent::{Agent, AgentEvent, AgentMessage, ContentBlock, LlmMessage, UserMessage};
 
 /// Plain text input from the user, ready to be sent to the agent.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct UserInput {
     /// The text content of the user's message.
@@ -35,6 +36,7 @@ impl UserInput {
 }
 
 /// Error type for transport operations.
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum TransportError {
     /// The underlying channel or connection has closed.
@@ -105,11 +107,10 @@ impl InProcessTransport {
 
         tokio::spawn(async move {
             while let Some(input) = input_rx.recv().await {
-                let user_msg = AgentMessage::Llm(LlmMessage::User(UserMessage {
-                    content: vec![ContentBlock::Text { text: input.text }],
-                    timestamp: swink_agent::now_timestamp(),
-                    cache_hint: None,
-                }));
+                let user_msg = AgentMessage::Llm(LlmMessage::User(
+                    UserMessage::new(vec![ContentBlock::Text { text: input.text }])
+                        .with_timestamp(swink_agent::now_timestamp()),
+                ));
 
                 match agent.prompt_stream(vec![user_msg]) {
                     Ok(stream) => {

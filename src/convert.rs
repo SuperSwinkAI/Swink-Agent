@@ -75,21 +75,30 @@ pub fn convert_messages<C: MessageConverter>(
 ///
 /// Used by adapters to avoid duplicating the `name` / `description` /
 /// `parameters` mapping before wrapping in provider-specific types.
+#[non_exhaustive]
 pub struct ToolSchema {
     pub name: String,
     pub description: String,
     pub parameters: Value,
 }
 
+impl ToolSchema {
+    /// Create a new tool schema record.
+    #[must_use]
+    pub fn new(name: impl Into<String>, description: impl Into<String>, parameters: Value) -> Self {
+        Self {
+            name: name.into(),
+            description: description.into(),
+            parameters,
+        }
+    }
+}
+
 /// Extract tool metadata from a slice of [`AgentTool`] trait objects.
 pub fn extract_tool_schemas(tools: &[Arc<dyn AgentTool>]) -> Vec<ToolSchema> {
     tools
         .iter()
-        .map(|t| ToolSchema {
-            name: t.name().to_string(),
-            description: t.description().to_string(),
-            parameters: t.parameters_schema().clone(),
-        })
+        .map(|t| ToolSchema::new(t.name(), t.description(), t.parameters_schema().clone()))
         .collect()
 }
 

@@ -202,13 +202,12 @@ fn check_tool_called(result: &AgentResult, tool_name: &str) -> bool {
 
 /// Build a user message from plain text.
 fn make_user_message(text: &str) -> AgentMessage {
-    AgentMessage::Llm(LlmMessage::User(swink_agent::UserMessage {
-        content: vec![ContentBlock::Text {
+    AgentMessage::Llm(LlmMessage::User(
+        swink_agent::UserMessage::new(vec![ContentBlock::Text {
             text: text.to_string(),
-        }],
-        timestamp: 0,
-        cache_hint: None,
-    }))
+        }])
+        .with_timestamp(0),
+    ))
 }
 
 #[cfg(all(test, feature = "testkit"))]

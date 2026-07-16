@@ -19,6 +19,7 @@ use crate::runner::{LlamaRunner, RunnerConfig};
 // ─── ModelConfig ────────────────────────────────────────────────────────────
 
 /// Configuration for a local GGUF model.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelConfig {
     /// `HuggingFace` repository ID (e.g. `unsloth/SmolLM3-3B-GGUF`).
@@ -38,6 +39,44 @@ pub struct ModelConfig {
 }
 
 impl ModelConfig {
+    /// Creates a new `ModelConfig` for the given repository and GGUF filename.
+    ///
+    /// GPU offload defaults to `0` (CPU only), context length defaults to
+    /// `8192`, and `chat_template` defaults to `None` (use the model's
+    /// built-in template). Use the `with_*` methods to override any of these.
+    #[must_use]
+    pub fn new(repo_id: impl Into<String>, filename: impl Into<String>) -> Self {
+        Self {
+            repo_id: repo_id.into(),
+            filename: filename.into(),
+            gpu_layers: 0,
+            context_length: 8192,
+            chat_template: None,
+        }
+    }
+
+    /// Sets the number of layers to offload to GPU (`0` = CPU only).
+    #[must_use]
+    pub fn with_gpu_layers(mut self, gpu_layers: u32) -> Self {
+        self.gpu_layers = gpu_layers;
+        self
+    }
+
+    /// Sets the context window length (capped to save memory).
+    #[must_use]
+    pub fn with_context_length(mut self, context_length: usize) -> Self {
+        self.context_length = context_length;
+        self
+    }
+
+    /// Sets a chat template override. If unset, the model's built-in
+    /// template is used.
+    #[must_use]
+    pub fn with_chat_template(mut self, chat_template: impl Into<String>) -> Self {
+        self.chat_template = Some(chat_template.into());
+        self
+    }
+
     /// Returns `true` if this configuration targets a Gemma 4 model family.
     #[cfg(feature = "gemma4")]
     pub fn is_gemma4(&self) -> bool {
@@ -55,6 +94,7 @@ impl Default for ModelConfig {
 // ─── ModelState (public) ───────────────────────────────────────────────────
 
 /// Lifecycle state of a local model.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelState {
     Unloaded,

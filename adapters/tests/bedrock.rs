@@ -132,11 +132,7 @@ async fn bedrock_text_response_maps_to_text_events() {
     let events = stream_fn
         .stream(
             &ModelSpec::new("bedrock", "amazon.nova-pro-v1:0"),
-            &AgentContext {
-                system_prompt: String::new(),
-                messages: Vec::new(),
-                tools: Vec::new(),
-            },
+            &AgentContext::new(String::new(), Vec::new(), Vec::new()),
             &StreamOptions::default(),
             CancellationToken::new(),
         )
@@ -180,11 +176,7 @@ async fn bedrock_http_400_input_too_long_sets_context_overflow_kind() {
     let events = stream_fn
         .stream(
             &ModelSpec::new("bedrock", "amazon.nova-pro-v1:0"),
-            &AgentContext {
-                system_prompt: String::new(),
-                messages: Vec::new(),
-                tools: Vec::new(),
-            },
+            &AgentContext::new(String::new(), Vec::new(), Vec::new()),
             &StreamOptions::default(),
             CancellationToken::new(),
         )
@@ -229,11 +221,7 @@ async fn bedrock_http_400_other_validation_error_has_no_kind() {
     let events = stream_fn
         .stream(
             &ModelSpec::new("bedrock", "amazon.nova-pro-v1:0"),
-            &AgentContext {
-                system_prompt: String::new(),
-                messages: Vec::new(),
-                tools: Vec::new(),
-            },
+            &AgentContext::new(String::new(), Vec::new(), Vec::new()),
             &StreamOptions::default(),
             CancellationToken::new(),
         )
@@ -267,11 +255,7 @@ async fn bedrock_pre_request_cancellation_is_aborted() {
     let events = stream_fn
         .stream(
             &ModelSpec::new("bedrock", "amazon.nova-pro-v1:0"),
-            &AgentContext {
-                system_prompt: String::new(),
-                messages: Vec::new(),
-                tools: Vec::new(),
-            },
+            &AgentContext::new(String::new(), Vec::new(), Vec::new()),
             &StreamOptions::default(),
             token,
         )
@@ -313,14 +297,7 @@ impl AgentTool for DummyTool {
         _state: std::sync::Arc<std::sync::RwLock<swink_agent::SessionState>>,
         _credential: Option<swink_agent::ResolvedCredential>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = AgentToolResult> + Send + '_>> {
-        Box::pin(async {
-            AgentToolResult {
-                content: vec![],
-                details: serde_json::Value::Null,
-                is_error: false,
-                transfer_signal: None,
-            }
-        })
+        Box::pin(async { AgentToolResult::new(vec![], false) })
     }
 }
 
@@ -351,17 +328,16 @@ async fn bedrock_tool_use_maps_to_tool_events() {
     let events = stream_fn
         .stream(
             &ModelSpec::new("bedrock", "us.anthropic.claude-sonnet-4-5-20250929-v1:0"),
-            &AgentContext {
-                system_prompt: String::new(),
-                messages: vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-                    content: vec![ContentBlock::Text {
+            &AgentContext::new(
+                String::new(),
+                vec![AgentMessage::Llm(LlmMessage::User(
+                    UserMessage::new(vec![ContentBlock::Text {
                         text: "weather?".into(),
-                    }],
-                    timestamp: 0,
-                    cache_hint: None,
-                }))],
-                tools: vec![std::sync::Arc::new(DummyTool)],
-            },
+                    }])
+                    .with_timestamp(0),
+                ))],
+                vec![std::sync::Arc::new(DummyTool)],
+            ),
             &StreamOptions::default(),
             CancellationToken::new(),
         )
@@ -410,11 +386,7 @@ async fn bedrock_session_token_is_forwarded() {
     let events = stream_fn
         .stream(
             &ModelSpec::new("bedrock", "amazon.nova-pro-v1:0"),
-            &AgentContext {
-                system_prompt: String::new(),
-                messages: Vec::new(),
-                tools: Vec::new(),
-            },
+            &AgentContext::new(String::new(), Vec::new(), Vec::new()),
             &StreamOptions::default(),
             CancellationToken::new(),
         )
@@ -457,11 +429,7 @@ async fn bedrock_stream_cancellation_is_aborted() {
     let cancel_token = token.clone();
     let events_handle = tokio::spawn(async move {
         let model = ModelSpec::new("bedrock", "amazon.nova-pro-v1:0");
-        let context = AgentContext {
-            system_prompt: String::new(),
-            messages: Vec::new(),
-            tools: Vec::new(),
-        };
+        let context = AgentContext::new(String::new(), Vec::new(), Vec::new());
         let options = StreamOptions::default();
         stream_fn
             .stream(&model, &context, &options, token)
@@ -510,11 +478,7 @@ async fn bedrock_startup_cancellation_does_not_wait_for_send() {
     let cancel_token = token.clone();
     let events_handle = tokio::spawn(async move {
         let model = ModelSpec::new("bedrock", "amazon.nova-pro-v1:0");
-        let context = AgentContext {
-            system_prompt: String::new(),
-            messages: Vec::new(),
-            tools: Vec::new(),
-        };
+        let context = AgentContext::new(String::new(), Vec::new(), Vec::new());
         let options = StreamOptions::default();
         stream_fn
             .stream(&model, &context, &options, token)
@@ -565,10 +529,9 @@ async fn bedrock_extra_maps_to_additional_model_request_fields() {
         "secret",
         None,
     );
-    let options = StreamOptions {
-        temperature: Some(0.7),
-        serving: swink_agent::ServingOptions {
-            extra: [
+    let options = StreamOptions::default().with_temperature(0.7).with_serving(
+        swink_agent::ServingOptions::default().with_extra(
+            [
                 ("top_k".to_string(), serde_json::json!(250)),
                 // Colliding keys: the typed base parameters must win and the
                 // extra entries must not reach `additionalModelRequestFields`.
@@ -577,18 +540,12 @@ async fn bedrock_extra_maps_to_additional_model_request_fields() {
             ]
             .into_iter()
             .collect(),
-            ..swink_agent::ServingOptions::default()
-        },
-        ..StreamOptions::default()
-    };
+        ),
+    );
     let _events = stream_fn
         .stream(
             &ModelSpec::new("bedrock", "amazon.nova-pro-v1:0"),
-            &AgentContext {
-                system_prompt: String::new(),
-                messages: Vec::new(),
-                tools: Vec::new(),
-            },
+            &AgentContext::new(String::new(), Vec::new(), Vec::new()),
             &options,
             CancellationToken::new(),
         )
@@ -642,11 +599,7 @@ async fn bedrock_empty_extra_omits_additional_model_request_fields() {
     let _events = stream_fn
         .stream(
             &ModelSpec::new("bedrock", "amazon.nova-pro-v1:0"),
-            &AgentContext {
-                system_prompt: String::new(),
-                messages: Vec::new(),
-                tools: Vec::new(),
-            },
+            &AgentContext::new(String::new(), Vec::new(), Vec::new()),
             &StreamOptions::default(),
             CancellationToken::new(),
         )

@@ -16,8 +16,8 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
     AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessage,
-    AssistantMessageEvent, ContentBlock, Cost, LlmMessage, ModelSpec, StopReason, StreamFn,
-    StreamOptions, Usage, UserMessage,
+    AssistantMessageEvent, ContentBlock, LlmMessage, ModelSpec, StreamFn, StreamOptions,
+    UserMessage,
 };
 use swink_agent_adapters::BedrockStreamFn;
 
@@ -46,17 +46,16 @@ fn cheap_model() -> ModelSpec {
 }
 
 fn simple_context(prompt: &str) -> AgentContext {
-    AgentContext {
-        system_prompt: "Reply in one word.".into(),
-        messages: vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
+    AgentContext::new(
+        "Reply in one word.",
+        vec![AgentMessage::Llm(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text {
                 text: prompt.to_string(),
-            }],
-            timestamp: 0,
-            cache_hint: None,
-        }))],
-        tools: Vec::new(),
-    }
+            }])
+            .with_timestamp(0),
+        ))],
+        Vec::new(),
+    )
 }
 
 async fn collect_events(
@@ -203,16 +202,7 @@ impl AgentTool for DummyTool {
         _state: std::sync::Arc<std::sync::RwLock<swink_agent::SessionState>>,
         _credential: Option<swink_agent::ResolvedCredential>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = AgentToolResult> + Send + '_>> {
-        Box::pin(async {
-            AgentToolResult {
-                content: vec![ContentBlock::Text {
-                    text: "72°F, sunny".into(),
-                }],
-                details: json!({}),
-                is_error: false,
-                transfer_signal: None,
-            }
-        })
+        Box::pin(async { AgentToolResult::text("72°F, sunny") })
     }
 }
 
@@ -221,18 +211,16 @@ impl AgentTool for DummyTool {
 async fn live_tool_use_stream() {
     let (access_key, secret_key, region, session_token) = aws_creds();
     let sf = BedrockStreamFn::new(&region, &access_key, &secret_key, session_token);
-    let context = AgentContext {
-        system_prompt: "You must use the get_weather tool to answer. Do not reply with text only."
-            .into(),
-        messages: vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
+    let context = AgentContext::new(
+        "You must use the get_weather tool to answer. Do not reply with text only.",
+        vec![AgentMessage::Llm(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text {
                 text: "What's the weather in Paris?".into(),
-            }],
-            timestamp: 0,
-            cache_hint: None,
-        }))],
-        tools: vec![Arc::new(DummyTool)],
-    };
+            }])
+            .with_timestamp(0),
+        ))],
+        vec![Arc::new(DummyTool)],
+    );
 
     let events = timeout(TIMEOUT, collect_events(&sf, &context))
         .await
@@ -274,40 +262,34 @@ async fn live_multi_turn_context() {
     let sf = BedrockStreamFn::new(&region, &access_key, &secret_key, session_token);
 
     // Two-turn conversation: introduce a name, then ask for recall
-    let context = AgentContext {
-        system_prompt: "You are a helpful assistant. Remember what the user tells you.".into(),
-        messages: vec![
-            AgentMessage::Llm(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+    let context = AgentContext::new(
+        "You are a helpful assistant. Remember what the user tells you.",
+        vec![
+            AgentMessage::Llm(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: "My name is Zephyrine.".into(),
-                }],
-                timestamp: 0,
-                cache_hint: None,
-            })),
-            AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
-                content: vec![ContentBlock::Text {
-                    text: "Nice to meet you, Zephyrine!".into(),
-                }],
-                provider: "bedrock".into(),
-                model_id: String::new(),
-                stop_reason: StopReason::Stop,
-                usage: Usage::default(),
-                cost: Cost::default(),
-                error_message: None,
-                error_kind: None,
-                timestamp: 0,
-                cache_hint: None,
-            })),
-            AgentMessage::Llm(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+                }])
+                .with_timestamp(0),
+            )),
+            AgentMessage::Llm(LlmMessage::Assistant(
+                AssistantMessage::new(
+                    vec![ContentBlock::Text {
+                        text: "Nice to meet you, Zephyrine!".into(),
+                    }],
+                    "bedrock",
+                    String::new(),
+                )
+                .with_timestamp(0),
+            )),
+            AgentMessage::Llm(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: "What is my name?".into(),
-                }],
-                timestamp: 0,
-                cache_hint: None,
-            })),
+                }])
+                .with_timestamp(0),
+            )),
         ],
-        tools: Vec::new(),
-    };
+        Vec::new(),
+    );
 
     let events = timeout(TIMEOUT, collect_events(&sf, &context))
         .await

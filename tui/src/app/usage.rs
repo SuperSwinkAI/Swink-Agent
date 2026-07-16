@@ -16,14 +16,14 @@ impl TurnUsage {
     /// [`swink_agent::price_assistant_message_with`]. The TUI never prices
     /// anything itself; it only totals what the loop reports.
     pub(super) fn from_message(message: &AssistantMessage) -> Self {
-        Self {
-            model_id: message.model_id.clone(),
-            input_tokens: message.usage.input,
-            output_tokens: message.usage.output,
-            cache_read_tokens: message.usage.cache_read,
-            cache_write_tokens: message.usage.cache_write,
-            cost: message.cost.total,
-        }
+        Self::new(
+            message.model_id.clone(),
+            message.usage.input,
+            message.usage.output,
+            message.usage.cache_read,
+            message.usage.cache_write,
+            message.cost.total,
+        )
     }
 }
 
@@ -227,27 +227,17 @@ mod tests {
 
     #[test]
     fn turn_usage_is_built_from_the_loop_priced_message() {
-        let message = swink_agent::AssistantMessage {
-            content: vec![],
-            provider: "anthropic".to_string(),
-            model_id: "claude-sonnet-4-6".to_string(),
-            usage: swink_agent::Usage {
-                input: 10,
-                output: 20,
-                cache_read: 30,
-                cache_write: 40,
-                ..swink_agent::Usage::default()
-            },
-            cost: swink_agent::Cost {
-                total: 1.25,
-                ..swink_agent::Cost::default()
-            },
-            stop_reason: swink_agent::StopReason::Stop,
-            error_message: None,
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        };
+        let message = swink_agent::AssistantMessage::new(vec![], "anthropic", "claude-sonnet-4-6")
+            .with_usage(
+                swink_agent::Usage::default()
+                    .with_input(10)
+                    .with_output(20)
+                    .with_cache_read(30)
+                    .with_cache_write(40),
+            )
+            .with_cost(swink_agent::Cost::default().with_total(1.25))
+            .with_stop_reason(swink_agent::StopReason::Stop)
+            .with_timestamp(0);
         let recorded = TurnUsage::from_message(&message);
         assert_eq!(recorded.model_id, "claude-sonnet-4-6");
         assert_eq!(recorded.input_tokens, 10);

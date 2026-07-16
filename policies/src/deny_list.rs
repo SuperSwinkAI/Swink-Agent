@@ -52,13 +52,7 @@ mod tests {
         args: &'a mut serde_json::Value,
         state: &'a swink_agent::SessionState,
     ) -> ToolDispatchContext<'a> {
-        ToolDispatchContext {
-            tool_name,
-            tool_call_id: "id1",
-            arguments: args,
-            execution_root: None,
-            state,
-        }
+        ToolDispatchContext::new(tool_name, "id1", args, None, state)
     }
 
     #[test]

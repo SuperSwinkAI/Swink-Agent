@@ -15,6 +15,7 @@ use crate::jsonrpc::RpcError;
 // ─── Handshake ────────────────────────────────────────────────────────────────
 
 /// Payload for the `initialize` notification sent by the client.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InitializeParams {
     pub protocol_version: String,
@@ -22,7 +23,26 @@ pub struct InitializeParams {
     pub client: ClientInfo,
 }
 
+impl InitializeParams {
+    /// Construct with the given protocol version and default `client` info.
+    #[must_use]
+    pub fn new(protocol_version: impl Into<String>) -> Self {
+        Self {
+            protocol_version: protocol_version.into(),
+            client: ClientInfo::default(),
+        }
+    }
+
+    /// Set the client info.
+    #[must_use]
+    pub fn with_client(mut self, client: ClientInfo) -> Self {
+        self.client = client;
+        self
+    }
+}
+
 /// Payload for the `initialized` notification sent by the server.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InitializedParams {
     pub protocol_version: String,
@@ -30,6 +50,25 @@ pub struct InitializedParams {
     pub server: ServerInfo,
 }
 
+impl InitializedParams {
+    /// Construct with the given protocol version and default `server` info.
+    #[must_use]
+    pub fn new(protocol_version: impl Into<String>) -> Self {
+        Self {
+            protocol_version: protocol_version.into(),
+            server: ServerInfo::default(),
+        }
+    }
+
+    /// Set the server info.
+    #[must_use]
+    pub fn with_server(mut self, server: ServerInfo) -> Self {
+        self.server = server;
+        self
+    }
+}
+
+#[non_exhaustive]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ClientInfo {
     #[serde(default)]
@@ -38,10 +77,33 @@ pub struct ClientInfo {
     pub version: String,
 }
 
+impl ClientInfo {
+    /// Construct a new `ClientInfo`.
+    #[must_use]
+    pub fn new(name: impl Into<String>, version: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            version: version.into(),
+        }
+    }
+}
+
+#[non_exhaustive]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ServerInfo {
     pub name: String,
     pub version: String,
+}
+
+impl ServerInfo {
+    /// Construct a new `ServerInfo`.
+    #[must_use]
+    pub fn new(name: impl Into<String>, version: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            version: version.into(),
+        }
+    }
 }
 
 // Called only from the unix `run_session` path in `server.rs`, which is itself
@@ -96,6 +158,7 @@ fn ensure_protocol_version(actual: &str) -> Result<(), RpcError> {
 // ─── prompt ───────────────────────────────────────────────────────────────────
 
 /// Parameters for the `prompt` request.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromptParams {
     /// The user's text message.
@@ -105,15 +168,45 @@ pub struct PromptParams {
     pub session_id: Option<String>,
 }
 
+impl PromptParams {
+    /// Construct a new `PromptParams` with no session id.
+    #[must_use]
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            session_id: None,
+        }
+    }
+
+    /// Continue an existing session.
+    #[must_use]
+    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = Some(session_id.into());
+        self
+    }
+}
+
 /// Response to the `prompt` request — sent once the agent accepts the input.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromptResult {
     pub turn_id: String,
 }
 
+impl PromptResult {
+    /// Construct a new `PromptResult`.
+    #[must_use]
+    pub fn new(turn_id: impl Into<String>) -> Self {
+        Self {
+            turn_id: turn_id.into(),
+        }
+    }
+}
+
 // ─── tool.approve ─────────────────────────────────────────────────────────────
 
 /// Parameters for the `tool.approve` request sent by the server.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolApprovalRequestDto {
     pub id: String,
@@ -122,6 +215,32 @@ pub struct ToolApprovalRequestDto {
     pub requires_approval: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<serde_json::Value>,
+}
+
+impl ToolApprovalRequestDto {
+    /// Construct a new `ToolApprovalRequestDto` with no context.
+    #[must_use]
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        arguments: serde_json::Value,
+        requires_approval: bool,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            arguments,
+            requires_approval,
+            context: None,
+        }
+    }
+
+    /// Attach context data.
+    #[must_use]
+    pub fn with_context(mut self, context: serde_json::Value) -> Self {
+        self.context = Some(context);
+        self
+    }
 }
 
 impl From<&ToolApprovalRequest> for ToolApprovalRequestDto {
@@ -137,6 +256,7 @@ impl From<&ToolApprovalRequest> for ToolApprovalRequestDto {
 }
 
 /// Response to the `tool.approve` request sent by the client.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "decision")]
 pub enum ToolApprovalDto {
@@ -159,8 +279,11 @@ impl From<&ToolApproval> for ToolApprovalDto {
     fn from(approval: &ToolApproval) -> Self {
         match approval {
             ToolApproval::Approved => Self::Approved,
-            ToolApproval::Rejected => Self::Rejected,
             ToolApproval::ApprovedWith(v) => Self::ApprovedWith { value: v.clone() },
+            // Covers ToolApproval::Rejected and, since ToolApproval is
+            // #[non_exhaustive], any unknown future variant — fail closed
+            // rather than silently approving a tool call.
+            _ => Self::Rejected,
         }
     }
 }
@@ -270,13 +393,13 @@ mod tests {
 
     #[test]
     fn tool_approval_request_dto_preserves_core_request_payload() {
-        let request = ToolApprovalRequest {
-            tool_call_id: "call-1".into(),
-            tool_name: "write_file".into(),
-            arguments: serde_json::json!({"path": "notes.md", "content": "ok"}),
-            requires_approval: true,
-            context: Some(serde_json::json!({"cwd": "/workspace"})),
-        };
+        let request = ToolApprovalRequest::new(
+            "call-1",
+            "write_file",
+            serde_json::json!({"path": "notes.md", "content": "ok"}),
+            true,
+        )
+        .with_context(serde_json::json!({"cwd": "/workspace"}));
 
         let dto = ToolApprovalRequestDto::from(&request);
         let encoded = serde_json::to_value(&dto).unwrap();

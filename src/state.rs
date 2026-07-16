@@ -15,6 +15,7 @@ use serde_json::Value;
 /// Record of mutations since the last flush.
 ///
 /// `Some(value)` = set/update, `None` = removed.
+#[non_exhaustive]
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct StateDelta {
     /// Map of changed keys. `Some(v)` means the key was set to `v`;

@@ -555,13 +555,13 @@ impl ArtifactStore for FileArtifactStore {
             .map_err(storage_err)?;
 
             // Update meta.json
-            let version = ArtifactVersion {
-                name: name.to_string(),
-                version: next_version,
-                created_at: now,
-                size: data.content.len(),
-                content_type: data.content_type,
-            };
+            let version = ArtifactVersion::new(
+                name.to_string(),
+                next_version,
+                now,
+                data.content.len(),
+                data.content_type,
+            );
             meta.versions.push(record);
             if let Err(error) = self.write_meta(session_id, name, &meta).await {
                 Self::rollback_version_file(&content_path).await;
@@ -619,18 +619,15 @@ impl ArtifactStore for FileArtifactStore {
                 Err(e) => return Err(storage_err(e)),
             };
 
-            let data = ArtifactData {
-                content,
-                content_type: record.content_type.clone(),
-                metadata: record.metadata.clone(),
-            };
-            let version = ArtifactVersion {
-                name: record.name.clone(),
-                version: record.version,
-                created_at: record.created_at,
-                size: record.size,
-                content_type: record.content_type.clone(),
-            };
+            let data = ArtifactData::new(content, record.content_type.clone())
+                .with_metadata(record.metadata.clone());
+            let version = ArtifactVersion::new(
+                record.name.clone(),
+                record.version,
+                record.created_at,
+                record.size,
+                record.content_type.clone(),
+            );
 
             tracing::debug!(
                 session_id,
@@ -684,18 +681,15 @@ impl ArtifactStore for FileArtifactStore {
                 Err(e) => return Err(storage_err(e)),
             };
 
-            let data = ArtifactData {
-                content,
-                content_type: record.content_type.clone(),
-                metadata: record.metadata.clone(),
-            };
-            let artifact_version = ArtifactVersion {
-                name: record.name.clone(),
-                version: record.version,
-                created_at: record.created_at,
-                size: record.size,
-                content_type: record.content_type.clone(),
-            };
+            let data = ArtifactData::new(content, record.content_type.clone())
+                .with_metadata(record.metadata.clone());
+            let artifact_version = ArtifactVersion::new(
+                record.name.clone(),
+                record.version,
+                record.created_at,
+                record.size,
+                record.content_type.clone(),
+            );
 
             tracing::debug!(session_id, name, version, "artifact version loaded");
             Ok(Some((data, artifact_version)))
@@ -718,13 +712,13 @@ impl ArtifactStore for FileArtifactStore {
                 self.reject_metadata_content_mismatch(session_id, name, &meta)
                     .await?;
                 if let (Some(first), Some(last)) = (meta.versions.first(), meta.versions.last()) {
-                    metas.push(ArtifactMeta {
-                        name: name.clone(),
-                        latest_version: last.version,
-                        created_at: first.created_at,
-                        updated_at: last.created_at,
-                        content_type: last.content_type.clone(),
-                    });
+                    metas.push(ArtifactMeta::new(
+                        name.clone(),
+                        last.version,
+                        first.created_at,
+                        last.created_at,
+                        last.content_type.clone(),
+                    ));
                 }
             }
 
@@ -766,11 +760,7 @@ mod tests {
     use swink_agent::{ArtifactData, ArtifactError, ArtifactStore};
 
     fn text_data(content: &str) -> ArtifactData {
-        ArtifactData {
-            content: content.as_bytes().to_vec(),
-            content_type: "text/plain".to_string(),
-            metadata: HashMap::new(),
-        }
+        ArtifactData::new(content.as_bytes().to_vec(), "text/plain".to_string())
     }
 
     fn assert_invalid_data_storage_error(err: ArtifactError, expected_snippet: &str) {

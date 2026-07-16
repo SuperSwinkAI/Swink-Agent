@@ -29,19 +29,15 @@ use crate::tool::McpTool;
 ///
 /// # async fn example() -> Result<(), swink_agent_mcp::McpError> {
 /// let configs = vec![
-///     McpServerConfig {
-///         name: "fs".into(),
-///         transport: McpTransport::Stdio {
+///     McpServerConfig::new(
+///         "fs",
+///         McpTransport::Stdio {
 ///             command: "mcp-server-fs".into(),
 ///             args: vec![],
 ///             env: Default::default(),
 ///         },
-///         tool_prefix: Some("fs".into()),
-///         tool_filter: None,
-///         requires_approval: true,
-///         connect_timeout_ms: None,
-///         discovery_timeout_ms: None,
-///     },
+///     )
+///     .with_tool_prefix("fs"),
 /// ];
 ///
 /// let mut manager = McpManager::new(configs);

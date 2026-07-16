@@ -239,7 +239,9 @@ async fn send_request(
         .iter()
         .filter_map(|msg| match msg {
             swink_agent::AgentMessage::Llm(llm) => Some(llm),
-            swink_agent::AgentMessage::Custom(_) => None,
+            // Custom messages, and any future AgentMessage variant, have no
+            // representation in the proxy wire protocol — drop them.
+            _ => None,
         })
         .collect();
 
@@ -952,11 +954,7 @@ mod tests {
     async fn proxy_stream_raw_returns_error_for_unreachable_server() {
         let proxy = ProxyStreamFn::new("http://127.0.0.1:1", "token");
         let model = ModelSpec::new("test-provider", "test-model");
-        let context = AgentContext {
-            system_prompt: "test".to_string(),
-            messages: vec![],
-            tools: vec![],
-        };
+        let context = AgentContext::new("test".to_string(), vec![], vec![]);
         let options = StreamOptions::default();
         let result = proxy.stream_raw(&model, &context, &options).await;
         assert!(result.is_err());
@@ -970,11 +968,7 @@ mod tests {
 
         let proxy = ProxyStreamFn::new("http://127.0.0.1:1", "token");
         let model = ModelSpec::new("test-provider", "test-model");
-        let context = AgentContext {
-            system_prompt: "test".to_string(),
-            messages: vec![],
-            tools: vec![],
-        };
+        let context = AgentContext::new("test".to_string(), vec![], vec![]);
         let options = StreamOptions::default();
         let token = CancellationToken::new();
         token.cancel();

@@ -1371,15 +1371,7 @@ mod budget_policy_tests {
 
     fn make_ctx<'a>(turn_index: usize, usage: &'a Usage, cost: &'a Cost) -> PolicyContext<'a> {
         let state = Box::leak(Box::new(SessionState::new()));
-        PolicyContext {
-            turn_index,
-            accumulated_usage: usage,
-            accumulated_cost: cost,
-            message_count: 0,
-            overflow_signal: false,
-            new_messages: &[],
-            state,
-        }
+        PolicyContext::new(turn_index, usage, cost, 0, false, &[], state)
     }
 
     #[test]
@@ -1408,10 +1400,7 @@ mod budget_policy_tests {
 
         let (budget_policy, max_turns_policy) = constraints.to_policies();
         let usage = Usage::default();
-        let cost = Cost {
-            total: 1.0,
-            ..Default::default()
-        };
+        let cost = Cost::default().with_total(1.0);
         let ctx = make_ctx(0, &usage, &cost);
 
         assert!(matches!(
@@ -1431,12 +1420,10 @@ mod budget_policy_tests {
         };
 
         let (budget_policy, max_turns_policy) = constraints.to_policies();
-        let usage = Usage {
-            input: 10,
-            output: 20,
-            total: 30,
-            ..Default::default()
-        };
+        let usage = Usage::default()
+            .with_input(10)
+            .with_output(20)
+            .with_total(30);
         let cost = Cost::default();
         let ctx = make_ctx(0, &usage, &cost);
 
@@ -1458,10 +1445,7 @@ mod budget_policy_tests {
 
         let (budget_policy, max_turns_policy) = constraints.to_policies();
         let usage = Usage::default();
-        let cost = Cost {
-            total: 2.0,
-            ..Default::default()
-        };
+        let cost = Cost::default().with_total(2.0);
         let budget_ctx = make_ctx(0, &usage, &cost);
         let turn_cost = Cost::default();
         let turn_ctx = make_ctx(3, &usage, &turn_cost);

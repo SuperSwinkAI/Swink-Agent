@@ -541,11 +541,10 @@ async fn invoke_agent_impl(
         .user_messages
         .iter()
         .map(|text| {
-            swink_agent::AgentMessage::Llm(swink_agent::LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text { text: text.clone() }],
-                timestamp: swink_agent::now_timestamp(),
-                cache_hint: None,
-            }))
+            swink_agent::AgentMessage::Llm(swink_agent::LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text { text: text.clone() }])
+                    .with_timestamp(swink_agent::now_timestamp()),
+            ))
         })
         .collect();
     let stream = agent.prompt_stream(messages)?;
@@ -782,18 +781,10 @@ fn error_invocation(error_message: Option<String>) -> Invocation {
         .map(|msg| {
             vec![TurnRecord {
                 turn_index: 0,
-                assistant_message: AssistantMessage {
-                    content: vec![],
-                    provider: String::new(),
-                    model_id: String::new(),
-                    usage: Usage::default(),
-                    cost: Cost::default(),
-                    stop_reason: StopReason::Error,
-                    error_message: Some(msg),
-                    error_kind: None,
-                    timestamp: swink_agent::now_timestamp(),
-                    cache_hint: None,
-                },
+                assistant_message: AssistantMessage::new(vec![], String::new(), String::new())
+                    .with_stop_reason(StopReason::Error)
+                    .with_error_message(msg)
+                    .with_timestamp(swink_agent::now_timestamp()),
                 tool_calls: vec![],
                 tool_results: vec![],
                 duration: std::time::Duration::ZERO,

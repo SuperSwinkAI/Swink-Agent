@@ -5,6 +5,7 @@ use std::io;
 use swink_agent::AgentError;
 
 /// Top-level error type for the TUI binary.
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum TuiError {
     /// Terminal I/O failure.

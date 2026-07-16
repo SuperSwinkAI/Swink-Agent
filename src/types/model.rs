@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 /// Populated from the model catalog or set manually. The agent loop can
 /// inspect these before enabling provider-specific features (e.g. skip
 /// thinking blocks when `supports_thinking` is false).
+#[non_exhaustive]
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ModelCapabilities {
@@ -81,6 +82,7 @@ impl ModelCapabilities {
 // ─── Model Specification ────────────────────────────────────────────────────
 
 /// Reasoning depth for models that support configurable thinking.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThinkingLevel {
@@ -95,6 +97,7 @@ pub enum ThinkingLevel {
 
 /// Optional per-level token budget overrides for providers that support
 /// token-based reasoning control.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThinkingBudgets {
     pub budgets: HashMap<ThinkingLevel, u64>,
@@ -115,6 +118,7 @@ impl ThinkingBudgets {
 }
 
 /// Identifies the target model for a request.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 pub struct ModelSpec {

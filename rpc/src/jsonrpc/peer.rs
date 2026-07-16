@@ -19,6 +19,9 @@ pub const MAX_LINE_BYTES: usize = 1024 * 1024;
 // ─── IncomingMessage ──────────────────────────────────────────────────────────
 
 /// A message received from the remote peer, ready for the application to handle.
+// Frozen by design: Request/Notification are the only peer-to-application kinds;
+// responses are routed internally and never surfaced here.
+#[allow(clippy::exhaustive_enums)]
 #[derive(Debug)]
 pub enum IncomingMessage {
     /// The remote is requesting something; the application must respond.

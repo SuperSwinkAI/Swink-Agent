@@ -15,8 +15,8 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
     Agent, AgentError, AgentEvent, AgentMessage, AgentOptions, AssistantMessageEvent, ContentBlock,
-    Cost, DefaultRetryStrategy, LlmMessage, ModelSpec, PolicyContext, PolicyVerdict, PreTurnPolicy,
-    StopReason, StreamFn, StreamOptions, ToolResultMessage, Usage, UserMessage,
+    DefaultRetryStrategy, LlmMessage, ModelSpec, PolicyContext, PolicyVerdict, PreTurnPolicy,
+    StopReason, StreamFn, StreamOptions, ToolResultMessage, UserMessage,
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -60,7 +60,9 @@ impl PreTurnPolicy for ContinueBatchRecorder {
                 AgentMessage::Llm(LlmMessage::ToolResult(result)) => {
                     Some(ContentBlock::extract_text(&result.content))
                 }
-                AgentMessage::Custom(_) => None,
+                // Covers AgentMessage::Custom and, since AgentMessage is
+                // #[non_exhaustive], any future variant.
+                _ => None,
             })
             .collect();
         self.observations.lock().unwrap().push(batch);
@@ -249,40 +251,35 @@ async fn continue_from_tool_result() {
     )]));
     let mut agent = make_agent(stream_fn);
 
-    let user = AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text {
+    let user = AgentMessage::Llm(LlmMessage::User(
+        UserMessage::new(vec![ContentBlock::Text {
             text: "do something".to_string(),
-        }],
-        timestamp: 0,
-        cache_hint: None,
-    }));
-    let assistant = AgentMessage::Llm(LlmMessage::Assistant(swink_agent::AssistantMessage {
-        content: vec![ContentBlock::ToolCall {
-            id: "tc_1".to_string(),
-            name: "my_tool".to_string(),
-            arguments: serde_json::json!({}),
-            partial_json: None,
-        }],
-        provider: String::new(),
-        model_id: String::new(),
-        stop_reason: StopReason::ToolUse,
-        usage: Usage::default(),
-        cost: Cost::default(),
-        error_message: None,
-        error_kind: None,
-        timestamp: 0,
-        cache_hint: None,
-    }));
-    let tool_result = AgentMessage::Llm(LlmMessage::ToolResult(ToolResultMessage {
-        tool_call_id: "tc_1".to_string(),
-        content: vec![ContentBlock::Text {
-            text: "tool output".to_string(),
-        }],
-        is_error: false,
-        timestamp: 0,
-        details: serde_json::Value::Null,
-        cache_hint: None,
-    }));
+        }])
+        .with_timestamp(0),
+    ));
+    let assistant = AgentMessage::Llm(LlmMessage::Assistant(
+        swink_agent::AssistantMessage::new(
+            vec![ContentBlock::ToolCall {
+                id: "tc_1".to_string(),
+                name: "my_tool".to_string(),
+                arguments: serde_json::json!({}),
+                partial_json: None,
+            }],
+            String::new(),
+            String::new(),
+        )
+        .with_stop_reason(StopReason::ToolUse)
+        .with_timestamp(0),
+    ));
+    let tool_result = AgentMessage::Llm(LlmMessage::ToolResult(
+        ToolResultMessage::new(
+            "tc_1",
+            vec![ContentBlock::Text {
+                text: "tool output".to_string(),
+            }],
+        )
+        .with_timestamp(0),
+    ));
 
     agent.set_messages(vec![user, assistant, tool_result]);
 
@@ -321,40 +318,35 @@ async fn continue_does_not_reemit_existing_messages() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("continued")]));
     let mut agent = make_agent(stream_fn);
 
-    let user = AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text {
+    let user = AgentMessage::Llm(LlmMessage::User(
+        UserMessage::new(vec![ContentBlock::Text {
             text: "original".to_string(),
-        }],
-        timestamp: 0,
-        cache_hint: None,
-    }));
-    let assistant = AgentMessage::Llm(LlmMessage::Assistant(swink_agent::AssistantMessage {
-        content: vec![ContentBlock::ToolCall {
-            id: "tc_1".to_string(),
-            name: "tool".to_string(),
-            arguments: serde_json::json!({}),
-            partial_json: None,
-        }],
-        provider: String::new(),
-        model_id: String::new(),
-        stop_reason: StopReason::ToolUse,
-        usage: Usage::default(),
-        cost: Cost::default(),
-        error_message: None,
-        error_kind: None,
-        timestamp: 0,
-        cache_hint: None,
-    }));
-    let tool_result = AgentMessage::Llm(LlmMessage::ToolResult(ToolResultMessage {
-        tool_call_id: "tc_1".to_string(),
-        content: vec![ContentBlock::Text {
-            text: "result".to_string(),
-        }],
-        is_error: false,
-        timestamp: 0,
-        details: serde_json::Value::Null,
-        cache_hint: None,
-    }));
+        }])
+        .with_timestamp(0),
+    ));
+    let assistant = AgentMessage::Llm(LlmMessage::Assistant(
+        swink_agent::AssistantMessage::new(
+            vec![ContentBlock::ToolCall {
+                id: "tc_1".to_string(),
+                name: "tool".to_string(),
+                arguments: serde_json::json!({}),
+                partial_json: None,
+            }],
+            String::new(),
+            String::new(),
+        )
+        .with_stop_reason(StopReason::ToolUse)
+        .with_timestamp(0),
+    ));
+    let tool_result = AgentMessage::Llm(LlmMessage::ToolResult(
+        ToolResultMessage::new(
+            "tc_1",
+            vec![ContentBlock::Text {
+                text: "result".to_string(),
+            }],
+        )
+        .with_timestamp(0),
+    ));
     agent.set_messages(vec![user, assistant, tool_result]);
 
     let events = Arc::new(Mutex::new(Vec::new()));
@@ -427,10 +419,7 @@ async fn session_id_forwarding() {
 
     let stream_fn: Arc<dyn StreamFn> = Arc::clone(&capturing) as Arc<dyn StreamFn>;
 
-    let options = StreamOptions {
-        session_id: Some("session-abc".to_string()),
-        ..StreamOptions::default()
-    };
+    let options = StreamOptions::default().with_session_id("session-abc");
 
     let mut agent = Agent::new(
         AgentOptions::new("test", default_model(), stream_fn, default_convert)

@@ -13,6 +13,7 @@ pub enum ContentError {
 /// Contains only data the extractor actually knows. HTTP metadata
 /// (status code, content type, truncation) belongs in the caller that holds the
 /// real HTTP response.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct FetchedContent {
     pub url: String,
@@ -20,6 +21,21 @@ pub struct FetchedContent {
     pub text: String,
     /// Character length of the extracted text.
     pub text_length: usize,
+}
+
+impl FetchedContent {
+    /// Construct from extracted fields, computing `text_length` from `text`.
+    #[must_use]
+    pub fn new(url: impl Into<String>, title: Option<String>, text: impl Into<String>) -> Self {
+        let text = text.into();
+        let text_length = text.chars().count();
+        Self {
+            url: url.into(),
+            title,
+            text,
+            text_length,
+        }
+    }
 }
 
 /// Extract readable content from raw HTML bytes.
@@ -37,14 +53,8 @@ pub fn extract_readable_content(
     let text = extract_main_text(&document).ok_or_else(|| {
         ContentError::ExtractionFailed("no readable text blocks found".to_string())
     })?;
-    let text_length = text.chars().count();
 
-    Ok(FetchedContent {
-        url: url.to_string(),
-        title,
-        text,
-        text_length,
-    })
+    Ok(FetchedContent::new(url.to_string(), title, text))
 }
 
 fn extract_title(document: &Html) -> Option<String> {
@@ -214,12 +224,11 @@ mod tests {
     #[test]
     fn fetched_content_has_no_http_metadata_fields() {
         // Pin the struct contract: FetchedContent only carries extractor-known data.
-        let content = super::FetchedContent {
-            url: "https://example.com".to_string(),
-            title: Some("Title".to_string()),
-            text: "Body text".to_string(),
-            text_length: 9,
-        };
+        let content = super::FetchedContent::new(
+            "https://example.com",
+            Some("Title".to_string()),
+            "Body text",
+        );
         assert_eq!(content.url, "https://example.com");
         assert_eq!(content.title.as_deref(), Some("Title"));
         assert_eq!(content.text, "Body text");

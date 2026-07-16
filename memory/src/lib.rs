@@ -17,14 +17,7 @@
 //! let dir = JsonlSessionStore::default_dir().expect("config dir");
 //! let store = JsonlSessionStore::new(dir)?;
 //! let id = format_session_id(); // e.g. "20260320_143000_6f00bfe3f7c54b2f86d780df58ccf0a1"
-//! let meta = SessionMeta {
-//!     id: id.clone(),
-//!     title: "My session".into(),
-//!     created_at: now_utc(),
-//!     updated_at: now_utc(),
-//!     version: 1,
-//!     sequence: 0,
-//! };
+//! let meta = SessionMeta::new(id.clone(), "My session", now_utc(), now_utc());
 //! store.save(&id, &meta, &messages)?;
 //! ```
 //!

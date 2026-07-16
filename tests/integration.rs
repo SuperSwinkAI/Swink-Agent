@@ -392,14 +392,12 @@ async fn accumulates_text_and_tool_call_deltas() {
         AssistantMessageEvent::ToolCallEnd { content_index: 1 },
         AssistantMessageEvent::Done {
             stop_reason: StopReason::ToolUse,
-            usage: Usage {
-                input: 10,
-                output: 20,
-                cache_read: 0,
-                cache_write: 0,
-                total: 30,
-                ..Default::default()
-            },
+            usage: Usage::default()
+                .with_input(10)
+                .with_output(20)
+                .with_cache_read(0)
+                .with_cache_write(0)
+                .with_total(30),
             cost: Cost::default(),
         },
     ];

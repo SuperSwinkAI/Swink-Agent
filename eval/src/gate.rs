@@ -155,10 +155,7 @@ mod tests {
                 total_cases: passed + failed,
                 passed,
                 failed,
-                total_cost: Cost {
-                    total: cost,
-                    ..Default::default()
-                },
+                total_cost: Cost::default().with_total(cost),
                 total_usage: Usage::default(),
                 total_duration: duration,
             },

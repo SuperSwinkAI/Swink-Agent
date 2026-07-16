@@ -335,15 +335,12 @@ async fn openai_on_raw_payload_observes_runtime_sse_lines() {
 
     let observed = Arc::new(Mutex::new(Vec::<String>::new()));
     let callback_lines = Arc::clone(&observed);
-    let options = StreamOptions {
-        on_raw_payload: Some(Arc::new(move |line| {
-            callback_lines
-                .lock()
-                .expect("callback buffer poisoned")
-                .push(line.to_owned());
-        })),
-        ..StreamOptions::default()
-    };
+    let options = StreamOptions::default().with_on_raw_payload(Arc::new(move |line| {
+        callback_lines
+            .lock()
+            .expect("callback buffer poisoned")
+            .push(line.to_owned());
+    }));
 
     let sf = OpenAiStreamFn::new(server.uri(), "test-key");
     let events = collect_events_with_options(&sf, options).await;
@@ -680,10 +677,7 @@ async fn openai_stream_options_api_key_overrides_default() {
     let sf = OpenAiStreamFn::new(server.uri(), "default-key");
     let model = test_model();
     let context = test_context();
-    let options = StreamOptions {
-        api_key: Some("override-key".to_string()),
-        ..StreamOptions::default()
-    };
+    let options = StreamOptions::default().with_api_key("override-key");
     let token = CancellationToken::new();
     let events: Vec<_> = sf.stream(&model, &context, &options, token).collect().await;
 
@@ -1083,22 +1077,21 @@ async fn serving_options_serialize_into_request_body() {
         .await;
 
     let stream_fn = OpenAiStreamFn::new(server.uri(), "test-key");
-    let options = StreamOptions {
-        serving: swink_agent::ServingOptions {
-            context_length: Some(8192),
-            top_p: Some(0.9),
-            keep_alive: Some("5m".to_string()),
-            format: None,
-            extra: [
-                ("logit_bias".to_string(), serde_json::json!({"50256": -100})),
-                // Colliding key: the typed `top_p` above must win.
-                ("top_p".to_string(), serde_json::json!(0.1)),
-            ]
-            .into_iter()
-            .collect(),
-        },
-        ..StreamOptions::default()
-    };
+    let options = StreamOptions::default().with_serving(
+        swink_agent::ServingOptions::default()
+            .with_context_length(8192)
+            .with_top_p(0.9)
+            .with_keep_alive("5m")
+            .with_extra(
+                [
+                    ("logit_bias".to_string(), serde_json::json!({"50256": -100})),
+                    // Colliding key: the typed `top_p` above must win.
+                    ("top_p".to_string(), serde_json::json!(0.1)),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+    );
     let events = collect_events_with_options(&stream_fn, options).await;
     assert!(matches!(events[0], AssistantMessageEvent::Start));
 
@@ -1136,10 +1129,7 @@ async fn body_for_serving(serving: swink_agent::ServingOptions) -> String {
         .await;
 
     let stream_fn = OpenAiStreamFn::new(server.uri(), "test-key");
-    let options = StreamOptions {
-        serving,
-        ..StreamOptions::default()
-    };
+    let options = StreamOptions::default().with_serving(serving);
     let _events = collect_events_with_options(&stream_fn, options).await;
 
     let requests = server.received_requests().await.expect("recording enabled");
@@ -1150,10 +1140,9 @@ async fn body_for_serving(serving: swink_agent::ServingOptions) -> String {
 /// as `{"type": "json_object"}`.
 #[tokio::test]
 async fn openai_response_format_json_maps_to_json_object() {
-    let body = body_for_serving(swink_agent::ServingOptions {
-        format: Some(swink_agent::ResponseFormat::Json),
-        ..swink_agent::ServingOptions::default()
-    })
+    let body = body_for_serving(
+        swink_agent::ServingOptions::default().with_format(swink_agent::ResponseFormat::Json),
+    )
     .await;
 
     let json: serde_json::Value = serde_json::from_str(&body).expect("valid JSON body");
@@ -1177,10 +1166,10 @@ async fn openai_response_format_schema_maps_to_json_schema_envelope() {
         "properties": { "name": { "type": "string" } },
         "required": ["name"],
     });
-    let body = body_for_serving(swink_agent::ServingOptions {
-        format: Some(swink_agent::ResponseFormat::Schema(schema.clone())),
-        ..swink_agent::ServingOptions::default()
-    })
+    let body = body_for_serving(
+        swink_agent::ServingOptions::default()
+            .with_format(swink_agent::ResponseFormat::Schema(schema.clone())),
+    )
     .await;
 
     let json: serde_json::Value = serde_json::from_str(&body).expect("valid JSON body");

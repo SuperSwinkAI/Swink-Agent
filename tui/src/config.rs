@@ -8,6 +8,7 @@ use swink_agent::PricingTable;
 /// Deserialized from TOML, so it holds data only. Host-supplied *code* — custom
 /// commands and other extension points — goes through
 /// [`TuiExtensions`](crate::TuiExtensions) instead.
+#[non_exhaustive]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct TuiConfig {

@@ -16,8 +16,8 @@ use tokio_util::sync::CancellationToken;
 use swink_agent::testing::{TestGpu, TestRuntimeRequirements, should_run_test};
 use swink_agent::{
     AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessage,
-    AssistantMessageEvent, ContentBlock, Cost, LlmMessage, ModelCapabilities, ModelSpec,
-    StopReason, StreamFn, StreamOptions, ThinkingLevel, Usage, UserMessage,
+    AssistantMessageEvent, ContentBlock, LlmMessage, ModelCapabilities, ModelSpec, StopReason,
+    StreamFn, StreamOptions, ThinkingLevel, UserMessage,
 };
 use swink_agent_adapters::OllamaStreamFn;
 
@@ -36,17 +36,16 @@ fn model() -> ModelSpec {
 }
 
 fn simple_context(prompt: &str) -> AgentContext {
-    AgentContext {
-        system_prompt: "Reply in one short sentence.".into(),
-        messages: vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
+    AgentContext::new(
+        "Reply in one short sentence.",
+        vec![AgentMessage::Llm(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text {
                 text: prompt.to_string(),
-            }],
-            timestamp: 0,
-            cache_hint: None,
-        }))],
-        tools: Vec::new(),
-    }
+            }])
+            .with_timestamp(0),
+        ))],
+        Vec::new(),
+    )
 }
 
 async fn collect_model_events(
@@ -125,13 +124,15 @@ impl AgentTool for DummyWeatherTool {
         _credential: Option<swink_agent::ResolvedCredential>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = AgentToolResult> + Send + '_>> {
         Box::pin(async {
-            AgentToolResult {
-                content: vec![ContentBlock::Text {
-                    text: "72°F, sunny".into(),
-                }],
-                details: json!({}),
-                is_error: false,
-                transfer_signal: None,
+            {
+                let mut result = AgentToolResult::new(
+                    vec![ContentBlock::Text {
+                        text: "72°F, sunny".into(),
+                    }],
+                    false,
+                );
+                result.details = json!({});
+                result
             }
         })
     }
@@ -197,18 +198,16 @@ async fn live_usage_captured() {
 #[ignore = "hits live Ollama instance"]
 async fn live_tool_use_stream() {
     let sf = ollama();
-    let context = AgentContext {
-        system_prompt: "You must use the get_weather tool to answer. Do not reply with text only."
-            .into(),
-        messages: vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
+    let context = AgentContext::new(
+        "You must use the get_weather tool to answer. Do not reply with text only.",
+        vec![AgentMessage::Llm(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text {
                 text: "What's the weather in Paris? Use the get_weather tool.".into(),
-            }],
-            timestamp: 0,
-            cache_hint: None,
-        }))],
-        tools: vec![Arc::new(DummyWeatherTool)],
-    };
+            }])
+            .with_timestamp(0),
+        ))],
+        vec![Arc::new(DummyWeatherTool)],
+    );
 
     let events = timeout(TIMEOUT, collect_events(&sf, &context))
         .await
@@ -255,38 +254,32 @@ async fn live_multi_turn_context() {
 
     // Second turn with prior context
     let m = model();
-    let context = AgentContext {
-        system_prompt: "Reply in one short sentence.".into(),
-        messages: vec![
-            AgentMessage::Llm(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+    let context = AgentContext::new(
+        "Reply in one short sentence.",
+        vec![
+            AgentMessage::Llm(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: "My name is Zephyr.".into(),
-                }],
-                timestamp: 0,
-                cache_hint: None,
-            })),
-            AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
-                content: vec![ContentBlock::Text { text: reply }],
-                provider: "ollama".into(),
-                model_id: m.model_id,
-                usage: Usage::default(),
-                cost: Cost::default(),
-                stop_reason: StopReason::Stop,
-                error_message: None,
-                error_kind: None,
-                timestamp: 1,
-                cache_hint: None,
-            })),
-            AgentMessage::Llm(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+                }])
+                .with_timestamp(0),
+            )),
+            AgentMessage::Llm(LlmMessage::Assistant(
+                AssistantMessage::new(
+                    vec![ContentBlock::Text { text: reply }],
+                    "ollama",
+                    m.model_id,
+                )
+                .with_timestamp(1),
+            )),
+            AgentMessage::Llm(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: "What is my name?".into(),
-                }],
-                timestamp: 2,
-                cache_hint: None,
-            })),
+                }])
+                .with_timestamp(2),
+            )),
         ],
-        tools: Vec::new(),
-    };
+        Vec::new(),
+    );
 
     let events = timeout(TIMEOUT, collect_events(&sf, &context))
         .await
@@ -435,18 +428,16 @@ async fn live_gemma4_tool_call() {
     let sf = ollama();
     let m = ModelSpec::new("ollama", "gemma4:e2b")
         .with_capabilities(ModelCapabilities::default().with_tool_use(true));
-    let context = AgentContext {
-        system_prompt:
-            "You must use the get_weather tool before answering. Do not answer from memory.".into(),
-        messages: vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
+    let context = AgentContext::new(
+        "You must use the get_weather tool before answering. Do not answer from memory.",
+        vec![AgentMessage::Llm(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text {
                 text: "What is the weather in Paris? Use the get_weather tool first.".into(),
-            }],
-            timestamp: 0,
-            cache_hint: None,
-        }))],
-        tools: vec![Arc::new(DummyWeatherTool)],
-    };
+            }])
+            .with_timestamp(0),
+        ))],
+        vec![Arc::new(DummyWeatherTool)],
+    );
     let events: Vec<AssistantMessageEvent> =
         timeout(TIMEOUT, collect_model_events(&sf, &m, &context))
             .await
@@ -523,46 +514,40 @@ async fn live_gemma4_multi_turn() {
         "expected first turn to include visible text"
     );
 
-    let second_context = AgentContext {
-        system_prompt: "Reply with one word.".into(),
-        messages: vec![
-            AgentMessage::Llm(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+    let second_context = AgentContext::new(
+        "Reply with one word.",
+        vec![
+            AgentMessage::Llm(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: "My favorite color is teal.".into(),
-                }],
-                timestamp: 0,
-                cache_hint: None,
-            })),
-            AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
-                content: vec![
-                    ContentBlock::Thinking {
-                        thinking,
-                        signature: None,
-                    },
-                    ContentBlock::Text {
-                        text: first_reply.clone(),
-                    },
-                ],
-                provider: "ollama".into(),
-                model_id: thinking_model.model_id.clone(),
-                usage: Usage::default(),
-                cost: Cost::default(),
-                stop_reason: StopReason::Stop,
-                error_message: None,
-                error_kind: None,
-                timestamp: 1,
-                cache_hint: None,
-            })),
-            AgentMessage::Llm(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+                }])
+                .with_timestamp(0),
+            )),
+            AgentMessage::Llm(LlmMessage::Assistant(
+                AssistantMessage::new(
+                    vec![
+                        ContentBlock::Thinking {
+                            thinking,
+                            signature: None,
+                        },
+                        ContentBlock::Text {
+                            text: first_reply.clone(),
+                        },
+                    ],
+                    "ollama",
+                    thinking_model.model_id.clone(),
+                )
+                .with_timestamp(1),
+            )),
+            AgentMessage::Llm(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: "What is my favorite color?".into(),
-                }],
-                timestamp: 2,
-                cache_hint: None,
-            })),
+                }])
+                .with_timestamp(2),
+            )),
         ],
-        tools: Vec::new(),
-    };
+        Vec::new(),
+    );
 
     let second_events: Vec<AssistantMessageEvent> = timeout(
         TIMEOUT,

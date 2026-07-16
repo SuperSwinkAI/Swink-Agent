@@ -15,8 +15,8 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
     AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessage,
-    AssistantMessageEvent, ContentBlock, Cost, LlmMessage, ModelSpec, StopReason, StreamFn,
-    StreamOptions, Usage, UserMessage,
+    AssistantMessageEvent, ContentBlock, LlmMessage, ModelSpec, StopReason, StreamFn,
+    StreamOptions, UserMessage,
 };
 use swink_agent_adapters::OpenAiStreamFn;
 
@@ -38,17 +38,16 @@ fn cheap_model() -> ModelSpec {
 }
 
 fn simple_context(prompt: &str) -> AgentContext {
-    AgentContext {
-        system_prompt: "Reply in one word.".into(),
-        messages: vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
+    AgentContext::new(
+        "Reply in one word.",
+        vec![AgentMessage::Llm(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text {
                 text: prompt.to_string(),
-            }],
-            timestamp: 0,
-            cache_hint: None,
-        }))],
-        tools: Vec::new(),
-    }
+            }])
+            .with_timestamp(0),
+        ))],
+        Vec::new(),
+    )
 }
 
 async fn collect_events(sf: &OpenAiStreamFn, context: &AgentContext) -> Vec<AssistantMessageEvent> {
@@ -119,13 +118,15 @@ impl AgentTool for DummyTool {
         _credential: Option<swink_agent::ResolvedCredential>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = AgentToolResult> + Send + '_>> {
         Box::pin(async {
-            AgentToolResult {
-                content: vec![ContentBlock::Text {
-                    text: "72°F, sunny".into(),
-                }],
-                details: json!({}),
-                is_error: false,
-                transfer_signal: None,
+            {
+                let mut result = AgentToolResult::new(
+                    vec![ContentBlock::Text {
+                        text: "72°F, sunny".into(),
+                    }],
+                    false,
+                );
+                result.details = json!({});
+                result
             }
         })
     }
@@ -189,18 +190,16 @@ async fn live_usage_and_cost() {
 async fn live_tool_use_stream() {
     let key = openai_key();
     let sf = OpenAiStreamFn::new("https://api.openai.com", &key);
-    let context = AgentContext {
-        system_prompt: "You must use the get_weather tool to answer. Do not reply with text only."
-            .into(),
-        messages: vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
+    let context = AgentContext::new(
+        "You must use the get_weather tool to answer. Do not reply with text only.",
+        vec![AgentMessage::Llm(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text {
                 text: "What's the weather in Paris?".into(),
-            }],
-            timestamp: 0,
-            cache_hint: None,
-        }))],
-        tools: vec![Arc::new(DummyTool)],
-    };
+            }])
+            .with_timestamp(0),
+        ))],
+        vec![Arc::new(DummyTool)],
+    );
 
     let events = timeout(TIMEOUT, collect_events(&sf, &context))
         .await
@@ -251,38 +250,32 @@ async fn live_multi_turn_context() {
     assert!(!reply.is_empty(), "first turn should produce text");
 
     // Second turn with prior context
-    let context = AgentContext {
-        system_prompt: "Reply in one short sentence.".into(),
-        messages: vec![
-            AgentMessage::Llm(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+    let context = AgentContext::new(
+        "Reply in one short sentence.",
+        vec![
+            AgentMessage::Llm(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: "My name is Alice.".into(),
-                }],
-                timestamp: 0,
-                cache_hint: None,
-            })),
-            AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
-                content: vec![ContentBlock::Text { text: reply }],
-                provider: "openai".into(),
-                model_id: cheap_model().model_id,
-                usage: Usage::default(),
-                cost: Cost::default(),
-                stop_reason: StopReason::Stop,
-                error_message: None,
-                error_kind: None,
-                timestamp: 1,
-                cache_hint: None,
-            })),
-            AgentMessage::Llm(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+                }])
+                .with_timestamp(0),
+            )),
+            AgentMessage::Llm(LlmMessage::Assistant(
+                AssistantMessage::new(
+                    vec![ContentBlock::Text { text: reply }],
+                    "openai",
+                    cheap_model().model_id,
+                )
+                .with_timestamp(1),
+            )),
+            AgentMessage::Llm(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: "What is my name?".into(),
-                }],
-                timestamp: 2,
-                cache_hint: None,
-            })),
+                }])
+                .with_timestamp(2),
+            )),
         ],
-        tools: Vec::new(),
-    };
+        Vec::new(),
+    );
 
     let events = timeout(TIMEOUT, collect_events(&sf, &context))
         .await

@@ -72,10 +72,7 @@ fn record_against_budget(budget: Option<&CycleBudget>, verdict_cost: Option<f64>
     if let Some(budget) = budget {
         budget.record_judge_invocation();
         if let Some(cost) = verdict_cost {
-            budget.record(Cost {
-                total: cost,
-                ..Cost::default()
-            });
+            budget.record(Cost::default().with_total(cost));
         }
     }
 }

@@ -44,11 +44,10 @@ impl App {
             return;
         };
 
-        let user_message = AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text { text: outbound }],
-            timestamp: timestamp_now(),
-            cache_hint: None,
-        }));
+        let user_message = AgentMessage::Llm(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text { text: outbound }])
+                .with_timestamp(timestamp_now()),
+        ));
 
         // If a loop is already running, inject the message as a steering event
         // rather than trying to start a second loop (which would error).
@@ -114,18 +113,11 @@ impl App {
     ///
     /// let mut app = App::new(TuiConfig::default());
     /// app.handle_agent_event(AgentEvent::MessageEnd {
-    ///     message: AssistantMessage {
-    ///         content: vec![],
-    ///         provider: "anthropic".to_string(),
-    ///         model_id: "claude-sonnet-4-6".to_string(),
-    ///         usage: Usage { input: 120, output: 45, ..Usage::default() },
-    ///         cost: Cost { total: 0.0042, ..Cost::default() },
-    ///         stop_reason: StopReason::Stop,
-    ///         error_message: None,
-    ///         error_kind: None,
-    ///         timestamp: 0,
-    ///         cache_hint: None,
-    ///     },
+    ///     message: AssistantMessage::new(vec![], "anthropic", "claude-sonnet-4-6")
+    ///         .with_usage(Usage::default().with_input(120).with_output(45))
+    ///         .with_cost(Cost::default().with_total(0.0042))
+    ///         .with_stop_reason(StopReason::Stop)
+    ///         .with_timestamp(0),
     /// });
     ///
     /// assert_eq!(app.total_input_tokens, 120);
@@ -168,7 +160,9 @@ impl App {
                             let thinking = msg.thinking.get_or_insert_with(String::new);
                             thinking.push_str(&delta);
                         }
-                        AssistantMessageDelta::ToolCall { .. } => {}
+                        // Covers AssistantMessageDelta::ToolCall and, since
+                        // that enum is #[non_exhaustive], any future variant.
+                        _ => {}
                     }
                 }
             }
@@ -337,12 +331,7 @@ impl App {
             return false;
         }
 
-        self.hunk_review = Some(HunkReview {
-            decisions: vec![None; hunks.len()],
-            hunks,
-            diff,
-            cursor: 0,
-        });
+        self.hunk_review = Some(HunkReview::new(diff, hunks));
         true
     }
 

@@ -8,6 +8,7 @@ use crate::{LocalModel, LocalStreamFn, ModelConfig};
 
 pub const DEFAULT_LOCAL_PRESET_ID: &str = "smollm3_3b";
 
+#[non_exhaustive]
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum LocalPresetError {
     #[error("Missing local default preset local.{preset_id} in the model catalog")]
@@ -182,6 +183,7 @@ pub(crate) fn default_embedding_config() -> EmbeddingConfig {
 /// Each variant bundles a `HuggingFace` repository ID, filename, quantization
 /// level, and context window so consumers can select a model by name without
 /// manual configuration.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelPreset {
     /// SmolLM3-3B with `Q4_K_M` quantization, 8192-token context window (~1.92 GB).

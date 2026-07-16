@@ -144,10 +144,7 @@ fn jsonl_search_respects_max_results() {
         save_session_with_text(&store, &id, &format!("Session {i}"), &["apple pie recipe"]);
     }
 
-    let opts = SessionSearchOptions {
-        max_results: Some(2),
-        ..Default::default()
-    };
+    let opts = SessionSearchOptions::new().with_max_results(2);
     let hits = store.search("apple", &opts).expect("search");
     assert!(
         hits.len() <= 2,
@@ -169,10 +166,7 @@ fn jsonl_search_session_id_filter() {
     );
     save_session_with_text(&store, "other-session", "Other", &["needle found here too"]);
 
-    let opts = SessionSearchOptions {
-        session_ids: Some(vec!["target-session".to_string()]),
-        ..Default::default()
-    };
+    let opts = SessionSearchOptions::new().with_session_ids(vec!["target-session".to_string()]);
     let hits = store.search("needle", &opts).expect("search");
     assert!(
         hits.iter().all(|h| h.session_id == "target-session"),
@@ -199,10 +193,7 @@ fn jsonl_search_entry_type_filter_excludes_non_message_types() {
         .expect("save_entries");
 
     // Restrict to only "message" entries.
-    let opts = SessionSearchOptions {
-        entry_types: Some(vec!["message".to_string()]),
-        ..Default::default()
-    };
+    let opts = SessionSearchOptions::new().with_entry_types(vec!["message".to_string()]);
     let hits = store.search("unique phrase", &opts).expect("search");
     assert!(
         hits.iter().all(|h| h.entry.entry_type_name() == "message"),
@@ -422,10 +413,7 @@ mod tantivy_tests {
             save_session_with_text(&store, &id, &format!("Session {i}"), &["mango smoothie"]);
         }
 
-        let opts = SessionSearchOptions {
-            max_results: Some(2),
-            ..Default::default()
-        };
+        let opts = SessionSearchOptions::new().with_max_results(2);
         let hits = store.search("mango", &opts).expect("search");
         assert!(
             hits.len() <= 2,

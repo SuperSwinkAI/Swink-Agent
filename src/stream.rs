@@ -22,6 +22,7 @@ use crate::types::{
 // ─── StreamTransport ─────────────────────────────────────────────────────────
 
 /// Transport protocol for streaming responses.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StreamTransport {
@@ -37,6 +38,7 @@ pub enum StreamTransport {
 /// Adapters translate this to provider-specific cache markers at request
 /// construction time. Adapters that don't support caching silently ignore
 /// the strategy.
+#[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub enum CacheStrategy {
     /// No caching (default) — no cache markers injected.
@@ -128,6 +130,7 @@ pub type OnRawPayload = Arc<dyn Fn(&str) + Send + Sync>;
 ///
 /// [`format`]: ServingOptions::format
 /// [`keep_alive`]: ServingOptions::keep_alive
+#[non_exhaustive]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ServingOptions {
     /// Model context window to serve this request with (Ollama `num_ctx`).
@@ -164,6 +167,7 @@ pub struct ServingOptions {
 /// regardless of backend.
 ///
 /// [JSON Schema]: https://json-schema.org/
+#[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResponseFormat {
@@ -174,6 +178,42 @@ pub enum ResponseFormat {
 }
 
 impl ServingOptions {
+    /// Set the model context window to serve this request with (Ollama `num_ctx`).
+    #[must_use]
+    pub const fn with_context_length(mut self, context_length: u64) -> Self {
+        self.context_length = Some(context_length);
+        self
+    }
+
+    /// Set the nucleus-sampling probability mass.
+    #[must_use]
+    pub const fn with_top_p(mut self, top_p: f64) -> Self {
+        self.top_p = Some(top_p);
+        self
+    }
+
+    /// Set how long the backend should keep the model loaded after the
+    /// request (Ollama `keep_alive`, e.g. `"5m"`).
+    #[must_use]
+    pub fn with_keep_alive(mut self, keep_alive: impl Into<String>) -> Self {
+        self.keep_alive = Some(keep_alive.into());
+        self
+    }
+
+    /// Set the structured-output ("JSON mode") constraint for the response.
+    #[must_use]
+    pub fn with_format(mut self, format: ResponseFormat) -> Self {
+        self.format = Some(format);
+        self
+    }
+
+    /// Set additional provider-native options passed through verbatim.
+    #[must_use]
+    pub fn with_extra(mut self, extra: std::collections::BTreeMap<String, Value>) -> Self {
+        self.extra = extra;
+        self
+    }
+
     /// True when nothing is set — adapters can skip serialization work.
     pub fn is_default(&self) -> bool {
         *self == Self::default()
@@ -183,6 +223,7 @@ impl ServingOptions {
 // ─── StreamOptions ───────────────────────────────────────────────────────────
 
 /// Per-call configuration passed through to the LLM provider.
+#[non_exhaustive]
 #[derive(Clone, Default)]
 pub struct StreamOptions {
     /// Sampling temperature (optional).
@@ -201,6 +242,64 @@ pub struct StreamOptions {
     pub on_raw_payload: Option<OnRawPayload>,
     /// Provider-native serving options (local backends). Default = none set.
     pub serving: ServingOptions,
+}
+
+impl StreamOptions {
+    /// Set the sampling temperature.
+    #[must_use]
+    pub const fn with_temperature(mut self, temperature: f64) -> Self {
+        self.temperature = Some(temperature);
+        self
+    }
+
+    /// Set the output token limit.
+    #[must_use]
+    pub const fn with_max_tokens(mut self, max_tokens: u64) -> Self {
+        self.max_tokens = Some(max_tokens);
+        self
+    }
+
+    /// Set the provider-side session identifier for caching.
+    #[must_use]
+    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = Some(session_id.into());
+        self
+    }
+
+    /// Set a dynamically resolved API key for this specific request.
+    #[must_use]
+    pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
+        self.api_key = Some(api_key.into());
+        self
+    }
+
+    /// Set the preferred transport protocol.
+    #[must_use]
+    pub const fn with_transport(mut self, transport: StreamTransport) -> Self {
+        self.transport = transport;
+        self
+    }
+
+    /// Set the provider-agnostic caching configuration.
+    #[must_use]
+    pub fn with_cache_strategy(mut self, cache_strategy: CacheStrategy) -> Self {
+        self.cache_strategy = cache_strategy;
+        self
+    }
+
+    /// Set a callback for observing raw SSE data lines before parsing.
+    #[must_use]
+    pub fn with_on_raw_payload(mut self, on_raw_payload: OnRawPayload) -> Self {
+        self.on_raw_payload = Some(on_raw_payload);
+        self
+    }
+
+    /// Set the provider-native serving options (local backends).
+    #[must_use]
+    pub fn with_serving(mut self, serving: ServingOptions) -> Self {
+        self.serving = serving;
+        self
+    }
 }
 
 impl std::fmt::Debug for StreamOptions {
@@ -423,6 +522,7 @@ impl AssistantMessageEvent {
 ///
 /// The `delta` field uses [`Cow<'static, str>`] to avoid cloning on the hot
 /// path when the caller can transfer ownership of the underlying `String`.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AssistantMessageDelta {

@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 // ─── RequestId ────────────────────────────────────────────────────────────────
 
 /// A JSON-RPC 2.0 request identifier — either a number or a string.
+// Frozen by design: the id domain is fixed by the JSON-RPC 2.0 spec (number | string).
+#[allow(clippy::exhaustive_enums)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RequestId {
@@ -24,6 +26,8 @@ impl std::fmt::Display for RequestId {
 // ─── RpcError ─────────────────────────────────────────────────────────────────
 
 /// A JSON-RPC 2.0 error object.
+// Frozen by design: the spec error object shape (code/message/data) is fixed.
+#[allow(clippy::exhaustive_structs)]
 #[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
 #[error("JSON-RPC error {code}: {message}")]
 pub struct RpcError {
@@ -126,6 +130,8 @@ impl RpcError {
 /// A flat JSON-RPC 2.0 message envelope used for both serialization and
 /// deserialization. Classification (request / response / notification) is
 /// determined by which optional fields are present.
+// Frozen by design: the spec envelope shape (jsonrpc/id/method/params/result/error) is fixed.
+#[allow(clippy::exhaustive_structs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawMessage {
     /// Must be exactly `"2.0"`.
@@ -206,6 +212,9 @@ impl RawMessage {
 }
 
 /// Logical classification of a [`RawMessage`].
+// Frozen by design: a complete classification of a spec envelope
+// (Request/Notification/Response/Invalid); no other shape exists.
+#[allow(clippy::exhaustive_enums)]
 #[derive(Debug)]
 pub enum MessageKind<'a> {
     Request { id: &'a RequestId, method: &'a str },

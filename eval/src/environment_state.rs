@@ -135,18 +135,8 @@ mod tests {
         Invocation {
             turns: vec![TurnRecord {
                 turn_index: 0,
-                assistant_message: swink_agent::AssistantMessage {
-                    content: vec![],
-                    provider: "test".into(),
-                    model_id: "test-model".into(),
-                    usage: Usage::default(),
-                    cost: Cost::default(),
-                    stop_reason: StopReason::Stop,
-                    error_message: None,
-                    error_kind: None,
-                    timestamp: 0,
-                    cache_hint: None,
-                },
+                assistant_message: swink_agent::AssistantMessage::new(vec![], "test", "test-model")
+                    .with_timestamp(0),
                 tool_calls: vec![],
                 tool_results: vec![],
                 duration: std::time::Duration::from_millis(10),

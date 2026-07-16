@@ -32,6 +32,7 @@ static SCHEMA_VALIDATOR_CACHE: LazyLock<Mutex<HashMap<String, Arc<jsonschema::Va
 ///
 /// Contains content blocks returned to the LLM and structured details for
 /// logging that are not sent to the model.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentToolResult {
     /// Content blocks returned to the LLM as the tool result.
@@ -46,6 +47,22 @@ pub struct AgentToolResult {
 }
 
 impl AgentToolResult {
+    /// Create a result from arbitrary content blocks with null details and no
+    /// transfer signal.
+    ///
+    /// Use this when the content isn't a single text block (e.g. converting
+    /// from another protocol's multi-block result); prefer
+    /// [`text`](Self::text) / [`error`](Self::error) for the common case.
+    #[must_use]
+    pub fn new(content: Vec<ContentBlock>, is_error: bool) -> Self {
+        Self {
+            content,
+            details: Value::Null,
+            is_error,
+            transfer_signal: None,
+        }
+    }
+
     /// Create a result containing a single text content block with null details.
     pub fn text(text: impl Into<String>) -> Self {
         Self {
@@ -102,6 +119,7 @@ pub type ToolFuture<'a> = Pin<Box<dyn Future<Output = AgentToolResult> + Send + 
 ///
 /// Groups tools by namespace and tracks version. Existing tools default to
 /// no namespace and no version.
+#[non_exhaustive]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ToolMetadata {
     /// Logical grouping such as `"filesystem"`, `"git"`, or `"code_analysis"`.
@@ -337,6 +355,7 @@ pub fn validation_error_result(errors: &[String]) -> AgentToolResult {
 // ─── Tool Approval ──────────────────────────────────────────────────────────
 
 /// Result of the approval gate for a tool call.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolApproval {
     /// The tool call is approved and should proceed.
@@ -352,6 +371,7 @@ pub enum ToolApproval {
 /// The [`Debug`] implementation redacts the `arguments` field and sanitizes
 /// `context` to prevent sensitive values from leaking into logs and debug
 /// output.
+#[non_exhaustive]
 #[derive(Clone)]
 pub struct ToolApprovalRequest {
     /// The unique ID of this tool call.
@@ -364,6 +384,38 @@ pub struct ToolApprovalRequest {
     pub requires_approval: bool,
     /// Optional rich context from the tool's `approval_context()` method.
     pub context: Option<Value>,
+}
+
+impl ToolApprovalRequest {
+    /// Create a new approval request. `context` defaults to `None`; attach
+    /// it with [`with_context`](Self::with_context) when the tool provides
+    /// rich approval context.
+    ///
+    /// This constructor does not affect the [`Debug`] redaction behavior —
+    /// `arguments` is always redacted and `context` always sanitized when
+    /// formatted, regardless of how the value was constructed.
+    #[must_use]
+    pub fn new(
+        tool_call_id: impl Into<String>,
+        tool_name: impl Into<String>,
+        arguments: Value,
+        requires_approval: bool,
+    ) -> Self {
+        Self {
+            tool_call_id: tool_call_id.into(),
+            tool_name: tool_name.into(),
+            arguments,
+            requires_approval,
+            context: None,
+        }
+    }
+
+    /// Attach rich approval context (e.g. a diff preview, estimated cost).
+    #[must_use]
+    pub fn with_context(mut self, context: Value) -> Self {
+        self.context = Some(context);
+        self
+    }
 }
 
 impl fmt::Debug for ToolApprovalRequest {

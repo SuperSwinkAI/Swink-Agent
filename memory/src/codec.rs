@@ -73,6 +73,17 @@ fn encode(msg: &AgentMessage, session_id: &str) -> Option<(MessageKind, String)>
                 .ok()
                 .map(|json| (MessageKind::Custom, json))
         }
+        // `AgentMessage` is `#[non_exhaustive]`: a variant this build
+        // doesn't know how to encode can't be mapped to an existing
+        // `MessageKind`, so skip it the same way an unserializable custom
+        // message is skipped above.
+        _ => {
+            tracing::warn!(
+                session_id,
+                "skipping AgentMessage variant not recognised by this build"
+            );
+            None
+        }
     }
 }
 
@@ -127,6 +138,15 @@ pub fn encode_jsonl_message_line(msg: &AgentMessage, session_id: &str) -> Option
                 .insert("_custom".to_string(), serde_json::Value::Bool(true));
 
             serde_json::to_string(&envelope).ok()
+        }
+        // Same rationale as `encode` above: an unrecognised `AgentMessage`
+        // variant has no JSONL encoding this build knows how to produce.
+        _ => {
+            tracing::warn!(
+                session_id,
+                "skipping AgentMessage variant not recognised by this build"
+            );
+            None
         }
     }
 }
@@ -249,13 +269,12 @@ mod tests {
     }
 
     fn user_msg() -> AgentMessage {
-        AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
+        AgentMessage::Llm(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text {
                 text: "hello".to_string(),
-            }],
-            timestamp: 1,
-            cache_hint: None,
-        }))
+            }])
+            .with_timestamp(1),
+        ))
     }
 
     #[test]
@@ -299,13 +318,12 @@ mod tests {
 
     #[test]
     fn decode_jsonl_message_line_reads_tagged_message_entry() {
-        let entry = SessionEntry::Message(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
+        let entry = SessionEntry::Message(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text {
                 text: "from-entry".to_string(),
-            }],
-            timestamp: 7,
-            cache_hint: None,
-        }));
+            }])
+            .with_timestamp(7),
+        ));
         let line = serde_json::to_string(&entry).unwrap();
 
         let decoded = decode_jsonl_message_line(&line, None)
@@ -328,13 +346,12 @@ mod tests {
 
     #[test]
     fn session_entry_codec_roundtrips_message_entries() {
-        let entry = SessionEntry::Message(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
+        let entry = SessionEntry::Message(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text {
                 text: "hello".to_string(),
-            }],
-            timestamp: 1,
-            cache_hint: None,
-        }));
+            }])
+            .with_timestamp(1),
+        ));
 
         let (kind, data) = encode_session_entry(&entry).unwrap();
         let decoded = decode_session_entry(&kind, &data)

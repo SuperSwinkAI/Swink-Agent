@@ -27,7 +27,9 @@ fn fallback_model() -> ModelSpec {
 fn default_convert_to_llm() -> ConvertToLlmBoxed {
     Box::new(|msg| match msg {
         AgentMessage::Llm(llm) => Some(llm.clone()),
-        AgentMessage::Custom(_) => None,
+        // Covers AgentMessage::Custom and, since AgentMessage is
+        // #[non_exhaustive], any future variant.
+        _ => None,
     })
 }
 

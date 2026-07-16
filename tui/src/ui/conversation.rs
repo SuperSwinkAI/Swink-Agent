@@ -163,7 +163,10 @@ impl ConversationView {
                 }
                 MessageRole::ToolResult => ("Tool", theme::tool_color()),
                 MessageRole::Error => ("Error", theme::error_color()),
-                MessageRole::System => ("System", theme::system_color()),
+                // Covers MessageRole::System and, since DisplayRole is
+                // #[non_exhaustive], any unknown future role — rendered as a
+                // neutral, non-attributed line.
+                _ => ("System", theme::system_color()),
             };
 
             // Tool result selection style

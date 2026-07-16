@@ -183,6 +183,7 @@ pub fn deserialize_custom_message(
 /// across process boundaries. `Llm` variants delegate to the derived impl;
 /// `Custom` variants serialize via [`serialize_custom_message`] (or as
 /// `null` if the custom message does not support serialization).
+#[non_exhaustive]
 #[allow(clippy::large_enum_variant)]
 pub enum AgentMessage {
     /// A standard LLM message (user, assistant, or tool result).

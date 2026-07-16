@@ -280,15 +280,12 @@ async fn proxy_on_raw_payload_observes_runtime_sse_lines() {
 
     let observed = Arc::new(Mutex::new(Vec::<String>::new()));
     let callback_lines = Arc::clone(&observed);
-    let options = StreamOptions {
-        on_raw_payload: Some(Arc::new(move |line| {
-            callback_lines
-                .lock()
-                .expect("callback buffer poisoned")
-                .push(line.to_owned());
-        })),
-        ..StreamOptions::default()
-    };
+    let options = StreamOptions::default().with_on_raw_payload(Arc::new(move |line: &str| {
+        callback_lines
+            .lock()
+            .expect("callback buffer poisoned")
+            .push(line.to_owned());
+    }));
 
     let proxy = ProxyStreamFn::new(server.uri(), "test-token");
     let events = collect_events_with_options(&proxy, options).await;
@@ -551,14 +548,12 @@ async fn serving_extra_is_dropped_and_body_unchanged() {
         .await;
 
     let proxy = ProxyStreamFn::new(server.uri(), "test-token");
-    let options = StreamOptions {
-        temperature: Some(0.7),
-        serving: swink_agent::ServingOptions {
-            extra: std::collections::BTreeMap::from([("top_k".to_string(), serde_json::json!(40))]),
-            ..swink_agent::ServingOptions::default()
-        },
-        ..StreamOptions::default()
-    };
+    let options = StreamOptions::default().with_temperature(0.7).with_serving(
+        swink_agent::ServingOptions::default().with_extra(std::collections::BTreeMap::from([(
+            "top_k".to_string(),
+            serde_json::json!(40),
+        )])),
+    );
     let events = collect_events_with_options(&proxy, options).await;
     assert!(
         events

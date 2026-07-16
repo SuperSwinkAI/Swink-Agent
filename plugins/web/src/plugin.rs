@@ -18,6 +18,7 @@ use crate::tools::{ExtractTool, FetchTool, ScreenshotTool, SearchTool};
 ///
 /// These replace the previous panics on recoverable misconfiguration so that
 /// hosts embedding the plugin can surface a diagnostic instead of aborting.
+#[non_exhaustive]
 #[derive(Debug, Error)]
 pub enum WebPluginError {
     /// The underlying `reqwest` HTTP client failed to build (e.g. invalid

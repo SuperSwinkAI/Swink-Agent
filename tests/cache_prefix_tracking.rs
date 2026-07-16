@@ -69,7 +69,9 @@ type ConvertToLlmBoxed = Box<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send 
 fn default_convert_to_llm() -> ConvertToLlmBoxed {
     Box::new(|msg: &AgentMessage| match msg {
         AgentMessage::Llm(llm) => Some(llm.clone()),
-        AgentMessage::Custom(_) => None,
+        // Covers AgentMessage::Custom and, since AgentMessage is
+        // #[non_exhaustive], any future variant.
+        _ => None,
     })
 }
 
@@ -106,11 +108,9 @@ impl RetryStrategy for RetryCacheMissOnce {
 fn sized_user_msg(label: &str, token_count: usize) -> AgentMessage {
     let padding = "x".repeat(token_count * 4);
     let text = format!("{label}:{padding}");
-    AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text { text }],
-        timestamp: 0,
-        cache_hint: None,
-    }))
+    AgentMessage::Llm(LlmMessage::User(
+        UserMessage::new(vec![ContentBlock::Text { text }]).with_timestamp(0),
+    ))
 }
 
 async fn collect_events(stream: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>) -> Vec<AgentEvent> {

@@ -11,13 +11,12 @@ use swink_agent::{
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 fn text_message(text: &str) -> AgentMessage {
-    AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text {
+    AgentMessage::Llm(LlmMessage::User(
+        UserMessage::new(vec![ContentBlock::Text {
             text: text.to_owned(),
-        }],
-        timestamp: 0,
-        cache_hint: None,
-    }))
+        }])
+        .with_timestamp(0),
+    ))
 }
 
 /// Strategy that produces a Vec of text lengths, which we materialise into
@@ -176,13 +175,12 @@ proptest! {
         multiplier in 1.0_f64..5.0,
         attempt in 1_u32..8,
     ) {
-        let strategy = DefaultRetryStrategy {
-            max_attempts: 10,
-            base_delay: Duration::from_millis(base_ms),
-            max_delay: Duration::from_hours(1),
-            multiplier,
-            jitter: true,
-        };
+        let strategy = DefaultRetryStrategy::default()
+            .with_max_attempts(10)
+            .with_base_delay(Duration::from_millis(base_ms))
+            .with_max_delay(Duration::from_hours(1))
+            .with_multiplier(multiplier)
+            .with_jitter(true);
 
         let delay = strategy.delay(attempt);
 
@@ -210,13 +208,12 @@ proptest! {
         multiplier in 1.0_f64..5.0,
         attempt in 1_u32..8,
     ) {
-        let strategy = DefaultRetryStrategy {
-            max_attempts: 10,
-            base_delay: Duration::from_millis(base_ms),
-            max_delay: Duration::from_hours(1),
-            multiplier,
-            jitter: false,
-        };
+        let strategy = DefaultRetryStrategy::default()
+            .with_max_attempts(10)
+            .with_base_delay(Duration::from_millis(base_ms))
+            .with_max_delay(Duration::from_hours(1))
+            .with_multiplier(multiplier)
+            .with_jitter(false);
 
         let d1 = strategy.delay(attempt);
         let d2 = strategy.delay(attempt);
@@ -229,13 +226,12 @@ proptest! {
         max_ms in 100_u64..5000,
         attempt in 1_u32..10,
     ) {
-        let strategy = DefaultRetryStrategy {
-            max_attempts: 10,
-            base_delay: Duration::from_millis(base_ms),
-            max_delay: Duration::from_millis(max_ms),
-            multiplier: 2.0,
-            jitter: false,
-        };
+        let strategy = DefaultRetryStrategy::default()
+            .with_max_attempts(10)
+            .with_base_delay(Duration::from_millis(base_ms))
+            .with_max_delay(Duration::from_millis(max_ms))
+            .with_multiplier(2.0)
+            .with_jitter(false);
 
         let delay = strategy.delay(attempt);
         // Without jitter, delay should never exceed max_delay.

@@ -13,6 +13,7 @@ use swink_agent::{ContentBlock, PolicyContext, PolicyVerdict, PostTurnPolicy, Tu
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 /// Summary of a single turn, suitable for serialization to an audit log.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize)]
 pub struct AuditRecord {
     /// ISO 8601 timestamp of when the record was created.
@@ -30,6 +31,7 @@ pub struct AuditRecord {
 }
 
 /// Subset of token usage relevant for audit records.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize)]
 pub struct AuditUsage {
     pub input: u64,
@@ -38,6 +40,7 @@ pub struct AuditUsage {
 }
 
 /// Subset of cost relevant for audit records.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize)]
 pub struct AuditCost {
     pub total: f64,
@@ -208,26 +211,15 @@ mod tests {
     // ── Helpers ─────────────────────────────────────────────────────────
 
     fn make_assistant_message(content: Vec<ContentBlock>) -> AssistantMessage {
-        AssistantMessage {
-            content,
-            provider: String::new(),
-            model_id: String::new(),
-            usage: Usage {
-                input: 100,
-                output: 50,
-                total: 150,
-                ..Default::default()
-            },
-            cost: Cost {
-                total: 0.005,
-                ..Default::default()
-            },
-            stop_reason: StopReason::Stop,
-            error_message: None,
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        }
+        AssistantMessage::new(content, "", "")
+            .with_usage(
+                Usage::default()
+                    .with_input(100)
+                    .with_output(50)
+                    .with_total(150),
+            )
+            .with_cost(Cost::default().with_total(0.005))
+            .with_timestamp(0)
     }
 
     fn make_ctx<'a>(
@@ -235,15 +227,7 @@ mod tests {
         cost: &'a Cost,
         state: &'a swink_agent::SessionState,
     ) -> PolicyContext<'a> {
-        PolicyContext {
-            turn_index: 3,
-            accumulated_usage: usage,
-            accumulated_cost: cost,
-            message_count: 10,
-            overflow_signal: false,
-            new_messages: &[],
-            state,
-        }
+        PolicyContext::new(3, usage, cost, 10, false, &[], state)
     }
 
     // ── Tests ───────────────────────────────────────────────────────────
@@ -262,14 +246,7 @@ mod tests {
         let ctx = make_ctx(&usage, &cost, &state);
         static MODEL: std::sync::LazyLock<swink_agent::ModelSpec> =
             std::sync::LazyLock::new(|| swink_agent::ModelSpec::new("test", "test-model"));
-        let turn = TurnPolicyContext {
-            assistant_message: &msg,
-            tool_results: &[],
-            stop_reason: StopReason::Stop,
-            system_prompt: "",
-            model_spec: &MODEL,
-            context_messages: &[],
-        };
+        let turn = TurnPolicyContext::new(&msg, &[], StopReason::Stop, "", &MODEL, &[]);
 
         let verdict = logger.evaluate(&ctx, &turn);
         assert!(matches!(verdict, PolicyVerdict::Continue));
@@ -290,14 +267,7 @@ mod tests {
         let ctx = make_ctx(&usage, &cost, &state);
         static MODEL: std::sync::LazyLock<swink_agent::ModelSpec> =
             std::sync::LazyLock::new(|| swink_agent::ModelSpec::new("test", "test-model"));
-        let turn = TurnPolicyContext {
-            assistant_message: &msg,
-            tool_results: &[],
-            stop_reason: StopReason::Stop,
-            system_prompt: "",
-            model_spec: &MODEL,
-            context_messages: &[],
-        };
+        let turn = TurnPolicyContext::new(&msg, &[], StopReason::Stop, "", &MODEL, &[]);
 
         logger.evaluate(&ctx, &turn);
 
@@ -337,14 +307,7 @@ mod tests {
         let ctx = make_ctx(&usage, &cost, &state);
         static MODEL2: std::sync::LazyLock<swink_agent::ModelSpec> =
             std::sync::LazyLock::new(|| swink_agent::ModelSpec::new("test", "test-model"));
-        let turn = TurnPolicyContext {
-            assistant_message: &msg,
-            tool_results: &[],
-            stop_reason: StopReason::ToolUse,
-            system_prompt: "",
-            model_spec: &MODEL2,
-            context_messages: &[],
-        };
+        let turn = TurnPolicyContext::new(&msg, &[], StopReason::ToolUse, "", &MODEL2, &[]);
 
         logger.evaluate(&ctx, &turn);
 

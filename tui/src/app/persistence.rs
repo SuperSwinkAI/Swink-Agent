@@ -66,14 +66,7 @@ impl App {
                 existing.updated_at = now;
                 existing
             }
-            None => SessionMeta {
-                id: self.session_id.clone(),
-                title: self.model_name.clone(),
-                created_at: now,
-                updated_at: now,
-                version: 1,
-                sequence: 0,
-            },
+            None => SessionMeta::new(self.session_id.clone(), self.model_name.clone(), now, now),
         };
 
         match store.save_full(
@@ -165,9 +158,10 @@ impl App {
                                 display_messages.push(message);
                             }
                         }
-                        AgentMessage::Custom(_) => {
-                            // Custom messages are not displayed in the TUI
-                        }
+                        // Covers AgentMessage::Custom (not displayed in the
+                        // TUI) and, since AgentMessage / LlmMessage are
+                        // #[non_exhaustive], any future variant.
+                        &_ => {}
                     }
                 }
                 self.messages = display_messages;

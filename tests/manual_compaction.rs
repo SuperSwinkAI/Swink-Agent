@@ -26,16 +26,18 @@ use swink_agent::{
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
+/// Per-call snapshots of the LLM message list, captured by
+/// [`MessageCapturingStreamFn`].
+type CapturedMessages = Arc<Mutex<Vec<Vec<LlmMessage>>>>;
+
 /// A `StreamFn` that captures the full LLM message list on each call.
 struct MessageCapturingStreamFn {
     responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
-    captured: Arc<Mutex<Vec<Vec<LlmMessage>>>>,
+    captured: CapturedMessages,
 }
 
 impl MessageCapturingStreamFn {
-    fn new(
-        responses: Vec<Vec<AssistantMessageEvent>>,
-    ) -> (Arc<Self>, Arc<Mutex<Vec<Vec<LlmMessage>>>>) {
+    fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> (Arc<Self>, CapturedMessages) {
         let captured = Arc::new(Mutex::new(Vec::new()));
         let this = Arc::new(Self {
             responses: Mutex::new(responses),
@@ -58,7 +60,9 @@ impl StreamFn for MessageCapturingStreamFn {
             .iter()
             .filter_map(|m| match m {
                 AgentMessage::Llm(llm) => Some(llm.clone()),
-                AgentMessage::Custom(_) => None,
+                // Covers AgentMessage::Custom and, since AgentMessage is
+                // #[non_exhaustive], any future variant.
+                _ => None,
             })
             .collect();
         self.captured.lock().unwrap().push(llm_msgs);
@@ -70,13 +74,12 @@ impl StreamFn for MessageCapturingStreamFn {
 /// Create a large user message (~`token_count` estimated tokens; chars / 4).
 fn large_user_msg(label: &str, token_count: usize) -> AgentMessage {
     let padding = "x".repeat(token_count * 4);
-    AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text {
+    AgentMessage::Llm(LlmMessage::User(
+        UserMessage::new(vec![ContentBlock::Text {
             text: format!("{label}:{padding}"),
-        }],
-        timestamp: 0,
-        cache_hint: None,
-    }))
+        }])
+        .with_timestamp(0),
+    ))
 }
 
 /// Seed a history of `n` large messages (~50 estimated tokens each).
@@ -289,13 +292,8 @@ impl AsyncContextTransformer for DropFirstAsyncTransformer {
                 return None;
             }
             messages.remove(0);
-            Some(CompactionReport {
-                dropped_count: 1,
-                tokens_before: 777, // sentinel: identifies the async report
-                tokens_after: 0,
-                overflow,
-                dropped_messages: Vec::new(),
-            })
+            // 777 is a sentinel: identifies the async report
+            Some(CompactionReport::new(1, 777, 0, overflow))
         })
     }
 }

@@ -6,6 +6,7 @@
 use crate::types::{ContentBlock, LlmMessage, StopReason};
 
 /// Role of a message for display styling.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisplayRole {
     User,
@@ -20,11 +21,31 @@ pub enum DisplayRole {
 /// Contains the essential display data extracted from [`LlmMessage`].
 /// Frontend implementations can wrap this with additional UI-specific
 /// fields (collapse state, scroll position, etc.).
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct CoreDisplayMessage {
     pub role: DisplayRole,
     pub content: String,
     pub thinking: Option<String>,
+}
+
+impl CoreDisplayMessage {
+    /// Create a new display message with no thinking content.
+    #[must_use]
+    pub fn new(role: DisplayRole, content: impl Into<String>) -> Self {
+        Self {
+            role,
+            content: content.into(),
+            thinking: None,
+        }
+    }
+
+    /// Attach thinking/reasoning content to this message.
+    #[must_use]
+    pub fn with_thinking(mut self, thinking: impl Into<String>) -> Self {
+        self.thinking = Some(thinking.into());
+        self
+    }
 }
 
 /// Convert message types into display-ready representations.

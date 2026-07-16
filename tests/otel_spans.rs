@@ -42,13 +42,11 @@ fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
 }
 
 fn user_msg(text: &str) -> AgentMessage {
-    AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text {
+    AgentMessage::Llm(LlmMessage::User(UserMessage::new(vec![
+        ContentBlock::Text {
             text: text.to_string(),
-        }],
-        timestamp: swink_agent::now_timestamp(),
-        cache_hint: None,
-    }))
+        },
+    ])))
 }
 
 /// Set up an in-memory `OTel` exporter and tracing subscriber, returning the

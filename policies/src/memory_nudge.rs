@@ -39,6 +39,7 @@ use swink_agent::{
 // ─── Category ───────────────────────────────────────────────────────────────
 
 /// The category of save-worthy content detected by [`MemoryNudgePolicy`].
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MemoryNudgeCategory {
     /// A user correction — the user (or assistant relaying a correction) clarifies
@@ -81,6 +82,7 @@ impl MemoryNudgeCategory {
 ///
 /// Serialized as JSON inside a `ContentBlock::Extension { type_name: "memory_nudge" }`.
 /// Callers should deserialize the `data` field to recover this struct.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct MemoryNudge {
     /// Which category of save-worthy content was detected.
@@ -117,6 +119,7 @@ impl MemoryNudge {
 /// | Low    | 0.75      | Only high-confidence, unambiguous matches       |
 /// | Medium | 0.55      | Balanced — default for most use cases           |
 /// | High   | 0.35      | Catch borderline / partial matches too          |
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NudgeSensitivity {
     /// Only high-confidence matches (threshold 0.75).
@@ -316,14 +319,13 @@ fn nudge_message(
     // Embed the nudge as an extension block inside a user message so it can
     // be stored in the message history without being forwarded to the LLM
     // (extension blocks are stripped during message conversion).
-    AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Extension {
+    AgentMessage::Llm(LlmMessage::User(
+        UserMessage::new(vec![ContentBlock::Extension {
             type_name: "memory_nudge".to_string(),
             data,
-        }],
-        timestamp: 0,
-        cache_hint: None,
-    }))
+        }])
+        .with_timestamp(0),
+    ))
 }
 
 // ─── PostTurnPolicy impl ─────────────────────────────────────────────────────
@@ -386,20 +388,14 @@ mod tests {
     // ── Test helpers ─────────────────────────────────────────────────────
 
     fn make_assistant(text: &str) -> AssistantMessage {
-        AssistantMessage {
-            content: vec![ContentBlock::Text {
+        AssistantMessage::new(
+            vec![ContentBlock::Text {
                 text: text.to_string(),
             }],
-            provider: String::new(),
-            model_id: String::new(),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::Stop,
-            error_message: None,
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        }
+            String::new(),
+            String::new(),
+        )
+        .with_timestamp(0)
     }
 
     fn make_turn_ctx<'a>(
@@ -409,14 +405,14 @@ mod tests {
     ) -> TurnPolicyContext<'a> {
         static MODEL: std::sync::LazyLock<swink_agent::ModelSpec> =
             std::sync::LazyLock::new(|| swink_agent::ModelSpec::new("test", "test-model"));
-        TurnPolicyContext {
-            assistant_message: assistant,
+        TurnPolicyContext::new(
+            assistant,
             tool_results,
-            stop_reason: StopReason::Stop,
-            system_prompt: "",
-            model_spec: &MODEL,
+            StopReason::Stop,
+            "",
+            &MODEL,
             context_messages,
-        }
+        )
     }
 
     fn make_policy_ctx<'a>(
@@ -424,15 +420,7 @@ mod tests {
         cost: &'a Cost,
         state: &'a swink_agent::SessionState,
     ) -> PolicyContext<'a> {
-        PolicyContext {
-            turn_index: 3,
-            accumulated_usage: usage,
-            accumulated_cost: cost,
-            message_count: 10,
-            overflow_signal: false,
-            new_messages: &[],
-            state,
-        }
+        PolicyContext::new(3, usage, cost, 10, false, &[], state)
     }
 
     fn evaluate_text(text: &str, sensitivity: NudgeSensitivity) -> PolicyVerdict {
@@ -600,15 +588,7 @@ mod tests {
         let usage = Usage::default();
         let cost = Cost::default();
         let state = swink_agent::SessionState::new();
-        let ctx = PolicyContext {
-            turn_index: 7,
-            accumulated_usage: &usage,
-            accumulated_cost: &cost,
-            message_count: 20,
-            overflow_signal: false,
-            new_messages: &[],
-            state: &state,
-        };
+        let ctx = PolicyContext::new(7, &usage, &cost, 20, false, &[], &state);
         let turn = make_turn_ctx(&assistant, &[], &[]);
         match PostTurnPolicy::evaluate(&policy, &ctx, &turn) {
             PolicyVerdict::Inject(msgs) => {

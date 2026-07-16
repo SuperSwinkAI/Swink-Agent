@@ -16,6 +16,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use crate::credentials::{self, ProviderInfo};
 
 /// Current step in the setup wizard.
+#[non_exhaustive]
 pub enum WizardStep {
     Welcome,
     ProviderList,

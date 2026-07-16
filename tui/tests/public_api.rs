@@ -21,27 +21,17 @@ fn tui_reexports_remain_consumable() {
 /// A stubbed assistant response, priced as the agent loop would have priced it.
 fn stubbed_turn(model_id: &str, input: u64, output: u64, cost: f64) -> AgentEvent {
     AgentEvent::MessageEnd {
-        message: AssistantMessage {
-            content: vec![ContentBlock::Text {
+        message: AssistantMessage::new(
+            vec![ContentBlock::Text {
                 text: "stub".to_string(),
             }],
-            provider: "anthropic".to_string(),
-            model_id: model_id.to_string(),
-            usage: Usage {
-                input,
-                output,
-                ..Usage::default()
-            },
-            cost: Cost {
-                total: cost,
-                ..Cost::default()
-            },
-            stop_reason: StopReason::Stop,
-            error_message: None,
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        },
+            "anthropic",
+            model_id,
+        )
+        .with_usage(Usage::default().with_input(input).with_output(output))
+        .with_cost(Cost::default().with_total(cost))
+        .with_stop_reason(StopReason::Stop)
+        .with_timestamp(0),
     }
 }
 

@@ -190,12 +190,10 @@ impl AgentClient {
             warn!("could not parse tool.approve params; rejecting");
             return ToolApproval::Rejected;
         };
-        let req = ToolApprovalRequest {
-            tool_call_id: dto.id,
-            tool_name: dto.name,
-            arguments: dto.arguments,
-            requires_approval: dto.requires_approval,
-            context: dto.context,
+        let req = ToolApprovalRequest::new(dto.id, dto.name, dto.arguments, dto.requires_approval);
+        let req = match dto.context {
+            Some(context) => req.with_context(context),
+            None => req,
         };
         handler(req)
     }
