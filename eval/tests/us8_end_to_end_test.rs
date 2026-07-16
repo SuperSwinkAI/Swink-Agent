@@ -23,50 +23,43 @@ const SCHEMA_JSON: &str =
     include_str!("../../specs/043-evals-adv-features/contracts/eval-result.schema.json");
 
 fn sample_result() -> EvalSetResult {
-    let case_pass = EvalCaseResult {
-        case_id: "case_alpha".into(),
-        invocation: mock_invocation(&["search_docs"], Some("Refund approved"), 0.0125, 180),
-        metric_results: vec![
-            EvalMetricResult {
-                evaluator_name: "helpfulness".into(),
-                score: Score::new(0.87, 0.5),
-                details: Some("grounded in policy".into()),
-            },
-            EvalMetricResult {
-                evaluator_name: "correctness".into(),
-                score: Score::new(0.93, 0.7),
-                details: Some("quoted the refund window".into()),
-            },
-        ],
-        verdict: Verdict::Pass,
-    };
-    let case_fail = EvalCaseResult {
-        case_id: "case_beta".into(),
-        invocation: mock_invocation(&["lookup_order"], Some("Need more info"), 0.008, 140),
-        metric_results: vec![EvalMetricResult {
-            evaluator_name: "task_completion".into(),
-            score: Score::new(0.24, 0.6),
-            details: Some("did not resolve the missing package".into()),
-        }],
-        verdict: Verdict::Fail,
-    };
+    let case_pass = EvalCaseResult::new(
+        "case_alpha",
+        mock_invocation(&["search_docs"], Some("Refund approved"), 0.0125, 180),
+        Verdict::Pass,
+    )
+    .with_metric_results(vec![
+        EvalMetricResult::new("helpfulness", Score::new(0.87, 0.5)).with_details("grounded in policy"),
+        EvalMetricResult::new("correctness", Score::new(0.93, 0.7))
+            .with_details("quoted the refund window"),
+    ]);
+    let case_fail = EvalCaseResult::new(
+        "case_beta",
+        mock_invocation(&["lookup_order"], Some("Need more info"), 0.008, 140),
+        Verdict::Fail,
+    )
+    .with_metric_results(vec![
+        EvalMetricResult::new("task_completion", Score::new(0.24, 0.6))
+            .with_details("did not resolve the missing package"),
+    ]);
 
-    EvalSetResult {
-        eval_set_id: "support-evals".into(),
-        case_results: vec![case_pass, case_fail],
-        summary: EvalSummary {
-            total_cases: 2,
-            passed: 1,
-            failed: 1,
-            total_cost: Cost::default().with_total(0.0205),
-            total_usage: Usage::default()
-                .with_input(190)
-                .with_output(130)
-                .with_total(320),
-            total_duration: Duration::from_millis(275),
-        },
-        timestamp: 1_713_901_234,
-    }
+    EvalSetResult::new(
+        "support-evals",
+        vec![case_pass, case_fail],
+        EvalSummary::default()
+            .with_total_cases(2)
+            .with_passed(1)
+            .with_failed(1)
+            .with_total_cost(Cost::default().with_total(0.0205))
+            .with_total_usage(
+                Usage::default()
+                    .with_input(190)
+                    .with_output(130)
+                    .with_total(320),
+            )
+            .with_total_duration(Duration::from_millis(275)),
+        1_713_901_234,
+    )
 }
 
 fn render_stdout(reporter: &dyn Reporter, result: &EvalSetResult) -> String {

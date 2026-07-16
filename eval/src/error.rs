@@ -1,6 +1,7 @@
 //! Error types for the evaluation framework.
 
 /// The top-level error type for eval operations.
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum EvalError {
     /// An error from the underlying agent during evaluation.

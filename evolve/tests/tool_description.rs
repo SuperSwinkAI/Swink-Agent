@@ -43,30 +43,15 @@ impl AgentFactory for ToolAwareFactory {
 }
 
 fn case() -> EvalCase {
-    EvalCase {
-        id: "c1".to_string(),
-        name: "c1".to_string(),
-        description: None,
-        system_prompt: "You are helpful.".to_string(),
-        user_messages: vec!["hello".to_string()],
-        expected_response: Some(ResponseCriteria::Custom(Arc::new(|_: &str| Score {
-            value: 1.0,
-            threshold: 0.5,
-        }))),
-        expected_trajectory: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new(
+        "c1",
+        "c1",
+        "You are helpful.",
+        vec!["hello".to_string()],
+    )
+    .with_expected_response(ResponseCriteria::Custom(Arc::new(|_: &str| {
+        Score::new(1.0, 0.5)
+    })))
 }
 
 #[test]

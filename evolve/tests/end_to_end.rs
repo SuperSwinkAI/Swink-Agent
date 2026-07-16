@@ -85,72 +85,33 @@ impl MutationStrategy for HelpfulToUsefulStrategy {
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 fn low_score_case(id: &str) -> EvalCase {
-    EvalCase {
-        id: id.to_string(),
-        name: id.to_string(),
-        description: None,
-        system_prompt: "You are a helpful assistant.".to_string(),
-        user_messages: vec!["hello".to_string()],
-        expected_response: Some(ResponseCriteria::Custom(Arc::new(|_: &str| Score {
-            value: 0.3,
-            threshold: 0.5,
-        }))),
-        expected_trajectory: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new(
+        id,
+        id,
+        "You are a helpful assistant.",
+        vec!["hello".to_string()],
+    )
+    .with_expected_response(ResponseCriteria::Custom(Arc::new(|_: &str| {
+        Score::new(0.3, 0.5)
+    })))
 }
 
 /// Case scored 0.9 when the response contains "useful", 0.3 otherwise.
 /// Used with `SystemPromptEchoFactory` so the score reflects the active prompt.
 fn content_scored_case(id: &str) -> EvalCase {
-    EvalCase {
-        id: id.to_string(),
-        name: id.to_string(),
-        description: None,
-        system_prompt: "You are a helpful assistant.".to_string(),
-        user_messages: vec!["hello".to_string()],
-        expected_response: Some(ResponseCriteria::Custom(Arc::new(|response: &str| Score {
-            value: if response.contains("useful") {
-                0.9
-            } else {
-                0.3
-            },
-            threshold: 0.5,
-        }))),
-        expected_trajectory: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new(
+        id,
+        id,
+        "You are a helpful assistant.",
+        vec!["hello".to_string()],
+    )
+    .with_expected_response(ResponseCriteria::Custom(Arc::new(|response: &str| {
+        Score::new(if response.contains("useful") { 0.9 } else { 0.3 }, 0.5)
+    })))
 }
 
 fn make_eval_set(cases: Vec<EvalCase>) -> EvalSet {
-    EvalSet {
-        id: "e2e".into(),
-        name: "E2E Test".into(),
-        description: None,
-        cases,
-    }
+    EvalSet::new("e2e", "E2E Test", cases)
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -349,68 +310,31 @@ fn regressing_case(id: &str, priority: Option<&str>) -> EvalCase {
         Some(p) => serde_json::json!({ "priority": p }),
         None => serde_json::Value::Null,
     };
-    EvalCase {
-        id: id.to_string(),
-        name: id.to_string(),
-        description: None,
-        system_prompt: "You are a helpful assistant.".to_string(),
-        user_messages: vec!["hello".to_string()],
-        expected_response: Some(ResponseCriteria::Custom(Arc::new(|response: &str| Score {
-            value: if response.contains("MARKER") {
-                0.1
-            } else {
-                0.9
-            },
-            threshold: 0.5,
-        }))),
-        expected_trajectory: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new(
+        id,
+        id,
+        "You are a helpful assistant.",
+        vec!["hello".to_string()],
+    )
+    .with_expected_response(ResponseCriteria::Custom(Arc::new(|response: &str| {
+        Score::new(if response.contains("MARKER") { 0.1 } else { 0.9 }, 0.5)
+    })))
+    .with_metadata(metadata)
 }
 
 /// A case that fails at baseline and passes once "MARKER" is present —
 /// pulls the aggregate score up enough to clear the acceptance threshold
 /// despite `regressing_case`'s P1/P2 regression.
 fn improving_case(id: &str) -> EvalCase {
-    EvalCase {
-        id: id.to_string(),
-        name: id.to_string(),
-        description: None,
-        system_prompt: "You are a helpful assistant.".to_string(),
-        user_messages: vec!["hello".to_string()],
-        expected_response: Some(ResponseCriteria::Custom(Arc::new(|response: &str| Score {
-            value: if response.contains("MARKER") {
-                0.9
-            } else {
-                0.1
-            },
-            threshold: 0.5,
-        }))),
-        expected_trajectory: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new(
+        id,
+        id,
+        "You are a helpful assistant.",
+        vec!["hello".to_string()],
+    )
+    .with_expected_response(ResponseCriteria::Custom(Arc::new(|response: &str| {
+        Score::new(if response.contains("MARKER") { 0.9 } else { 0.1 }, 0.5)
+    })))
 }
 
 /// Without wiring real case metadata into the acceptance gate, every case

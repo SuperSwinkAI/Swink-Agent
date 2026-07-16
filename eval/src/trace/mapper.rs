@@ -388,6 +388,7 @@ pub enum GenAIConventionVersion {
 ///
 /// Exposed (rather than hidden inside the mapper) so out-of-tree callers can
 /// inspect exactly which keys are consumed per version.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct GenAIAttributeTable {
     pub system: &'static str,

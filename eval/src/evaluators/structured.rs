@@ -20,6 +20,7 @@ type RubricScorer =
     dyn Fn(&str, &serde_json::Value, Option<&serde_json::Value>) -> f64 + Send + Sync;
 
 /// Per-key aggregation strategy for [`JsonMatchEvaluator`].
+#[non_exhaustive]
 #[derive(Clone)]
 pub enum KeyStrategy {
     /// Average per-key scores (1.0 per matching key, 0.0 otherwise).

@@ -2,72 +2,47 @@
 
 use std::time::Duration;
 
-use swink_agent::{Cost, ModelSpec, StopReason, Usage};
+use swink_agent::{ModelSpec, StopReason};
 use swink_agent_eval::{
     EvalCase, EvalCaseResult, EvalError, EvalMetricResult, EvalSet, EvalSetResult, EvalStore,
     EvalSummary, FsEvalStore, Invocation, Score, Verdict,
 };
 
 fn sample_eval_set() -> EvalSet {
-    EvalSet {
-        id: "test-set".to_string(),
-        name: "Test Set".to_string(),
-        description: Some("A test eval set".to_string()),
-        cases: vec![EvalCase {
-            id: "case-1".to_string(),
-            name: "Case 1".to_string(),
-            description: None,
-            system_prompt: "test".to_string(),
-            user_messages: vec!["hello".to_string()],
-            expected_trajectory: None,
-            expected_response: None,
-            expected_assertion: None,
-            expected_interactions: None,
-            few_shot_examples: vec![],
-            budget: None,
-            evaluators: vec![],
-            metadata: serde_json::Value::Null,
-            attachments: vec![],
-            session_id: None,
-            expected_environment_state: None,
-            expected_tool_intent: None,
-            semantic_tool_selection: false,
-            state_capture: None,
-        }],
-    }
+    EvalSet::new(
+        "test-set",
+        "Test Set",
+        vec![EvalCase::new(
+            "case-1",
+            "Case 1",
+            "test",
+            vec!["hello".to_string()],
+        )],
+    )
+    .with_description("A test eval set")
 }
 
 fn sample_result() -> EvalSetResult {
-    EvalSetResult {
-        eval_set_id: "test-set".to_string(),
-        case_results: vec![EvalCaseResult {
-            case_id: "case-1".to_string(),
-            invocation: Invocation {
-                turns: vec![],
-                total_usage: Usage::default(),
-                total_cost: Cost::default(),
-                total_duration: Duration::from_millis(50),
-                final_response: Some("hello".to_string()),
-                stop_reason: StopReason::Stop,
-                model: ModelSpec::new("test", "test-model"),
-            },
-            metric_results: vec![EvalMetricResult {
-                evaluator_name: "budget".to_string(),
-                score: Score::pass(),
-                details: Some("all good".to_string()),
-            }],
-            verdict: Verdict::Pass,
-        }],
-        summary: EvalSummary {
-            total_cases: 1,
-            passed: 1,
-            failed: 0,
-            total_cost: Cost::default(),
-            total_usage: Usage::default(),
-            total_duration: Duration::from_millis(50),
-        },
-        timestamp: 1_000_000,
-    }
+    EvalSetResult::new(
+        "test-set",
+        vec![
+            EvalCaseResult::new(
+                "case-1",
+                Invocation::new(StopReason::Stop, ModelSpec::new("test", "test-model"))
+                    .with_total_duration(Duration::from_millis(50))
+                    .with_final_response("hello"),
+                Verdict::Pass,
+            )
+            .with_metric_results(vec![
+                EvalMetricResult::new("budget", Score::pass()).with_details("all good"),
+            ]),
+        ],
+        EvalSummary::default()
+            .with_total_cases(1)
+            .with_passed(1)
+            .with_total_duration(Duration::from_millis(50)),
+        1_000_000,
+    )
 }
 
 #[test]

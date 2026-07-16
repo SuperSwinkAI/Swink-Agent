@@ -33,13 +33,11 @@ fn config(judge: Arc<dyn JudgeClient>) -> JudgeEvaluatorConfig {
 }
 
 fn verdict(score: f64, reason: &str) -> JudgeVerdict {
-    JudgeVerdict {
-        score,
-        pass: (0.5..=1.0).contains(&score),
-        reason: Some(reason.to_string()),
-        label: None,
-        cost: None,
-    }
+    // Preserve the raw (possibly out-of-range) score so the dispatch pipeline
+    // can exercise its own clamp path; `new()` would clamp it prematurely.
+    let mut verdict = JudgeVerdict::new(score, (0.5..=1.0).contains(&score)).with_reason(reason);
+    verdict.score = score;
+    verdict
 }
 
 // ─── Harmfulness vs toxicity (rubric separation) ────────────────────────────

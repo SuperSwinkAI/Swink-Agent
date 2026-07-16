@@ -67,6 +67,7 @@ pub trait JudgePromptTemplate: Send + Sync {
 }
 
 /// Prompt families with judge-backed templates.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PromptFamily {
     Quality,
@@ -79,6 +80,7 @@ pub enum PromptFamily {
 }
 
 /// Data made available to prompt templates.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize)]
 pub struct PromptContext {
     pub case: Arc<EvalCase>,
@@ -114,6 +116,7 @@ impl PromptContext {
 }
 
 /// Prompt-template construction and rendering errors.
+#[non_exhaustive]
 #[derive(Debug, Error)]
 pub enum PromptError {
     #[error("missing prompt variable: {name}")]

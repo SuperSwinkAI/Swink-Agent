@@ -15,37 +15,31 @@ use common::mock_invocation;
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 fn make_trace(case_id: &str, score: f64, final_response: Option<&str>) -> ScoredTrace {
-    ScoredTrace {
-        invocation: mock_invocation(&["read_file"], final_response, 0.01, 100),
+    ScoredTrace::new(
+        mock_invocation(&["read_file"], final_response, 0.01, 100),
         score,
-        case_id: case_id.to_string(),
-    }
+        case_id,
+    )
 }
 
 fn make_trace_no_tools(case_id: &str, score: f64, final_response: &str) -> ScoredTrace {
-    ScoredTrace {
-        invocation: mock_invocation(&[], Some(final_response), 0.01, 100),
+    ScoredTrace::new(
+        mock_invocation(&[], Some(final_response), 0.01, 100),
         score,
-        case_id: case_id.to_string(),
-    }
+        case_id,
+    )
 }
 
 fn make_case_result(case_id: &str, score_val: f64) -> EvalCaseResult {
     let inv = mock_invocation(&["read_file"], Some("done"), 0.01, 100);
-    EvalCaseResult {
-        case_id: case_id.to_string(),
-        invocation: inv,
-        metric_results: vec![EvalMetricResult {
-            evaluator_name: "trajectory".to_string(),
-            score: Score::new(score_val, 0.5),
-            details: None,
-        }],
-        verdict: if score_val >= 0.5 {
-            Verdict::Pass
-        } else {
-            Verdict::Fail
-        },
-    }
+    let verdict = if score_val >= 0.5 {
+        Verdict::Pass
+    } else {
+        Verdict::Fail
+    };
+    EvalCaseResult::new(case_id, inv, verdict).with_metric_results(vec![
+        EvalMetricResult::new("trajectory", Score::new(score_val, 0.5)),
+    ])
 }
 
 // ─── ChatML / SFT ───────────────────────────────────────────────────────────
@@ -114,11 +108,10 @@ fn chatml_export_includes_tool_calls_on_assistant_turns() {
 #[test]
 fn chatml_export_includes_metadata_when_requested() {
     let traces = vec![make_trace("my-case", 0.9, Some("result"))];
-    let opts = ExportOptions {
-        format: TrainingFormat::ChatMlSft,
-        quality_threshold: 0.0,
-        include_metadata: true,
-    };
+    let opts = ExportOptions::default()
+        .with_format(TrainingFormat::ChatMlSft)
+        .with_quality_threshold(0.0)
+        .with_include_metadata(true);
     let bytes = ChatMlExporter.export(&traces, &opts).unwrap();
     let output = String::from_utf8(bytes).unwrap();
     let record: serde_json::Value = serde_json::from_str(output.lines().next().unwrap()).unwrap();
@@ -132,11 +125,10 @@ fn chatml_export_includes_metadata_when_requested() {
 #[test]
 fn chatml_export_omits_metadata_when_not_requested() {
     let traces = vec![make_trace("c", 1.0, Some("ok"))];
-    let opts = ExportOptions {
-        format: TrainingFormat::ChatMlSft,
-        quality_threshold: 0.0,
-        include_metadata: false,
-    };
+    let opts = ExportOptions::default()
+        .with_format(TrainingFormat::ChatMlSft)
+        .with_quality_threshold(0.0)
+        .with_include_metadata(false);
     let bytes = ChatMlExporter.export(&traces, &opts).unwrap();
     let output = String::from_utf8(bytes).unwrap();
     let record: serde_json::Value = serde_json::from_str(output.lines().next().unwrap()).unwrap();
@@ -293,12 +285,7 @@ fn scored_trace_from_case_result_averages_metric_scores() {
 #[test]
 fn scored_trace_from_case_result_handles_no_metrics() {
     let inv = mock_invocation(&[], Some("done"), 0.0, 0);
-    let result = EvalCaseResult {
-        case_id: "empty".to_string(),
-        invocation: inv,
-        metric_results: vec![],
-        verdict: Verdict::Fail,
-    };
+    let result = EvalCaseResult::new("empty", inv, Verdict::Fail);
     let trace = ScoredTrace::from_case_result(&result);
     assert!((trace.score - 0.0).abs() < 1e-9);
 }

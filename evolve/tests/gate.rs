@@ -1,9 +1,8 @@
 //! US4+US5: candidate evaluation and acceptance gate tests.
 
 use std::collections::HashMap;
-use std::time::Duration;
 
-use swink_agent::{Cost, ModelSpec, StopReason, Usage};
+use swink_agent::{Cost, ModelSpec, StopReason};
 use swink_agent_eval::{EvalCaseResult, EvalMetricResult, Invocation, Score, Verdict};
 
 use swink_agent_evolve::{
@@ -12,31 +11,13 @@ use swink_agent_evolve::{
 };
 
 fn make_invocation() -> Invocation {
-    Invocation {
-        turns: vec![],
-        total_usage: Usage::default(),
-        total_cost: Cost::default(),
-        total_duration: Duration::ZERO,
-        final_response: None,
-        stop_reason: StopReason::Stop,
-        model: ModelSpec::new("test", "test-model"),
-    }
+    Invocation::new(StopReason::Stop, ModelSpec::new("test", "test-model"))
 }
 
 fn build_case_result(case_id: &str, score: f64, verdict: Verdict) -> EvalCaseResult {
-    EvalCaseResult {
-        case_id: case_id.to_string(),
-        invocation: make_invocation(),
-        metric_results: vec![EvalMetricResult {
-            evaluator_name: "response".to_string(),
-            score: Score {
-                value: score,
-                threshold: 0.5,
-            },
-            details: None,
-        }],
-        verdict,
-    }
+    EvalCaseResult::new(case_id, make_invocation(), verdict).with_metric_results(vec![
+        EvalMetricResult::new("response", Score::new(score, 0.5)),
+    ])
 }
 
 fn build_baseline(cases: Vec<(&str, f64, Verdict)>, aggregate: f64) -> BaselineSnapshot {

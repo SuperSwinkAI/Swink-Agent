@@ -7,7 +7,7 @@ mod common;
 
 use std::time::Duration;
 
-use swink_agent::{Cost, Usage};
+use swink_agent::Cost;
 use swink_agent_eval::{
     EvalCaseResult, EvalMetricResult, EvalSetResult, EvalSummary, MarkdownReporter, Reporter,
     ReporterOutput, Score, Verdict,
@@ -16,40 +16,34 @@ use swink_agent_eval::{
 use common::mock_invocation;
 
 fn sample_result() -> EvalSetResult {
-    let case_pass = EvalCaseResult {
-        case_id: "case_alpha".into(),
-        invocation: mock_invocation(&[], Some("ok"), 0.01, 120),
-        metric_results: vec![EvalMetricResult {
-            evaluator_name: "helpfulness".into(),
-            score: Score::new(0.82, 0.5),
-            details: Some("looks good".into()),
-        }],
-        verdict: Verdict::Pass,
-    };
+    let case_pass = EvalCaseResult::new(
+        "case_alpha",
+        mock_invocation(&[], Some("ok"), 0.01, 120),
+        Verdict::Pass,
+    )
+    .with_metric_results(vec![
+        EvalMetricResult::new("helpfulness", Score::new(0.82, 0.5)).with_details("looks good"),
+    ]);
     // Embed a pipe character in the case id to exercise Markdown escaping.
-    let case_fail = EvalCaseResult {
-        case_id: "case|beta".into(),
-        invocation: mock_invocation(&[], Some("bad"), 0.01, 120),
-        metric_results: vec![EvalMetricResult {
-            evaluator_name: "correctness".into(),
-            score: Score::new(0.12, 0.6),
-            details: Some("off-topic".into()),
-        }],
-        verdict: Verdict::Fail,
-    };
-    EvalSetResult {
-        eval_set_id: "demo-set".into(),
-        case_results: vec![case_pass, case_fail],
-        summary: EvalSummary {
-            total_cases: 2,
-            passed: 1,
-            failed: 1,
-            total_cost: Cost::default().with_total(0.02),
-            total_usage: Usage::default(),
-            total_duration: Duration::from_millis(220),
-        },
-        timestamp: 0,
-    }
+    let case_fail = EvalCaseResult::new(
+        "case|beta",
+        mock_invocation(&[], Some("bad"), 0.01, 120),
+        Verdict::Fail,
+    )
+    .with_metric_results(vec![
+        EvalMetricResult::new("correctness", Score::new(0.12, 0.6)).with_details("off-topic"),
+    ]);
+    EvalSetResult::new(
+        "demo-set",
+        vec![case_pass, case_fail],
+        EvalSummary::default()
+            .with_total_cases(2)
+            .with_passed(1)
+            .with_failed(1)
+            .with_total_cost(Cost::default().with_total(0.02))
+            .with_total_duration(Duration::from_millis(220)),
+        0,
+    )
 }
 
 fn render(result: &EvalSetResult) -> String {
@@ -181,24 +175,19 @@ fn markdown_render_is_deterministic() {
 
 #[test]
 fn markdown_omits_metrics_section_when_no_metrics() {
-    let result = EvalSetResult {
-        eval_set_id: "no-metrics".into(),
-        case_results: vec![EvalCaseResult {
-            case_id: "solo".into(),
-            invocation: mock_invocation(&[], Some("ok"), 0.0, 0),
-            metric_results: vec![],
-            verdict: Verdict::Pass,
-        }],
-        summary: EvalSummary {
-            total_cases: 1,
-            passed: 1,
-            failed: 0,
-            total_cost: Cost::default(),
-            total_usage: Usage::default(),
-            total_duration: Duration::from_millis(5),
-        },
-        timestamp: 0,
-    };
+    let result = EvalSetResult::new(
+        "no-metrics",
+        vec![EvalCaseResult::new(
+            "solo",
+            mock_invocation(&[], Some("ok"), 0.0, 0),
+            Verdict::Pass,
+        )],
+        EvalSummary::default()
+            .with_total_cases(1)
+            .with_passed(1)
+            .with_total_duration(Duration::from_millis(5)),
+        0,
+    );
     let out = render(&result);
     assert!(out.contains("## Cases"));
     assert!(

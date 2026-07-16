@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use tempfile::tempdir;
 
-use swink_agent::{Cost, ModelSpec, StopReason, Usage};
+use swink_agent::{ModelSpec, StopReason};
 use swink_agent_eval::{
     AgentToneEvaluator, Assertion, AssertionKind, Attachment, CodeInjectionEvaluator,
     CodeLlmJudgeEvaluator, CoherenceEvaluator, ConcisenessEvaluator, CorrectnessEvaluator,
@@ -48,13 +48,7 @@ impl JudgeClient for CapturingJudge {
     fn judge<'a>(&'a self, prompt: &'a str) -> swink_agent_eval::JudgeFuture<'a> {
         Box::pin(async move {
             self.prompts.lock().unwrap().push(prompt.to_string());
-            Ok(JudgeVerdict {
-                score: 0.8,
-                pass: true,
-                reason: Some("captured".into()),
-                label: None,
-                cost: None,
-            })
+            Ok(JudgeVerdict::new(0.8, true).with_reason("captured"))
         })
     }
 }
@@ -72,61 +66,38 @@ fn config(judge: Arc<dyn JudgeClient>) -> JudgeEvaluatorConfig {
 }
 
 fn base_case() -> EvalCase {
-    EvalCase {
-        id: "case-1".into(),
-        name: "Case One".into(),
-        description: None,
-        system_prompt: "original system prompt".into(),
-        user_messages: vec!["what is two plus two?".into()],
-        expected_trajectory: None,
-        expected_response: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new(
+        "case-1",
+        "Case One",
+        "original system prompt",
+        vec!["what is two plus two?".into()],
+    )
 }
 
 fn invocation() -> Invocation {
-    Invocation {
-        turns: vec![],
-        total_usage: Usage::default(),
-        total_cost: Cost::default(),
-        total_duration: Duration::from_millis(1),
-        final_response: Some("4".into()),
-        stop_reason: StopReason::Stop,
-        model: ModelSpec::new("test", "judge-target"),
-    }
+    Invocation::new(StopReason::Stop, ModelSpec::new("test", "judge-target"))
+        .with_total_duration(Duration::from_millis(1))
+        .with_final_response("4")
 }
 
 fn fully_populated_case() -> EvalCase {
     let mut case = base_case();
-    case.expected_assertion = Some(Assertion {
-        description: "The task should be completed.".into(),
-        kind: AssertionKind::GoalCompleted,
-    });
-    case.expected_trajectory = Some(vec![ExpectedToolCall {
-        tool_name: "search".into(),
-        arguments: Some(serde_json::json!({ "query": "two plus two" })),
-    }]);
-    case.expected_interactions = Some(vec![InteractionExpectation {
-        from: "planner".into(),
-        to: "worker".into(),
-        description: "delegates the task".into(),
-    }]);
-    case.few_shot_examples = vec![FewShotExample {
-        input: "retrieved evidence".into(),
-        expected: "ground truth".into(),
-        reasoning: Some("because evidence".into()),
-    }];
+    case.expected_assertion = Some(Assertion::new(
+        "The task should be completed.",
+        AssertionKind::GoalCompleted,
+    ));
+    case.expected_trajectory = Some(vec![
+        ExpectedToolCall::new("search")
+            .with_arguments(serde_json::json!({ "query": "two plus two" })),
+    ]);
+    case.expected_interactions = Some(vec![InteractionExpectation::new(
+        "planner",
+        "worker",
+        "delegates the task",
+    )]);
+    case.few_shot_examples = vec![
+        FewShotExample::new("retrieved evidence", "ground truth").with_reasoning("because evidence"),
+    ];
     case.attachments = vec![Attachment::Base64 {
         mime: "image/png".into(),
         bytes: TINY_PNG.to_vec(),
@@ -299,11 +270,10 @@ async fn custom_prompt_override_uses_builder_supplied_render_context() {
 
     let evaluator = CorrectnessEvaluator::new(config(judge.clone()))
         .with_prompt(prompt)
-        .with_few_shot(vec![FewShotExample {
-            input: "few-shot input".into(),
-            expected: "few-shot expected".into(),
-            reasoning: Some("few-shot reasoning".into()),
-        }])
+        .with_few_shot(vec![
+            FewShotExample::new("few-shot input", "few-shot expected")
+                .with_reasoning("few-shot reasoning"),
+        ])
         .with_system_prompt("override system prompt")
         .with_output_schema(serde_json::json!({ "type": "object" }))
         .with_use_reasoning(false)
@@ -389,11 +359,7 @@ fn builder_surface_is_exposed_for_representative_judge_backed_evaluators() {
         MinijinjaTemplate::new("surface_v1", PromptFamily::Quality, "{{ case.id }}")
             .expect("template compiles"),
     );
-    let few_shot = vec![FewShotExample {
-        input: "one".into(),
-        expected: "two".into(),
-        reasoning: None,
-    }];
+    let few_shot = vec![FewShotExample::new("one", "two")];
     let schema = serde_json::json!({ "type": "object" });
 
     let quality = HelpfulnessEvaluator::new(config(Arc::new(CapturingJudge {

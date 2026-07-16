@@ -6,46 +6,25 @@ use swink_agent_eval::{
 };
 
 fn base_case(id: &str) -> EvalCase {
-    EvalCase {
-        id: id.to_string(),
-        name: id.to_string(),
-        description: None,
-        system_prompt: "system".to_string(),
-        user_messages: vec!["hello".to_string()],
-        expected_trajectory: None,
-        expected_response: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new(id, id, "system", vec!["hello".to_string()])
 }
 
 #[test]
 fn validate_accepts_extended_v043_fields() {
     let mut case = base_case("valid");
-    case.expected_assertion = Some(Assertion {
-        description: "user issue is resolved".into(),
-        kind: AssertionKind::ToolInvoked("lookup_order".into()),
-    });
-    case.expected_interactions = Some(vec![InteractionExpectation {
-        from: "planner".into(),
-        to: "tool".into(),
-        description: "delegates lookup".into(),
-    }]);
-    case.few_shot_examples = vec![FewShotExample {
-        input: "Where is my order?".into(),
-        expected: "I can help track that.".into(),
-        reasoning: Some("Establishes the expected tone.".into()),
-    }];
+    case.expected_assertion = Some(Assertion::new(
+        "user issue is resolved",
+        AssertionKind::ToolInvoked("lookup_order".into()),
+    ));
+    case.expected_interactions = Some(vec![InteractionExpectation::new(
+        "planner",
+        "tool",
+        "delegates lookup",
+    )]);
+    case.few_shot_examples = vec![
+        FewShotExample::new("Where is my order?", "I can help track that.")
+            .with_reasoning("Establishes the expected tone."),
+    ];
     case.attachments = vec![
         Attachment::Path(PathBuf::from("fixtures/order.png")),
         Attachment::Base64 {
@@ -61,10 +40,10 @@ fn validate_accepts_extended_v043_fields() {
 #[test]
 fn validate_rejects_blank_assertion_tool_name() {
     let mut case = base_case("blank-tool");
-    case.expected_assertion = Some(Assertion {
-        description: "must invoke a tool".into(),
-        kind: AssertionKind::ToolInvoked("   ".into()),
-    });
+    case.expected_assertion = Some(Assertion::new(
+        "must invoke a tool",
+        AssertionKind::ToolInvoked("   ".into()),
+    ));
 
     let err = validate_eval_case(&case).expect_err("blank tool name must be rejected");
     assert!(
@@ -88,12 +67,7 @@ fn validate_rejects_malformed_attachment_path_and_url() {
 
 #[test]
 fn validate_rejects_duplicate_case_ids_within_eval_set() {
-    let set = EvalSet {
-        id: "set".into(),
-        name: "Set".into(),
-        description: None,
-        cases: vec![base_case("dup"), base_case("dup")],
-    };
+    let set = EvalSet::new("set", "Set", vec![base_case("dup"), base_case("dup")]);
 
     let err = validate_eval_set(&set).expect_err("duplicate case IDs must be rejected");
     assert!(err.to_string().contains("duplicate case id `dup`"));
@@ -102,20 +76,16 @@ fn validate_rejects_duplicate_case_ids_within_eval_set() {
 #[test]
 fn deterministic_session_id_tracks_new_case_fields() {
     let mut left = base_case("session");
-    left.expected_assertion = Some(Assertion {
-        description: "complete the task".into(),
-        kind: AssertionKind::GoalCompleted,
-    });
-    left.expected_interactions = Some(vec![InteractionExpectation {
-        from: "agent".into(),
-        to: "reviewer".into(),
-        description: "hands off the result".into(),
-    }]);
-    left.few_shot_examples = vec![FewShotExample {
-        input: "draft".into(),
-        expected: "reviewed".into(),
-        reasoning: None,
-    }];
+    left.expected_assertion = Some(Assertion::new(
+        "complete the task",
+        AssertionKind::GoalCompleted,
+    ));
+    left.expected_interactions = Some(vec![InteractionExpectation::new(
+        "agent",
+        "reviewer",
+        "hands off the result",
+    )]);
+    left.few_shot_examples = vec![FewShotExample::new("draft", "reviewed")];
 
     let mut right = left.clone();
     assert_eq!(left.default_session_id(), right.default_session_id());

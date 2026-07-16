@@ -9,52 +9,25 @@ use swink_agent_eval::{
 use common::mock_invocation_with_response;
 
 fn base_case() -> EvalCase {
-    EvalCase {
-        id: "env-state".into(),
-        name: "Environment state".into(),
-        description: None,
-        system_prompt: "test".into(),
-        user_messages: vec!["write out.md".into()],
-        expected_trajectory: None,
-        expected_response: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new(
+        "env-state",
+        "Environment state",
+        "test",
+        vec!["write out.md".into()],
+    )
 }
 
 #[test]
 fn all_named_states_match_passes() {
     let mut case = base_case();
     case.expected_environment_state = Some(vec![
-        EnvironmentState {
-            name: "created_file".into(),
-            state: serde_json::json!("out.md"),
-        },
-        EnvironmentState {
-            name: "row_count".into(),
-            state: serde_json::json!(3),
-        },
+        EnvironmentState::new("created_file", serde_json::json!("out.md")),
+        EnvironmentState::new("row_count", serde_json::json!(3)),
     ]);
     case.state_capture = Some(Arc::new(|_| {
         vec![
-            EnvironmentState {
-                name: "created_file".into(),
-                state: serde_json::json!("out.md"),
-            },
-            EnvironmentState {
-                name: "row_count".into(),
-                state: serde_json::json!(3),
-            },
+            EnvironmentState::new("created_file", serde_json::json!("out.md")),
+            EnvironmentState::new("row_count", serde_json::json!(3)),
         ]
     }));
 
@@ -72,15 +45,15 @@ fn all_named_states_match_passes() {
 #[test]
 fn missing_expected_name_fails() {
     let mut case = base_case();
-    case.expected_environment_state = Some(vec![EnvironmentState {
-        name: "created_file".into(),
-        state: serde_json::json!("out.md"),
-    }]);
+    case.expected_environment_state = Some(vec![EnvironmentState::new(
+        "created_file",
+        serde_json::json!("out.md"),
+    )]);
     case.state_capture = Some(Arc::new(|_| {
-        vec![EnvironmentState {
-            name: "different_state".into(),
-            state: serde_json::json!("out.md"),
-        }]
+        vec![EnvironmentState::new(
+            "different_state",
+            serde_json::json!("out.md"),
+        )]
     }));
 
     let result = EnvironmentStateEvaluator
@@ -98,15 +71,12 @@ fn missing_expected_name_fails() {
 #[test]
 fn mismatched_value_fails_with_expected_and_actual() {
     let mut case = base_case();
-    case.expected_environment_state = Some(vec![EnvironmentState {
-        name: "row_count".into(),
-        state: serde_json::json!(3),
-    }]);
+    case.expected_environment_state = Some(vec![EnvironmentState::new(
+        "row_count",
+        serde_json::json!(3),
+    )]);
     case.state_capture = Some(Arc::new(|_| {
-        vec![EnvironmentState {
-            name: "row_count".into(),
-            state: serde_json::json!(2),
-        }]
+        vec![EnvironmentState::new("row_count", serde_json::json!(2))]
     }));
 
     let result = EnvironmentStateEvaluator
@@ -123,10 +93,10 @@ fn mismatched_value_fails_with_expected_and_actual() {
 #[test]
 fn missing_state_capture_returns_none() {
     let mut case = base_case();
-    case.expected_environment_state = Some(vec![EnvironmentState {
-        name: "created_file".into(),
-        state: serde_json::json!("out.md"),
-    }]);
+    case.expected_environment_state = Some(vec![EnvironmentState::new(
+        "created_file",
+        serde_json::json!("out.md"),
+    )]);
 
     assert!(
         EnvironmentStateEvaluator
@@ -138,10 +108,10 @@ fn missing_state_capture_returns_none() {
 #[test]
 fn state_capture_panic_becomes_failure() {
     let mut case = base_case();
-    case.expected_environment_state = Some(vec![EnvironmentState {
-        name: "created_file".into(),
-        state: serde_json::json!("out.md"),
-    }]);
+    case.expected_environment_state = Some(vec![EnvironmentState::new(
+        "created_file",
+        serde_json::json!("out.md"),
+    )]);
     case.state_capture = Some(Arc::new(|_| {
         panic!("capture exploded");
     }));
@@ -162,20 +132,14 @@ fn state_capture_panic_becomes_failure() {
 #[test]
 fn extra_captured_states_are_ignored() {
     let mut case = base_case();
-    case.expected_environment_state = Some(vec![EnvironmentState {
-        name: "created_file".into(),
-        state: serde_json::json!("out.md"),
-    }]);
+    case.expected_environment_state = Some(vec![EnvironmentState::new(
+        "created_file",
+        serde_json::json!("out.md"),
+    )]);
     case.state_capture = Some(Arc::new(|_| {
         vec![
-            EnvironmentState {
-                name: "created_file".into(),
-                state: serde_json::json!("out.md"),
-            },
-            EnvironmentState {
-                name: "ignored_extra".into(),
-                state: serde_json::json!({"anything": true}),
-            },
+            EnvironmentState::new("created_file", serde_json::json!("out.md")),
+            EnvironmentState::new("ignored_extra", serde_json::json!({"anything": true})),
         ]
     }));
 
@@ -189,15 +153,15 @@ fn extra_captured_states_are_ignored() {
 #[test]
 fn with_defaults_registers_environment_state_evaluator() {
     let mut case = base_case();
-    case.expected_environment_state = Some(vec![EnvironmentState {
-        name: "created_file".into(),
-        state: serde_json::json!("out.md"),
-    }]);
+    case.expected_environment_state = Some(vec![EnvironmentState::new(
+        "created_file",
+        serde_json::json!("out.md"),
+    )]);
     case.state_capture = Some(Arc::new(|_| {
-        vec![EnvironmentState {
-            name: "created_file".into(),
-            state: serde_json::json!("out.md"),
-        }]
+        vec![EnvironmentState::new(
+            "created_file",
+            serde_json::json!("out.md"),
+        )]
     }));
 
     let results = EvaluatorRegistry::with_defaults()

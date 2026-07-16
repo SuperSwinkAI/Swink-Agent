@@ -15,29 +15,15 @@ impl UrlFilter for AllowAllUrls {
 }
 
 fn base_case(id: &str) -> EvalCase {
-    EvalCase {
-        id: id.to_string(),
-        name: id.to_string(),
-        description: None,
-        system_prompt: String::new(),
-        user_messages: vec!["look at the image".to_string()],
-        expected_trajectory: None,
-        expected_response: Some(ResponseCriteria::Contains {
-            substring: "safe".to_string(),
-        }),
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new(
+        id,
+        id,
+        String::new(),
+        vec!["look at the image".to_string()],
+    )
+    .with_expected_response(ResponseCriteria::Contains {
+        substring: "safe".to_string(),
+    })
 }
 
 #[tokio::test]

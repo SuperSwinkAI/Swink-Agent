@@ -65,6 +65,7 @@ pub mod safety;
 /// A `None` template means "use the evaluator's built-in `_v0` template".
 /// Builder methods on each concrete evaluator surface the individual knobs
 /// (see data-model §3 "Base Evaluator extensions").
+#[non_exhaustive]
 pub struct JudgeEvaluatorConfig {
     /// Prompt template override. When `None`, the evaluator uses its built-in
     /// `_v0` template from `PromptTemplateRegistry::builtin()`.
@@ -329,6 +330,7 @@ macro_rules! impl_judge_evaluator_builder {
 /// `ScoreClamped` variant is authored here for the first time. PR body notes
 /// that `EvalMetricResult::details` remains `Option<String>` for
 /// serde-compat.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Detail {
@@ -403,6 +405,7 @@ impl DetailBuffer {
 }
 
 /// Errors produced by [`dispatch_judge`] (T056).
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum DispatchError {
     /// Prompt render or template lookup failed.
@@ -424,6 +427,7 @@ pub enum DispatchError {
 /// Evaluators fold these into [`EvalMetricResult`] via `Score::fail()` with the
 /// error message copied into `details`; the type exists primarily so callers
 /// (tests, reporters) can reason about the failure mode programmatically.
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum EvaluatorError {
     /// The current platform cannot run this evaluator (e.g. Windows sandbox).
@@ -455,6 +459,7 @@ impl EvaluatorError {
 }
 
 /// Outcome of a [`dispatch_judge`] call (T056).
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct DispatchOutcome {
     /// Clamped score in `[0.0, 1.0]`.
@@ -465,6 +470,24 @@ pub struct DispatchOutcome {
     pub details: DetailBuffer,
     /// Raw verdict for downstream evaluators that need label/reason.
     pub verdict: JudgeVerdict,
+}
+
+impl DispatchOutcome {
+    /// Construct a dispatch outcome from its component parts.
+    #[must_use]
+    pub fn new(
+        score: Score,
+        pass: bool,
+        details: DetailBuffer,
+        verdict: JudgeVerdict,
+    ) -> Self {
+        Self {
+            score,
+            pass,
+            details,
+            verdict,
+        }
+    }
 }
 
 /// Shared judge-dispatch helper (T056).

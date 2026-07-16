@@ -34,13 +34,11 @@ fn config(judge: Arc<dyn JudgeClient>) -> JudgeEvaluatorConfig {
 }
 
 fn verdict(score: f64, reason: &str) -> JudgeVerdict {
-    JudgeVerdict {
-        score,
-        pass: (0.5..=1.0).contains(&score),
-        reason: Some(reason.to_string()),
-        label: None,
-        cost: None,
-    }
+    // Preserve the raw (possibly out-of-range) score so the dispatch pipeline
+    // can exercise its own clamp path; `new()` would clamp it prematurely.
+    let mut verdict = JudgeVerdict::new(score, (0.5..=1.0).contains(&score)).with_reason(reason);
+    verdict.score = score;
+    verdict
 }
 
 // ─── T057: baseline evaluator wiring ────────────────────────────────────────
@@ -138,11 +136,7 @@ async fn faithfulness_runs_with_retrieved_context() {
     )]));
     let evaluator = FaithfulnessEvaluator::new(config(Arc::clone(&judge)));
     let mut case = common::case_with_trajectory(vec![]);
-    case.few_shot_examples = vec![FewShotExample {
-        input: "retrieved passage".into(),
-        expected: "the sky is blue".into(),
-        reasoning: None,
-    }];
+    case.few_shot_examples = vec![FewShotExample::new("retrieved passage", "the sky is blue")];
     let invocation = mock_invocation_with_response(&[], "the sky is blue");
 
     let result = evaluator.evaluate(&case, &invocation).expect("result");
@@ -268,10 +262,10 @@ async fn goal_success_rate_consumes_expected_assertion() {
     let mut case = case_with_response(swink_agent_eval::ResponseCriteria::Contains {
         substring: "answer".into(),
     });
-    case.expected_assertion = Some(Assertion {
-        description: "User's goal was to find the answer".into(),
-        kind: AssertionKind::GoalCompleted,
-    });
+    case.expected_assertion = Some(Assertion::new(
+        "User's goal was to find the answer",
+        AssertionKind::GoalCompleted,
+    ));
     let invocation = mock_invocation_with_response(&[], "the answer");
 
     let result = evaluator.evaluate(&case, &invocation).expect("result");

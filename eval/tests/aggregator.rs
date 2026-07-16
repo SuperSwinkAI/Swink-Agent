@@ -23,9 +23,7 @@ fn any_pass_aggregator_returns_binary_pass_when_one_sample_passes() {
 
 #[test]
 fn weighted_aggregator_uses_configured_weights() {
-    let aggregator = Weighted {
-        weights: vec![1.0, 2.0, 1.0],
-    };
+    let aggregator = Weighted::new(vec![1.0, 2.0, 1.0]);
     let score = aggregator.aggregate(&[
         Score::new(0.2, 0.5),
         Score::new(0.6, 0.5),

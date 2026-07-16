@@ -203,11 +203,5 @@ fn judge_cache_disk_flush_removes_evicted_entries() {
 }
 
 fn verdict(score: f64, pass: bool, reason: &str) -> JudgeVerdict {
-    JudgeVerdict {
-        score,
-        pass,
-        reason: Some(reason.to_string()),
-        label: None,
-        cost: None,
-    }
+    JudgeVerdict::new(score, pass).with_reason(reason)
 }

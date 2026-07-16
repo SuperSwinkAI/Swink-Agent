@@ -10,7 +10,7 @@ mod common;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use swink_agent::{AssistantMessage, Cost, ModelSpec, StopReason, Usage};
+use swink_agent::{AssistantMessage, ModelSpec, StopReason};
 
 use swink_agent_eval::{
     EvalCase, Evaluator, Invocation, JudgeClient, JudgeError, JudgeVerdict, MockJudge,
@@ -22,55 +22,15 @@ use common::mock_invocation;
 
 /// Build an `EvalCase` with an `expected_tool_intent`, nothing else set.
 fn case_with_intent(id: &str, intent: &str, tool_name: Option<&str>) -> EvalCase {
-    EvalCase {
-        id: id.to_string(),
-        name: id.to_string(),
-        description: None,
-        system_prompt: "be helpful".to_string(),
-        user_messages: vec!["do the thing".to_string()],
-        expected_trajectory: None,
-        expected_response: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: Some(ToolIntent {
-            intent: intent.to_string(),
-            tool_name: tool_name.map(String::from),
-        }),
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    let mut tool_intent = ToolIntent::new(intent);
+    tool_intent.tool_name = tool_name.map(String::from);
+    EvalCase::new(id, id, "be helpful", vec!["do the thing".to_string()])
+        .with_expected_tool_intent(tool_intent)
 }
 
 /// Build an `EvalCase` with no intent set.
 fn case_without_intent(id: &str) -> EvalCase {
-    EvalCase {
-        id: id.to_string(),
-        name: id.to_string(),
-        description: None,
-        system_prompt: "be helpful".to_string(),
-        user_messages: vec!["do the thing".to_string()],
-        expected_trajectory: None,
-        expected_response: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new(id, id, "be helpful", vec!["do the thing".to_string()])
 }
 
 /// Build an invocation whose only turn contains arbitrary (name, args) pairs.
@@ -78,43 +38,30 @@ fn invocation_with(calls: &[(&str, serde_json::Value)]) -> Invocation {
     let tool_calls: Vec<RecordedToolCall> = calls
         .iter()
         .enumerate()
-        .map(|(i, (name, args))| RecordedToolCall {
-            id: format!("id{i}"),
-            name: (*name).to_string(),
-            arguments: args.clone(),
-        })
+        .map(|(i, (name, args))| RecordedToolCall::new(format!("id{i}"), *name, args.clone()))
         .collect();
 
-    Invocation {
-        turns: vec![TurnRecord {
-            turn_index: 0,
-            assistant_message: AssistantMessage::new(vec![], "test", "test-model")
-                .with_stop_reason(StopReason::Stop)
-                .with_timestamp(0),
-            tool_calls,
-            tool_results: vec![],
-            duration: Duration::from_millis(1),
-        }],
-        total_usage: Usage::default(),
-        total_cost: Cost::default(),
-        total_duration: Duration::from_millis(1),
-        final_response: None,
-        stop_reason: StopReason::Stop,
-        model: ModelSpec::new("test", "test-model"),
-    }
+    let turn = TurnRecord::new(
+        0,
+        AssistantMessage::new(vec![], "test", "test-model")
+            .with_stop_reason(StopReason::Stop)
+            .with_timestamp(0),
+    )
+    .with_tool_calls(tool_calls)
+    .with_duration(Duration::from_millis(1));
+
+    Invocation::new(StopReason::Stop, ModelSpec::new("test", "test-model"))
+        .with_turns(vec![turn])
+        .with_total_duration(Duration::from_millis(1))
 }
 
 // ── T058 / AS-6.1 ──────────────────────────────────────────────────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn intent_satisfied_by_non_literal_arguments() {
-    let verdict = JudgeVerdict {
-        score: 1.0,
-        pass: true,
-        reason: Some("arguments satisfy the intent".into()),
-        label: Some("equivalent".into()),
-        cost: None,
-    };
+    let verdict = JudgeVerdict::new(1.0, true)
+        .with_reason("arguments satisfy the intent")
+        .with_label("equivalent");
     let judge: Arc<dyn JudgeClient> = Arc::new(MockJudge::with_verdicts(vec![verdict]));
     let evaluator = SemanticToolParameterEvaluator::new(Arc::clone(&judge));
 
@@ -228,13 +175,9 @@ async fn filter_with_no_match_returns_none() {
 async fn filter_with_partial_match_judges_only_target() {
     // Single verdict queued — if the evaluator judged more than the single
     // target call, the mock would run out and report `Other("exhausted")`.
-    let verdict = JudgeVerdict {
-        score: 1.0,
-        pass: true,
-        reason: Some("path matches project-alpha".into()),
-        label: Some("equivalent".into()),
-        cost: None,
-    };
+    let verdict = JudgeVerdict::new(1.0, true)
+        .with_reason("path matches project-alpha")
+        .with_label("equivalent");
     let judge_inner = Arc::new(MockJudge::with_verdicts(vec![verdict]));
     let judge: Arc<dyn JudgeClient> = Arc::clone(&judge_inner) as _;
     let evaluator = SemanticToolParameterEvaluator::new(judge);
@@ -284,13 +227,7 @@ async fn filter_with_partial_match_judges_only_target() {
 
 #[test]
 fn evaluates_from_plain_sync_context_without_panic() {
-    let verdict = JudgeVerdict {
-        score: 1.0,
-        pass: true,
-        reason: Some("intent satisfied".into()),
-        label: None,
-        cost: None,
-    };
+    let verdict = JudgeVerdict::new(1.0, true).with_reason("intent satisfied");
     let judge: Arc<dyn JudgeClient> = Arc::new(MockJudge::with_verdicts(vec![verdict]));
     let evaluator = SemanticToolParameterEvaluator::new(judge);
     let case = case_with_intent("sync-ctx", "read config for project-alpha", None);

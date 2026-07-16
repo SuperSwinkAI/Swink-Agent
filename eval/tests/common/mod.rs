@@ -22,11 +22,7 @@ pub fn mock_invocation(
     let tool_calls: Vec<RecordedToolCall> = tool_names
         .iter()
         .enumerate()
-        .map(|(i, name)| RecordedToolCall {
-            id: format!("call_{i}"),
-            name: (*name).to_string(),
-            arguments: serde_json::json!({}),
-        })
+        .map(|(i, name)| RecordedToolCall::new(format!("call_{i}"), *name, serde_json::json!({})))
         .collect();
 
     let content = final_response.map_or_else(Vec::new, |text| {
@@ -45,75 +41,45 @@ pub fn mock_invocation(
         .with_stop_reason(StopReason::Stop)
         .with_timestamp(0);
 
-    Invocation {
-        turns: vec![TurnRecord {
-            turn_index: 0,
-            assistant_message,
-            tool_calls,
-            tool_results: vec![],
-            duration: Duration::from_millis(100),
-        }],
-        total_usage: Usage::default()
-            .with_input(token_total)
-            .with_total(token_total),
-        total_cost: Cost::default().with_total(cost_total),
-        total_duration: Duration::from_millis(100),
-        final_response: final_response.map(String::from),
-        stop_reason: StopReason::Stop,
-        model: ModelSpec::new("test", "test-model"),
-    }
+    let mut invocation = Invocation::new(StopReason::Stop, ModelSpec::new("test", "test-model"))
+        .with_turns(vec![
+            TurnRecord::new(0, assistant_message)
+                .with_tool_calls(tool_calls)
+                .with_duration(Duration::from_millis(100)),
+        ])
+        .with_total_usage(
+            Usage::default()
+                .with_input(token_total)
+                .with_total(token_total),
+        )
+        .with_total_cost(Cost::default().with_total(cost_total))
+        .with_total_duration(Duration::from_millis(100));
+    invocation.final_response = final_response.map(String::from);
+    invocation
 }
 
 /// Build a minimal eval case with the given expected trajectory.
 #[allow(dead_code)]
 pub fn case_with_trajectory(expected: Vec<ExpectedToolCall>) -> EvalCase {
-    EvalCase {
-        id: "test-case".to_string(),
-        name: "Test Case".to_string(),
-        description: None,
-        system_prompt: "You are a test agent.".to_string(),
-        user_messages: vec!["test prompt".to_string()],
-        expected_trajectory: Some(expected),
-        expected_response: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new(
+        "test-case",
+        "Test Case",
+        "You are a test agent.",
+        vec!["test prompt".to_string()],
+    )
+    .with_expected_trajectory(expected)
 }
 
 /// Build a minimal eval case with response criteria.
 #[allow(dead_code)]
 pub fn case_with_response(criteria: ResponseCriteria) -> EvalCase {
-    EvalCase {
-        id: "test-case".to_string(),
-        name: "Test Case".to_string(),
-        description: None,
-        system_prompt: "You are a test agent.".to_string(),
-        user_messages: vec!["test prompt".to_string()],
-        expected_trajectory: None,
-        expected_response: Some(criteria),
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new(
+        "test-case",
+        "Test Case",
+        "You are a test agent.",
+        vec!["test prompt".to_string()],
+    )
+    .with_expected_response(criteria)
 }
 
 /// Build a multi-turn `Invocation` where each inner slice defines tool calls
@@ -127,59 +93,36 @@ pub fn mock_invocation_multi_turn(turns: &[&[(&str, serde_json::Value)]]) -> Inv
             let tool_calls = calls
                 .iter()
                 .enumerate()
-                .map(|(j, (name, args))| RecordedToolCall {
-                    id: format!("call_{i}_{j}"),
-                    name: (*name).to_string(),
-                    arguments: args.clone(),
+                .map(|(j, (name, args))| {
+                    RecordedToolCall::new(format!("call_{i}_{j}"), *name, args.clone())
                 })
                 .collect();
-            TurnRecord {
-                turn_index: i,
-                assistant_message: AssistantMessage::new(vec![], "test", "test-model")
+            TurnRecord::new(
+                i,
+                AssistantMessage::new(vec![], "test", "test-model")
                     .with_stop_reason(StopReason::Stop)
                     .with_timestamp(0),
-                tool_calls,
-                tool_results: vec![],
-                duration: Duration::from_millis(50),
-            }
+            )
+            .with_tool_calls(tool_calls)
+            .with_duration(Duration::from_millis(50))
         })
         .collect();
 
-    Invocation {
-        turns: turn_records,
-        total_usage: Usage::default(),
-        total_cost: Cost::default(),
-        total_duration: Duration::from_millis(100),
-        final_response: None,
-        stop_reason: StopReason::Stop,
-        model: ModelSpec::new("test", "test-model"),
-    }
+    Invocation::new(StopReason::Stop, ModelSpec::new("test", "test-model"))
+        .with_turns(turn_records)
+        .with_total_duration(Duration::from_millis(100))
 }
 
 /// Build a minimal eval case with budget constraints.
 #[allow(dead_code)]
 pub fn case_with_budget(budget: BudgetConstraints) -> EvalCase {
-    EvalCase {
-        id: "test-case".to_string(),
-        name: "Test Case".to_string(),
-        description: None,
-        system_prompt: "You are a test agent.".to_string(),
-        user_messages: vec!["test prompt".to_string()],
-        expected_trajectory: None,
-        expected_response: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: Some(budget),
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new(
+        "test-case",
+        "Test Case",
+        "You are a test agent.",
+        vec!["test prompt".to_string()],
+    )
+    .with_budget(budget)
 }
 
 /// Build an eval case with both expected trajectory and response criteria.
@@ -188,27 +131,14 @@ pub fn case_with_trajectory_and_response(
     expected: Vec<ExpectedToolCall>,
     criteria: ResponseCriteria,
 ) -> EvalCase {
-    EvalCase {
-        id: "test-case".to_string(),
-        name: "Test Case".to_string(),
-        description: None,
-        system_prompt: "You are a test agent.".to_string(),
-        user_messages: vec!["test prompt".to_string()],
-        expected_trajectory: Some(expected),
-        expected_response: Some(criteria),
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new(
+        "test-case",
+        "Test Case",
+        "You are a test agent.",
+        vec!["test prompt".to_string()],
+    )
+    .with_expected_trajectory(expected)
+    .with_expected_response(criteria)
 }
 
 /// Build a minimal `Invocation` with the given tool call names and a set response.
@@ -223,25 +153,10 @@ pub fn mock_invocation_with_response(tool_names: &[&str], response: &str) -> Inv
 /// case shape without each re-declaring every field.
 #[allow(dead_code)]
 pub fn make_case(id: &str) -> EvalCase {
-    EvalCase {
-        id: id.to_string(),
-        name: format!("Case {id}"),
-        description: None,
-        system_prompt: "You are a test agent.".to_string(),
-        user_messages: vec!["hello".to_string()],
-        expected_trajectory: None,
-        expected_response: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new(
+        id,
+        format!("Case {id}"),
+        "You are a test agent.",
+        vec!["hello".to_string()],
+    )
 }

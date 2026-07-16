@@ -61,9 +61,18 @@ impl Aggregator for AnyPass {
 /// When the configured weight count does not match the sample count, the
 /// aggregator falls back to the unweighted mean rather than silently dropping
 /// or over-reading samples.
+#[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct Weighted {
     pub weights: Vec<f64>,
+}
+
+impl Weighted {
+    /// Create a weighted aggregator from the given per-sample weights.
+    #[must_use]
+    pub fn new(weights: Vec<f64>) -> Self {
+        Self { weights }
+    }
 }
 
 impl Aggregator for Weighted {

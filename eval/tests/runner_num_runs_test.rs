@@ -44,11 +44,7 @@ impl Evaluator for SequenceEvaluator {
     }
     fn evaluate(&self, _c: &EvalCase, _i: &Invocation) -> Option<EvalMetricResult> {
         let v = self.seq.lock().unwrap().pop_front().unwrap_or(0.0);
-        Some(EvalMetricResult {
-            evaluator_name: self.name.to_string(),
-            score: Score::new(v, 0.5),
-            details: None,
-        })
+        Some(EvalMetricResult::new(self.name, Score::new(v, 0.5)))
     }
 }
 
@@ -75,11 +71,7 @@ impl Evaluator for AllPassSequenceEvaluator {
 
     fn evaluate(&self, _c: &EvalCase, _i: &Invocation) -> Option<EvalMetricResult> {
         let v = self.seq.lock().unwrap().pop_front().unwrap_or(0.0);
-        Some(EvalMetricResult {
-            evaluator_name: self.name.to_string(),
-            score: Score::new(v, 0.5),
-            details: None,
-        })
+        Some(EvalMetricResult::new(self.name, Score::new(v, 0.5)))
     }
 
     fn aggregator(&self) -> Arc<dyn swink_agent_eval::Aggregator> {
@@ -98,11 +90,7 @@ impl Evaluator for CallCountingEvaluator {
 
     fn evaluate(&self, _c: &EvalCase, _i: &Invocation) -> Option<EvalMetricResult> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        Some(EvalMetricResult {
-            evaluator_name: self.name().to_string(),
-            score: Score::pass(),
-            details: None,
-        })
+        Some(EvalMetricResult::new(self.name(), Score::pass()))
     }
 }
 
@@ -176,13 +164,8 @@ impl JudgeClient for RunnerCancellingJudge {
         Box::pin(async move {
             runner_cancel.cancel();
             tokio::task::yield_now().await;
-            Ok(JudgeVerdict {
-                score: 1.0,
-                pass: true,
-                reason: Some("would pass without runner cancellation".to_string()),
-                label: None,
-                cost: None,
-            })
+            Ok(JudgeVerdict::new(1.0, true)
+                .with_reason("would pass without runner cancellation"))
         })
     }
 }
@@ -210,12 +193,7 @@ impl Evaluator for JudgeBackedEvaluator {
 }
 
 fn single_case_set() -> EvalSet {
-    EvalSet {
-        id: "nr".into(),
-        name: "nr".into(),
-        description: None,
-        cases: vec![common::make_case("c1")],
-    }
+    EvalSet::new("nr", "nr", vec![common::make_case("c1")])
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

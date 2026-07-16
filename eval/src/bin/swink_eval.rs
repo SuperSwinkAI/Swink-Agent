@@ -350,6 +350,11 @@ fn emit_report(result: &EvalSetResult, format: Format) -> u8 {
             println!("pushed to {backend}: {identifier}");
             EXIT_OK
         }
+        Ok(_) => {
+            // Unknown reporter output variant (non_exhaustive); nothing to
+            // emit today — treat as a successful no-op render.
+            EXIT_OK
+        }
         Err(err) => {
             eprintln!("swink-eval: render error: {err}");
             EXIT_RUNTIME

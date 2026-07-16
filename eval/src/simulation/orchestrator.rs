@@ -23,6 +23,7 @@ use crate::trajectory::TrajectoryCollector;
 use crate::types::{Invocation, RecordedToolCall};
 
 /// Outcome classification emitted alongside the [`Invocation`].
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SimulationOutcome {
     GoalCompleted,
@@ -31,6 +32,7 @@ pub enum SimulationOutcome {
 }
 
 /// Errors surfaced by [`run_multiturn_simulation`].
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum SimulationError {
     #[error("actor error: {0}")]

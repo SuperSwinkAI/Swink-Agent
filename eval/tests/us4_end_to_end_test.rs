@@ -22,13 +22,9 @@ use tokio_util::sync::CancellationToken;
 mod common;
 
 fn verdict(reason: &str, label: Option<&str>) -> JudgeVerdict {
-    JudgeVerdict {
-        score: 1.0,
-        pass: true,
-        reason: Some(reason.into()),
-        label: label.map(str::to_string),
-        cost: None,
-    }
+    let mut v = JudgeVerdict::new(1.0, true).with_reason(reason);
+    v.label = label.map(str::to_string);
+    v
 }
 
 fn config(judge: Arc<dyn JudgeClient>) -> JudgeEvaluatorConfig {
@@ -43,10 +39,10 @@ fn goal_case() -> swink_agent_eval::EvalCase {
     let mut case = common::case_with_response(ResponseCriteria::Contains {
         substring: "refund is complete".into(),
     });
-    case.expected_assertion = Some(Assertion {
-        description: "The user received a completed refund resolution.".into(),
-        kind: AssertionKind::GoalCompleted,
-    });
+    case.expected_assertion = Some(Assertion::new(
+        "The user received a completed refund resolution.",
+        AssertionKind::GoalCompleted,
+    ));
     case
 }
 

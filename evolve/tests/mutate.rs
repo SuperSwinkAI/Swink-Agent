@@ -16,10 +16,7 @@ fn make_context(max_candidates: usize) -> MutationContext<'static> {
         affected_cases: vec![CaseFailure {
             case_id: "c1".to_string(),
             evaluator_name: "response".to_string(),
-            score: Score {
-                value: 0.2,
-                threshold: 0.5,
-            },
+            score: Score::new(0.2, 0.5),
             details: None,
         }],
         mean_score_gap: 0.3,
@@ -77,13 +74,9 @@ fn ablation_produces_two_candidates() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn llm_guided_uses_judge_client() {
     let rewrite = "improved text from judge";
-    let judge = Arc::new(MockJudge::with_verdicts(vec![JudgeVerdict {
-        score: 0.9,
-        pass: true,
-        reason: Some(rewrite.to_string()),
-        label: None,
-        cost: None,
-    }]));
+    let judge = Arc::new(MockJudge::with_verdicts(vec![
+        JudgeVerdict::new(0.9, true).with_reason(rewrite),
+    ]));
     let strategy = LlmGuided::new(judge);
     let context = make_context(3);
     let candidates = strategy.mutate("original text", &context).unwrap();
@@ -97,13 +90,11 @@ async fn llm_guided_uses_judge_client() {
 /// the judge populates `JudgeVerdict::cost`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn llm_guided_records_budget_invocation_and_cost() {
-    let judge = Arc::new(MockJudge::with_verdicts(vec![JudgeVerdict {
-        score: 0.9,
-        pass: true,
-        reason: Some("improved text".to_string()),
-        label: None,
-        cost: Some(0.01),
-    }]));
+    let judge = Arc::new(MockJudge::with_verdicts(vec![
+        JudgeVerdict::new(0.9, true)
+            .with_reason("improved text")
+            .with_cost(0.01),
+    ]));
     let strategy = LlmGuided::new(judge);
     let budget = CycleBudget::new(Cost::default().with_total(10.0));
     let mut context = make_context(3);
@@ -129,13 +120,9 @@ async fn llm_guided_records_budget_invocation_and_cost() {
 /// counted but dollar spend is untouched.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn llm_guided_counts_invocation_without_cost() {
-    let judge = Arc::new(MockJudge::with_verdicts(vec![JudgeVerdict {
-        score: 0.9,
-        pass: true,
-        reason: Some("improved text".to_string()),
-        label: None,
-        cost: None,
-    }]));
+    let judge = Arc::new(MockJudge::with_verdicts(vec![
+        JudgeVerdict::new(0.9, true).with_reason("improved text"),
+    ]));
     let strategy = LlmGuided::new(judge);
     let budget = CycleBudget::new(Cost::default().with_total(10.0));
     let mut context = make_context(3);

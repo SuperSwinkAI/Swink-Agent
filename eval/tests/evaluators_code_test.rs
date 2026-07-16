@@ -11,46 +11,21 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use regex::Regex;
-use swink_agent::{Cost, ModelSpec, StopReason, Usage};
+use swink_agent::{ModelSpec, StopReason};
 use swink_agent_eval::{
     CodeExtractor, CodeExtractorStrategy, EvalCase, Evaluator, Invocation, JudgeClient,
     JudgeVerdict,
 };
 
 fn make_case() -> EvalCase {
-    EvalCase {
-        id: "case".into(),
-        name: "Case".into(),
-        description: None,
-        system_prompt: "s".into(),
-        user_messages: vec!["write fn add".into()],
-        expected_trajectory: None,
-        expected_response: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new("case", "Case", "s", vec!["write fn add".into()])
 }
 
 fn make_invocation(response: Option<&str>) -> Invocation {
-    Invocation {
-        turns: vec![],
-        total_usage: Usage::default(),
-        total_cost: Cost::default(),
-        total_duration: Duration::from_millis(1),
-        final_response: response.map(str::to_string),
-        stop_reason: StopReason::Stop,
-        model: ModelSpec::new("test", "m"),
-    }
+    let mut invocation = Invocation::new(StopReason::Stop, ModelSpec::new("test", "m"))
+        .with_total_duration(Duration::from_millis(1));
+    invocation.final_response = response.map(str::to_string);
+    invocation
 }
 
 #[tokio::test]
@@ -86,13 +61,9 @@ struct StaticJudge(Option<String>);
 impl JudgeClient for StaticJudge {
     fn judge<'a>(&'a self, _prompt: &'a str) -> swink_agent_eval::JudgeFuture<'a> {
         Box::pin(async move {
-            Ok(JudgeVerdict {
-                score: 1.0,
-                pass: true,
-                reason: self.0.clone(),
-                label: None,
-                cost: None,
-            })
+            let mut verdict = JudgeVerdict::new(1.0, true);
+            verdict.reason = self.0.clone();
+            Ok(verdict)
         })
     }
 }

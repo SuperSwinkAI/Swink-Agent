@@ -5,7 +5,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use swink_agent::{Cost, ModelSpec, StopReason, Usage};
+use swink_agent::{ModelSpec, StopReason};
 use swink_agent_eval::{
     Attachment, DefaultUrlFilter, EvalCase, Evaluator, ImageSafetyEvaluator, Invocation,
     JudgeClient, JudgeEvaluatorConfig, JudgeRegistry, JudgeVerdict, materialize_case_attachments,
@@ -22,51 +22,22 @@ impl JudgeClient for FixedVerdict {
     fn judge<'a>(&'a self, prompt: &'a str) -> swink_agent_eval::JudgeFuture<'a> {
         Box::pin(async move {
             *self.last_prompt.lock().unwrap() = Some(prompt.to_string());
-            Ok(JudgeVerdict {
-                score: self.score,
-                pass: self.pass,
-                reason: self.reason.clone(),
-                label: None,
-                cost: None,
-            })
+            let mut verdict = JudgeVerdict::new(self.score, self.pass);
+            verdict.reason = self.reason.clone();
+            Ok(verdict)
         })
     }
 }
 
 fn make_case_with_attachments(attachments: Vec<Attachment>) -> EvalCase {
-    EvalCase {
-        id: "case".into(),
-        name: "Case".into(),
-        description: None,
-        system_prompt: "s".into(),
-        user_messages: vec!["check the image".into()],
-        expected_trajectory: None,
-        expected_response: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments,
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new("case", "Case", "s", vec!["check the image".into()])
+        .with_attachments(attachments)
 }
 
 fn make_invocation() -> Invocation {
-    Invocation {
-        turns: vec![],
-        total_usage: Usage::default(),
-        total_cost: Cost::default(),
-        total_duration: Duration::from_millis(1),
-        final_response: Some("ok".into()),
-        stop_reason: StopReason::Stop,
-        model: ModelSpec::new("test", "m"),
-    }
+    Invocation::new(StopReason::Stop, ModelSpec::new("test", "m"))
+        .with_total_duration(Duration::from_millis(1))
+        .with_final_response("ok")
 }
 
 fn make_config(judge: Arc<dyn JudgeClient>) -> JudgeEvaluatorConfig {

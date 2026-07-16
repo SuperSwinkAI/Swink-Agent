@@ -242,43 +242,17 @@ fn network_egress_blocked() {
 
 #[test]
 fn evaluator_returns_none_when_no_code_extracted() {
-    use swink_agent::{Cost, ModelSpec, StopReason, Usage};
+    use swink_agent::{ModelSpec, StopReason};
     use swink_agent_eval::{EvalCase, Evaluator, Invocation};
 
     let extractor = Arc::new(CodeExtractor::new(CodeExtractorStrategy::MarkdownFence {
         language: Some("rust".into()),
     }));
     let evaluator = SandboxedExecutionEvaluator::new(extractor);
-    let case = EvalCase {
-        id: "case".into(),
-        name: "Case".into(),
-        description: None,
-        system_prompt: "s".into(),
-        user_messages: vec!["hi".into()],
-        expected_trajectory: None,
-        expected_response: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    };
-    let invocation = Invocation {
-        turns: vec![],
-        total_usage: Usage::default(),
-        total_cost: Cost::default(),
-        total_duration: Duration::from_millis(1),
-        final_response: Some("no fenced code here".into()),
-        stop_reason: StopReason::Stop,
-        model: ModelSpec::new("test", "m"),
-    };
+    let case = EvalCase::new("case", "Case", "s", vec!["hi".into()]);
+    let invocation = Invocation::new(StopReason::Stop, ModelSpec::new("test", "m"))
+        .with_total_duration(Duration::from_millis(1))
+        .with_final_response("no fenced code here");
 
     assert!(evaluator.evaluate(&case, &invocation).is_none());
 }
