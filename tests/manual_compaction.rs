@@ -374,12 +374,18 @@ async fn manual_compaction_while_running_returns_already_running() {
         "expected AlreadyRunning while the loop is active, got {err:?}"
     );
 
-    // Dropping the stream makes the agent idle; the guard clears. (Dropping
-    // an un-drained `prompt_stream` leaves the history empty — `start_loop`
-    // takes it — so re-seed before verifying compaction now goes through.)
+    // Dropping the stream makes the agent idle; the guard clears. Dropping
+    // an un-drained `prompt_stream` no longer empties the history:
+    // `start_loop` keeps a snapshot in `state.messages`, so the seeded
+    // history (plus the "hi" prompt) survives the drop and compaction goes
+    // through without re-seeding.
     drop(stream);
     assert!(!agent.is_running());
-    seed_large_history(&mut agent, 10);
+    assert_eq!(
+        agent.state().messages.len(),
+        11,
+        "history (10 seeded + 1 prompt) must survive dropping an un-drained stream"
+    );
     let report = agent.compact_context().await.expect("agent is idle now");
     assert!(report.is_some(), "compaction succeeds once idle");
 }

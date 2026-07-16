@@ -55,10 +55,21 @@ impl Agent {
                     let assistant_llm = LlmMessage::Assistant(assistant_message);
                     state_messages.push(AgentMessage::Llm(assistant_llm.clone()));
                     checkpoint_messages.push(AgentMessage::Llm(assistant_llm.clone()));
+                    // Also write the completed turn back to observable state
+                    // so that history is not lost if this future is dropped
+                    // before completion (e.g. a `select!` timeout). The final
+                    // assignment below replaces `state.messages` wholesale,
+                    // so these incremental pushes never duplicate.
+                    self.state
+                        .messages
+                        .push(AgentMessage::Llm(assistant_llm.clone()));
                     all_messages.push(AgentMessage::Llm(assistant_llm));
                     for tr in tool_results {
                         state_messages.push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
                         checkpoint_messages
+                            .push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
+                        self.state
+                            .messages
                             .push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
                         all_messages.push(AgentMessage::Llm(LlmMessage::ToolResult(tr)));
                     }
@@ -116,9 +127,22 @@ impl Agent {
                 checkpoint_msgs.push(AgentMessage::Llm(LlmMessage::Assistant(
                     assistant_message.clone(),
                 )));
+                // Also write the completed turn back to observable state so
+                // that dropping the stream before `AgentEnd` keeps every turn
+                // the host already processed. The `AgentEnd` arm below
+                // replaces `state.messages` wholesale, so these incremental
+                // pushes never duplicate.
+                self.state
+                    .messages
+                    .push(AgentMessage::Llm(LlmMessage::Assistant(
+                        assistant_message.clone(),
+                    )));
                 for tr in tool_results {
                     msgs.push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
                     checkpoint_msgs.push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
+                    self.state
+                        .messages
+                        .push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
                 }
                 // Capture terminal error so it survives through AgentEnd.
                 if let Some(ref err) = assistant_message.error_message {

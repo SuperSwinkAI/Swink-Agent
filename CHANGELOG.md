@@ -13,6 +13,11 @@ Bundles the full 0.11.x development line off `integration`. **Supersedes the
 unreleased 0.11.1** — that version was never tagged or published, so its entries
 are folded in here rather than kept as a phantom release.
 
+### Fixed — dropping an un-drained prompt stream no longer empties history
+
+- **`swink-agent`**: `start_loop` moved the entire conversation history into the spawned loop task via `mem::take`, leaving `state.messages` empty until `AgentEnd` wrote it back. A host that dropped the stream returned by `prompt_stream`/`continue_stream` before draining it silently lost the whole conversation — `LoopGuardStream::drop` restored `loop_active` but never the history.
+- The agent now keeps an equivalent snapshot of the full pre-run context in `state.messages` when the loop starts, and completed turns are written back on `TurnEnd` in both drain paths. History is never removed from observable state, so an early drop loses at most the in-flight turn, and `Drop` needs no restore (no host/loop-task race window). Every completion path still replaces `state.messages` wholesale on `AgentEnd`, so nothing duplicates.
+
 ### Fixed — `ServingOptions.extra` honored (or loudly rejected) by every provider (#1130)
 
 - **`swink-agent-adapters`**: `ServingOptions::extra` — documented as "passed through verbatim" — was a silent no-op on Anthropic, Google, Bedrock, Mistral, and Proxy. Now: Anthropic and Mistral merge it into the request-body top level, Google into `generationConfig`, and Bedrock into the Converse API's `additionalModelRequestFields`; the Proxy wire protocol has no pass-through channel, so non-empty `extra` emits one `tracing::warn!` per stream call naming the dropped keys instead of vanishing.
