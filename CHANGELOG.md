@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `patterns`: first integration test suite (17 tests: pipeline sequential/parallel/loop execution, merge strategies, exit conditions, event ordering, failure propagation) (#1137)
+- `eval`: `RawSession::otel_spans` constructor for OTel-backed raw sessions (#1144)
+- `rpc`: `PeerSender` requests now carry a 10-minute default timeout (`DEFAULT_REQUEST_TIMEOUT`, error code `TIMEOUT = -32095`) so a dead peer can no longer hang a caller (#1141)
+
+### Changed
+- **agent loop performance**: `TurnSnapshot.messages` is now `Arc<Vec<Arc<LlmMessage>>>`; per-turn history deep-clones replaced by shared snapshots, and per-turn LLM-message conversion is amortized through a lazily-extended mirror (`ContextMessages`) (#1140)
+- `build_loop_config` destructures `AgentOptions` exhaustively — adding an option field without wiring it into the loop config is now a compile error (#1140)
+- **memory performance**: long-lived `IndexWriter` with incremental per-append indexing (full reindex only on first search or corruption), checkpoint retention bounded at `DEFAULT_MAX_CHECKPOINTS = 20` with `unbounded()` opt-out, atomic-write lock map now evicts dead entries (#1138)
+- **tui performance**: per-message render cache keyed by fingerprint + width + theme; selection capture skipped while selection mode is inactive (#1139)
+- `rpc`: `respond_ok`/`respond_err` are now async with real backpressure; `RequestId` is zero-clone on the hot path; agentd session factory returns `Result<AgentOptions, String>` and surfaces construction failures as JSON-RPC errors; SIGTERM handler installs before session spawn (#1141)
+- `mcp`: `McpError` reworked into a five-variant taxonomy with typed sources and `ProtocolError { context }`; blanket `From<io::Error>` removed; `McpTransport::Sse` renamed to `StreamableHttp` (serde tag `"streamable_http"`); bearer-token/header conflicts now warn (#1141)
+- `adapters`: ollama adapter migrated to the shared `sse_adapter_stream`; bedrock/proxy share `base::prefix_start_if_unstarted`; `OaiParserOptions.error_finish_reason_is_error` surfaces error finish reasons as stream errors instead of silent truncation (#1141)
+- `policies`, `auth`: constructor coverage (`MemoryNudge`, `FilterRule`, `PiiPattern`, `AuditRecord`), `with_*` naming consistency, keychain `with_service`, oauth2 doc-contract sweep (#1136)
+- `patterns`: crate now inherits `[lints] workspace = true`; remaining exported types swept with `#[non_exhaustive]` + constructors (#1137)
+- `eval`: crate lint table re-synced with the workspace set (it had drifted, silently exempting the crate); ~50 exported types incl. 17 unit marker structs protected with `#[non_exhaustive]` + `const fn new()`; `CanonicalJsonValue` documented frozen-by-design (#1144)
+- workspace: `serde_yaml` (unmaintained) replaced by `serde_yaml_ng` 0.10; `tracing-subscriber`, `url`, `clap` centralized in `[workspace.dependencies]`; `macros` no longer declares the unused `attributes(tool)`; plugin-web dead feature + re-exports removed (#1145)
+- CI: every workflow job now carries a timeout; clippy runs `--all-features --all-targets` (excluding `swink-agent-local-llm`); composite rust-setup action adopted across jobs; deny.toml documents the four tolerated ghost dependency chains (#1145)
+- test layout: integration tests consolidated into per-crate suites — root 61→2, eval 64→1, adapters 20→2 test binaries; former per-file `#![cfg(...)]` gates now live on `mod` lines in `tests/suite/main.rs`; the two `no_default_features.rs` sentinels stay standalone (#1147)
+
+### Fixed
+- `eval`: `JudgeVerdict::new` no longer clamps at construction — clamping and `ScoreClamped` detail recording (FR-021) stay in `dispatch_judge`; the constructor clamp introduced by the sweep hid out-of-range judge scores from that instrumentation (#1146)
+- coverage workflow: tarpaulin config key is `out`, not `generate` — first green coverage run on integration (#1134)
+- `eval`: lost-wakeup hang — `Notified` future `.enable()`d before the condition re-check, with a 30s timeout backstop (#1144)
+- `adapters`: `prefix_start_if_unstarted` feature-gated to its bedrock/proxy callers; single-feature builds (e.g. `--features anthropic`) no longer fail `-D dead-code` (#1142)
+- API seams from the non_exhaustive sweep closed: missing constructors/re-exports, `ScriptToolDef`/`OtelInitConfig` (feature-gated escapees), latent all-features test lints (#1135)
+
 ## [0.12.0] - 2026-07-15
 
 ### Changed — public API hardened with #[non_exhaustive] (gap 1)
