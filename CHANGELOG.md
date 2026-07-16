@@ -37,6 +37,11 @@ are folded in here rather than kept as a phantom release.
 - **`swink-agent-memory`**: `FileCheckpointStore::with_max_checkpoints(n)` prunes the oldest checkpoints (by `created_at`) after each save; the default stays unlimited, and pruning never deletes files that don't parse as checkpoints.
 - **`swink-agent-policies`**: new `RollingCheckpointPolicy` (same `checkpoint` feature) overwrites one stable checkpoint — optionally `"{session}-rolling"` — via the store's atomic save path. Recommended for long-session crash-safety: `CheckpointPolicy` writes the full history under a new ID every turn (O(N²) bytes for N turns); rolling keeps disk at O(context) and loses at most one turn on crash, giving up time-travel. Documented in a new "Crash Safety" section of the policies README and on `AgentOptions::checkpoint_store`.
 
+### Fixed — `swink-agentd` honors `LLM_SYSTEM_PROMPT` / `LLM_MODEL` (#931)
+
+- The daemon loads `.env` via dotenvy but its clap args used baked-in `default_value`s, so `LLM_SYSTEM_PROMPT` and `LLM_MODEL` from the environment were silently ignored — set in `.env`, the TUI honored them and `swink-agentd` didn't. Both args are now `Option<String>` resolved as CLI flag > env var > shared default, mirroring the TUI's tested `resolve_system_prompt` chain.
+- The duplicated default literals are promoted to shared core constants `swink_agent::{DEFAULT_SYSTEM_PROMPT, DEFAULT_MODEL}` (additive), and the TUI's proxy-mode model fallback now uses the documented `claude-sonnet-4-6` alias instead of the dated `claude-sonnet-4-20250514` snapshot.
+
 ### Added — TUI cost/usage display with pluggable pricing (#1084, #1108)
 
 - **`swink-agent`**: new `pricing` module (`CostCalculator`, `ModelRates`, `PricingTable`), `AgentOptions::with_cost_calculator`/`with_pricing_table`, `AgentLoopConfig::cost_calculator`, and `price_assistant_message_with` — operators can declare per-tier rates that outrank the compiled catalog.
