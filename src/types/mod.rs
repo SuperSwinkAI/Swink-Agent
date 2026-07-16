@@ -664,13 +664,17 @@ pub struct TurnSnapshot {
     pub turn_index: usize,
     /// The LLM messages present in the context at the turn boundary.
     ///
-    /// Wrapped in `Arc` to avoid cloning the full message list when the
-    /// snapshot is forwarded to multiple subscribers.
+    /// Each message is wrapped in an `Arc` shared with the loop's internal
+    /// history and with neighbouring turn snapshots, so building a snapshot
+    /// costs pointer bumps for the unchanged history prefix instead of a
+    /// deep copy of every message on every turn. The outer `Arc` keeps
+    /// forwarding the snapshot to multiple subscribers cheap. Serialization
+    /// is transparent: the JSON shape is a plain array of messages.
     #[serde(
         serialize_with = "serialize_arc_vec",
         deserialize_with = "deserialize_arc_vec"
     )]
-    pub messages: Arc<Vec<LlmMessage>>,
+    pub messages: Arc<Vec<Arc<LlmMessage>>>,
     /// Accumulated token usage up to and including this turn.
     pub usage: Usage,
     /// Accumulated cost up to and including this turn.
@@ -688,7 +692,11 @@ impl TurnSnapshot {
     ///
     /// `usage`/`cost` default to zero and `state_delta` defaults to `None`.
     #[must_use]
-    pub fn new(turn_index: usize, messages: Arc<Vec<LlmMessage>>, stop_reason: StopReason) -> Self {
+    pub fn new(
+        turn_index: usize,
+        messages: Arc<Vec<Arc<LlmMessage>>>,
+        stop_reason: StopReason,
+    ) -> Self {
         Self {
             turn_index,
             messages,

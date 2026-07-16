@@ -16,8 +16,9 @@ use super::overflow::{OverflowRecoveryResult, attempt_overflow_recovery};
 use super::stream::{capability_filter_tools, stream_with_retry};
 use super::tool_dispatch::execute_tools_concurrently;
 use super::{
-    AgentEvent, AgentLoopConfig, LoopState, StreamResult, ToolCallInfo, ToolExecOutcome,
-    TransferRejectionReason, TurnEndReason, TurnOutcome, build_abort_message, emit,
+    AgentEvent, AgentLoopConfig, ContextMessages, LoopState, StreamResult, ToolCallInfo,
+    ToolExecOutcome, TransferRejectionReason, TurnEndReason, TurnOutcome, build_abort_message,
+    emit,
 };
 
 /// Run a single turn of the inner loop: inject pending messages, transform
@@ -55,8 +56,9 @@ pub async fn run_single_turn(
     if !state.pending_messages.is_empty() {
         state.context_messages.append(&mut state.pending_messages);
     }
-    let fresh_messages =
-        clone_messages_for_policy_snapshot(&state.context_messages[fresh_messages_start..]);
+    let fresh_messages = clone_messages_for_policy_snapshot(
+        &state.context_messages.as_slice()[fresh_messages_start..],
+    );
     state.initial_new_messages_len = 0;
     clear_pending_message_snapshot(config);
     // Sync the full context (including newly consumed pending messages) to the
@@ -135,7 +137,7 @@ pub async fn run_single_turn(
                 let _ = super::emit(
                     tx,
                     super::AgentEvent::AgentEnd {
-                        messages: Arc::new(std::mem::take(&mut state.context_messages)),
+                        messages: Arc::new(state.context_messages.take_vec()),
                     },
                 )
                 .await;
@@ -173,12 +175,16 @@ pub async fn run_single_turn(
     if let Some(ref cache_config) = config.cache_config {
         // Scope the MutexGuard so it's dropped before any await.
         let cache_event = {
+            // Cache hints mutate messages in place, so this path invalidates
+            // the snapshot mirror and re-clones the history at the next
+            // `TurnEnd` (matching the pre-mirror cost for cache users).
+            let context_messages = state.context_messages.make_mut();
             let mut cache_state = config
                 .cache_state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let hint = cache_state.advance_turn(cache_config);
-            let current_len = state.context_messages.len();
+            let current_len = context_messages.len();
             let prior_prefix = cache_state.cached_prefix_len.min(current_len);
 
             // Compute the effective prefix for this turn based on the hint.
@@ -192,8 +198,7 @@ pub async fn run_single_turn(
             };
 
             // Estimate prefix tokens and check min_tokens threshold
-            let prefix_tokens: usize = state
-                .context_messages
+            let prefix_tokens: usize = context_messages
                 .iter()
                 .take(prefix_len)
                 .map(crate::context::estimate_tokens)
@@ -201,11 +206,11 @@ pub async fn run_single_turn(
 
             if prefix_tokens >= cache_config.min_tokens && prefix_len > 0 {
                 // Annotate cacheable prefix messages with the hint
-                for msg in state.context_messages.iter_mut().take(prefix_len) {
+                for msg in context_messages.iter_mut().take(prefix_len) {
                     msg.set_cache_hint(hint.clone());
                 }
                 // Clear hints on messages beyond the prefix
-                for msg in state.context_messages.iter_mut().skip(prefix_len) {
+                for msg in context_messages.iter_mut().skip(prefix_len) {
                     msg.clear_cache_hint();
                 }
                 cache_state.cached_prefix_len = prefix_len;
@@ -215,7 +220,7 @@ pub async fn run_single_turn(
                 // Threshold not met: clear any stale hints and leave the
                 // recorded prefix alone on `Read`; on `Write` we reset so the
                 // next eligible turn starts fresh.
-                for msg in &mut state.context_messages {
+                for msg in &mut *context_messages {
                     msg.clear_cache_hint();
                 }
                 drop(cache_state);
@@ -242,7 +247,7 @@ pub async fn run_single_turn(
     // iii. Apply convert_to_llm to filter messages for the provider
     let llm_messages = build_llm_messages(
         config,
-        &state.context_messages,
+        state.context_messages.as_slice(),
         dynamic_prompt_injected.as_ref(),
     );
 
@@ -466,10 +471,19 @@ fn clone_messages_for_policy_snapshot(messages: &[AgentMessage]) -> Vec<AgentMes
 /// `ContextCompacted` events for each. Returns whether any compaction occurred.
 pub(super) async fn run_context_transformers(
     config: &AgentLoopConfig,
-    messages: &mut Vec<crate::types::AgentMessage>,
+    messages: &mut ContextMessages,
     overflow: bool,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> bool {
+    // Fast path: no transformer configured — do not touch the history, so
+    // its snapshot mirror stays valid.
+    if config.async_transform_context.is_none() && config.transform_context.is_none() {
+        return false;
+    }
+
+    // Transformers mutate the history in place, invalidating the snapshot
+    // mirror; the next `TurnEnd` snapshot re-clones the full history.
+    let messages = messages.make_mut();
     let mut any_compacted = false;
 
     // Async transformer runs first
@@ -512,11 +526,11 @@ fn mark_assistant_message_aborted(message: &AssistantMessage) -> AssistantMessag
 
 /// Sync the full loop context to the shared `loop_context_snapshot` so that
 /// `Agent::pause()` can recover messages already drained from the shared pending
-/// queue but not yet reflected in `in_flight_messages`.
+/// queue but not yet written back to `state.messages` by a `TurnEnd` event.
 fn sync_loop_context_snapshot(config: &AgentLoopConfig, state: &LoopState) {
     config
         .runtime_state
-        .replace_loop_context(&state.context_messages);
+        .replace_loop_context(state.context_messages.as_slice());
 }
 
 // ─── Shared helpers ──────────────────────────────────────────────────────
@@ -578,7 +592,7 @@ pub(super) async fn emit_turn_end_and_agent_end(
     let _ = emit(
         tx,
         AgentEvent::AgentEnd {
-            messages: Arc::new(std::mem::take(&mut state.context_messages)),
+            messages: Arc::new(state.context_messages.take_vec()),
         },
     )
     .await;
@@ -590,7 +604,7 @@ async fn emit_agent_end(state: &mut LoopState, tx: &mpsc::Sender<AgentEvent>) ->
     let _ = emit(
         tx,
         AgentEvent::AgentEnd {
-            messages: Arc::new(std::mem::take(&mut state.context_messages)),
+            messages: Arc::new(state.context_messages.take_vec()),
         },
     )
     .await;
@@ -601,24 +615,17 @@ async fn emit_agent_end(state: &mut LoopState, tx: &mpsc::Sender<AgentEvent>) ->
 
 /// Build a `TurnSnapshot` from current loop state.
 ///
-/// Extracts LLM messages from `context_messages`, using the accumulated
-/// usage/cost and the given stop reason.
+/// Extracts LLM messages from `context_messages` as shared `Arc` clones —
+/// only messages touched since the previous snapshot are deep-cloned — using
+/// the accumulated usage/cost and the given stop reason.
 pub(super) fn build_snapshot(
-    state: &LoopState,
+    state: &mut LoopState,
     stop_reason: StopReason,
     state_delta: Option<crate::StateDelta>,
 ) -> TurnSnapshot {
-    let llm_messages: Vec<LlmMessage> = state
-        .context_messages
-        .iter()
-        .filter_map(|m| match m {
-            AgentMessage::Llm(llm) => Some(llm.clone()),
-            AgentMessage::Custom(_) => None,
-        })
-        .collect();
     TurnSnapshot {
         turn_index: state.turn_index,
-        messages: Arc::new(llm_messages),
+        messages: state.context_messages.snapshot_llm(),
         usage: state.accumulated_usage.clone(),
         cost: state.accumulated_cost.clone(),
         stop_reason,
@@ -786,8 +793,10 @@ async fn handle_error_stop(
         .push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message)));
     let (msg_for_event, policy_stop) =
         run_post_turn_policy_check(&msg_for_event, &[], state, config, system_prompt);
-    state.context_messages[assistant_ctx_index] =
-        AgentMessage::Llm(LlmMessage::Assistant(msg_for_event.clone()));
+    state.context_messages.set(
+        assistant_ctx_index,
+        AgentMessage::Llm(LlmMessage::Assistant(msg_for_event.clone())),
+    );
     let snapshot = build_snapshot(state, stop, None);
     let reason = if is_abort {
         TurnEndReason::Aborted
@@ -867,7 +876,7 @@ pub(super) fn run_post_turn_policy_check(
         stop_reason: assistant_message.stop_reason,
         system_prompt,
         model_spec: &config.model,
-        context_messages: &state.context_messages,
+        context_messages: state.context_messages.as_slice(),
     };
     match run_post_turn_policies(&config.post_turn_policies, &policy_ctx, &turn_ctx) {
         PolicyVerdict::Continue => (assistant_message.clone(), None),
@@ -959,8 +968,10 @@ async fn handle_no_tool_calls(
     let (assistant_message, policy_stop) =
         run_post_turn_policy_check(&assistant_message, &[], state, config, system_prompt);
 
-    state.context_messages[assistant_ctx_index] =
-        AgentMessage::Llm(LlmMessage::Assistant(assistant_message.clone()));
+    state.context_messages.set(
+        assistant_ctx_index,
+        AgentMessage::Llm(LlmMessage::Assistant(assistant_message.clone())),
+    );
 
     let stop = assistant_message.stop_reason;
     let state_delta = flush_state_delta(config, tx).await;
@@ -1122,8 +1133,10 @@ async fn handle_tool_calls(
                     config,
                     system_prompt,
                 );
-                state.context_messages[assistant_ctx_index] =
-                    AgentMessage::Llm(LlmMessage::Assistant(aborted_turn_end.clone()));
+                state.context_messages.set(
+                    assistant_ctx_index,
+                    AgentMessage::Llm(LlmMessage::Assistant(aborted_turn_end.clone())),
+                );
 
                 let state_delta = flush_state_delta(config, tx).await;
                 let snapshot = build_snapshot(state, StopReason::Aborted, state_delta);
@@ -1172,8 +1185,10 @@ async fn handle_tool_calls(
     );
 
     // Update the assistant message in context in case a policy replaced it.
-    state.context_messages[assistant_ctx_index] =
-        AgentMessage::Llm(LlmMessage::Assistant(msg_for_turn_end.clone()));
+    state.context_messages.set(
+        assistant_ctx_index,
+        AgentMessage::Llm(LlmMessage::Assistant(msg_for_turn_end.clone())),
+    );
 
     // xiii-a. Transfer signal detection: if a tool signaled a transfer,
     // validate against the transfer chain for safety, then enrich and exit.
@@ -1212,7 +1227,9 @@ async fn handle_tool_calls(
                         break;
                     }
                 }
-                for msg in &mut state.context_messages {
+                // In-place rewrite of a committed message: invalidates the
+                // snapshot mirror (rare rejected-transfer path).
+                for msg in state.context_messages.make_mut() {
                     if let AgentMessage::Llm(LlmMessage::ToolResult(tr)) = msg
                         && rewrite_tool_result_as_rejected(
                             tr,
