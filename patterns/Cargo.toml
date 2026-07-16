@@ -27,3 +27,9 @@ uuid = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 schemars = { workspace = true }
+
+[dev-dependencies]
+swink-agent = { path = "..", default-features = false, features = ["testkit"] }
+
+[lints]
+workspace = true

@@ -450,14 +450,14 @@ async fn pre_provisioned_expired_auto_refreshes() {
 // ── US4: Interactive OAuth2 authorization flow (T054, T055, T057, T058) ────
 
 fn authorization_config(token_url: &str) -> AuthorizationConfig {
-    AuthorizationConfig {
-        authorization_endpoint: "https://accounts.example.com/o/authorize".to_string(),
-        token_url: token_url.to_string(),
-        client_id: "calendar-client".to_string(),
-        client_secret: Some("calendar-secret".to_string()),
-        redirect_uri: "http://localhost:8080/callback".to_string(),
-        scopes: vec!["calendar.readonly".to_string()],
-    }
+    AuthorizationConfig::new(
+        "https://accounts.example.com/o/authorize",
+        token_url,
+        "calendar-client",
+        "http://localhost:8080/callback",
+    )
+    .with_client_secret("calendar-secret")
+    .with_scopes(["calendar.readonly"])
 }
 
 /// Records the `auth_url` it was invoked with and returns a fixed code.
@@ -731,13 +731,12 @@ impl DeviceCodeHandler for FailingDeviceHandler {
 }
 
 fn device_authorization_config(base_url: &str) -> DeviceAuthorizationConfig {
-    DeviceAuthorizationConfig {
-        device_authorization_endpoint: format!("{base_url}/device/code"),
-        token_url: format!("{base_url}/token"),
-        client_id: "device-client".to_string(),
-        client_secret: None,
-        scopes: vec!["calendar.readonly".to_string()],
-    }
+    DeviceAuthorizationConfig::new(
+        format!("{base_url}/device/code"),
+        format!("{base_url}/token"),
+        "device-client",
+    )
+    .with_scopes(["calendar.readonly"])
 }
 
 /// Mount the device authorization endpoint. `interval: 1` keeps the

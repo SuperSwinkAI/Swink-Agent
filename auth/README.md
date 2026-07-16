@@ -55,7 +55,7 @@ Notes:
   construct the store and pass it in. A default build does not depend on
   `keyring` at all.
 - **Namespacing.** Entries are written under the `swink-agent-auth` service name.
-  Use `KeychainCredentialStore::with_service("my-app")` to isolate an
+  Use `KeychainCredentialStore::new().with_service("my-app")` to isolate an
   application's credentials from other `swink-agent` processes on the machine.
 - **Headless hosts.** A machine with no unlocked keyring (many CI containers, some
   Linux servers) yields `CredentialError::StoreError`. Keep the in-memory store

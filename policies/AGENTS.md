@@ -6,7 +6,7 @@
 
 ## Key Facts
 
-- **10 policies**: BudgetPolicy, MaxTurnsPolicy, ToolDenyListPolicy, SandboxPolicy, LoopDetectionPolicy, CheckpointPolicy, PromptInjectionGuard, PiiRedactor, ContentFilter, AuditLogger.
+- **11 policies**: BudgetPolicy, MaxTurnsPolicy, ToolDenyListPolicy, SandboxPolicy, LoopDetectionPolicy, CheckpointPolicy, PromptInjectionGuard, PiiRedactor, ContentFilter, AuditLogger, MemoryNudgePolicy.
 - Feature-gated individually; `full` enables all. Traits take `&self`; stateful policies use interior mutability.
 
 ## Key Invariants

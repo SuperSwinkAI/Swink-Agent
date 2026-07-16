@@ -8,6 +8,7 @@ use swink_agent::Usage;
 use super::types::PipelineId;
 
 /// Events emitted during pipeline execution.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub enum PipelineEvent {
     /// Pipeline execution began.

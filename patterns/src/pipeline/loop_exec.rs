@@ -14,9 +14,10 @@ use super::types::{ExitCondition, PipelineId};
 /// Execute a loop pipeline: run the body agent repeatedly until an exit condition
 /// is met or `max_iterations` is reached.
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn run_loop(
     factory: &Arc<dyn AgentFactory>,
-    event_handler: &Option<Arc<dyn Fn(PipelineEvent) + Send + Sync>>,
+    event_handler: Option<&Arc<dyn Fn(PipelineEvent) + Send + Sync>>,
     id: PipelineId,
     name: String,
     body: String,
@@ -139,31 +140,31 @@ pub(crate) async fn run_loop(
         }
     }
 
-    // All iterations exhausted.
-    match exit_condition {
-        ExitCondition::MaxIterations => {
-            // MaxIterations exit condition: success after running all iterations.
-            let total_duration = pipeline_start.elapsed();
-            let final_response = accumulated_responses.last().cloned().unwrap_or_default();
-            if let Some(handler) = event_handler {
-                handler(PipelineEvent::Completed {
-                    pipeline_id: id.clone(),
-                    total_duration,
-                    total_usage: total_usage.clone(),
-                });
-            }
-            Ok(PipelineOutput {
-                pipeline_id: id,
-                final_response,
-                steps,
-                total_duration,
-                total_usage,
-            })
-        }
-        _ => Err(PipelineError::MaxIterationsReached {
+    // All iterations exhausted. Any exit condition other than MaxIterations
+    // was never met, so surface the safety-cap error.
+    if !matches!(exit_condition, ExitCondition::MaxIterations) {
+        return Err(PipelineError::MaxIterationsReached {
             iterations: max_iterations,
-        }),
+        });
     }
+
+    // MaxIterations exit condition: success after running all iterations.
+    let total_duration = pipeline_start.elapsed();
+    let final_response = accumulated_responses.last().cloned().unwrap_or_default();
+    if let Some(handler) = event_handler {
+        handler(PipelineEvent::Completed {
+            pipeline_id: id.clone(),
+            total_duration,
+            total_usage: total_usage.clone(),
+        });
+    }
+    Ok(PipelineOutput {
+        pipeline_id: id,
+        final_response,
+        steps,
+        total_duration,
+        total_usage,
+    })
 }
 
 /// Extract the text response from the last assistant message in an `AgentResult`.
@@ -183,8 +184,7 @@ fn extract_text(result: &AgentResult) -> String {
                     ContentBlock::Text { text } => Some(text.as_str()),
                     _ => None,
                 })
-                .collect::<Vec<_>>()
-                .join("")
+                .collect::<String>()
         })
         .unwrap_or_default()
 }
@@ -290,7 +290,7 @@ mod tests {
 
         let result = run_loop(
             &(factory as Arc<dyn AgentFactory>),
-            &None,
+            None,
             PipelineId::new("test-loop"),
             "test".to_string(),
             "body".to_string(),
@@ -324,7 +324,7 @@ mod tests {
 
         let result = run_loop(
             &(factory as Arc<dyn AgentFactory>),
-            &None,
+            None,
             PipelineId::new("test-loop"),
             "test".to_string(),
             "body".to_string(),
@@ -356,7 +356,7 @@ mod tests {
 
         let result = run_loop(
             &(factory as Arc<dyn AgentFactory>),
-            &None,
+            None,
             PipelineId::new("test-loop"),
             "test".to_string(),
             "body".to_string(),
@@ -383,7 +383,7 @@ mod tests {
 
         let result = run_loop(
             &factory,
-            &None,
+            None,
             PipelineId::new("test-loop"),
             "test".to_string(),
             "body".to_string(),
@@ -418,7 +418,7 @@ mod tests {
 
         let result = run_loop(
             &(factory as Arc<dyn AgentFactory>),
-            &None,
+            None,
             PipelineId::new("test-loop"),
             "test".to_string(),
             "body".to_string(),
@@ -450,7 +450,7 @@ mod tests {
 
         let result = run_loop(
             &(factory as Arc<dyn AgentFactory>),
-            &None,
+            None,
             PipelineId::new("test-loop"),
             "test".to_string(),
             "body".to_string(),

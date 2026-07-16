@@ -40,9 +40,10 @@ fn branch_panic_error(step_index: usize, agent_name: String) -> PipelineError {
 
 /// Execute branches in parallel and merge results according to the merge strategy.
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn run_parallel(
     factory: &Arc<dyn AgentFactory>,
-    event_handler: &Option<Arc<dyn Fn(PipelineEvent) + Send + Sync>>,
+    event_handler: Option<&Arc<dyn Fn(PipelineEvent) + Send + Sync>>,
     id: PipelineId,
     name: String,
     branches: Vec<String>,
@@ -75,7 +76,7 @@ pub(crate) async fn run_parallel(
         let tx = tx.clone();
         let token = child_token.clone();
         let id = id.clone();
-        let handler = event_handler.clone();
+        let handler = event_handler.cloned();
         let panic_agent_name = branch_name.clone();
 
         tokio::spawn(async move {
@@ -103,7 +104,7 @@ pub(crate) async fn run_parallel(
                 ))];
 
                 let result = tokio::select! {
-                    _ = token.cancelled() => Err(PipelineError::Cancelled),
+                    () = token.cancelled() => Err(PipelineError::Cancelled),
                     res = agent.prompt_async(messages) => {
                         res.map_err(|e| PipelineError::StepFailed {
                             step_index: index,
@@ -115,7 +116,7 @@ pub(crate) async fn run_parallel(
 
                 let duration = step_start.elapsed();
                 let response = result.assistant_text();
-                let usage = result.usage.clone();
+                let usage = result.usage;
 
                 // Emit step-completed event.
                 if let Some(ref h) = handler {
@@ -209,14 +210,11 @@ async fn merge_concat(
     let mut total_usage = Usage::default();
 
     for (index, slot) in results.into_iter().enumerate() {
-        let branch = match slot {
-            Some(branch) => branch,
-            None => {
-                return Err(missing_branch_result_error(
-                    index,
-                    format!("parallel-branch-{index}"),
-                ));
-            }
+        let Some(branch) = slot else {
+            return Err(missing_branch_result_error(
+                index,
+                format!("parallel-branch-{index}"),
+            ));
         };
         total_usage.merge(&branch.usage);
         responses.push(branch.response.clone());
@@ -277,7 +275,6 @@ async fn merge_first(
             Err(e) => {
                 tracing::warn!("parallel branch failed: {e}");
                 first_error.get_or_insert(e);
-                continue;
             }
         }
     }
@@ -317,7 +314,6 @@ async fn merge_fastest(
             Err(e) => {
                 tracing::warn!("parallel branch failed during fastest: {e}");
                 first_error.get_or_insert(e);
-                continue;
             }
         }
     }
@@ -367,7 +363,7 @@ async fn merge_custom(
     branch_count: usize,
     aggregator_name: String,
     factory: &Arc<dyn AgentFactory>,
-    _event_handler: &Option<Arc<dyn Fn(PipelineEvent) + Send + Sync>>,
+    _event_handler: Option<&Arc<dyn Fn(PipelineEvent) + Send + Sync>>,
     id: PipelineId,
     pipeline_start: Instant,
 ) -> Result<PipelineOutput, PipelineError> {
@@ -385,14 +381,11 @@ async fn merge_custom(
     let mut total_usage = Usage::default();
 
     for (index, slot) in results.into_iter().enumerate() {
-        let branch = match slot {
-            Some(branch) => branch,
-            None => {
-                return Err(missing_branch_result_error(
-                    index,
-                    format!("parallel-branch-{index}"),
-                ));
-            }
+        let Some(branch) = slot else {
+            return Err(missing_branch_result_error(
+                index,
+                format!("parallel-branch-{index}"),
+            ));
         };
         formatted_parts.push(format!("[{}]: {}", branch.agent_name, branch.response));
         total_usage += branch.usage.clone();
@@ -488,7 +481,7 @@ mod tests {
 
         let result = super::run_parallel(
             &(factory as Arc<dyn super::super::executor::AgentFactory>),
-            &None,
+            None,
             PipelineId::new("test-concat"),
             "test".to_owned(),
             vec!["agent-a".into(), "agent-b".into(), "agent-c".into()],
@@ -515,7 +508,7 @@ mod tests {
 
         let result = super::run_parallel(
             &(factory as Arc<dyn super::super::executor::AgentFactory>),
-            &None,
+            None,
             PipelineId::new("test-first"),
             "test".to_owned(),
             vec!["agent-a".into(), "agent-b".into()],
@@ -547,7 +540,7 @@ mod tests {
 
         let result = super::run_parallel(
             &(factory as Arc<dyn super::super::executor::AgentFactory>),
-            &None,
+            None,
             PipelineId::new("test-fastest"),
             "test".to_owned(),
             vec!["agent-a".into(), "agent-b".into(), "agent-c".into()],
@@ -567,7 +560,7 @@ mod tests {
 
         let result = super::run_parallel(
             &(factory as Arc<dyn super::super::executor::AgentFactory>),
-            &None,
+            None,
             PipelineId::new("test-first-all-fail"),
             "test".to_owned(),
             vec!["agent-a".into(), "agent-b".into()],
@@ -589,7 +582,7 @@ mod tests {
 
         let result = super::run_parallel(
             &(factory as Arc<dyn super::super::executor::AgentFactory>),
-            &None,
+            None,
             PipelineId::new("test-fastest-all-fail"),
             "test".to_owned(),
             vec!["agent-a".into(), "agent-b".into()],
@@ -613,7 +606,7 @@ mod tests {
 
         let result = super::run_parallel(
             &(factory as Arc<dyn super::super::executor::AgentFactory>),
-            &None,
+            None,
             PipelineId::new("test-fail"),
             "test".to_owned(),
             vec!["agent-a".into(), "agent-missing".into()],
@@ -643,7 +636,7 @@ mod tests {
 
         let result = super::run_parallel(
             &(factory as Arc<dyn super::super::executor::AgentFactory>),
-            &None,
+            None,
             PipelineId::new("test-cancel"),
             "test".to_owned(),
             vec!["agent-a".into()],
@@ -663,12 +656,12 @@ mod tests {
 
         let result = super::run_parallel(
             &(factory as Arc<dyn super::super::executor::AgentFactory>),
-            &None,
+            None,
             PipelineId::new("test-single"),
             "test".to_owned(),
             vec!["solo".into()],
             MergeStrategy::Concat {
-                separator: "".to_owned(),
+                separator: String::new(),
             },
             "hello".to_owned(),
             CancellationToken::new(),
@@ -687,7 +680,7 @@ mod tests {
 
         let result = super::run_parallel(
             &(factory as Arc<dyn super::super::executor::AgentFactory>),
-            &None,
+            None,
             PipelineId::new("test-empty-concat"),
             "test".to_owned(),
             vec![],
@@ -741,7 +734,7 @@ mod tests {
 
         let result = super::run_parallel(
             &(Arc::new(factory) as Arc<dyn super::super::executor::AgentFactory>),
-            &None,
+            None,
             PipelineId::new("test-branch-panic"),
             "test".to_owned(),
             vec!["agent-a".into()],

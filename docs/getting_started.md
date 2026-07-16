@@ -161,10 +161,10 @@ The snippet above runs with **no policies** — the library default is anything-
 use swink_agent_policies::{RecommendedPolicies, assert_production_guardrails};
 
 let options = RecommendedPolicies::builder()
-    .max_cost(10.0)                       // budget cap in USD (default: 10.0)
-    .max_turns(50)                        // turn cap (default: 50)
-    .sandbox_root("/srv/agent-workspace") // file-tool root (default: cwd)
-    .deny_tools(["bash"])                 // blocked tools (default: ["bash"])
+    .with_max_cost(10.0)                       // budget cap in USD (default: 10.0)
+    .with_max_turns(50)                        // turn cap (default: 50)
+    .with_sandbox_root("/srv/agent-workspace") // file-tool root (default: cwd)
+    .with_deny_tools(["bash"])                 // blocked tools (default: ["bash"])
     .apply(options);
 
 // In your test suite: fails if any of the four guardrails

@@ -80,7 +80,7 @@ async fn main() {
     let options = AgentOptions::new_simple("You are a helpful assistant.", model, stream_fn)
         // PreTurn policies: checked before each LLM call.
         // Budget: stop if cost exceeds $10.
-        .with_pre_turn_policy(BudgetPolicy::new().max_cost(10.0))
+        .with_pre_turn_policy(BudgetPolicy::new().with_max_cost(10.0))
         // Max turns: stop a single agent loop (e.g. a long tool-use chain)
         // after 3 turns. The counter resets on each new prompt.
         .with_pre_turn_policy(MaxTurnsPolicy::new(3))
@@ -121,10 +121,10 @@ async fn main() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_events("guarded response")]));
     let model = ModelSpec::new("mock", "mock-model-v1");
     let guarded_options = RecommendedPolicies::builder()
-        .max_cost(10.0)
-        .max_turns(50)
-        .sandbox_root(std::env::temp_dir())
-        .deny_tools(["bash"])
+        .with_max_cost(10.0)
+        .with_max_turns(50)
+        .with_sandbox_root(std::env::temp_dir())
+        .with_deny_tools(["bash"])
         .apply(AgentOptions::new_simple(
             "You are a helpful assistant.",
             model,

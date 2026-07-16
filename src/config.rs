@@ -72,6 +72,41 @@ impl RetryConfig {
             jitter: self.jitter,
         }
     }
+
+    /// Set the maximum number of attempts (including the initial call).
+    #[must_use]
+    pub const fn with_max_attempts(mut self, n: u32) -> Self {
+        self.max_attempts = n;
+        self
+    }
+
+    /// Set the base delay in milliseconds before the first retry.
+    #[must_use]
+    pub const fn with_base_delay_ms(mut self, ms: u64) -> Self {
+        self.base_delay_ms = ms;
+        self
+    }
+
+    /// Set the maximum delay cap in milliseconds.
+    #[must_use]
+    pub const fn with_max_delay_ms(mut self, ms: u64) -> Self {
+        self.max_delay_ms = ms;
+        self
+    }
+
+    /// Set the exponential multiplier per attempt.
+    #[must_use]
+    pub const fn with_multiplier(mut self, m: f64) -> Self {
+        self.multiplier = m;
+        self
+    }
+
+    /// Enable or disable jitter.
+    #[must_use]
+    pub const fn with_jitter(mut self, j: bool) -> Self {
+        self.jitter = j;
+        self
+    }
 }
 
 // ─── StreamOptionsConfig ─────────────────────────────────────────────────────
@@ -129,6 +164,41 @@ impl StreamOptionsConfig {
             on_raw_payload: None,
             serving: self.serving.clone(),
         }
+    }
+
+    /// Set the sampling temperature.
+    #[must_use]
+    pub const fn with_temperature(mut self, temperature: f64) -> Self {
+        self.temperature = Some(temperature);
+        self
+    }
+
+    /// Set the output token limit.
+    #[must_use]
+    pub const fn with_max_tokens(mut self, max_tokens: u64) -> Self {
+        self.max_tokens = Some(max_tokens);
+        self
+    }
+
+    /// Set the provider-side session identifier.
+    #[must_use]
+    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = Some(session_id.into());
+        self
+    }
+
+    /// Set the preferred transport protocol.
+    #[must_use]
+    pub const fn with_transport(mut self, transport: StreamTransport) -> Self {
+        self.transport = transport;
+        self
+    }
+
+    /// Set the provider-native serving options (local backends).
+    #[must_use]
+    pub fn with_serving(mut self, serving: crate::stream::ServingOptions) -> Self {
+        self.serving = serving;
+        self
     }
 }
 
@@ -607,6 +677,40 @@ mod tests {
         let back = RetryConfig::from(&strategy);
         assert_eq!(back.max_attempts, 4);
         assert_eq!(back.base_delay_ms, 500);
+    }
+
+    #[test]
+    fn retry_config_builders_set_every_field() {
+        let config = RetryConfig::default()
+            .with_max_attempts(7)
+            .with_base_delay_ms(250)
+            .with_max_delay_ms(9000)
+            .with_multiplier(4.0)
+            .with_jitter(false);
+        assert_eq!(config.max_attempts, 7);
+        assert_eq!(config.base_delay_ms, 250);
+        assert_eq!(config.max_delay_ms, 9000);
+        assert!((config.multiplier - 4.0).abs() < f64::EPSILON);
+        assert!(!config.jitter);
+    }
+
+    #[test]
+    fn stream_options_config_builders_set_every_field() {
+        let serving = crate::stream::ServingOptions {
+            context_length: Some(2048),
+            ..Default::default()
+        };
+        let config = StreamOptionsConfig::default()
+            .with_temperature(0.3)
+            .with_max_tokens(1024)
+            .with_session_id("sess-9")
+            .with_transport(StreamTransport::Sse)
+            .with_serving(serving);
+        assert_eq!(config.temperature, Some(0.3));
+        assert_eq!(config.max_tokens, Some(1024));
+        assert_eq!(config.session_id.as_deref(), Some("sess-9"));
+        assert_eq!(config.transport, StreamTransport::Sse);
+        assert_eq!(config.serving.context_length, Some(2048));
     }
 
     #[test]

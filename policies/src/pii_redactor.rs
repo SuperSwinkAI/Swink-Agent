@@ -28,6 +28,24 @@ pub struct PiiPattern {
     pub regex: Regex,
 }
 
+impl PiiPattern {
+    /// Compile `pattern` into a standalone named pattern.
+    ///
+    /// This is the direct counterpart to [`PiiRedactor::with_pattern`] for
+    /// constructing patterns outside a redactor (e.g. in unit tests).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`regex::Error`] when `pattern` is not a valid regular
+    /// expression.
+    pub fn new(name: impl Into<String>, pattern: &str) -> Result<Self, regex::Error> {
+        Ok(Self {
+            name: name.into(),
+            regex: compile_regex(pattern)?,
+        })
+    }
+}
+
 /// Detects and optionally redacts PII in assistant output.
 ///
 /// Operates as a [`PostTurnPolicy`]: after each assistant turn it scans the
@@ -91,11 +109,7 @@ impl PiiRedactor {
         name: impl Into<String>,
         pattern: &str,
     ) -> Result<Self, regex::Error> {
-        let regex = compile_regex(pattern)?;
-        self.patterns.push(PiiPattern {
-            name: name.into(),
-            regex,
-        });
+        self.patterns.push(PiiPattern::new(name, pattern)?);
         Ok(self)
     }
 }
@@ -307,5 +321,17 @@ mod tests {
             .expect("valid regex");
         let verdict = evaluate_text(&policy, "Reference ID-123456 noted");
         assert_redacted(verdict, "Reference [REDACTED] noted");
+    }
+
+    #[test]
+    fn pii_pattern_new_compiles_standalone_pattern() {
+        let pattern = PiiPattern::new("badge_id", r"BADGE-\d{4}").expect("valid regex");
+        assert_eq!(pattern.name, "badge_id");
+        assert!(pattern.regex.is_match("Visitor BADGE-1234 arrived."));
+    }
+
+    #[test]
+    fn pii_pattern_new_rejects_invalid_regex() {
+        assert!(PiiPattern::new("broken", "[invalid").is_err());
     }
 }
