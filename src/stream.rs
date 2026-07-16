@@ -69,15 +69,42 @@ pub type OnRawPayload = Arc<dyn Fn(&str) + Send + Sync>;
 /// Provider-native serving options, primarily for self-hosted/local backends.
 ///
 /// Provider-agnostic names; each adapter maps them onto its protocol's native
-/// knobs and silently ignores fields its protocol has no equivalent for:
+/// knobs and silently ignores fields its protocol has no equivalent for
+/// (marked `—` below). `extra` is the exception: every adapter either honors
+/// it or rejects it loudly — never a silent no-op:
 ///
-/// | Field            | Ollama                | OpenAI-compatible (OpenAI, Azure, xAI) |
-/// |------------------|-----------------------|----------------------------------------|
-/// | `context_length` | `options.num_ctx`     | —                                      |
-/// | `top_p`          | `options.top_p`       | `top_p`                                |
-/// | `keep_alive`     | `keep_alive`          | —                                      |
-/// | `format`         | `format` (top level)  | `response_format`                      |
-/// | `extra`          | merged into `options` | merged into the request body           |
+/// | Adapter | `context_length` | `top_p` | `keep_alive` | `format` | `extra` |
+/// |---|---|---|---|---|---|
+/// | Ollama | `options.num_ctx` | `options.top_p` | `keep_alive` | `format` (top level) | merged into `options` |
+/// | OpenAI-compatible (OpenAI, Azure, xAI) | — | `top_p` | — | `response_format` | merged into the body (top level) |
+/// | Mistral | — | — | — | — | merged into the body (top level) |
+/// | Anthropic | — | — | — | — | merged into the body (top level) |
+/// | Google (Gemini) | — | — | — | — | merged into `generationConfig` |
+/// | AWS Bedrock | — | — | — | — | `additionalModelRequestFields` |
+/// | Proxy | — | — | — | — | unsupported: dropped with a `tracing` warning naming the keys |
+///
+/// # `extra`: merge targets and key names
+///
+/// `extra` keys are the provider's *wire* names, verbatim — e.g. snake_case
+/// `top_k` for Anthropic and Ollama, camelCase `topK` for Gemini. Each adapter
+/// merges them where that provider keeps its native generation knobs:
+///
+/// - **Anthropic** — top level of the `/v1/messages` body (`top_k`,
+///   `stop_sequences`, `metadata`, `service_tier`, …).
+/// - **Google (Gemini)** — inside `generationConfig` (`topK`, `topP`,
+///   `candidateCount`, `stopSequences`, `responseMimeType`, `seed`, …),
+///   mirroring Ollama's `options` namespace.
+/// - **AWS Bedrock** — as the Converse API's `additionalModelRequestFields`
+///   object, its own verbatim pass-through for model-native parameters
+///   beyond the base `inferenceConfig` set (e.g. `top_k` for Anthropic
+///   models on Bedrock).
+/// - **Proxy** — the proxy wire protocol has a fixed options schema with no
+///   pass-through channel, so `extra` is *not* supported: non-empty `extra`
+///   is dropped with one `tracing::warn!` per stream call naming the keys.
+///
+/// Keys the provider does not recognize are surfaced by the provider API
+/// itself (Anthropic, Gemini, and Bedrock all reject unknown fields with an
+/// HTTP 4xx), so a typo fails loudly rather than silently.
 ///
 /// # Ollama: top-level fields vs `options.*`
 ///

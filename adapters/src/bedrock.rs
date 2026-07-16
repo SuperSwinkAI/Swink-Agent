@@ -47,6 +47,11 @@ struct BedrockRequest {
     inference_config: Option<BedrockInferenceConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_config: Option<BedrockToolConfig>,
+    /// Model-native parameters the Converse API passes to the model verbatim
+    /// (`swink_agent::ServingOptions::extra`, e.g. `top_k` for Anthropic
+    /// models). `None` when `extra` is empty so default bodies are unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    additional_model_request_fields: Option<serde_json::Map<String, Value>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -898,11 +903,25 @@ fn build_request(context: &AgentContext, options: &StreamOptions) -> BedrockRequ
         });
     }
 
+    // `ServingOptions::extra` maps onto `additionalModelRequestFields` — the
+    // Converse API's own verbatim pass-through for model-native parameters
+    // beyond the base `inferenceConfig` set. The base parameters that already
+    // have typed fields (`temperature`, `maxTokens`) are filtered so typed
+    // fields win; Converse rejects base parameters in this namespace anyway.
+    let mut additional = serde_json::Map::new();
+    crate::base::merge_extra(
+        &mut additional,
+        &options.serving.extra,
+        &["temperature", "maxTokens"],
+    );
+    let additional_model_request_fields = (!additional.is_empty()).then_some(additional);
+
     BedrockRequest {
         messages,
         system,
         inference_config,
         tool_config,
+        additional_model_request_fields,
     }
 }
 

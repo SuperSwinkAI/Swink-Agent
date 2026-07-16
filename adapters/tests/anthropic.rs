@@ -1228,3 +1228,87 @@ async fn anthropic_on_raw_payload_observes_runtime_sse_lines() {
         ]
     );
 }
+
+/// `ServingOptions::extra` merges into the top level of the `/v1/messages`
+/// body — where Anthropic keeps its provider-native knobs (`top_k`,
+/// `stop_sequences`, …). Keys colliding with typed fields are dropped:
+/// typed fields win.
+#[tokio::test]
+async fn anthropic_extra_merges_into_top_level_body() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&basic_text_sse()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let options = StreamOptions {
+        temperature: Some(0.7),
+        serving: swink_agent::ServingOptions {
+            extra: [
+                ("top_k".to_string(), serde_json::json!(40)),
+                ("stop_sequences".to_string(), serde_json::json!(["END"])),
+                // Colliding keys: the typed fields must win.
+                ("temperature".to_string(), serde_json::json!(0.1)),
+                ("stream".to_string(), serde_json::json!(false)),
+            ]
+            .into_iter()
+            .collect(),
+            ..swink_agent::ServingOptions::default()
+        },
+        ..StreamOptions::default()
+    };
+    let events = collect_events_with_options(&sf, options).await;
+    assert!(matches!(events[0], AssistantMessageEvent::Start));
+
+    let requests = server.received_requests().await.expect("request log");
+    let body: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("JSON body");
+    assert_eq!(body["top_k"], serde_json::json!(40), "body: {body}");
+    assert_eq!(
+        body["stop_sequences"],
+        serde_json::json!(["END"]),
+        "body: {body}"
+    );
+    assert_eq!(
+        body["temperature"],
+        serde_json::json!(0.7),
+        "typed `temperature` must win over the colliding extra entry: {body}"
+    );
+    assert_eq!(
+        body["stream"],
+        serde_json::json!(true),
+        "typed `stream` must win over the colliding extra entry: {body}"
+    );
+}
+
+/// With `extra` empty the request body carries exactly the typed fields —
+/// the merge path must not run and must not inject anything.
+#[tokio::test]
+async fn anthropic_empty_extra_leaves_body_unchanged() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&basic_text_sse()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let _events = collect_events(&sf).await;
+
+    let requests = server.received_requests().await.expect("request log");
+    let body: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("JSON body");
+    let keys: Vec<&str> = body
+        .as_object()
+        .expect("object body")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        vec!["max_tokens", "messages", "model", "stream", "system"],
+        "default body must carry exactly the typed fields (keys sorted on parse)"
+    );
+}

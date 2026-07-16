@@ -537,3 +537,126 @@ async fn bedrock_startup_cancellation_does_not_wait_for_send() {
         } if error_message.contains("Bedrock request cancelled")
     )));
 }
+
+/// `ServingOptions::extra` maps onto the Converse API's
+/// `additionalModelRequestFields` — its verbatim pass-through for
+/// model-native parameters. Keys colliding with the typed base parameters
+/// (`temperature`, `maxTokens`) are dropped: typed fields win.
+#[tokio::test]
+async fn bedrock_extra_maps_to_additional_model_request_fields() {
+    let body = text_response_body("ok");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/model/amazon.nova-pro-v1:0/converse-stream"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Content-Type", "application/vnd.amazon.eventstream")
+                .set_body_bytes(body),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let stream_fn = BedrockStreamFn::new_with_base_url(
+        server.uri(),
+        "us-east-1",
+        "AKIDEXAMPLE",
+        "secret",
+        None,
+    );
+    let options = StreamOptions {
+        temperature: Some(0.7),
+        serving: swink_agent::ServingOptions {
+            extra: [
+                ("top_k".to_string(), serde_json::json!(250)),
+                // Colliding keys: the typed base parameters must win and the
+                // extra entries must not reach `additionalModelRequestFields`.
+                ("temperature".to_string(), serde_json::json!(0.1)),
+                ("maxTokens".to_string(), serde_json::json!(1)),
+            ]
+            .into_iter()
+            .collect(),
+            ..swink_agent::ServingOptions::default()
+        },
+        ..StreamOptions::default()
+    };
+    let _events = stream_fn
+        .stream(
+            &ModelSpec::new("bedrock", "amazon.nova-pro-v1:0"),
+            &AgentContext {
+                system_prompt: String::new(),
+                messages: Vec::new(),
+                tools: Vec::new(),
+            },
+            &options,
+            CancellationToken::new(),
+        )
+        .collect::<Vec<_>>()
+        .await;
+
+    let requests = server.received_requests().await.expect("request log");
+    let request: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("JSON body");
+    let additional = &request["additionalModelRequestFields"];
+    assert_eq!(
+        additional["top_k"],
+        serde_json::json!(250),
+        "body: {request}"
+    );
+    assert!(
+        additional.get("temperature").is_none() && additional.get("maxTokens").is_none(),
+        "typed base parameters must be filtered from additionalModelRequestFields: {request}"
+    );
+    assert_eq!(
+        request["inferenceConfig"]["temperature"],
+        serde_json::json!(0.7),
+        "typed `temperature` must win via inferenceConfig: {request}"
+    );
+}
+
+/// With `extra` empty the request body carries no
+/// `additionalModelRequestFields` key at all.
+#[tokio::test]
+async fn bedrock_empty_extra_omits_additional_model_request_fields() {
+    let body = text_response_body("ok");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/model/amazon.nova-pro-v1:0/converse-stream"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Content-Type", "application/vnd.amazon.eventstream")
+                .set_body_bytes(body),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let stream_fn = BedrockStreamFn::new_with_base_url(
+        server.uri(),
+        "us-east-1",
+        "AKIDEXAMPLE",
+        "secret",
+        None,
+    );
+    let _events = stream_fn
+        .stream(
+            &ModelSpec::new("bedrock", "amazon.nova-pro-v1:0"),
+            &AgentContext {
+                system_prompt: String::new(),
+                messages: Vec::new(),
+                tools: Vec::new(),
+            },
+            &StreamOptions::default(),
+            CancellationToken::new(),
+        )
+        .collect::<Vec<_>>()
+        .await;
+
+    let requests = server.received_requests().await.expect("request log");
+    let request: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("JSON body");
+    assert!(
+        request.get("additionalModelRequestFields").is_none(),
+        "empty extra must not emit additionalModelRequestFields: {request}"
+    );
+}

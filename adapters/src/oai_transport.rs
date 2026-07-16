@@ -270,13 +270,8 @@ pub fn prepare_oai_request(
         "tools",
         "tool_choice",
     ];
-    let extra = options
-        .serving
-        .extra
-        .iter()
-        .filter(|(k, _)| !TYPED_KEYS.contains(&k.as_str()))
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
+    let mut extra = serde_json::Map::new();
+    crate::base::merge_extra(&mut extra, &options.serving.extra, TYPED_KEYS);
 
     let messages =
         convert::convert_messages::<OaiConverter>(&context.messages, &context.system_prompt);

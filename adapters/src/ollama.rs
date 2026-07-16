@@ -94,21 +94,27 @@ fn response_format(options: &StreamOptions) -> Option<Value> {
 
 /// Build Ollama's `options` object from the stream/serving options.
 ///
-/// `ServingOptions::extra` keys go in first so typed fields win on collision;
-/// `None` when nothing is set, so default requests carry no `options` key.
+/// `ServingOptions::extra` merges in via [`crate::base::merge_extra`] so typed
+/// fields win on collision. Only the typed keys that are actually *set* are
+/// protected: an unset typed knob never reaches the wire, so a same-named
+/// `extra` entry passes through instead of colliding. Returns `None` when
+/// nothing is set, so default requests carry no `options` key.
 fn generation_options(options: &StreamOptions) -> Option<serde_json::Map<String, Value>> {
     let serving = &options.serving;
-    let mut map: serde_json::Map<String, Value> = serving
-        .extra
-        .iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
     let typed = [
         ("temperature", options.temperature.map(Value::from)),
         ("num_predict", options.max_tokens.map(Value::from)),
         ("top_p", serving.top_p.map(Value::from)),
         ("num_ctx", serving.context_length.map(Value::from)),
     ];
+    let set_keys: Vec<&str> = typed
+        .iter()
+        .filter(|(_, value)| value.is_some())
+        .map(|(key, _)| *key)
+        .collect();
+
+    let mut map = serde_json::Map::new();
+    crate::base::merge_extra(&mut map, &serving.extra, &set_keys);
     for (key, value) in typed {
         if let Some(value) = value {
             map.insert(key.to_string(), value);

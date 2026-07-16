@@ -1294,3 +1294,108 @@ async fn gemini_abrupt_stream_end_closes_open_text_block() {
         "expected TextEnd from finalization: {types:?}"
     );
 }
+
+/// `ServingOptions::extra` merges into `generationConfig` — Gemini's native
+/// generation-knob namespace — using wire (camelCase) key names. Keys
+/// colliding with typed fields are dropped: typed fields win. Nothing from
+/// `extra` may leak to the top level of the request.
+#[tokio::test]
+async fn google_extra_merges_into_generation_config() {
+    let body = [
+        r#"data: {"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}"#,
+        "",
+        r#"data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5,"totalTokenCount":15}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .respond_with(sse_response(&body))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let options = StreamOptions {
+        temperature: Some(0.7),
+        serving: swink_agent::ServingOptions {
+            extra: [
+                ("topK".to_string(), serde_json::json!(40)),
+                ("seed".to_string(), serde_json::json!(7)),
+                // Colliding key: the typed `temperature` must win.
+                ("temperature".to_string(), serde_json::json!(0.1)),
+            ]
+            .into_iter()
+            .collect(),
+            ..swink_agent::ServingOptions::default()
+        },
+        ..StreamOptions::default()
+    };
+    let events = collect_events_with_options(&stream_fn, options).await;
+    assert!(matches!(events[0], AssistantMessageEvent::Start));
+
+    let requests = server.received_requests().await.expect("request log");
+    let request: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("JSON body");
+    let config = &request["generationConfig"];
+    assert_eq!(config["topK"], serde_json::json!(40), "body: {request}");
+    assert_eq!(config["seed"], serde_json::json!(7), "body: {request}");
+    assert_eq!(
+        config["temperature"],
+        serde_json::json!(0.7),
+        "typed `temperature` must win over the colliding extra entry: {request}"
+    );
+    assert!(
+        request.get("topK").is_none() && request.get("seed").is_none(),
+        "extra keys must not leak to the top level: {request}"
+    );
+}
+
+/// With `extra` empty the request body carries exactly the typed top-level
+/// fields — the merge path must not run and must not inject anything.
+#[tokio::test]
+async fn google_empty_extra_leaves_body_unchanged() {
+    let body = [
+        r#"data: {"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}"#,
+        "",
+        r#"data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5,"totalTokenCount":15}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .respond_with(sse_response(&body))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let _events = collect_events(&stream_fn).await;
+
+    let requests = server.received_requests().await.expect("request log");
+    let request: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("JSON body");
+    let keys: Vec<&str> = request
+        .as_object()
+        .expect("object body")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        vec!["contents", "generationConfig", "systemInstruction"],
+        "default body must carry exactly the typed fields (keys sorted on parse)"
+    );
+}

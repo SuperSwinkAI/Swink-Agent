@@ -99,11 +99,12 @@ pub struct OaiChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<String>,
     /// Extra provider-native body fields ([`ServingOptions::extra`]); callers
-    /// must exclude keys that collide with the typed fields above.
+    /// must exclude keys that collide with the typed fields above (build this
+    /// with `crate::base::merge_extra`).
     ///
     /// [`ServingOptions::extra`]: swink_agent::ServingOptions
     #[serde(flatten)]
-    pub extra: std::collections::BTreeMap<String, Value>,
+    pub extra: serde_json::Map<String, Value>,
 }
 
 // ─── Response / streaming types ─────────────────────────────────────────────

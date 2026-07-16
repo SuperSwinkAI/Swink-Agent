@@ -13,6 +13,12 @@ Bundles the full 0.11.x development line off `integration`. **Supersedes the
 unreleased 0.11.1** — that version was never tagged or published, so its entries
 are folded in here rather than kept as a phantom release.
 
+### Fixed — `ServingOptions.extra` honored (or loudly rejected) by every provider (#1130)
+
+- **`swink-agent-adapters`**: `ServingOptions::extra` — documented as "passed through verbatim" — was a silent no-op on Anthropic, Google, Bedrock, Mistral, and Proxy. Now: Anthropic and Mistral merge it into the request-body top level, Google into `generationConfig`, and Bedrock into the Converse API's `additionalModelRequestFields`; the Proxy wire protocol has no pass-through channel, so non-empty `extra` emits one `tracing::warn!` per stream call naming the dropped keys instead of vanishing.
+- The "typed fields win on collision" merge rule is now implemented once (`base::merge_extra`) and shared by every adapter, replacing the two divergent copies in the OAI transport (blocklist filter) and Ollama (build-order overwrite). OAI-compatible and Ollama request bytes are unchanged — the pinned byte-identity tests still pass.
+- **`swink-agent`**: the `ServingOptions` rustdoc support matrix now covers every built-in provider, including each provider's `extra` merge target.
+
 ### Added — manual context compaction (#1102)
 
 - **`swink-agent`**: `Agent::compact_context()` — an on-demand counterpart to the automatic in-loop compaction, for host `/compact` commands (unblocks SuperSwink-Coding's TUI `/compact`). Runs the configured context transformer(s) against the stored history with `overflow = true` (a host asking to compact wants maximal pruning), persists the pruned history, and returns the resulting `CompactionReport` synchronously.
