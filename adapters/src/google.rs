@@ -240,7 +240,9 @@ impl GeminiStreamFn {
     const fn api_version_path(&self) -> &'static str {
         match self.api_version {
             ApiVersion::V1 => "v1",
-            ApiVersion::V1beta => "v1beta",
+            // ApiVersion is #[non_exhaustive]; treat unknown future variants
+            // like V1beta, where Google ships new API surface first.
+            _ => "v1beta",
         }
     }
 }

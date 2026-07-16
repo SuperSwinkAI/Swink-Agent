@@ -297,14 +297,7 @@ impl AgentTool for DummyTool {
         _state: std::sync::Arc<std::sync::RwLock<swink_agent::SessionState>>,
         _credential: Option<swink_agent::ResolvedCredential>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = AgentToolResult> + Send + '_>> {
-        Box::pin(async {
-            AgentToolResult {
-                content: vec![],
-                details: serde_json::Value::Null,
-                is_error: false,
-                transfer_signal: None,
-            }
-        })
+        Box::pin(async { AgentToolResult::new(vec![], false) })
     }
 }
 

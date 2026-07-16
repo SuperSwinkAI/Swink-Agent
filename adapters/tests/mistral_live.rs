@@ -113,16 +113,7 @@ impl AgentTool for WeatherTool {
         _state: std::sync::Arc<std::sync::RwLock<swink_agent::SessionState>>,
         _credential: Option<swink_agent::ResolvedCredential>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = AgentToolResult> + Send + '_>> {
-        Box::pin(async {
-            AgentToolResult {
-                content: vec![ContentBlock::Text {
-                    text: "72°F, sunny".into(),
-                }],
-                details: json!({}),
-                is_error: false,
-                transfer_signal: None,
-            }
-        })
+        Box::pin(async { AgentToolResult::text("72°F, sunny") })
     }
 }
 

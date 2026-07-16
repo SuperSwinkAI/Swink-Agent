@@ -16,8 +16,8 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
     AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessage,
-    AssistantMessageEvent, ContentBlock, LlmMessage, ModelSpec, StopReason, StreamFn,
-    StreamOptions, UserMessage,
+    AssistantMessageEvent, ContentBlock, LlmMessage, ModelSpec, StreamFn, StreamOptions,
+    UserMessage,
 };
 use swink_agent_adapters::BedrockStreamFn;
 
@@ -202,16 +202,7 @@ impl AgentTool for DummyTool {
         _state: std::sync::Arc<std::sync::RwLock<swink_agent::SessionState>>,
         _credential: Option<swink_agent::ResolvedCredential>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = AgentToolResult> + Send + '_>> {
-        Box::pin(async {
-            AgentToolResult {
-                content: vec![ContentBlock::Text {
-                    text: "72°F, sunny".into(),
-                }],
-                details: json!({}),
-                is_error: false,
-                transfer_signal: None,
-            }
-        })
+        Box::pin(async { AgentToolResult::text("72°F, sunny") })
     }
 }
 
