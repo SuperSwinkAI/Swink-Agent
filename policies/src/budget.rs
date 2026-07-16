@@ -11,7 +11,7 @@ use swink_agent::{PolicyContext, PolicyVerdict, PreTurnPolicy};
 /// use swink_agent::AgentOptions;
 ///
 /// let opts = AgentOptions::new(...)
-///     .with_pre_turn_policy(BudgetPolicy::new().max_cost(5.0));
+///     .with_pre_turn_policy(BudgetPolicy::new().with_max_cost(5.0));
 /// ```
 #[derive(Debug, Clone)]
 #[allow(clippy::struct_field_names)]
@@ -39,24 +39,24 @@ impl BudgetPolicy {
     /// model catalog, so this ceiling is enforced for any model with catalog
     /// pricing. Models with no catalog pricing (unknown or local models) accrue
     /// zero cost and are therefore not constrained by this limit — use
-    /// [`max_input`](Self::max_input) / [`max_output`](Self::max_output) to cap
-    /// those.
+    /// [`with_max_input`](Self::with_max_input) /
+    /// [`with_max_output`](Self::with_max_output) to cap those.
     #[must_use]
-    pub const fn max_cost(mut self, limit: f64) -> Self {
+    pub const fn with_max_cost(mut self, limit: f64) -> Self {
         self.max_cost = Some(limit);
         self
     }
 
     /// Set the maximum input tokens.
     #[must_use]
-    pub const fn max_input(mut self, limit: u64) -> Self {
+    pub const fn with_max_input(mut self, limit: u64) -> Self {
         self.max_input = Some(limit);
         self
     }
 
     /// Set the maximum output tokens.
     #[must_use]
-    pub const fn max_output(mut self, limit: u64) -> Self {
+    pub const fn with_max_output(mut self, limit: u64) -> Self {
         self.max_output = Some(limit);
         self
     }
@@ -135,7 +135,7 @@ mod tests {
 
     #[test]
     fn cost_exceeded_returns_stop() {
-        let policy = BudgetPolicy::new().max_cost(1.0);
+        let policy = BudgetPolicy::new().with_max_cost(1.0);
         let usage = Usage::default();
         let cost = Cost::default().with_total(1.5);
         let state = swink_agent::SessionState::new();
@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn cost_not_exceeded_returns_continue() {
-        let policy = BudgetPolicy::new().max_cost(5.0);
+        let policy = BudgetPolicy::new().with_max_cost(5.0);
         let usage = Usage::default();
         let cost = Cost::default().with_total(4.99);
         let state = swink_agent::SessionState::new();
@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn token_exceeded_returns_stop() {
-        let policy = BudgetPolicy::new().max_input(100);
+        let policy = BudgetPolicy::new().with_max_input(100);
         let usage = Usage::default().with_input(150);
         let cost = Cost::default();
         let state = swink_agent::SessionState::new();
@@ -165,7 +165,7 @@ mod tests {
 
     #[test]
     fn boundary_value_at_limit() {
-        let policy = BudgetPolicy::new().max_cost(1.0);
+        let policy = BudgetPolicy::new().with_max_cost(1.0);
         let usage = Usage::default();
         let cost = Cost::default().with_total(1.0);
         let state = swink_agent::SessionState::new();

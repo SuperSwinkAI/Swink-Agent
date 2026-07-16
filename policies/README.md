@@ -22,6 +22,7 @@ Ready-made policy implementations for [`swink-agent`](https://crates.io/crates/s
 - **`pii`** — `PiiRedactor` scrubs emails/phones/SSNs from assistant responses
 - **`content-filter`** — keyword/regex blocklist for assistant output
 - **`audit`** — `AuditLogger` records every turn to a pluggable sink (JSONL, Unix socket, HTTP, etc.)
+- **`memory-nudge`** — `MemoryNudgePolicy` flags save-worthy content (corrections, decisions, preferences, explicit save requests) as injected extension blocks
 
 All policies slot into the four core hook points (`pre_turn`, `pre_dispatch`, `post_turn`, `post_loop`) and are evaluated in insertion order.
 
@@ -41,7 +42,7 @@ use swink_agent_policies::{BudgetPolicy, MaxTurnsPolicy, ToolDenyListPolicy};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = AgentOptions::from_connections("You are a helpful assistant.", connections)
-        .with_pre_turn_policy(BudgetPolicy::new().max_cost(10.0))
+        .with_pre_turn_policy(BudgetPolicy::new().with_max_cost(10.0))
         .with_pre_turn_policy(MaxTurnsPolicy::new(5))
         .with_pre_dispatch_policy(ToolDenyListPolicy::new(["bash"]));
 
@@ -62,10 +63,10 @@ The library default is anything-goes — no policy slots are populated. Embedder
 use swink_agent_policies::RecommendedPolicies;
 
 let options = RecommendedPolicies::builder()
-    .max_cost(10.0)                      // default: $10 USD
-    .max_turns(50)                       // default: 50 turns
-    .sandbox_root("/srv/agent-workspace") // default: process cwd
-    .deny_tools(["bash"])                // default: ["bash"]
+    .with_max_cost(10.0)                      // default: $10 USD
+    .with_max_turns(50)                       // default: 50 turns
+    .with_sandbox_root("/srv/agent-workspace") // default: process cwd
+    .with_deny_tools(["bash"])                // default: ["bash"]
     .apply(options);
 ```
 
