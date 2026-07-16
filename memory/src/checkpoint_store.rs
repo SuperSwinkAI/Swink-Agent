@@ -37,22 +37,31 @@ fn validate_checkpoint_id(id: &str) -> io::Result<()> {
 /// access and therefore must not contain path separators, `..`, `:`, or ASCII
 /// control characters.
 ///
-/// By default the store keeps every checkpoint forever; see
-/// [`with_max_checkpoints`](Self::with_max_checkpoints) for retention.
+/// Retention is bounded by default: after each save, only the
+/// [`DEFAULT_MAX_CHECKPOINTS`](Self::DEFAULT_MAX_CHECKPOINTS) most recent
+/// checkpoints (by `created_at`) are kept. Use
+/// [`with_max_checkpoints`](Self::with_max_checkpoints) to change the bound
+/// or [`unbounded`](Self::unbounded) to keep every checkpoint.
 pub struct FileCheckpointStore {
     checkpoints_dir: PathBuf,
     max_checkpoints: Option<usize>,
 }
 
 impl FileCheckpointStore {
+    /// Number of most-recent checkpoints a new store retains by default.
+    pub const DEFAULT_MAX_CHECKPOINTS: usize = 20;
+
     /// Create a new store rooted at the given directory.
     ///
     /// Creates the directory (and parents) if it does not already exist.
+    ///
+    /// The store keeps at most [`Self::DEFAULT_MAX_CHECKPOINTS`] checkpoints;
+    /// see [`Self::with_max_checkpoints`] and [`Self::unbounded`].
     pub fn new(checkpoints_dir: PathBuf) -> io::Result<Self> {
         std::fs::create_dir_all(&checkpoints_dir)?;
         Ok(Self {
             checkpoints_dir,
-            max_checkpoints: None,
+            max_checkpoints: Some(Self::DEFAULT_MAX_CHECKPOINTS),
         })
     }
 
@@ -64,10 +73,8 @@ impl FileCheckpointStore {
     /// Keep at most `n` checkpoints, pruning the oldest (by `created_at`)
     /// after each save.
     ///
-    /// The default is unlimited retention. Without a cap, a per-turn
-    /// checkpoint policy leaves one growing file per turn — an N-turn session
-    /// stores O(N²) bytes. The checkpoint just saved counts toward the limit,
-    /// so `n` should be at least 1.
+    /// The default is [`Self::DEFAULT_MAX_CHECKPOINTS`]. The checkpoint just
+    /// saved counts toward the limit, so `n` should be at least 1.
     ///
     /// Pruning only considers files in the store directory that parse as
     /// checkpoints; foreign or malformed files are never deleted. Pruning is
@@ -76,6 +83,17 @@ impl FileCheckpointStore {
     #[must_use]
     pub fn with_max_checkpoints(mut self, n: usize) -> Self {
         self.max_checkpoints = Some(n);
+        self
+    }
+
+    /// Disable retention pruning and keep every checkpoint.
+    ///
+    /// Disk usage then grows without bound: a per-turn checkpoint policy
+    /// leaves one growing file per turn, so an N-turn session stores O(N²)
+    /// bytes. Prefer a bound unless every historical checkpoint is needed.
+    #[must_use]
+    pub fn unbounded(mut self) -> Self {
+        self.max_checkpoints = None;
         self
     }
 
@@ -297,17 +315,55 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn retention_defaults_to_unlimited() {
+    async fn retention_defaults_to_bounded() {
         let dir = tempfile::tempdir().unwrap();
         let store = FileCheckpointStore::new(dir.path().to_path_buf()).unwrap();
 
-        for (id, created_at) in [("a", 1), ("b", 2), ("c", 3)] {
-            let mut checkpoint = Checkpoint::new(id, "prompt", "provider", "model", &[]);
-            checkpoint.created_at = created_at;
+        let total = FileCheckpointStore::DEFAULT_MAX_CHECKPOINTS + 5;
+        for i in 0..total {
+            let mut checkpoint =
+                Checkpoint::new(format!("cp-{i:03}"), "prompt", "provider", "model", &[]);
+            checkpoint.created_at = u64::try_from(i).unwrap();
             store.save_checkpoint(checkpoint).await.unwrap();
         }
 
-        assert_eq!(store.list_checkpoints().await.unwrap().len(), 3);
+        let ids = store.list_checkpoints().await.unwrap();
+        assert_eq!(
+            ids.len(),
+            FileCheckpointStore::DEFAULT_MAX_CHECKPOINTS,
+            "default retention must cap the checkpoint count"
+        );
+        assert_eq!(
+            ids[0],
+            format!("cp-{:03}", total - 1),
+            "newest checkpoint must survive pruning"
+        );
+        assert!(
+            !ids.contains(&"cp-000".to_string()),
+            "oldest checkpoint must be pruned"
+        );
+    }
+
+    #[tokio::test]
+    async fn retention_unbounded_opt_out_keeps_everything() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileCheckpointStore::new(dir.path().to_path_buf())
+            .unwrap()
+            .unbounded();
+
+        let total = FileCheckpointStore::DEFAULT_MAX_CHECKPOINTS + 5;
+        for i in 0..total {
+            let mut checkpoint =
+                Checkpoint::new(format!("cp-{i:03}"), "prompt", "provider", "model", &[]);
+            checkpoint.created_at = u64::try_from(i).unwrap();
+            store.save_checkpoint(checkpoint).await.unwrap();
+        }
+
+        assert_eq!(
+            store.list_checkpoints().await.unwrap().len(),
+            total,
+            "unbounded store must retain every checkpoint"
+        );
     }
 
     #[tokio::test]
