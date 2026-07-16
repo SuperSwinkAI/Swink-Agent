@@ -262,16 +262,6 @@ impl StreamFinalize for BedrockStreamState {
     }
 }
 
-fn cancelled_event(message: &'static str) -> AssistantMessageEvent {
-    AssistantMessageEvent::Error {
-        stop_reason: StopReason::Aborted,
-        error_message: message.to_string(),
-        usage: None,
-        error_kind: None,
-        retry_after: None,
-    }
-}
-
 fn unexpected_eof_events(state: &mut BedrockStreamState) -> Vec<AssistantMessageEvent> {
     let mut events = finalize::finalize_blocks(state);
     events.push(AssistantMessageEvent::error_network(
@@ -288,12 +278,11 @@ fn prefix_pre_start_terminal_error(
         return events;
     }
 
-    *started = true;
     let event = events
         .into_iter()
         .next()
         .expect("matched single terminal error");
-    Vec::from(crate::base::pre_stream_error(event))
+    crate::base::prefix_start_if_unstarted(event, started)
 }
 
 pub struct BedrockStreamFn {
@@ -463,7 +452,7 @@ impl BedrockStreamFn {
                             return Some((
                                 vec![
                                     AssistantMessageEvent::Start,
-                                    cancelled_event("Bedrock request cancelled"),
+                                    crate::base::cancelled_error("Bedrock request cancelled"),
                                 ],
                                 StreamUnfoldState::Done,
                             ));
@@ -563,7 +552,9 @@ impl BedrockStreamFn {
                                 biased;
                                 () = cancellation_token.cancelled() => {
                                     let mut events = finalize::finalize_blocks(state.as_mut());
-                                    events.push(cancelled_event("Bedrock stream cancelled"));
+                                    events.push(crate::base::cancelled_error(
+                                        "Bedrock stream cancelled",
+                                    ));
                                     let events =
                                         prefix_pre_start_terminal_error(events, &mut state.started);
                                     return Some((events, StreamUnfoldState::Done));

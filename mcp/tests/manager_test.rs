@@ -224,7 +224,7 @@ async fn connect_all_collision_rolls_back_open_sessions() {
     let mut manager = McpManager::new(vec![
         McpServerConfig::new(
             "collision-a",
-            McpTransport::Sse {
+            McpTransport::StreamableHttp {
                 url: url_a,
                 bearer_token: None,
                 bearer_auth: None,
@@ -234,7 +234,7 @@ async fn connect_all_collision_rolls_back_open_sessions() {
         .with_requires_approval(false),
         McpServerConfig::new(
             "collision-b",
-            McpTransport::Sse {
+            McpTransport::StreamableHttp {
                 url: url_b,
                 bearer_token: None,
                 bearer_auth: None,
@@ -332,7 +332,7 @@ async fn discovery_timeout_skips_hung_server_and_keeps_healthy_tools() {
     let mut manager = McpManager::new(vec![
         McpServerConfig::new(
             "hung-discovery",
-            McpTransport::Sse {
+            McpTransport::StreamableHttp {
                 url: hanging_url,
                 bearer_token: None,
                 bearer_auth: None,
@@ -344,7 +344,7 @@ async fn discovery_timeout_skips_hung_server_and_keeps_healthy_tools() {
         .with_discovery_timeout_ms(50),
         McpServerConfig::new(
             "healthy",
-            McpTransport::Sse {
+            McpTransport::StreamableHttp {
                 url: healthy_url,
                 bearer_token: None,
                 bearer_auth: None,

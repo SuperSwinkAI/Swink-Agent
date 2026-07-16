@@ -365,6 +365,11 @@ pub struct OaiSseStreamState {
 #[derive(Clone, Copy, Default)]
 pub(crate) struct OaiParserOptions {
     pub(crate) detect_content_filter_results: bool,
+    /// When true, a `finish_reason: "error"` chunk is surfaced as a terminal
+    /// `AssistantMessageEvent::Error` instead of falling through to the
+    /// generic `stop_reason` mapping. Set by adapters (e.g. Mistral) whose
+    /// provider uses `"error"` as a genuine terminal-failure finish reason.
+    pub(crate) error_finish_reason_is_error: bool,
 }
 
 impl crate::finalize::StreamFinalize for OaiSseStreamState {
@@ -501,12 +506,12 @@ fn process_oai_chunk_with_options(
                 return;
             }
 
-            if provider == "Mistral" && reason == "error" {
+            if options.error_finish_reason_is_error && reason == "error" {
                 let _ = flush_pending_oai_tool_calls(state, events, provider);
                 events.extend(crate::finalize::finalize_blocks(state));
                 state.terminal_error = Some(AssistantMessageEvent::Error {
                     stop_reason: StopReason::Error,
-                    error_message: "Mistral reported finish_reason=error".to_string(),
+                    error_message: format!("{provider} reported finish_reason=error"),
                     usage: state.usage.clone(),
                     error_kind: None,
                     retry_after: None,

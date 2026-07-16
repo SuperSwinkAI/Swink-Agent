@@ -50,7 +50,8 @@ async fn server_accepts_real_socket_connection_and_round_trips_a_prompt() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("swink.sock");
 
-    let server = AgentServer::bind(&path, || test_agent_options("hello over the wire")).unwrap();
+    let server =
+        AgentServer::bind(&path, || Ok(test_agent_options("hello over the wire"))).unwrap();
     let server_task = tokio::spawn(server.serve());
 
     wait_for_secured_socket(&path).await;
@@ -96,12 +97,12 @@ async fn second_bind_attempt_without_force_fails_while_server_is_active() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("swink.sock");
 
-    let server = AgentServer::bind(&path, || test_agent_options("unused")).unwrap();
+    let server = AgentServer::bind(&path, || Ok(test_agent_options("unused"))).unwrap();
     let server_task = tokio::spawn(server.serve());
 
     wait_for_secured_socket(&path).await;
 
-    let err = match AgentServer::bind(&path, || test_agent_options("unused")) {
+    let err = match AgentServer::bind(&path, || Ok(test_agent_options("unused"))) {
         Ok(_) => panic!("bind should reject an already-active socket path without --force"),
         Err(err) => err,
     };

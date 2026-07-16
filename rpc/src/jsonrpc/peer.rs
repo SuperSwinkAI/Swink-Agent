@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -15,6 +16,10 @@ use super::message::{RawMessage, RequestId, RpcError};
 
 /// Maximum byte length of a single NDJSON line (1 MiB).
 pub const MAX_LINE_BYTES: usize = 1024 * 1024;
+
+/// Default timeout for [`PeerSender::request`] before it gives up waiting for
+/// a response and returns [`RpcError::timeout`].
+pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 // ─── IncomingMessage ──────────────────────────────────────────────────────────
 
@@ -59,9 +64,21 @@ struct PeerInner {
 #[derive(Clone)]
 pub struct PeerSender {
     inner: Arc<PeerInner>,
+    /// Per-sender timeout for [`request`](Self::request). Deliberately kept
+    /// outside `PeerInner` so a clone can override it independently (e.g. via
+    /// [`with_request_timeout`](Self::with_request_timeout)) without affecting
+    /// other clones that share the same underlying connection.
+    timeout: Duration,
 }
 
 impl PeerSender {
+    /// Override the timeout used by [`request`](Self::request) on this sender.
+    #[must_use]
+    pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
     /// Send a JSON-RPC notification to the remote peer (fire-and-forget).
     pub async fn notify<P: Serialize + Sync>(
         &self,
@@ -83,47 +100,59 @@ impl PeerSender {
         method: &str,
         params: &P,
     ) -> Result<R, RpcError> {
-        let id = RequestId::Number(self.inner.next_id.fetch_add(1, Ordering::Relaxed));
+        // Kept as a raw `u64` (Copy) rather than a `RequestId`, so the enum
+        // value is constructed fresh at each of the few sites that need it
+        // instead of being cloned from a shared local.
+        let n = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
         let params = serde_json::to_value(params).map_err(|e| RpcError::internal(e.to_string()))?;
         self.ensure_connected()?;
 
         let (tx, rx) = oneshot::channel();
         {
             let mut guard = self.inner.pending.lock().unwrap_or_else(|e| e.into_inner());
-            guard.insert(id.clone(), tx);
+            guard.insert(RequestId::Number(n), tx);
         }
         if self.inner.disconnected.load(Ordering::Acquire) {
-            self.remove_pending(&id);
+            self.remove_pending(&RequestId::Number(n));
             return Err(RpcError::disconnected());
         }
 
-        let msg = RawMessage::request(id.clone(), method, params);
+        let msg = RawMessage::request(RequestId::Number(n), method, params);
         if self.inner.outbound_tx.send(msg).await.is_err() {
-            self.remove_pending(&id);
+            self.remove_pending(&RequestId::Number(n));
             return Err(RpcError::disconnected());
         }
 
-        let result = rx.await.map_err(|_| RpcError::disconnected())?;
+        let result = match tokio::time::timeout(self.timeout, rx).await {
+            Ok(Ok(res)) => res,
+            Ok(Err(_)) => return Err(RpcError::disconnected()),
+            Err(_elapsed) => {
+                self.remove_pending(&RequestId::Number(n));
+                return Err(RpcError::timeout());
+            }
+        };
         let value = result?;
         serde_json::from_value(value).map_err(|e| RpcError::internal(e.to_string()))
     }
 
     /// Send a success response to an inbound request.
-    pub fn respond_ok<R: Serialize>(&self, id: RequestId, result: R) -> Result<(), RpcError> {
+    pub async fn respond_ok<R: Serialize>(&self, id: RequestId, result: R) -> Result<(), RpcError> {
         let value = serde_json::to_value(result).map_err(|e| RpcError::internal(e.to_string()))?;
         let msg = RawMessage::success(id, value);
         self.inner
             .outbound_tx
-            .try_send(msg)
+            .send(msg)
+            .await
             .map_err(|_| RpcError::disconnected())
     }
 
     /// Send an error response to an inbound request.
-    pub fn respond_err(&self, id: RequestId, err: RpcError) -> Result<(), RpcError> {
+    pub async fn respond_err(&self, id: RequestId, err: RpcError) -> Result<(), RpcError> {
         let msg = RawMessage::error_response(id, err);
         self.inner
             .outbound_tx
-            .try_send(msg)
+            .send(msg)
+            .await
             .map_err(|_| RpcError::disconnected())
     }
 
@@ -181,7 +210,10 @@ impl JsonRpcPeer {
         tokio::spawn(reader_task(read, pending, disconnected, incoming_tx));
 
         Self {
-            sender: PeerSender { inner },
+            sender: PeerSender {
+                inner,
+                timeout: DEFAULT_REQUEST_TIMEOUT,
+            },
             incoming_rx,
         }
     }

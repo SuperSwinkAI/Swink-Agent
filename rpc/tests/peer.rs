@@ -1,6 +1,7 @@
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use swink_agent_rpc::jsonrpc::{IncomingMessage, JsonRpcPeer, RpcError};
 use tokio::io::duplex;
@@ -45,7 +46,7 @@ async fn request_response_round_trip() {
         match msg {
             IncomingMessage::Request { id, method, params } => {
                 assert_eq!(method, "echo");
-                sender_b.respond_ok(id, params.unwrap()).unwrap();
+                sender_b.respond_ok(id, params.unwrap()).await.unwrap();
             }
             other @ IncomingMessage::Notification { .. } => {
                 panic!("expected request, got {other:?}")
@@ -73,6 +74,7 @@ async fn error_response_surfaces_as_err() {
         if let IncomingMessage::Request { id, .. } = msg {
             sender_b
                 .respond_err(id, RpcError::method_not_found("unknown"))
+                .await
                 .unwrap();
         }
     });
@@ -150,9 +152,11 @@ async fn concurrent_requests_correlate_correctly() {
         {
             sender_b
                 .respond_ok(id2, serde_json::json!("second"))
+                .await
                 .unwrap();
             sender_b
                 .respond_ok(id1, serde_json::json!("first"))
+                .await
                 .unwrap();
         }
     });
@@ -239,4 +243,20 @@ async fn malformed_json_line_is_dropped_without_closing_connection() {
             panic!("expected notification after malformed line, got {other:?}")
         }
     }
+}
+
+#[tokio::test]
+async fn request_times_out_when_no_response_arrives() {
+    let (a, b) = make_peer_pair();
+    // Keep `b` alive so the connection stays open (no disconnect races the
+    // timeout), but never respond to the incoming request.
+    let _b = b;
+
+    let sender = a.sender().with_request_timeout(Duration::from_millis(50));
+
+    let result: Result<serde_json::Value, RpcError> =
+        sender.request("never.answered", &serde_json::Value::Null).await;
+
+    let err = result.unwrap_err();
+    assert_eq!(err.code, RpcError::TIMEOUT);
 }

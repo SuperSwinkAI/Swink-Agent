@@ -43,6 +43,11 @@ impl McpTool {
     /// If `prefix` is provided, the tool name becomes a provider-safe
     /// `{prefix}_{original_name}`. Otherwise the original name is sanitized and
     /// bounded without adding a namespace.
+    ///
+    /// **Stability note:** This function takes an `&rmcp::model::Tool`
+    /// parameter, exposing an external crate's type across this crate's
+    /// public boundary. Exposed rmcp types may change with rmcp major
+    /// version bumps without a swink-agent-mcp major bump.
     pub fn new(
         tool: &rmcp::model::Tool,
         prefix: Option<&str>,

@@ -339,6 +339,7 @@ fn azure_stream<'a>(
             },
             OaiParserOptions {
                 detect_content_filter_results: true,
+                ..OaiParserOptions::default()
             },
         )
         .right_stream()
