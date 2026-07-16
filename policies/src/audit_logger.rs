@@ -30,6 +30,32 @@ pub struct AuditRecord {
     pub cost: AuditCost,
 }
 
+impl AuditRecord {
+    /// Create a record from its parts, covering every field.
+    ///
+    /// [`AuditLogger`] builds records itself; this constructor exists so
+    /// custom [`AuditSink`] implementations can be unit-tested with
+    /// hand-built records.
+    #[must_use]
+    pub fn new(
+        timestamp: impl Into<String>,
+        turn_index: usize,
+        content_summary: impl Into<String>,
+        tool_calls: Vec<String>,
+        usage: AuditUsage,
+        cost: AuditCost,
+    ) -> Self {
+        Self {
+            timestamp: timestamp.into(),
+            turn_index,
+            content_summary: content_summary.into(),
+            tool_calls,
+            usage,
+            cost,
+        }
+    }
+}
+
 /// Subset of token usage relevant for audit records.
 #[non_exhaustive]
 #[derive(Debug, Clone, Serialize)]
@@ -39,11 +65,31 @@ pub struct AuditUsage {
     pub total: u64,
 }
 
+impl AuditUsage {
+    /// Create a usage summary from input, output, and total token counts.
+    #[must_use]
+    pub const fn new(input: u64, output: u64, total: u64) -> Self {
+        Self {
+            input,
+            output,
+            total,
+        }
+    }
+}
+
 /// Subset of cost relevant for audit records.
 #[non_exhaustive]
 #[derive(Debug, Clone, Serialize)]
 pub struct AuditCost {
     pub total: f64,
+}
+
+impl AuditCost {
+    /// Create a cost summary from a total cost in USD.
+    #[must_use]
+    pub const fn new(total: f64) -> Self {
+        Self { total }
+    }
 }
 
 impl From<&swink_agent::Usage> for AuditUsage {
@@ -338,18 +384,14 @@ mod tests {
         let path = tmp.path().to_path_buf();
 
         let sink = JsonlAuditSink::new(&path);
-        let record = AuditRecord {
-            timestamp: "2026-03-24T00:00:00+00:00".into(),
-            turn_index: 0,
-            content_summary: "test".into(),
-            tool_calls: vec!["bash".into()],
-            usage: AuditUsage {
-                input: 10,
-                output: 5,
-                total: 15,
-            },
-            cost: AuditCost { total: 0.001 },
-        };
+        let record = AuditRecord::new(
+            "2026-03-24T00:00:00+00:00",
+            0,
+            "test",
+            vec!["bash".into()],
+            AuditUsage::new(10, 5, 15),
+            AuditCost::new(0.001),
+        );
 
         sink.write(&record);
 
@@ -364,20 +406,45 @@ mod tests {
     fn jsonl_sink_handles_write_error_gracefully() {
         // Writing to an impossible path should not panic — error is logged.
         let sink = JsonlAuditSink::new("/dev/null/impossible");
-        let record = AuditRecord {
-            timestamp: "2026-03-24T00:00:00+00:00".into(),
-            turn_index: 0,
-            content_summary: String::new(),
-            tool_calls: vec![],
-            usage: AuditUsage {
-                input: 0,
-                output: 0,
-                total: 0,
-            },
-            cost: AuditCost { total: 0.0 },
-        };
+        let record = AuditRecord::new(
+            "2026-03-24T00:00:00+00:00",
+            0,
+            String::new(),
+            vec![],
+            AuditUsage::new(0, 0, 0),
+            AuditCost::new(0.0),
+        );
 
         // Should not panic.
         sink.write(&record);
+    }
+
+    #[test]
+    fn hand_built_record_exercises_custom_sink() {
+        // The constructors let a custom AuditSink impl be unit-tested with a
+        // hand-built record, without running the policy at all.
+        let sink = MockSink::new();
+        let records = sink.shared_records();
+
+        let record = AuditRecord::new(
+            "2026-07-16T00:00:00+00:00",
+            42,
+            "summary text",
+            vec!["bash".into(), "read_file".into()],
+            AuditUsage::new(100, 50, 150),
+            AuditCost::new(0.005),
+        );
+        sink.write(&record);
+
+        let records = records.lock().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].timestamp, "2026-07-16T00:00:00+00:00");
+        assert_eq!(records[0].turn_index, 42);
+        assert_eq!(records[0].content_summary, "summary text");
+        assert_eq!(records[0].tool_calls, vec!["bash", "read_file"]);
+        assert_eq!(records[0].usage.input, 100);
+        assert_eq!(records[0].usage.output, 50);
+        assert_eq!(records[0].usage.total, 150);
+        assert!((records[0].cost.total - 0.005).abs() < f64::EPSILON);
     }
 }

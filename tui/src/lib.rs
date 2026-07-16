@@ -71,6 +71,7 @@ pub use skills::{SkillInvocation, parse_skill_invocation};
 pub use swink_agent::{ApprovalMode, ModelRates, PricingTable};
 pub use transport::{InProcessTransport, TransportError, TuiTransport, UserInput};
 pub use ui::conversation::ConversationView;
+pub use ui::diff::{DiffData, Hunk};
 pub use ui::input::{InputEditor, MentionQuery};
 pub use ui::markdown::markdown_to_lines;
 pub use ui::syntax::highlight_code;

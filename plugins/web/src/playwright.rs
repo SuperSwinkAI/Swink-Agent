@@ -11,7 +11,10 @@ use tokio::process::{Child, Command};
 use crate::domain::DomainFilter;
 
 /// Viewport dimensions for screenshots.
-// Frozen by design: a width x height dimensions pair; no further fields expected.
+///
+/// Deliberately exhaustive (never `#[non_exhaustive]`): a plain
+/// width x height pair with no further fields expected, so it is safe to
+/// construct this struct literally.
 #[allow(clippy::exhaustive_structs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Viewport {

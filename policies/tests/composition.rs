@@ -1,6 +1,7 @@
 #![cfg(all(
     feature = "audit",
     feature = "content-filter",
+    feature = "memory-nudge",
     feature = "pii",
     feature = "prompt-guard"
 ))]
@@ -12,7 +13,8 @@ use swink_agent::{
     UserMessage,
 };
 use swink_agent_policies::{
-    AuditLogger, ContentFilter, JsonlAuditSink, PiiRedactor, PromptInjectionGuard,
+    AuditLogger, ContentFilter, JsonlAuditSink, MemoryNudgePolicy, PiiRedactor,
+    PromptInjectionGuard,
 };
 
 fn make_assistant_msg(text: &str) -> AssistantMessage {
@@ -33,6 +35,7 @@ fn all_policies_compose() {
     let redactor = PiiRedactor::new();
     let filter = ContentFilter::new().with_keyword("blocked-term");
     let logger = AuditLogger::new(JsonlAuditSink::new("/dev/null"));
+    let nudge = MemoryNudgePolicy::new();
 
     // Verify names are distinct
     let pre_name = PreTurnPolicy::name(&guard);
@@ -40,10 +43,13 @@ fn all_policies_compose() {
     let redactor_name = PostTurnPolicy::name(&redactor);
     let filter_name = PostTurnPolicy::name(&filter);
     let logger_name = PostTurnPolicy::name(&logger);
+    let nudge_name = PostTurnPolicy::name(&nudge);
 
     assert_eq!(pre_name, post_guard_name); // same struct, same name
     assert_ne!(redactor_name, filter_name);
     assert_ne!(filter_name, logger_name);
+    assert_ne!(logger_name, nudge_name);
+    assert_ne!(redactor_name, nudge_name);
 
     // All can evaluate without interfering
     let usage = Usage::default();
@@ -83,6 +89,10 @@ fn all_policies_compose() {
     ));
     assert!(matches!(
         PostTurnPolicy::evaluate(&logger, &ctx, &turn_ctx),
+        PolicyVerdict::Continue
+    ));
+    assert!(matches!(
+        PostTurnPolicy::evaluate(&nudge, &ctx, &turn_ctx),
         PolicyVerdict::Continue
     ));
 }

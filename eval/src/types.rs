@@ -961,13 +961,13 @@ impl BudgetConstraints {
             } else {
                 let mut policy = BudgetPolicy::new();
                 if let Some(max_cost) = self.max_cost {
-                    policy = policy.max_cost(max_cost);
+                    policy = policy.with_max_cost(max_cost);
                 }
                 if let Some(max_input) = self.max_input {
-                    policy = policy.max_input(max_input);
+                    policy = policy.with_max_input(max_input);
                 }
                 if let Some(max_output) = self.max_output {
-                    policy = policy.max_output(max_output);
+                    policy = policy.with_max_output(max_output);
                 }
                 Some(policy)
             };

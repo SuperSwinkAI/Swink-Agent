@@ -52,6 +52,26 @@ pub enum TransportError {
     Io(#[from] std::io::Error),
 }
 
+impl TransportError {
+    /// Create a [`TransportError::ChannelClosed`].
+    ///
+    /// For [`TuiTransport`] implementations reporting that their underlying
+    /// channel or connection has closed.
+    #[must_use]
+    pub const fn channel_closed() -> Self {
+        Self::ChannelClosed
+    }
+
+    /// Create a [`TransportError::StreamStart`] with the given reason.
+    ///
+    /// For [`TuiTransport`] implementations reporting a failure to start the
+    /// agent prompt stream.
+    #[must_use]
+    pub fn stream_start(reason: impl Into<String>) -> Self {
+        Self::StreamStart(reason.into())
+    }
+}
+
 /// Abstraction over message exchange between the TUI and the agent backend.
 ///
 /// Implementations forward user input to an agent and yield [`AgentEvent`]
@@ -178,6 +198,18 @@ impl TuiTransport for InProcessTransport {
 mod tests {
     use super::*;
     use tokio::sync::mpsc;
+
+    #[test]
+    fn transport_error_constructors_build_expected_variants() {
+        assert!(matches!(
+            TransportError::channel_closed(),
+            TransportError::ChannelClosed
+        ));
+        match TransportError::stream_start("boom") {
+            TransportError::StreamStart(reason) => assert_eq!(reason, "boom"),
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
 
     // ---------------------------------------------------------------------------
     // Helpers
