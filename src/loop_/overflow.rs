@@ -83,7 +83,11 @@ pub(super) async fn attempt_overflow_recovery(
     }
 
     // Re-run convert-to-LLM pipeline with compacted context.
-    let llm_messages = build_llm_messages(config, &state.context_messages, dynamic_prompt_injected);
+    let llm_messages = build_llm_messages(
+        config,
+        state.context_messages.as_slice(),
+        dynamic_prompt_injected,
+    );
 
     // Retry the stream call with compacted context.
     let retry_result = stream_with_retry(
@@ -134,8 +138,10 @@ pub(super) async fn overflow_error(
     let assistant_ctx_index = state.context_messages.len() - 1;
     let (msg_for_event, policy_stop) =
         run_post_turn_policy_check(&msg_for_event, &[], state, config, system_prompt);
-    state.context_messages[assistant_ctx_index] =
-        AgentMessage::Llm(LlmMessage::Assistant(msg_for_event.clone()));
+    state.context_messages.set(
+        assistant_ctx_index,
+        AgentMessage::Llm(LlmMessage::Assistant(msg_for_event.clone())),
+    );
 
     let snapshot = build_snapshot(state, StopReason::Error, None);
     if let Some(reason) = policy_stop {

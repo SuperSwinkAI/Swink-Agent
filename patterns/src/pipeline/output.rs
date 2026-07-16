@@ -9,6 +9,7 @@ use super::types::PipelineId;
 // ─── StepResult ─────────────────────────────────────────────────────────────
 
 /// Per-step execution telemetry.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct StepResult {
     /// Which agent ran this step.
@@ -21,9 +22,28 @@ pub struct StepResult {
     pub usage: Usage,
 }
 
+impl StepResult {
+    /// Create a step result from its parts.
+    #[must_use]
+    pub fn new(
+        agent_name: impl Into<String>,
+        response: impl Into<String>,
+        duration: Duration,
+        usage: Usage,
+    ) -> Self {
+        Self {
+            agent_name: agent_name.into(),
+            response: response.into(),
+            duration,
+            usage,
+        }
+    }
+}
+
 // ─── PipelineOutput ─────────────────────────────────────────────────────────
 
 /// Structured result from pipeline execution.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct PipelineOutput {
     /// Which pipeline produced this output.
@@ -38,9 +58,46 @@ pub struct PipelineOutput {
     pub total_usage: Usage,
 }
 
+impl PipelineOutput {
+    /// Create a pipeline output with the identifying fields; step telemetry
+    /// and totals start empty and can be filled in with the `with_*` builders.
+    #[must_use]
+    pub fn new(pipeline_id: PipelineId, final_response: impl Into<String>) -> Self {
+        Self {
+            pipeline_id,
+            final_response: final_response.into(),
+            steps: Vec::new(),
+            total_duration: Duration::ZERO,
+            total_usage: Usage::default(),
+        }
+    }
+
+    /// Set the per-step telemetry.
+    #[must_use]
+    pub fn with_steps(mut self, steps: Vec<StepResult>) -> Self {
+        self.steps = steps;
+        self
+    }
+
+    /// Set the wall-clock time for the entire pipeline.
+    #[must_use]
+    pub fn with_total_duration(mut self, total_duration: Duration) -> Self {
+        self.total_duration = total_duration;
+        self
+    }
+
+    /// Set the aggregated token usage across all steps.
+    #[must_use]
+    pub fn with_total_usage(mut self, total_usage: Usage) -> Self {
+        self.total_usage = total_usage;
+        self
+    }
+}
+
 // ─── PipelineError ──────────────────────────────────────────────────────────
 
 /// Typed error variants for pipeline execution failures.
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum PipelineError {
     /// Named agent not found in factory.

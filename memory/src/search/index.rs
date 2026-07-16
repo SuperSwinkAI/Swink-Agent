@@ -2,8 +2,20 @@
 //!
 //! The index is stored in `<sessions_dir>/.search_index/` alongside the JSONL
 //! session files.  It is rebuilt (or opened) lazily on the first `search()`
-//! call and updated incrementally when sessions are re-indexed via
-//! [`TantivyIndex::index_session`].
+//! call, replaced wholesale per session via [`TantivyIndex::index_session`]
+//! (rewrite paths), and extended incrementally via
+//! [`TantivyIndex::append_session_entries`] (append paths).
+//!
+//! ## Writer lifecycle
+//!
+//! tantivy permits a single [`IndexWriter`] per index directory (it holds the
+//! directory write lock), and creating one allocates the full indexer heap.
+//! `TantivyIndex` therefore keeps one long-lived writer, created lazily on
+//! the first mutation and reused for every subsequent one, instead of paying
+//! writer creation on every save/append.  A consequence is that once a
+//! `TantivyIndex` has performed a mutation it holds the directory write lock
+//! until it is dropped, so only one live `TantivyIndex` may mutate a given
+//! index directory at a time (searches are unaffected — they use readers).
 //!
 //! ## Schema
 //!
@@ -78,7 +90,9 @@ impl Fields {
 /// Tantivy-backed full-text index.
 ///
 /// `TantivyIndex` is internally `Arc<Mutex<_>>` so it can be shared across
-/// threads and cloned cheaply.
+/// threads and cloned cheaply.  Mutations reuse one long-lived
+/// [`IndexWriter`], so a `TantivyIndex` that has mutated holds the index
+/// directory's write lock until dropped (see the module docs).
 #[derive(Clone)]
 pub struct TantivyIndex {
     inner: Arc<Mutex<Inner>>,
@@ -87,6 +101,41 @@ pub struct TantivyIndex {
 struct Inner {
     index: Index,
     fields: Fields,
+    /// Long-lived writer, created lazily on the first mutation and reused for
+    /// every subsequent one (see the module docs on writer lifecycle).
+    writer: Option<IndexWriter>,
+    /// Number of full session (re)index operations performed. Test-only
+    /// instrumentation proving append paths never fall back to
+    /// whole-session rebuilds.
+    #[cfg(test)]
+    full_reindex_count: usize,
+}
+
+impl Inner {
+    /// Return the long-lived writer, creating it on first use.
+    fn writer(&mut self) -> io::Result<&mut IndexWriter> {
+        if self.writer.is_none() {
+            self.writer = Some(
+                self.index
+                    .writer(INDEXER_HEAP_BYTES)
+                    .map_err(tantivy_to_io)?,
+            );
+        }
+        Ok(self.writer.as_mut().expect("just created"))
+    }
+
+    /// Commit pending writer operations.
+    ///
+    /// On failure the writer is dropped so the next mutation starts from a
+    /// fresh writer instead of reusing one in an unknown state.
+    fn commit(&mut self) -> io::Result<()> {
+        let writer = self.writer()?;
+        if let Err(err) = writer.commit() {
+            self.writer = None;
+            return Err(tantivy_to_io(err));
+        }
+        Ok(())
+    }
 }
 
 impl TantivyIndex {
@@ -97,44 +146,55 @@ impl TantivyIndex {
 
         let (index, fields) = open_or_create_index(&index_dir)?;
         Ok(Self {
-            inner: Arc::new(Mutex::new(Inner { index, fields })),
+            inner: Arc::new(Mutex::new(Inner {
+                index,
+                fields,
+                writer: None,
+                #[cfg(test)]
+                full_reindex_count: 0,
+            })),
         })
     }
 
     /// Index (or re-index) one session.
     ///
     /// Deletes any previously stored documents for this session ID, then
-    /// inserts one document per `SessionEntry`.
+    /// inserts one document per `SessionEntry`.  This is O(session); append
+    /// paths should prefer [`TantivyIndex::append_session_entries`].
     pub fn index_session(&self, meta: &SessionMeta, entries: &[SessionEntry]) -> io::Result<()> {
-        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let mut writer = inner
-            .index
-            .writer(INDEXER_HEAP_BYTES)
-            .map_err(tantivy_to_io)?;
-
-        delete_session_docs(&mut writer, &inner.fields, &meta.id);
-
-        for entry in entries {
-            let body = search::searchable_text_pub(entry);
-            if body.is_empty() {
-                continue;
-            }
-            let entry_json = serde_json::to_string(entry).map_err(io::Error::other)?;
-            let timestamp = entry.timestamp().unwrap_or(0);
-
-            let doc = tantivy::doc!(
-                inner.fields.session_id => meta.id.as_str(),
-                inner.fields.session_title => meta.title.as_str(),
-                inner.fields.entry_type => entry.entry_type_name(),
-                inner.fields.timestamp => timestamp,
-                inner.fields.body => body.as_str(),
-                inner.fields.entry_json => entry_json.as_str()
-            );
-            writer.add_document(doc).map_err(tantivy_to_io)?;
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        #[cfg(test)]
+        {
+            inner.full_reindex_count += 1;
         }
+        let fields = inner.fields;
+        let writer = inner.writer()?;
+        delete_session_docs(writer, &fields, &meta.id);
+        add_entry_docs(writer, &fields, meta, entries)?;
+        inner.commit()
+    }
 
-        writer.commit().map_err(tantivy_to_io)?;
-        Ok(())
+    /// Add documents for newly appended entries without touching the
+    /// session's existing documents.
+    ///
+    /// Used by append paths, where everything previously indexed for the
+    /// session is still valid and only the new `entries` need indexing —
+    /// O(new entries) instead of the O(session) cost of
+    /// [`TantivyIndex::index_session`].  Rewrite paths must keep using
+    /// [`TantivyIndex::index_session`] for its replacement semantics.
+    pub fn append_session_entries(
+        &self,
+        meta: &SessionMeta,
+        entries: &[SessionEntry],
+    ) -> io::Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let fields = inner.fields;
+        let writer = inner.writer()?;
+        add_entry_docs(writer, &fields, meta, entries)?;
+        inner.commit()
     }
 
     /// Delete every document in the index, leaving it empty.
@@ -142,26 +202,31 @@ impl TantivyIndex {
     /// Used by `rebuild_search_index` to guarantee replacement semantics when
     /// sessions have been removed outside the store API.
     pub fn clear_all(&self) -> io::Result<()> {
-        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let mut writer: tantivy::IndexWriter<TantivyDocument> = inner
-            .index
-            .writer(INDEXER_HEAP_BYTES)
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner
+            .writer()?
+            .delete_all_documents()
             .map_err(tantivy_to_io)?;
-        writer.delete_all_documents().map_err(tantivy_to_io)?;
-        writer.commit().map_err(tantivy_to_io)?;
-        Ok(())
+        inner.commit()
     }
 
     /// Remove all indexed documents for a session.
     pub fn delete_session(&self, session_id: &str) -> io::Result<()> {
-        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let mut writer = inner
-            .index
-            .writer(INDEXER_HEAP_BYTES)
-            .map_err(tantivy_to_io)?;
-        delete_session_docs(&mut writer, &inner.fields, session_id);
-        writer.commit().map_err(tantivy_to_io)?;
-        Ok(())
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let fields = inner.fields;
+        let writer = inner.writer()?;
+        delete_session_docs(writer, &fields, session_id);
+        inner.commit()
+    }
+
+    /// Number of full session (re)index operations performed via
+    /// [`TantivyIndex::index_session`] over this index's lifetime.
+    #[cfg(test)]
+    pub(crate) fn full_reindex_count(&self) -> usize {
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .full_reindex_count
     }
 
     /// Search the index and return hits respecting `options`.
@@ -291,10 +356,37 @@ fn open_or_create_index(index_dir: &Path) -> io::Result<(Index, Fields)> {
     Ok((index, fields))
 }
 
-#[allow(clippy::needless_pass_by_ref_mut)]
-fn delete_session_docs(writer: &mut IndexWriter, fields: &Fields, session_id: &str) {
+fn delete_session_docs(writer: &IndexWriter, fields: &Fields, session_id: &str) {
     let term = tantivy::Term::from_field_text(fields.session_id, session_id);
     writer.delete_term(term);
+}
+
+/// Stage one document per non-empty entry (does not commit).
+fn add_entry_docs(
+    writer: &IndexWriter,
+    fields: &Fields,
+    meta: &SessionMeta,
+    entries: &[SessionEntry],
+) -> io::Result<()> {
+    for entry in entries {
+        let body = search::searchable_text_pub(entry);
+        if body.is_empty() {
+            continue;
+        }
+        let entry_json = serde_json::to_string(entry).map_err(io::Error::other)?;
+        let timestamp = entry.timestamp().unwrap_or(0);
+
+        let doc = tantivy::doc!(
+            fields.session_id => meta.id.as_str(),
+            fields.session_title => meta.title.as_str(),
+            fields.entry_type => entry.entry_type_name(),
+            fields.timestamp => timestamp,
+            fields.body => body.as_str(),
+            fields.entry_json => entry_json.as_str()
+        );
+        writer.add_document(doc).map_err(tantivy_to_io)?;
+    }
+    Ok(())
 }
 
 fn get_text_field(doc: &TantivyDocument, field: Field) -> String {

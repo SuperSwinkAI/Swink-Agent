@@ -126,13 +126,13 @@ impl AgentClient {
             tokio::select! {
                 result = &mut prompt_fut => {
                     result?;
-                    self.drain_ready_incoming(&mut events)?;
+                    self.drain_ready_incoming(&mut events).await?;
                     break;
                 }
                 incoming = self.peer.recv_incoming() => {
                     match incoming {
                         None => return Err(RpcError::disconnected()),
-                        Some(incoming) => self.handle_incoming(incoming, &mut events)?,
+                        Some(incoming) => self.handle_incoming(incoming, &mut events).await?,
                     }
                 }
             }
@@ -141,14 +141,14 @@ impl AgentClient {
         Ok(events)
     }
 
-    fn drain_ready_incoming(&mut self, events: &mut Vec<AgentEvent>) -> Result<(), RpcError> {
+    async fn drain_ready_incoming(&mut self, events: &mut Vec<AgentEvent>) -> Result<(), RpcError> {
         while let Some(incoming) = self.peer.try_recv_incoming() {
-            self.handle_incoming(incoming, events)?;
+            self.handle_incoming(incoming, events).await?;
         }
         Ok(())
     }
 
-    fn handle_incoming(
+    async fn handle_incoming(
         &self,
         incoming: IncomingMessage,
         events: &mut Vec<AgentEvent>,
@@ -168,12 +168,13 @@ impl AgentClient {
             } if m == method::TOOL_APPROVE => {
                 let approval = self.handle_approval(params);
                 let dto = ToolApprovalDto::from(&approval);
-                self.peer.sender().respond_ok(id, dto)?;
+                self.peer.sender().respond_ok(id, dto).await?;
             }
             IncomingMessage::Request { id, method: m, .. } => {
                 self.peer
                     .sender()
-                    .respond_err(id, RpcError::method_not_found(&m))?;
+                    .respond_err(id, RpcError::method_not_found(&m))
+                    .await?;
             }
             IncomingMessage::Notification { .. } => {}
         }
@@ -274,6 +275,7 @@ mod tests {
                         turn_id: "1".into(),
                     },
                 )
+                .await
                 .unwrap();
             let _ = client_done_rx.await;
         });
@@ -327,6 +329,7 @@ mod tests {
                         turn_id: "2".into(),
                     },
                 )
+                .await
                 .unwrap();
             let _ = client_done_rx.await;
         });
@@ -373,6 +376,7 @@ mod tests {
                         turn_id: "3".into(),
                     },
                 )
+                .await
                 .unwrap();
             let _ = client_done_rx.await;
         });
@@ -413,6 +417,7 @@ mod tests {
                         turn_id: "4".into(),
                     },
                 )
+                .await
                 .unwrap();
             let _ = client_done_rx.await;
         });
@@ -451,6 +456,7 @@ mod tests {
                         turn_id: "5".into(),
                     },
                 )
+                .await
                 .unwrap();
             let _ = client_done_rx.await;
         });

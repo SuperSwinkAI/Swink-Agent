@@ -131,6 +131,11 @@ impl ProxyStreamFn {
     /// Returns a stream of raw byte chunks from the provider's SSE response.
     /// Useful for gateway deployments where the consumer handles its own
     /// event parsing.
+    ///
+    /// **Stability note:** This method is a shared implementation detail for
+    /// built-in adapters. External `StreamFn` implementors should depend
+    /// only on `swink_agent` (core) types. Breaking changes to this method's
+    /// signature may occur without a major version bump.
     pub async fn stream_raw(
         &self,
         model: &ModelSpec,
@@ -360,8 +365,9 @@ fn prepare_stream_event(
         AssistantMessageEvent::Done { .. } | AssistantMessageEvent::Error { .. }
     ) && !started
     {
-        let [start, terminal] = crate::base::pre_stream_error(event);
-        return (vec![start, terminal], true, true);
+        let mut started = started;
+        let events = crate::base::prefix_start_if_unstarted(event, &mut started);
+        return (events, started, true);
     }
 
     let started = started || matches!(event, AssistantMessageEvent::Start);

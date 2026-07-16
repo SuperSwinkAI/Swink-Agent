@@ -845,6 +845,12 @@ impl JsonlSessionStore {
             .clone()
     }
 
+    /// Best-effort full re-index of one session in an already-open index.
+    ///
+    /// Reloads the session from disk and replaces every document for it, so
+    /// this is O(session).  It is the right tool for rewrite paths (`save`,
+    /// `save_full`) where existing content may have changed wholesale;
+    /// append paths must use [`Self::append_to_active_search_index`] instead.
     #[cfg(feature = "search")]
     fn refresh_active_search_index(&self, id: &str, operation: &str) {
         let Some(index) = self.active_tantivy_index() else {
@@ -870,6 +876,32 @@ impl JsonlSessionStore {
                     "failed to load session for search index refresh"
                 );
             }
+        }
+    }
+
+    /// Best-effort incremental index update for append paths.
+    ///
+    /// Adds documents for only the newly appended `entries` instead of
+    /// reloading and re-indexing the whole session, making the index cost of
+    /// an append O(new entries) rather than O(session).  Rewrite paths must
+    /// keep using [`Self::refresh_active_search_index`] for its replacement
+    /// semantics.
+    #[cfg(feature = "search")]
+    fn append_to_active_search_index(
+        &self,
+        id: &str,
+        meta: &SessionMeta,
+        entries: &[SessionEntry],
+    ) {
+        let Some(index) = self.active_tantivy_index() else {
+            return;
+        };
+        if let Err(err) = index.append_session_entries(meta, entries) {
+            tracing::warn!(
+                session_id = %id,
+                error = %err,
+                "failed to append entries to search index after session append"
+            );
         }
     }
 
@@ -954,8 +986,32 @@ impl SessionStore for JsonlSessionStore {
                 .iter()
                 .filter_map(|msg| SessionRecord::from_message(msg, id)),
         )?;
+
+        // Index only the newly appended messages (best-effort). Custom
+        // messages are not `SessionEntry`s and were never indexed by the
+        // previous full-refresh either, so only LLM messages are converted.
         #[cfg(feature = "search")]
-        self.refresh_active_search_index(id, "append");
+        if self.active_tantivy_index().is_some() {
+            let entries: Vec<SessionEntry> = messages
+                .iter()
+                .filter_map(|msg| match msg {
+                    AgentMessage::Llm(llm) => Some(SessionEntry::Message(llm.clone())),
+                    // Custom (and any future) variants are not `SessionEntry`s
+                    // and were never indexed by the previous full refresh.
+                    _ => None,
+                })
+                .collect();
+            if !entries.is_empty() {
+                match read_meta_with_line_len(&path, id) {
+                    Ok((meta, _)) => self.append_to_active_search_index(id, &meta, &entries),
+                    Err(err) => tracing::warn!(
+                        session_id = %id,
+                        error = %err,
+                        "failed to read session meta for search index append"
+                    ),
+                }
+            }
+        }
         Ok(())
     }
 
@@ -1348,9 +1404,10 @@ impl JsonlSessionStore {
     /// Errors if the session file does not exist; use [`Self::save_entries`] to
     /// create a new session.
     ///
-    /// When the `search` feature is enabled, the tantivy index is refreshed
-    /// from the full on-disk session afterwards (best-effort — index errors
-    /// are logged but do not fail the append).
+    /// When the `search` feature is enabled, only the newly appended
+    /// `entries` are added to the tantivy index afterwards — the session's
+    /// existing documents are untouched (best-effort — index errors are
+    /// logged but do not fail the append).
     pub fn append_entries(
         &self,
         id: &str,
@@ -1385,7 +1442,7 @@ impl JsonlSessionStore {
         })?;
 
         #[cfg(feature = "search")]
-        self.refresh_active_search_index(id, "append_entries");
+        self.append_to_active_search_index(id, &write_meta, entries);
 
         Ok(write_meta)
     }
@@ -3233,6 +3290,81 @@ mod tests {
             stale_hits.is_empty(),
             "save_full should replace stale search documents"
         );
+    }
+
+    /// Append paths must extend a warm index incrementally — adding only the
+    /// new entries' documents — never by reloading and re-indexing the whole
+    /// session (the pre-fix behavior, which made every append O(session)).
+    ///
+    /// Instrumented via `TantivyIndex::full_reindex_count`, a test-only
+    /// counter of whole-session (re)index operations: cheap, exact, and it
+    /// fails loudly if an append path regresses to `index_session`.
+    #[cfg(feature = "search")]
+    #[test]
+    fn append_paths_update_search_index_without_full_reindex() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+        store.open_search_index().unwrap();
+
+        let meta = fresh_meta("append-incremental");
+        store
+            .save_entries("append-incremental", &meta, &[user_entry("quokka", 1)])
+            .unwrap();
+        let index = store.active_tantivy_index().expect("index is open");
+        let after_save = index.full_reindex_count();
+
+        let (loaded_meta, _) = store.load_entries("append-incremental").unwrap();
+        let bumped = store
+            .append_entries(
+                "append-incremental",
+                &loaded_meta,
+                &[user_entry("wombat", 2)],
+            )
+            .unwrap();
+        store
+            .append_entries("append-incremental", &bumped, &[user_entry("numbat", 3)])
+            .unwrap();
+        store
+            .append("append-incremental", &[user_msg("kookaburra", 4)])
+            .unwrap();
+
+        assert_eq!(
+            index.full_reindex_count(),
+            after_save,
+            "append paths must not re-index the whole session"
+        );
+
+        // Everything — original and appended — is searchable. The first
+        // search triggers the lazy full build (which legitimately calls
+        // index_session), so it runs after the counter assertion above.
+        for term in ["quokka", "wombat", "numbat", "kookaburra"] {
+            let hits = store
+                .search(term, &SessionSearchOptions::default())
+                .unwrap();
+            assert_eq!(hits.len(), 1, "expected exactly one hit for {term:?}");
+            assert_eq!(hits[0].session_id, "append-incremental");
+        }
+
+        // Steady state: once the index is built, appends stay incremental
+        // and are immediately searchable.
+        let after_build = index.full_reindex_count();
+        let (steady_meta, _) = store.load_entries("append-incremental").unwrap();
+        store
+            .append_entries(
+                "append-incremental",
+                &steady_meta,
+                &[user_entry("capybara", 5)],
+            )
+            .unwrap();
+        assert_eq!(
+            index.full_reindex_count(),
+            after_build,
+            "post-build appends must stay incremental"
+        );
+        let hits = store
+            .search("capybara", &SessionSearchOptions::default())
+            .unwrap();
+        assert_eq!(hits.len(), 1);
     }
 
     #[test]

@@ -17,12 +17,6 @@ impl Agent {
         mut stream: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>,
     ) -> Result<AgentResult, AgentError> {
         let mut all_messages: Vec<AgentMessage> = Vec::new();
-        let mut state_messages = self.in_flight_llm_messages.take().unwrap_or_default();
-        let mut checkpoint_messages = self
-            .in_flight_messages
-            .take()
-            .unwrap_or_else(|| clone_messages(&state_messages));
-        let mut received_full_context = false;
         let mut stop_reason = StopReason::Stop;
         let mut usage = Usage::default();
         let mut cost = crate::types::Cost::default();
@@ -53,21 +47,16 @@ impl Agent {
                         error = Some(err.clone());
                     }
                     let assistant_llm = LlmMessage::Assistant(assistant_message);
-                    state_messages.push(AgentMessage::Llm(assistant_llm.clone()));
-                    checkpoint_messages.push(AgentMessage::Llm(assistant_llm.clone()));
-                    // Also write the completed turn back to observable state
-                    // so that history is not lost if this future is dropped
-                    // before completion (e.g. a `select!` timeout). The final
-                    // assignment below replaces `state.messages` wholesale,
-                    // so these incremental pushes never duplicate.
+                    // Write the completed turn back to observable state so
+                    // that history is not lost if this future is dropped
+                    // before completion (e.g. a `select!` timeout). The
+                    // `AgentEnd` arm below replaces `state.messages`
+                    // wholesale, so these incremental pushes never duplicate.
                     self.state
                         .messages
                         .push(AgentMessage::Llm(assistant_llm.clone()));
                     all_messages.push(AgentMessage::Llm(assistant_llm));
                     for tr in tool_results {
-                        state_messages.push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
-                        checkpoint_messages
-                            .push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
                         self.state
                             .messages
                             .push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
@@ -77,20 +66,18 @@ impl Agent {
                 AgentEvent::AgentEnd { messages } => match Arc::try_unwrap(messages) {
                     Ok(returned) => {
                         self.state.messages = returned;
-                        received_full_context = true;
                     }
                     Err(messages) => {
                         self.state.messages = clone_messages(messages.as_ref());
-                        received_full_context = true;
                     }
                 },
                 _ => {}
             }
         }
 
-        if !received_full_context {
-            self.state.messages = checkpoint_messages;
-        }
+        // If the stream ended without `AgentEnd` (channel closed early),
+        // `state.messages` already holds the pre-run snapshot plus every
+        // turn written back above — nothing to restore.
         self.state.is_running = false;
         self.loop_active.store(false, Ordering::Release);
         self.pending_message_snapshot.clear();
@@ -119,27 +106,17 @@ impl Agent {
                 tool_results,
                 ..
             } => {
-                let msgs = self.in_flight_llm_messages.get_or_insert_with(Vec::new);
-                msgs.push(AgentMessage::Llm(LlmMessage::Assistant(
-                    assistant_message.clone(),
-                )));
-                let checkpoint_msgs = self.in_flight_messages.get_or_insert_with(Vec::new);
-                checkpoint_msgs.push(AgentMessage::Llm(LlmMessage::Assistant(
-                    assistant_message.clone(),
-                )));
-                // Also write the completed turn back to observable state so
-                // that dropping the stream before `AgentEnd` keeps every turn
-                // the host already processed. The `AgentEnd` arm below
-                // replaces `state.messages` wholesale, so these incremental
-                // pushes never duplicate.
+                // Write the completed turn back to observable state so that
+                // dropping the stream before `AgentEnd` keeps every turn the
+                // host already processed. The `AgentEnd` arm below replaces
+                // `state.messages` wholesale, so these incremental pushes
+                // never duplicate.
                 self.state
                     .messages
                     .push(AgentMessage::Llm(LlmMessage::Assistant(
                         assistant_message.clone(),
                     )));
                 for tr in tool_results {
-                    msgs.push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
-                    checkpoint_msgs.push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
                     self.state
                         .messages
                         .push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
@@ -151,8 +128,6 @@ impl Agent {
             }
             AgentEvent::AgentEnd { messages } => {
                 self.state.messages = clone_messages(messages.as_ref());
-                self.in_flight_llm_messages = None;
-                self.in_flight_messages = None;
                 self.pending_message_snapshot.clear();
                 self.loop_context_snapshot.clear();
                 // Preserve terminal error — do not clear self.state.error.

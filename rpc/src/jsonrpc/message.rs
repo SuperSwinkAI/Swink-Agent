@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 // ─── RequestId ────────────────────────────────────────────────────────────────
 
 /// A JSON-RPC 2.0 request identifier — either a number or a string.
-// Frozen by design: the id domain is fixed by the JSON-RPC 2.0 spec (number | string).
+///
+/// Deliberately exhaustive (never `#[non_exhaustive]`): the id domain is
+/// fixed by the JSON-RPC 2.0 specification as number | string, so it is safe
+/// to construct and match on this enum exhaustively.
 #[allow(clippy::exhaustive_enums)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -26,7 +29,11 @@ impl std::fmt::Display for RequestId {
 // ─── RpcError ─────────────────────────────────────────────────────────────────
 
 /// A JSON-RPC 2.0 error object.
-// Frozen by design: the spec error object shape (code/message/data) is fixed.
+///
+/// Deliberately exhaustive (never `#[non_exhaustive]`): the error object
+/// shape (`code` / `message` / `data`) is fixed by the JSON-RPC 2.0
+/// specification, so it is safe to construct this struct literally and to
+/// destructure all of its fields.
 #[allow(clippy::exhaustive_structs)]
 #[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
 #[error("JSON-RPC error {code}: {message}")]
@@ -59,6 +66,8 @@ impl RpcError {
     pub const DISCONNECTED: i64 = -32097;
     /// Application: Transport not available on this platform.
     pub const UNAVAILABLE: i64 = -32096;
+    /// Application: Request timed out waiting for a response.
+    pub const TIMEOUT: i64 = -32095;
 
     pub fn parse_error(msg: impl Into<String>) -> Self {
         Self {
@@ -123,6 +132,14 @@ impl RpcError {
             data: None,
         }
     }
+
+    pub fn timeout() -> Self {
+        Self {
+            code: Self::TIMEOUT,
+            message: "request timed out".into(),
+            data: None,
+        }
+    }
 }
 
 // ─── RawMessage ───────────────────────────────────────────────────────────────
@@ -130,7 +147,11 @@ impl RpcError {
 /// A flat JSON-RPC 2.0 message envelope used for both serialization and
 /// deserialization. Classification (request / response / notification) is
 /// determined by which optional fields are present.
-// Frozen by design: the spec envelope shape (jsonrpc/id/method/params/result/error) is fixed.
+///
+/// Deliberately exhaustive (never `#[non_exhaustive]`): the envelope shape
+/// (`jsonrpc` / `id` / `method` / `params` / `result` / `error`) is fixed by
+/// the JSON-RPC 2.0 specification, so it is safe to construct this struct
+/// literally and to destructure all of its fields.
 #[allow(clippy::exhaustive_structs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawMessage {
@@ -212,8 +233,11 @@ impl RawMessage {
 }
 
 /// Logical classification of a [`RawMessage`].
-// Frozen by design: a complete classification of a spec envelope
-// (Request/Notification/Response/Invalid); no other shape exists.
+///
+/// Deliberately exhaustive (never `#[non_exhaustive]`): this is a complete
+/// classification of a JSON-RPC 2.0 envelope — request, notification,
+/// response, or invalid; no other shape exists in the spec — so it is safe
+/// to match on this enum exhaustively.
 #[allow(clippy::exhaustive_enums)]
 #[derive(Debug)]
 pub enum MessageKind<'a> {

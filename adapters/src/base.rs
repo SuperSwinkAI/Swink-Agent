@@ -136,6 +136,20 @@ pub fn cancelled_error(message: impl Into<String>) -> swink_agent::AssistantMess
     }
 }
 
+/// If `started` is false, mark it true and prefix `event` with a synthetic
+/// `Start` (via [`pre_stream_error`]); otherwise return `event` unprefixed.
+#[must_use]
+pub fn prefix_start_if_unstarted(
+    event: swink_agent::AssistantMessageEvent,
+    started: &mut bool,
+) -> Vec<swink_agent::AssistantMessageEvent> {
+    if *started {
+        return vec![event];
+    }
+    *started = true;
+    Vec::from(pre_stream_error(event))
+}
+
 /// Ensure a process-wide default rustls crypto provider is installed.
 ///
 /// The workspace builds reqwest with `rustls-no-provider` so that the

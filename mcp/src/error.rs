@@ -12,7 +12,11 @@ pub enum McpError {
         source: std::io::Error,
     },
     /// Failed to connect to MCP server.
-    ConnectionFailed { server: String, reason: String },
+    ConnectionFailed {
+        server: String,
+        reason: String,
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    },
     /// Tool name collision detected across servers.
     ToolNameCollision {
         name: String,
@@ -24,10 +28,12 @@ pub enum McpError {
         server: String,
         tool: String,
         reason: String,
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
     /// MCP protocol error (JSON-RPC level).
     ProtocolError {
         server: String,
+        context: &'static str,
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 }
@@ -38,7 +44,7 @@ impl fmt::Display for McpError {
             Self::SpawnFailed { server, source } => {
                 write!(f, "failed to spawn MCP server '{server}': {source}")
             }
-            Self::ConnectionFailed { server, reason } => {
+            Self::ConnectionFailed { server, reason, .. } => {
                 write!(f, "failed to connect to MCP server '{server}': {reason}")
             }
             Self::ToolNameCollision {
@@ -55,14 +61,22 @@ impl fmt::Display for McpError {
                 server,
                 tool,
                 reason,
+                ..
             } => {
                 write!(
                     f,
                     "tool call '{tool}' failed on MCP server '{server}': {reason}"
                 )
             }
-            Self::ProtocolError { server, source } => {
-                write!(f, "protocol error with MCP server '{server}': {source}")
+            Self::ProtocolError {
+                server,
+                context,
+                source,
+            } => {
+                write!(
+                    f,
+                    "protocol error with MCP server '{server}' during {context}: {source}"
+                )
             }
         }
     }
@@ -73,18 +87,10 @@ impl std::error::Error for McpError {
         match self {
             Self::SpawnFailed { source, .. } => Some(source),
             Self::ProtocolError { source, .. } => Some(source.as_ref()),
-            Self::ConnectionFailed { .. }
-            | Self::ToolNameCollision { .. }
-            | Self::ToolCallFailed { .. } => None,
-        }
-    }
-}
-
-impl From<std::io::Error> for McpError {
-    fn from(err: std::io::Error) -> Self {
-        Self::SpawnFailed {
-            server: String::new(),
-            source: err,
+            Self::ConnectionFailed { source, .. } | Self::ToolCallFailed { source, .. } => source
+                .as_deref()
+                .map(|s| s as &(dyn std::error::Error + 'static)),
+            Self::ToolNameCollision { .. } => None,
         }
     }
 }

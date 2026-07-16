@@ -308,7 +308,7 @@ async fn turn_end_renders_tool_results_with_diff_data_and_trims_old_turns() {
         reason: swink_agent::TurnEndReason::ToolsExecuted,
         snapshot: TurnSnapshot::new(
             20,
-            Arc::new(vec![LlmMessage::Assistant(
+            Arc::new(vec![Arc::new(LlmMessage::Assistant(
                 AssistantMessage::new(
                     vec![ContentBlock::Text {
                         text: "done".to_string(),
@@ -318,7 +318,7 @@ async fn turn_end_renders_tool_results_with_diff_data_and_trims_old_turns() {
                 )
                 .with_stop_reason(StopReason::Stop)
                 .with_timestamp(0),
-            )]),
+            ))]),
             StopReason::Stop,
         ),
     });

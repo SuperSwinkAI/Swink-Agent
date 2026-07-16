@@ -225,7 +225,7 @@ never overwritten:
 - `run_single_turn` (`loop_/turn.rs`) prices before accumulation, covering the
   paths that bypass the streaming layer (overflow recovery, abort messages). This
   is what makes the priced cost reach `PolicyContext::accumulated_cost` — and
-  therefore `BudgetPolicy::max_cost` — as well as turn metrics, the context
+  therefore `BudgetPolicy::with_max_cost` — as well as turn metrics, the context
   history, and the `TurnEnd` event.
 
 [`price_assistant_message_with`]: https://docs.rs/swink-agent/latest/swink_agent/fn.price_assistant_message_with.html

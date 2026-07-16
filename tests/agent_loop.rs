@@ -2063,6 +2063,55 @@ async fn turn_snapshot_accumulates_across_tool_turns() {
 }
 
 #[tokio::test]
+async fn turn_snapshots_share_message_arcs_across_turns() {
+    // Snapshot construction must not deep-copy the whole history at every
+    // turn boundary: messages captured by an earlier `TurnEnd` snapshot are
+    // reused by later snapshots as `Arc` clones (pointer-equal), so per-turn
+    // snapshot cost is proportional to the new messages only.
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events("tc_1", "my_tool", "{}"),
+        text_only_events("Done!"),
+    ]));
+
+    let tool = Arc::new(MockTool::new("my_tool"));
+    let mut config = default_config(stream_fn);
+    config.tools = vec![tool];
+
+    let events = collect_events(agent_loop(
+        vec![common::user_msg("do something")],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    let snapshots: Vec<TurnSnapshot> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::TurnEnd { snapshot, .. } => Some(snapshot.clone()),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(snapshots.len(), 2, "should have two TurnEnd events");
+    assert!(
+        snapshots[1].messages.len() > snapshots[0].messages.len(),
+        "second snapshot should extend the first"
+    );
+    for (i, (first, second)) in snapshots[0]
+        .messages
+        .iter()
+        .zip(snapshots[1].messages.iter())
+        .enumerate()
+    {
+        assert!(
+            Arc::ptr_eq(first, second),
+            "snapshot message {i} should be shared between turns, not deep-copied"
+        );
+    }
+}
+
+#[tokio::test]
 async fn follow_up_turn_after_no_tool_turn_advances_turn_index() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![
         text_only_events("first response"),

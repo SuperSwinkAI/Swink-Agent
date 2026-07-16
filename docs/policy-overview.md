@@ -68,10 +68,10 @@ The library ships anything-goes: no policies run unless enabled. Deployments tha
 use swink_agent_policies::RecommendedPolicies;
 
 let options = RecommendedPolicies::builder()
-    .max_cost(10.0)                       // stop at $10 total spend (default)
-    .max_turns(50)                        // stop after 50 turns (default)
-    .sandbox_root("/srv/agent-workspace") // restrict file tools (default: cwd)
-    .deny_tools(["bash"])                 // block shell access (default)
+    .with_max_cost(10.0)                       // stop at $10 total spend (default)
+    .with_max_turns(50)                        // stop after 50 turns (default)
+    .with_sandbox_root("/srv/agent-workspace") // restrict file tools (default: cwd)
+    .with_deny_tools(["bash"])                 // block shell access (default)
     .apply(options);
 ```
 

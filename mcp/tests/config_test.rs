@@ -32,7 +32,7 @@ fn server_config_construction() {
 fn sse_transport_construction() {
     let config = McpServerConfig::new(
         "remote",
-        McpTransport::Sse {
+        McpTransport::StreamableHttp {
             url: "http://localhost:8080/sse".into(),
             bearer_token: Some("secret".into()),
             bearer_auth: None,
@@ -50,7 +50,7 @@ fn sse_transport_deserialization_defaults_headers() {
     let json = r#"{
         "name": "remote",
         "transport": {
-            "type": "sse",
+            "type": "streamable_http",
             "url": "http://localhost:8080/sse",
             "bearer_token": "secret"
         },
@@ -66,7 +66,7 @@ fn sse_transport_deserialization_defaults_headers() {
     assert_eq!(config.discovery_timeout_ms, Some(500));
 
     match config.transport {
-        McpTransport::Sse {
+        McpTransport::StreamableHttp {
             url,
             bearer_token,
             bearer_auth,
@@ -151,7 +151,7 @@ fn config_serialization_roundtrip() {
 fn sse_config_serialization_roundtrip_preserves_headers() {
     let config = McpServerConfig::new(
         "remote",
-        McpTransport::Sse {
+        McpTransport::StreamableHttp {
             url: "https://example.com/mcp".into(),
             bearer_token: Some("secret".into()),
             bearer_auth: Some(SseBearerAuth::new("mcp-sse", CredentialType::OAuth2)),
@@ -170,7 +170,7 @@ fn sse_config_serialization_roundtrip_preserves_headers() {
     let roundtrip: McpServerConfig = serde_json::from_str(&json).expect("deserialize");
 
     match roundtrip.transport {
-        McpTransport::Sse {
+        McpTransport::StreamableHttp {
             url,
             bearer_token,
             bearer_auth,

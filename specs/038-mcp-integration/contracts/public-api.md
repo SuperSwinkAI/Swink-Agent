@@ -51,8 +51,8 @@ pub enum McpTransport {
         args: Vec<String>,
         env: HashMap<String, String>,
     },
-    /// HTTP Server-Sent Events.
-    Sse {
+    /// MCP Streamable HTTP transport.
+    StreamableHttp {
         url: String,
         bearer_token: Option<String>,
         bearer_auth: Option<SseBearerAuth>,
@@ -145,17 +145,31 @@ let agent = Agent::new(/* stream_fn, options with tools */);
 
 ```rust
 /// Errors from MCP operations.
+#[non_exhaustive]
 pub enum McpError {
     /// Failed to spawn subprocess for stdio transport.
     SpawnFailed { server: String, source: std::io::Error },
     /// Failed to connect to MCP server.
-    ConnectionFailed { server: String, reason: String },
+    ConnectionFailed {
+        server: String,
+        reason: String,
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    },
     /// Tool name collision detected across servers.
     ToolNameCollision { name: String, server_a: String, server_b: String },
     /// MCP server returned an error during tool call.
-    ToolCallFailed { server: String, tool: String, reason: String },
+    ToolCallFailed {
+        server: String,
+        tool: String,
+        reason: String,
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    },
     /// MCP protocol error (JSON-RPC level).
-    ProtocolError { server: String, source: Box<dyn std::error::Error + Send + Sync> },
+    ProtocolError {
+        server: String,
+        context: &'static str,
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 }
 ```
 

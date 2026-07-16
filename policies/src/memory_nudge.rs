@@ -40,7 +40,8 @@ use swink_agent::{
 
 /// The category of save-worthy content detected by [`MemoryNudgePolicy`].
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MemoryNudgeCategory {
     /// A user correction — the user (or assistant relaying a correction) clarifies
     /// that a previous assumption, approach, or fact was wrong.
@@ -81,9 +82,10 @@ impl MemoryNudgeCategory {
 /// A structured payload emitted when save-worthy content is detected in a turn.
 ///
 /// Serialized as JSON inside a `ContentBlock::Extension { type_name: "memory_nudge" }`.
-/// Callers should deserialize the `data` field to recover this struct.
+/// Callers should deserialize the `data` field to recover this struct, e.g. via
+/// `serde_json::from_value::<MemoryNudge>(data)`.
 #[non_exhaustive]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MemoryNudge {
     /// Which category of save-worthy content was detected.
     pub category: MemoryNudgeCategory,
@@ -96,14 +98,39 @@ pub struct MemoryNudge {
 }
 
 impl MemoryNudge {
+    /// Create a `MemoryNudge` from its parts.
+    ///
+    /// `summary` should be a short excerpt (≤ 200 characters) of the detected
+    /// content and `confidence` a heuristic score in `[0.0, 1.0]`; neither is
+    /// clamped here — [`MemoryNudgePolicy`] truncates and scores before
+    /// constructing.
+    #[must_use]
+    pub fn new(
+        category: MemoryNudgeCategory,
+        summary: impl Into<String>,
+        confidence: f32,
+        turn_number: usize,
+    ) -> Self {
+        Self {
+            category,
+            summary: summary.into(),
+            confidence,
+            turn_number,
+        }
+    }
+
     /// Serialize `self` to a [`serde_json::Value`] for embedding in a content block.
+    ///
+    /// The output round-trips through [`serde_json::from_value`] back into a
+    /// `MemoryNudge`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if serialization fails, which cannot happen for this struct's
+    /// field types.
+    #[must_use]
     pub fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
-            "category": self.category.as_str(),
-            "summary": self.summary,
-            "confidence": self.confidence,
-            "turn_number": self.turn_number,
-        })
+        serde_json::to_value(self).expect("MemoryNudge serializes to JSON")
     }
 }
 
@@ -309,12 +336,12 @@ fn nudge_message(
     confidence: f32,
     turn_number: usize,
 ) -> AgentMessage {
-    let nudge = MemoryNudge {
+    let nudge = MemoryNudge::new(
         category,
-        summary: truncate_summary(summary, 200),
+        truncate_summary(summary, 200),
         confidence,
         turn_number,
-    };
+    );
     let data = nudge.to_json();
     // Embed the nudge as an extension block inside a user message so it can
     // be stored in the message history without being forwarded to the LLM
@@ -633,6 +660,40 @@ mod tests {
         assert_eq!(MemoryNudgeCategory::ExplicitSave.as_str(), "explicit_save");
         assert_eq!(MemoryNudgeCategory::Decision.as_str(), "decision");
         assert_eq!(MemoryNudgeCategory::Preference.as_str(), "preference");
+    }
+
+    #[test]
+    fn memory_nudge_round_trips_through_extension_data() {
+        // The documented contract: the `data` value embedded in the extension
+        // block deserializes back into a `MemoryNudge`.
+        let nudge = MemoryNudge::new(
+            MemoryNudgeCategory::ExplicitSave,
+            "Remember this: always validate input.",
+            0.95,
+            7,
+        );
+        let data = nudge.to_json();
+        assert_eq!(data["category"], "explicit_save");
+
+        let recovered: MemoryNudge =
+            serde_json::from_value(data).expect("extension data must deserialize");
+        assert_eq!(recovered.category, MemoryNudgeCategory::ExplicitSave);
+        assert_eq!(recovered.summary, nudge.summary);
+        assert!((recovered.confidence - nudge.confidence).abs() < f32::EPSILON);
+        assert_eq!(recovered.turn_number, 7);
+    }
+
+    #[test]
+    fn category_serde_names_match_as_str() {
+        for category in [
+            MemoryNudgeCategory::Correction,
+            MemoryNudgeCategory::ExplicitSave,
+            MemoryNudgeCategory::Decision,
+            MemoryNudgeCategory::Preference,
+        ] {
+            let json = serde_json::to_value(&category).unwrap();
+            assert_eq!(json, category.as_str());
+        }
     }
 
     #[test]

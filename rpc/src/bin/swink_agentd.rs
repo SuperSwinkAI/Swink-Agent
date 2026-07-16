@@ -63,11 +63,11 @@ mod unix_main {
             DEFAULT_SYSTEM_PROMPT,
         );
 
-        let factory = move || -> AgentOptions {
+        let factory = move || -> Result<AgentOptions, String> {
             let connection = build_remote_connection_for_model(&model)
-                .expect("failed to build model connection — check your API key env var");
+                .map_err(|e| format!("failed to build model connection: {e}"))?;
             let connections = ModelConnections::builder().primary(connection).build();
-            AgentOptions::from_connections(&system_prompt, connections).with_default_tools()
+            Ok(AgentOptions::from_connections(&system_prompt, connections).with_default_tools())
         };
 
         let server = if cli.force {
