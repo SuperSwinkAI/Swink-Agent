@@ -33,6 +33,7 @@ impl fmt::Display for PipelineId {
 // ─── MergeStrategy ──────────────────────────────────────────────────────────
 
 /// Controls how parallel branch outputs are combined.
+#[non_exhaustive]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum MergeStrategy {
     /// Join all outputs in declaration order with a separator.
@@ -48,6 +49,7 @@ pub enum MergeStrategy {
 // ─── ExitCondition ──────────────────────────────────────────────────────────
 
 /// Controls when a loop pipeline terminates.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub enum ExitCondition {
     /// Exit when the body agent invokes the named tool.
@@ -121,6 +123,7 @@ impl<'de> Deserialize<'de> for ExitCondition {
 // ─── Pipeline ───────────────────────────────────────────────────────────────
 
 /// A pipeline definition describing how to compose multiple agents.
+#[non_exhaustive]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Pipeline {
