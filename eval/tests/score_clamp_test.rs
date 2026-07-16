@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 
-use swink_agent::{Cost, ModelSpec, StopReason, Usage};
+use swink_agent::{ModelSpec, StopReason};
 use swink_agent_eval::{
     CorrectnessEvaluator, Detail, DetailBuffer, EvalCase, Evaluator, Invocation, JudgeClient,
     JudgeEvaluatorConfig, JudgeRegistry, JudgeVerdict, MockJudge,
@@ -27,50 +27,18 @@ fn config_with(judge: Arc<dyn JudgeClient>) -> JudgeEvaluatorConfig {
 }
 
 fn case() -> EvalCase {
-    EvalCase {
-        id: "clamp".into(),
-        name: "clamp".into(),
-        description: None,
-        system_prompt: "agent".into(),
-        user_messages: vec!["q".into()],
-        expected_trajectory: None,
-        expected_response: None,
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+    EvalCase::new("clamp", "clamp", "agent", vec!["q".into()])
 }
 
 fn invocation_with(response: &str) -> Invocation {
     use std::time::Duration;
-    Invocation {
-        turns: vec![],
-        total_usage: Usage::default(),
-        total_cost: Cost::default(),
-        total_duration: Duration::from_millis(1),
-        final_response: Some(response.into()),
-        stop_reason: StopReason::Stop,
-        model: ModelSpec::new("t", "m"),
-    }
+    Invocation::new(StopReason::Stop, ModelSpec::new("t", "m"))
+        .with_total_duration(Duration::from_millis(1))
+        .with_final_response(response)
 }
 
 fn verdict(score: f64) -> JudgeVerdict {
-    JudgeVerdict {
-        score,
-        pass: true,
-        reason: Some("ok".into()),
-        label: None,
-        cost: None,
-    }
+    JudgeVerdict::new(score, true).with_reason("ok")
 }
 
 fn first_clamp(details: Option<&str>) -> Option<(f64, f64)> {

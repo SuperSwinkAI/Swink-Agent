@@ -308,13 +308,10 @@ pub fn parse_verdict_text(text: &str) -> Result<JudgeVerdict, JudgeError> {
         .and_then(serde_json::Value::as_str)
         .map(str::to_string);
 
-    Ok(JudgeVerdict {
-        score: score.clamp(0.0, 1.0),
-        pass,
-        reason,
-        label,
-        cost: None,
-    })
+    let mut verdict = JudgeVerdict::new(score.clamp(0.0, 1.0), pass);
+    verdict.reason = reason;
+    verdict.label = label;
+    Ok(verdict)
 }
 
 fn strip_code_fence(text: &str) -> &str {
@@ -343,13 +340,7 @@ mod tests {
         fn judge<'a>(&'a self, _prompt: &'a str) -> swink_agent_eval::JudgeFuture<'a> {
             Box::pin(async move {
                 self.calls.fetch_add(1, Ordering::SeqCst);
-                Ok(JudgeVerdict {
-                    score: 1.0,
-                    pass: true,
-                    reason: None,
-                    label: None,
-                    cost: None,
-                })
+                Ok(JudgeVerdict::new(1.0, true))
             })
         }
     }
@@ -377,16 +368,8 @@ mod tests {
 
     #[test]
     fn block_on_judge_owns_runtime_without_ambient_tokio() {
-        let result = block_on_judge(async {
-            Ok(JudgeVerdict {
-                score: 0.7,
-                pass: true,
-                reason: Some("ok".to_string()),
-                label: None,
-                cost: None,
-            })
-        })
-        .expect("blocking helper should build its own runtime");
+        let result = block_on_judge(async { Ok(JudgeVerdict::new(0.7, true).with_reason("ok")) })
+            .expect("blocking helper should build its own runtime");
 
         assert!(result.pass);
         assert!((result.score - 0.7).abs() < f64::EPSILON);
@@ -400,16 +383,8 @@ mod tests {
             .expect("current-thread runtime");
 
         let result = runtime.block_on(async {
-            block_on_judge(async {
-                Ok(JudgeVerdict {
-                    score: 1.0,
-                    pass: true,
-                    reason: None,
-                    label: None,
-                    cost: None,
-                })
-            })
-            .expect("current-thread runtime should delegate to an owned runtime")
+            block_on_judge(async { Ok(JudgeVerdict::new(1.0, true)) })
+                .expect("current-thread runtime should delegate to an owned runtime")
         });
 
         assert!(result.pass);
@@ -455,13 +430,7 @@ mod tests {
         cancel.cancel();
 
         let result = retry_with_cancel(&policy, &cancel, is_retryable, || async {
-            Ok(JudgeVerdict {
-                score: 1.0,
-                pass: true,
-                reason: None,
-                label: None,
-                cost: None,
-            })
+            Ok(JudgeVerdict::new(1.0, true))
         })
         .await;
 

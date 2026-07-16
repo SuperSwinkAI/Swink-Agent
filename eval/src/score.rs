@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 /// Each evaluator produces a `Score` for its metric. The threshold is
 /// evaluator-specific, allowing different metrics to have different
 /// pass/fail criteria.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Score {
     /// The numeric score, clamped to `[0.0, 1.0]`.
@@ -66,6 +67,7 @@ impl Default for Score {
 }
 
 /// Binary pass/fail outcome derived from a [`Score`].
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Verdict {

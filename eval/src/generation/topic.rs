@@ -15,12 +15,24 @@ use serde::{Deserialize, Serialize};
 use crate::judge::{JudgeClient, JudgeError};
 
 /// One topic plus the number of cases to generate under it.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TopicSlot {
     /// Free-form topic label.
     pub topic: String,
     /// Number of cases the generator should produce for this topic.
     pub case_count: u32,
+}
+
+impl TopicSlot {
+    /// Construct a topic slot with the given case count.
+    #[must_use]
+    pub fn new(topic: impl Into<String>, case_count: u32) -> Self {
+        Self {
+            topic: topic.into(),
+            case_count,
+        }
+    }
 }
 
 /// Plans diverse topics for an upcoming generation request.

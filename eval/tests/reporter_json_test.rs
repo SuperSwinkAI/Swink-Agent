@@ -21,42 +21,36 @@ const SCHEMA_JSON: &str =
     include_str!("../../specs/043-evals-adv-features/contracts/eval-result.schema.json");
 
 fn sample_result() -> EvalSetResult {
-    let case = EvalCaseResult {
-        case_id: "case_alpha".into(),
-        invocation: mock_invocation(&[], Some("ok"), 0.01, 120),
-        metric_results: vec![
-            EvalMetricResult {
-                evaluator_name: "helpfulness".into(),
-                score: Score::new(0.82, 0.5),
-                details: Some("looks good".into()),
-            },
-            EvalMetricResult {
-                evaluator_name: "correctness".into(),
-                score: Score::new(0.91, 0.6),
-                details: None,
-            },
-        ],
-        verdict: Verdict::Pass,
-    };
-    EvalSetResult {
-        eval_set_id: "demo-set".into(),
-        case_results: vec![case],
-        summary: EvalSummary {
-            total_cases: 1,
-            passed: 1,
-            failed: 0,
-            total_cost: Cost::default()
-                .with_input(0.004)
-                .with_output(0.006)
-                .with_total(0.01),
-            total_usage: Usage::default()
-                .with_input(60)
-                .with_output(60)
-                .with_total(120),
-            total_duration: Duration::from_millis(150),
-        },
-        timestamp: 1_700_000_000,
-    }
+    let case = EvalCaseResult::new(
+        "case_alpha",
+        mock_invocation(&[], Some("ok"), 0.01, 120),
+        Verdict::Pass,
+    )
+    .with_metric_results(vec![
+        EvalMetricResult::new("helpfulness", Score::new(0.82, 0.5)).with_details("looks good"),
+        EvalMetricResult::new("correctness", Score::new(0.91, 0.6)),
+    ]);
+    EvalSetResult::new(
+        "demo-set",
+        vec![case],
+        EvalSummary::default()
+            .with_total_cases(1)
+            .with_passed(1)
+            .with_total_cost(
+                Cost::default()
+                    .with_input(0.004)
+                    .with_output(0.006)
+                    .with_total(0.01),
+            )
+            .with_total_usage(
+                Usage::default()
+                    .with_input(60)
+                    .with_output(60)
+                    .with_total(120),
+            )
+            .with_total_duration(Duration::from_millis(150)),
+        1_700_000_000,
+    )
 }
 
 fn render(reporter: JsonReporter, result: &EvalSetResult) -> (PathBuf, Vec<u8>) {
@@ -160,19 +154,7 @@ fn json_renders_are_deterministic() {
 
 #[test]
 fn json_artifact_validates_empty_case_set() {
-    let empty = EvalSetResult {
-        eval_set_id: "empty".into(),
-        case_results: vec![],
-        summary: EvalSummary {
-            total_cases: 0,
-            passed: 0,
-            failed: 0,
-            total_cost: Cost::default(),
-            total_usage: Usage::default(),
-            total_duration: Duration::ZERO,
-        },
-        timestamp: 0,
-    };
+    let empty = EvalSetResult::new("empty", vec![], EvalSummary::default(), 0);
     let (_, bytes) = render(JsonReporter::new(), &empty);
     let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let schema = schema_value();

@@ -28,6 +28,7 @@ use super::{Reporter, ReporterError, ReporterOutput};
 /// The reporter is a zero-sized struct because it holds no configuration:
 /// the rendering is deterministic and produces the same bytes for a given
 /// result regardless of terminal capability.
+#[non_exhaustive]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ConsoleReporter;
 

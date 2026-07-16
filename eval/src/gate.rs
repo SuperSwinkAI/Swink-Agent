@@ -11,6 +11,7 @@ use crate::types::EvalSetResult;
 /// Serde-ready so consumers (notably the `swink-eval gate` subcommand)
 /// can load thresholds from a YAML/JSON file without re-declaring the
 /// shape.
+#[non_exhaustive]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct GateConfig {
@@ -64,6 +65,7 @@ impl GateConfig {
 }
 
 /// Result of a CI/CD gate check.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct GateResult {
     /// Whether the gate check passed.
@@ -75,6 +77,16 @@ pub struct GateResult {
 }
 
 impl GateResult {
+    /// Create a gate result from its passed flag, exit code, and summary.
+    #[must_use]
+    pub fn new(passed: bool, exit_code: i32, summary: impl Into<String>) -> Self {
+        Self {
+            passed,
+            exit_code,
+            summary: summary.into(),
+        }
+    }
+
     /// Exit the process with this result's exit code.
     pub fn exit(&self) -> ! {
         std::process::exit(self.exit_code)

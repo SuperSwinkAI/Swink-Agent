@@ -14,6 +14,7 @@ use std::sync::{
 use crate::judge::{JudgeClient, JudgeError, JudgeVerdict};
 
 /// Descriptive profile of the simulated user (data-model.md §5).
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActorProfile {
     pub name: String,
@@ -52,11 +53,30 @@ impl ActorProfile {
 }
 
 /// One turn produced by the actor simulator.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActorTurn {
     pub message: String,
     /// When present, the actor asserted goal completion via this signal label.
     pub goal_completed: Option<String>,
+}
+
+impl ActorTurn {
+    /// Construct a turn with no goal-completion signal.
+    #[must_use]
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            goal_completed: None,
+        }
+    }
+
+    /// Set the goal-completion signal label.
+    #[must_use]
+    pub fn with_goal_completed(mut self, goal_completed: impl Into<String>) -> Self {
+        self.goal_completed = Some(goal_completed.into());
+        self
+    }
 }
 
 /// Drives a scripted user persona over multiple dialogue turns.

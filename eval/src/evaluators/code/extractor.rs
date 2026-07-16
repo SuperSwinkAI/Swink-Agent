@@ -11,6 +11,7 @@ use std::sync::Arc;
 use crate::judge::JudgeClient;
 
 /// Strategy selector for [`CodeExtractor`].
+#[non_exhaustive]
 #[derive(Clone)]
 pub enum CodeExtractorStrategy {
     /// Match fenced markdown code blocks. When `language` is `Some`, only

@@ -45,15 +45,13 @@ impl Evaluator for CorrectnessEvaluator {
         } else {
             Score::new(0.95, 0.7)
         };
-        Some(EvalMetricResult {
-            evaluator_name: "correctness".to_string(),
-            score,
-            details: if regressed {
-                Some(format!("regression on case `{}`", case.id))
-            } else {
-                None
-            },
-        })
+        let mut metric = EvalMetricResult::new("correctness", score);
+        metric.details = if regressed {
+            Some(format!("regression on case `{}`", case.id))
+        } else {
+            None
+        };
+        Some(metric)
     }
 }
 
@@ -106,14 +104,13 @@ async fn us7_full_run_produces_expected_span_tree() {
         regressed_ids: vec![], // happy path — no regressions
     });
 
-    let set = EvalSet {
-        id: "us7-smoke".into(),
-        name: "US7 smoke".into(),
-        description: None,
-        cases: (0..3)
+    let set = EvalSet::new(
+        "us7-smoke",
+        "US7 smoke",
+        (0..3)
             .map(|i| common::make_case(&format!("case-{i:02}")))
             .collect(),
-    };
+    );
 
     let runner = EvalRunner::new(registry)
         .with_parallelism(2)
@@ -179,14 +176,13 @@ async fn us7_regression_on_known_case_surfaces_as_errored_span() {
         regressed_ids: vec![regressed.clone()],
     });
 
-    let set = EvalSet {
-        id: "us7-regression".into(),
-        name: "US7 regression".into(),
-        description: None,
-        cases: (0..3)
+    let set = EvalSet::new(
+        "us7-regression",
+        "US7 regression",
+        (0..3)
             .map(|i| common::make_case(&format!("case-{i:02}")))
             .collect(),
-    };
+    );
 
     let runner = EvalRunner::new(registry)
         .with_parallelism(2)

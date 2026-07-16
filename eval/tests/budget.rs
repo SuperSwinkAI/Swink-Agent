@@ -19,63 +19,42 @@ use common::{case_with_budget, mock_invocation};
 
 #[test]
 fn passes_within_budget() {
-    let case = case_with_budget(BudgetConstraints {
-        max_cost: Some(1.0),
-        max_input: Some(1000),
-        max_output: None,
-        max_turns: Some(5),
-    });
+    let case = case_with_budget(
+        BudgetConstraints::default()
+            .with_max_cost(1.0)
+            .with_max_input(1000)
+            .with_max_turns(5),
+    );
     let invocation = mock_invocation(&["read"], Some("done"), 0.5, 500);
-    let result = BudgetEvaluator.evaluate(&case, &invocation).unwrap();
+    let result = BudgetEvaluator::new().evaluate(&case, &invocation).unwrap();
     assert_eq!(result.score.verdict(), Verdict::Pass);
 }
 
 #[test]
 fn fails_on_cost_exceeded() {
-    let case = case_with_budget(BudgetConstraints {
-        max_cost: Some(0.001),
-        max_input: None,
-        max_output: None,
-        max_turns: None,
-    });
+    let case = case_with_budget(BudgetConstraints::default().with_max_cost(0.001));
     let invocation = mock_invocation(&["read"], Some("done"), 0.01, 100);
-    let result = BudgetEvaluator.evaluate(&case, &invocation).unwrap();
+    let result = BudgetEvaluator::new().evaluate(&case, &invocation).unwrap();
     assert_eq!(result.score.verdict(), Verdict::Fail);
     assert!(result.details.unwrap().contains("cost"));
 }
 
 #[test]
 fn fails_on_input_exceeded() {
-    let case = case_with_budget(BudgetConstraints {
-        max_cost: None,
-        max_input: Some(50),
-        max_output: None,
-        max_turns: None,
-    });
+    let case = case_with_budget(BudgetConstraints::default().with_max_input(50));
     let invocation = mock_invocation(&["read"], Some("done"), 0.01, 100);
-    let result = BudgetEvaluator.evaluate(&case, &invocation).unwrap();
+    let result = BudgetEvaluator::new().evaluate(&case, &invocation).unwrap();
     assert_eq!(result.score.verdict(), Verdict::Fail);
     assert!(result.details.unwrap().contains("input"));
 }
 
 #[test]
 fn fails_on_output_exceeded() {
-    let case = case_with_budget(BudgetConstraints {
-        max_cost: None,
-        max_input: None,
-        max_output: Some(10),
-        max_turns: None,
-    });
-    let invocation = Invocation {
-        turns: vec![],
-        total_usage: Usage::default().with_output(11).with_total(11),
-        total_cost: Cost::default(),
-        total_duration: Duration::from_secs(1),
-        final_response: None,
-        stop_reason: StopReason::Stop,
-        model: ModelSpec::new("test", "test-model"),
-    };
-    let result = BudgetEvaluator.evaluate(&case, &invocation).unwrap();
+    let case = case_with_budget(BudgetConstraints::default().with_max_output(10));
+    let invocation = Invocation::new(StopReason::Stop, ModelSpec::new("test", "test-model"))
+        .with_total_usage(Usage::default().with_output(11).with_total(11))
+        .with_total_duration(Duration::from_secs(1));
+    let result = BudgetEvaluator::new().evaluate(&case, &invocation).unwrap();
     assert_eq!(result.score.verdict(), Verdict::Fail);
     assert!(result.details.unwrap().contains("output"));
 }
@@ -165,12 +144,7 @@ impl AgentFactory for PolicyAwareFactory {
 async fn budget_policy_stops_multi_turn_run() {
     let factory = PolicyAwareFactory::new();
     let runner = EvalRunner::with_defaults();
-    let case = case_with_budget(BudgetConstraints {
-        max_cost: Some(0.01),
-        max_input: None,
-        max_output: None,
-        max_turns: None,
-    });
+    let case = case_with_budget(BudgetConstraints::default().with_max_cost(0.01));
 
     let result = runner.run_case(&case, &factory).await.unwrap();
 
@@ -180,12 +154,7 @@ async fn budget_policy_stops_multi_turn_run() {
 
 #[test]
 fn budget_constraints_to_policies_none_when_unset() {
-    let constraints = BudgetConstraints {
-        max_cost: None,
-        max_input: None,
-        max_output: None,
-        max_turns: None,
-    };
+    let constraints = BudgetConstraints::default();
     let (budget_policy, max_turns_policy) = constraints.to_policies();
 
     assert!(budget_policy.is_none());

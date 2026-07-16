@@ -200,6 +200,7 @@ safety_evaluator! {
 ///
 /// `Other(String)` lets consumers add custom entity classes (e.g.,
 /// `"MedicalRecordNumber"`) without forking the evaluator.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PIIClass {

@@ -16,6 +16,7 @@ use super::{Reporter, ReporterError, ReporterOutput};
 pub const DEFAULT_ARTIFACT_NAME: &str = "eval-report.html";
 
 /// Self-contained HTML reporter (spec 043 §FR-041).
+#[non_exhaustive]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct HtmlReporter;
 

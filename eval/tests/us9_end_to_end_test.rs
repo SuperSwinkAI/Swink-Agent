@@ -120,7 +120,7 @@ cases:
 fn gate_fails_with_exit_1_when_threshold_unmet() {
     // Build a result where most cases failed, then apply a strict gate.
     use std::time::Duration;
-    use swink_agent::{Cost, ModelSpec, StopReason, Usage};
+    use swink_agent::{ModelSpec, StopReason};
     use swink_agent_eval::{EvalCaseResult, EvalSetResult, EvalSummary, Invocation, Verdict};
 
     let dir = TempDir::new().expect("tempdir");
@@ -128,34 +128,25 @@ fn gate_fails_with_exit_1_when_threshold_unmet() {
     let gate_path = dir.path().join("gate.json");
 
     let failing_cases: Vec<EvalCaseResult> = (0..5)
-        .map(|i| EvalCaseResult {
-            case_id: format!("c{i}"),
-            invocation: Invocation {
-                turns: vec![],
-                total_usage: Usage::default(),
-                total_cost: Cost::default(),
-                total_duration: Duration::from_millis(1),
-                final_response: Some("x".into()),
-                stop_reason: StopReason::Stop,
-                model: ModelSpec::new("t", "m"),
-            },
-            metric_results: vec![],
-            verdict: Verdict::Fail,
+        .map(|i| {
+            EvalCaseResult::new(
+                format!("c{i}"),
+                Invocation::new(StopReason::Stop, ModelSpec::new("t", "m"))
+                    .with_total_duration(Duration::from_millis(1))
+                    .with_final_response("x"),
+                Verdict::Fail,
+            )
         })
         .collect();
-    let result = EvalSetResult {
-        eval_set_id: "us9-fail".into(),
-        summary: EvalSummary {
-            total_cases: 5,
-            passed: 0,
-            failed: 5,
-            total_duration: Duration::from_millis(5),
-            total_cost: Cost::default(),
-            total_usage: Usage::default(),
-        },
-        case_results: failing_cases,
-        timestamp: 0,
-    };
+    let result = EvalSetResult::new(
+        "us9-fail",
+        failing_cases,
+        EvalSummary::default()
+            .with_total_cases(5)
+            .with_failed(5)
+            .with_total_duration(Duration::from_millis(5)),
+        0,
+    );
     fs::write(&result_path, serde_json::to_vec_pretty(&result).unwrap()).unwrap();
     fs::write(
         &gate_path,

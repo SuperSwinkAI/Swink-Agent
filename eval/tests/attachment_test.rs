@@ -15,29 +15,10 @@ impl UrlFilter for AllowAllUrls {
 }
 
 fn base_case(id: &str) -> EvalCase {
-    EvalCase {
-        id: id.to_string(),
-        name: id.to_string(),
-        description: None,
-        system_prompt: String::new(),
-        user_messages: vec!["look at the image".to_string()],
-        expected_trajectory: None,
-        expected_response: Some(ResponseCriteria::Contains {
+    EvalCase::new(id, id, String::new(), vec!["look at the image".to_string()])
+        .with_expected_response(ResponseCriteria::Contains {
             substring: "safe".to_string(),
-        }),
-        expected_assertion: None,
-        expected_interactions: None,
-        few_shot_examples: vec![],
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-        attachments: vec![],
-        session_id: None,
-        expected_environment_state: None,
-        expected_tool_intent: None,
-        semantic_tool_selection: false,
-        state_capture: None,
-    }
+        })
 }
 
 #[tokio::test]
@@ -49,7 +30,7 @@ async fn materializes_path_attachment_relative_to_eval_root() {
 
     let attachment = Attachment::Path(PathBuf::from("fixtures/image.png"));
     let materialized = attachment
-        .materialize(root.path(), &DefaultUrlFilter)
+        .materialize(root.path(), &DefaultUrlFilter::new())
         .await
         .unwrap();
 
@@ -66,7 +47,7 @@ async fn materializes_base64_attachment_with_supported_mime() {
     };
 
     let materialized = attachment
-        .materialize(root.path(), &DefaultUrlFilter)
+        .materialize(root.path(), &DefaultUrlFilter::new())
         .await
         .unwrap();
 
@@ -93,7 +74,7 @@ async fn url_attachment_applies_ssrf_filter() {
     let attachment = Attachment::Url("https://127.0.0.1/image.png".to_string());
 
     let err = attachment
-        .materialize(root.path(), &DefaultUrlFilter)
+        .materialize(root.path(), &DefaultUrlFilter::new())
         .await
         .expect_err("loopback URL should be blocked");
 
@@ -109,7 +90,7 @@ async fn unsupported_mime_is_structured_error() {
     };
 
     let err = attachment
-        .materialize(root.path(), &DefaultUrlFilter)
+        .materialize(root.path(), &DefaultUrlFilter::new())
         .await
         .expect_err("pdf is not a supported multimodal image MIME");
 

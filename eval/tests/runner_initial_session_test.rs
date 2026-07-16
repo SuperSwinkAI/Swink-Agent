@@ -102,12 +102,7 @@ impl AgentFactory for SeedingFactory {
 }
 
 fn eval_set() -> EvalSet {
-    EvalSet {
-        id: "init-suite".into(),
-        name: "init".into(),
-        description: None,
-        cases: vec![common::make_case("c1")],
-    }
+    EvalSet::new("init-suite", "init", vec![common::make_case("c1")])
 }
 
 fn write_initial_session(dir: &TempDir) -> std::path::PathBuf {
@@ -154,10 +149,11 @@ async fn initial_session_is_applied_to_each_created_agent() {
     let path = write_initial_session(&dir);
     let factory = HooklessRecordingFactory::new();
     let observed = Arc::clone(&factory.created_sessions);
-    let set = EvalSet {
-        cases: vec![common::make_case("c1"), common::make_case("c2")],
-        ..eval_set()
-    };
+    let set = EvalSet::new(
+        "init-suite",
+        "init",
+        vec![common::make_case("c1"), common::make_case("c2")],
+    );
 
     let _ = EvalRunner::new(EvaluatorRegistry::new())
         .with_parallelism(2)
@@ -249,10 +245,7 @@ fn initial_session_participates_in_cache_key() {
     let a = TaskResultCacheKey::from_fingerprint(&fp, &FingerprintContext::default());
     let b = TaskResultCacheKey::from_fingerprint(
         &fp,
-        &FingerprintContext {
-            initial_session: Some(serde_json::json!({"g": "hi"})),
-            ..Default::default()
-        },
+        &FingerprintContext::default().with_initial_session(serde_json::json!({"g": "hi"})),
     );
     assert_ne!(a, b);
 }

@@ -56,6 +56,7 @@ pub(crate) mod posix;
 /// On macOS `unshare` is unavailable and the network-off invariant degrades to
 /// "child has no configured provider" — documented as a known limitation in
 /// `specs/043-evals-adv-features/research.md` §R-006.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct SandboxLimits {
     /// Real-time deadline. The parent SIGKILLs the child on expiry.
@@ -82,7 +83,45 @@ impl Default for SandboxLimits {
     }
 }
 
+impl SandboxLimits {
+    /// Override the wall-clock deadline.
+    #[must_use]
+    pub fn with_wall_clock(mut self, wall_clock: Duration) -> Self {
+        self.wall_clock = wall_clock;
+        self
+    }
+
+    /// Override the CPU-seconds ceiling.
+    #[must_use]
+    pub fn with_cpu(mut self, cpu: Duration) -> Self {
+        self.cpu = cpu;
+        self
+    }
+
+    /// Override the address-space ceiling in bytes.
+    #[must_use]
+    pub fn with_memory_bytes(mut self, memory_bytes: u64) -> Self {
+        self.memory_bytes = memory_bytes;
+        self
+    }
+
+    /// Override the open-file-descriptor ceiling.
+    #[must_use]
+    pub fn with_max_open_files(mut self, max_open_files: u64) -> Self {
+        self.max_open_files = max_open_files;
+        self
+    }
+
+    /// Override whether the child may open external network connections.
+    #[must_use]
+    pub fn with_allow_network(mut self, allow_network: bool) -> Self {
+        self.allow_network = allow_network;
+        self
+    }
+}
+
 /// Structured outcome of [`run_sandboxed`].
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct SandboxOutcome {
     /// The child exited with status 0 and no limit was exceeded.
@@ -98,6 +137,46 @@ pub struct SandboxOutcome {
 }
 
 impl SandboxOutcome {
+    /// Construct an outcome with the given success flag; all other fields empty.
+    #[must_use]
+    pub fn new(success: bool) -> Self {
+        Self {
+            success,
+            exit_code: None,
+            signal: None,
+            stderr: String::new(),
+            limit_exceeded: None,
+        }
+    }
+
+    /// Set the raw child exit code.
+    #[must_use]
+    pub fn with_exit_code(mut self, exit_code: i32) -> Self {
+        self.exit_code = Some(exit_code);
+        self
+    }
+
+    /// Set the terminating signal number.
+    #[must_use]
+    pub fn with_signal(mut self, signal: i32) -> Self {
+        self.signal = Some(signal);
+        self
+    }
+
+    /// Set the captured stderr.
+    #[must_use]
+    pub fn with_stderr(mut self, stderr: impl Into<String>) -> Self {
+        self.stderr = stderr.into();
+        self
+    }
+
+    /// Set the exceeded-limit name.
+    #[must_use]
+    pub fn with_limit_exceeded(mut self, limit_exceeded: impl Into<String>) -> Self {
+        self.limit_exceeded = Some(limit_exceeded.into());
+        self
+    }
+
     /// Short label describing the outcome for reporter consumption.
     #[must_use]
     pub fn summary(&self) -> String {
@@ -176,8 +255,17 @@ pub trait SandboxRunner: Send + Sync {
 /// a Rust crate and `cargo run`), but the shell runner keeps the evaluator
 /// useful out of the box and — crucially — self-contained for tests (no
 /// compilers, no `cc`).
+#[non_exhaustive]
 #[derive(Debug, Default, Clone)]
 pub struct ShellRunner;
+
+impl ShellRunner {
+    /// Create a new `ShellRunner`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 impl SandboxRunner for ShellRunner {
     fn command(&self, code: &str, workdir: &std::path::Path) -> std::io::Result<Command> {

@@ -15,12 +15,7 @@ fn all_unique_passes() {
         ("read", serde_json::json!({"file": "a.rs"})),
         ("write", serde_json::json!({"file": "b.rs"})),
     ]]);
-    let case = case_with_budget(BudgetConstraints {
-        max_cost: None,
-        max_input: None,
-        max_output: None,
-        max_turns: None,
-    });
+    let case = case_with_budget(BudgetConstraints::default());
     let result = eval.evaluate(&case, &invocation).unwrap();
     assert_eq!(result.score.verdict(), Verdict::Pass);
     assert!((result.score.value - 1.0).abs() < f64::EPSILON);
@@ -39,12 +34,7 @@ fn duplicates_reduce_score() {
             ("read", serde_json::json!({"file": "a.rs"})),
         ],
     ]);
-    let case = case_with_budget(BudgetConstraints {
-        max_cost: None,
-        max_input: None,
-        max_output: None,
-        max_turns: None,
-    });
+    let case = case_with_budget(BudgetConstraints::default());
     let result = eval.evaluate(&case, &invocation).unwrap();
     // 1 unique / 4 total → dup_ratio = 0.25
     // ideal = max(1, 1) = 1, actual = 2 → step_ratio = 0.5
@@ -58,12 +48,7 @@ fn in_default_registry() {
     let registry = EvaluatorRegistry::with_defaults();
     // Verify the efficiency evaluator is present by running it on a case with tool calls.
     let invocation = mock_invocation_multi_turn(&[&[("read", serde_json::json!({}))]]);
-    let case = case_with_budget(BudgetConstraints {
-        max_cost: None,
-        max_input: None,
-        max_output: None,
-        max_turns: None,
-    });
+    let case = case_with_budget(BudgetConstraints::default());
     let results = registry.evaluate(&case, &invocation);
     let names: Vec<_> = results.iter().map(|r| r.evaluator_name.as_str()).collect();
     assert!(
@@ -82,12 +67,7 @@ fn us3_perfect_efficiency_score_1() {
         ("read", serde_json::json!({"file": "a.rs"})),
         ("write", serde_json::json!({"file": "b.rs"})),
     ]]);
-    let case = case_with_budget(BudgetConstraints {
-        max_cost: None,
-        max_input: None,
-        max_output: None,
-        max_turns: Some(1),
-    });
+    let case = case_with_budget(BudgetConstraints::default().with_max_turns(1));
     let result = eval.evaluate(&case, &invocation).unwrap();
     let repeated = eval.evaluate(&case, &invocation).unwrap();
     assert!(
@@ -112,12 +92,8 @@ fn us3_half_duplicates_double_turns() {
         &[("read", serde_json::json!({"file": "a.rs"}))],
         &[("read", serde_json::json!({"file": "a.rs"}))],
     ]);
-    let case = case_with_budget(BudgetConstraints {
-        max_cost: None,
-        max_input: None,
-        max_output: None,
-        max_turns: Some(1), // ideal = 1, actual = 2
-    });
+    // ideal = 1, actual = 2
+    let case = case_with_budget(BudgetConstraints::default().with_max_turns(1));
     let result = eval.evaluate(&case, &invocation).unwrap();
     // 0.6 * 0.5 + 0.4 * (1/2) = 0.3 + 0.2 = 0.5
     assert!(
@@ -132,12 +108,7 @@ fn us3_half_duplicates_double_turns() {
 fn us3_empty_trajectory_returns_none() {
     let eval = EfficiencyEvaluator::new();
     let invocation = mock_invocation_multi_turn(&[&[]]);
-    let case = case_with_budget(BudgetConstraints {
-        max_cost: None,
-        max_input: None,
-        max_output: None,
-        max_turns: None,
-    });
+    let case = case_with_budget(BudgetConstraints::default());
     assert!(eval.evaluate(&case, &invocation).is_none());
 }
 
@@ -145,12 +116,7 @@ fn us3_empty_trajectory_returns_none() {
 #[test]
 fn us3_more_efficient_scores_higher() {
     let eval = EfficiencyEvaluator::new();
-    let case = case_with_budget(BudgetConstraints {
-        max_cost: None,
-        max_input: None,
-        max_output: None,
-        max_turns: Some(1),
-    });
+    let case = case_with_budget(BudgetConstraints::default().with_max_turns(1));
 
     // Efficient: 1 turn, 2 unique calls
     let efficient = mock_invocation_multi_turn(&[&[
@@ -186,12 +152,7 @@ fn us3_ideal_turns_from_budget() {
     ]);
 
     // With budget max_turns = 2
-    let case = case_with_budget(BudgetConstraints {
-        max_cost: None,
-        max_input: None,
-        max_output: None,
-        max_turns: Some(2),
-    });
+    let case = case_with_budget(BudgetConstraints::default().with_max_turns(2));
     let result = eval.evaluate(&case, &invocation).unwrap();
     // 4 unique / 4 total → dup_ratio = 1.0
     // ideal = 2, actual = 4 → step_ratio = 2/4 = 0.5

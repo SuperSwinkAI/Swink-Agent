@@ -147,7 +147,7 @@ async fn otlp_missing_attribute_surfaces_as_mapping_error() {
     let provider = OtlpHttpTraceProvider::new(server.uri()).expect("build provider");
     let raw = provider.fetch_session("sess-2").await.expect("session");
 
-    let err = OpenInferenceSessionMapper
+    let err = OpenInferenceSessionMapper::new()
         .map(&raw)
         .expect_err("provider attribute missing");
     match err {

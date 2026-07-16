@@ -203,6 +203,7 @@ rag_evaluator! {
 /// [`EmbeddingSimilarityEvaluator`] folds an embedding failure into
 /// `Score::fail()` (FR-021 — the evaluator never crashes on a transport
 /// hiccup).
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum EmbedderError {
     /// Input text was rejected by the embedder (empty, too long, etc.).

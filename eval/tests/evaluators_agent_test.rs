@@ -36,13 +36,7 @@ fn config(judge: Arc<dyn JudgeClient>) -> JudgeEvaluatorConfig {
 }
 
 fn verdict(score: f64, reason: &str) -> JudgeVerdict {
-    JudgeVerdict {
-        score,
-        pass: (0.5..=1.0).contains(&score),
-        reason: Some(reason.to_string()),
-        label: None,
-        cost: None,
-    }
+    JudgeVerdict::new(score, (0.5..=1.0).contains(&score)).with_reason(reason)
 }
 
 fn base_case() -> swink_agent_eval::EvalCase {
@@ -119,10 +113,7 @@ async fn trajectory_accuracy_with_ref_happy_path() {
     )]));
     let evaluator = TrajectoryAccuracyWithRefEvaluator::new(config(Arc::clone(&judge)));
     let mut case = base_case();
-    case.expected_trajectory = Some(vec![ExpectedToolCall {
-        tool_name: "search".to_string(),
-        arguments: None,
-    }]);
+    case.expected_trajectory = Some(vec![ExpectedToolCall::new("search")]);
     let invocation = mock_invocation_with_response(&["search"], "Found the answer.");
 
     let result = evaluator
@@ -159,10 +150,10 @@ async fn task_completion_happy_path() {
     )]));
     let evaluator = TaskCompletionEvaluator::new(config(Arc::clone(&judge)));
     let mut case = base_case();
-    case.expected_assertion = Some(Assertion {
-        description: "The agent should have retrieved the document.".to_string(),
-        kind: AssertionKind::GoalCompleted,
-    });
+    case.expected_assertion = Some(Assertion::new(
+        "The agent should have retrieved the document.",
+        AssertionKind::GoalCompleted,
+    ));
     let invocation = mock_invocation_with_response(&[], "I retrieved the document successfully.");
 
     let result = evaluator
@@ -341,11 +332,11 @@ async fn interactions_happy_path() {
     )]));
     let evaluator = InteractionsEvaluator::new(config(Arc::clone(&judge)));
     let mut case = base_case();
-    case.expected_interactions = Some(vec![InteractionExpectation {
-        from: "orchestrator".to_string(),
-        to: "search_agent".to_string(),
-        description: "Query delegation".to_string(),
-    }]);
+    case.expected_interactions = Some(vec![InteractionExpectation::new(
+        "orchestrator",
+        "search_agent",
+        "Query delegation",
+    )]);
     let invocation = mock_invocation_with_response(&[], "The search agent found results.");
 
     let result = evaluator

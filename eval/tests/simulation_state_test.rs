@@ -10,12 +10,12 @@ use swink_agent_eval::simulation::{StateRegistry, ToolCallRecord, ToolSchema, To
 use swink_agent_eval::testing::MockJudge;
 
 fn record(tool: &str) -> ToolCallRecord {
-    ToolCallRecord {
-        tool: tool.into(),
-        args: serde_json::json!({}),
-        result: serde_json::json!({}),
-        timestamp: SystemTime::now(),
-    }
+    ToolCallRecord::new(
+        tool,
+        serde_json::json!({}),
+        serde_json::json!({}),
+        SystemTime::now(),
+    )
 }
 
 #[test]
@@ -70,13 +70,9 @@ async fn tool_simulator_emits_schema_validation_error_on_bad_response() {
         "properties": {"status": {"type": "string"}},
         "required": ["status"],
     });
-    let judge = Arc::new(MockJudge::with_verdicts(vec![JudgeVerdict {
-        score: 1.0,
-        pass: true,
-        reason: Some("{\"status\": 42}".into()),
-        label: None,
-        cost: None,
-    }]));
+    let judge = Arc::new(MockJudge::with_verdicts(vec![
+        JudgeVerdict::new(1.0, true).with_reason("{\"status\": 42}"),
+    ]));
     let sim = ToolSimulator::new(
         vec![ToolSchema::new("status_check", schema)],
         judge,
@@ -96,13 +92,9 @@ async fn tool_simulator_records_valid_invocations_in_bucket() {
         "properties": {"ok": {"type": "boolean"}},
         "required": ["ok"],
     });
-    let judge = Arc::new(MockJudge::with_verdicts(vec![JudgeVerdict {
-        score: 1.0,
-        pass: true,
-        reason: Some("{\"ok\": true}".into()),
-        label: None,
-        cost: None,
-    }]));
+    let judge = Arc::new(MockJudge::with_verdicts(vec![
+        JudgeVerdict::new(1.0, true).with_reason("{\"ok\": true}"),
+    ]));
     let sim = ToolSimulator::new(vec![ToolSchema::new("probe", schema)], judge, "test-model");
     let out = sim
         .invoke("probe", &serde_json::json!({"q": 1}), "my-bucket")

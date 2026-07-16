@@ -16,7 +16,7 @@ use std::fs;
 use std::process::Command;
 use std::time::Duration;
 
-use swink_agent::{Cost, ModelSpec, StopReason, Usage};
+use swink_agent::{ModelSpec, StopReason};
 use swink_agent_eval::{
     EvalCaseResult, EvalSetResult, EvalSummary, Invocation, JsonReporter, Reporter, ReporterOutput,
     Verdict,
@@ -33,39 +33,31 @@ fn sample_result(pass_rate: f64) -> EvalSetResult {
     let passed = (pass_rate * 10.0).round() as usize;
     let total = 10;
     let case_results: Vec<EvalCaseResult> = (0..total)
-        .map(|i| EvalCaseResult {
-            case_id: format!("case-{i:02}"),
-            invocation: Invocation {
-                turns: vec![],
-                total_usage: Usage::default(),
-                total_cost: Cost::default(),
-                total_duration: Duration::from_millis(1),
-                final_response: Some("ok".into()),
-                stop_reason: StopReason::Stop,
-                model: ModelSpec::new("test", "test-model"),
-            },
-            metric_results: vec![],
-            verdict: if i < passed {
-                Verdict::Pass
-            } else {
-                Verdict::Fail
-            },
+        .map(|i| {
+            EvalCaseResult::new(
+                format!("case-{i:02}"),
+                Invocation::new(StopReason::Stop, ModelSpec::new("test", "test-model"))
+                    .with_total_duration(Duration::from_millis(1))
+                    .with_final_response("ok"),
+                if i < passed {
+                    Verdict::Pass
+                } else {
+                    Verdict::Fail
+                },
+            )
         })
         .collect();
 
-    EvalSetResult {
-        eval_set_id: "cli-test".into(),
-        summary: EvalSummary {
-            total_cases: total,
-            passed,
-            failed: total - passed,
-            total_duration: Duration::from_millis(10),
-            total_cost: Cost::default(),
-            total_usage: Usage::default(),
-        },
+    EvalSetResult::new(
+        "cli-test",
         case_results,
-        timestamp: 0,
-    }
+        EvalSummary::default()
+            .with_total_cases(total)
+            .with_passed(passed)
+            .with_failed(total - passed)
+            .with_total_duration(Duration::from_millis(10)),
+        0,
+    )
 }
 
 fn write_json<T: serde::Serialize>(dir: &TempDir, name: &str, value: &T) -> std::path::PathBuf {

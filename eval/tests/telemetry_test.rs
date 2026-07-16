@@ -64,11 +64,13 @@ impl Evaluator for AlwaysPass {
         _case: &EvalCase,
         _invocation: &swink_agent_eval::Invocation,
     ) -> Option<swink_agent_eval::EvalMetricResult> {
-        Some(swink_agent_eval::EvalMetricResult {
-            evaluator_name: "always_pass".to_string(),
-            score: swink_agent_eval::Score::new(1.0, 0.5),
-            details: Some("ok".into()),
-        })
+        Some(
+            swink_agent_eval::EvalMetricResult::new(
+                "always_pass",
+                swink_agent_eval::Score::new(1.0, 0.5),
+            )
+            .with_details("ok"),
+        )
     }
 }
 
@@ -84,11 +86,13 @@ impl Evaluator for AlwaysFail {
         _case: &EvalCase,
         _invocation: &swink_agent_eval::Invocation,
     ) -> Option<swink_agent_eval::EvalMetricResult> {
-        Some(swink_agent_eval::EvalMetricResult {
-            evaluator_name: "always_fail".to_string(),
-            score: swink_agent_eval::Score::new(0.1, 0.5),
-            details: Some("simulated regression".into()),
-        })
+        Some(
+            swink_agent_eval::EvalMetricResult::new(
+                "always_fail",
+                swink_agent_eval::Score::new(0.1, 0.5),
+            )
+            .with_details("simulated regression"),
+        )
     }
 }
 
@@ -115,12 +119,7 @@ fn attr<'a>(span: &'a SpanData, key: &str) -> Option<&'a opentelemetry::Value> {
 }
 
 fn one_case_set(id: &str) -> EvalSet {
-    EvalSet {
-        id: "set-1".into(),
-        name: "Set One".into(),
-        description: None,
-        cases: vec![common::make_case(id)],
-    }
+    EvalSet::new("set-1", "Set One", vec![common::make_case(id)])
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
