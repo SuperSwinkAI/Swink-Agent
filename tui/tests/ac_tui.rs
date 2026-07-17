@@ -133,8 +133,11 @@ fn display_message_diff_data_defaults_to_none() {
 #[test]
 fn context_gauge_fields_default_to_zero() {
     let app = make_app();
-    assert_eq!(app.context_budget, 0, "budget should start at zero");
-    assert_eq!(app.context_tokens_used, 0, "used should start at zero");
+    assert_eq!(app.usage.context_budget, 0, "budget should start at zero");
+    assert_eq!(
+        app.usage.context_tokens_used, 0,
+        "used should start at zero"
+    );
 }
 
 #[test]
@@ -226,10 +229,10 @@ fn context_gauge_threshold_math() {
 #[test]
 fn context_fields_are_writable() {
     let mut app = make_app();
-    app.context_budget = 200_000;
-    app.context_tokens_used = 150_000;
-    assert_eq!(app.context_budget, 200_000);
-    assert_eq!(app.context_tokens_used, 150_000);
+    app.usage.context_budget = 200_000;
+    app.usage.context_tokens_used = 150_000;
+    assert_eq!(app.usage.context_budget, 200_000);
+    assert_eq!(app.usage.context_tokens_used, 150_000);
 }
 
 // ---------------------------------------------------------------------------
@@ -244,7 +247,7 @@ fn context_fields_are_writable() {
 #[test]
 fn app_starts_in_execute_mode() {
     let app = make_app();
-    assert_eq!(app.operating_mode, OperatingMode::Execute);
+    assert_eq!(app.mode.operating_mode, OperatingMode::Execute);
 }
 
 #[test]
@@ -255,11 +258,11 @@ fn operating_mode_enum_variants_are_distinct() {
 #[test]
 fn operating_mode_field_is_writable() {
     let mut app = make_app();
-    app.operating_mode = OperatingMode::Plan;
-    assert_eq!(app.operating_mode, OperatingMode::Plan);
+    app.mode.operating_mode = OperatingMode::Plan;
+    assert_eq!(app.mode.operating_mode, OperatingMode::Plan);
 
-    app.operating_mode = OperatingMode::Execute;
-    assert_eq!(app.operating_mode, OperatingMode::Execute);
+    app.mode.operating_mode = OperatingMode::Execute;
+    assert_eq!(app.mode.operating_mode, OperatingMode::Execute);
 }
 
 // ---------------------------------------------------------------------------
@@ -314,19 +317,23 @@ fn approval_mode_reflects_installed_agent() {
 #[test]
 fn session_trusted_tools_starts_empty() {
     let app = make_app();
-    assert!(app.session_trusted_tools.is_empty());
+    assert!(app.agent_io.session_trusted_tools.is_empty());
 }
 
 #[test]
 fn session_trusted_tools_tracks_tool_names() {
     let mut app = make_app();
-    app.session_trusted_tools.insert("ReadFile".to_string());
-    app.session_trusted_tools.insert("ListDir".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("ReadFile".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("ListDir".to_string());
 
-    assert!(app.session_trusted_tools.contains("ReadFile"));
-    assert!(app.session_trusted_tools.contains("ListDir"));
+    assert!(app.agent_io.session_trusted_tools.contains("ReadFile"));
+    assert!(app.agent_io.session_trusted_tools.contains("ListDir"));
     assert!(
-        !app.session_trusted_tools.contains("WriteFile"),
+        !app.agent_io.session_trusted_tools.contains("WriteFile"),
         "untrusted tool should not be in the set"
     );
 }
@@ -337,10 +344,12 @@ fn smart_mode_trust_semantics() {
     // Tools NOT in the set require approval prompts.
     // This mirrors the logic in `handle_approval_request`.
     let mut app = make_app();
-    app.session_trusted_tools.insert("ReadFile".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("ReadFile".to_string());
 
-    let trusted = app.session_trusted_tools.contains("ReadFile");
-    let untrusted = app.session_trusted_tools.contains("WriteFile");
+    let trusted = app.agent_io.session_trusted_tools.contains("ReadFile");
+    let untrusted = app.agent_io.session_trusted_tools.contains("WriteFile");
 
     assert!(trusted, "ReadFile should be auto-approved (trusted)");
     assert!(
@@ -356,7 +365,7 @@ fn smart_mode_trust_semantics() {
 #[test]
 fn agent_status_starts_idle() {
     let app = make_app();
-    assert_eq!(app.status, AgentStatus::Idle);
+    assert_eq!(app.agent_io.status, AgentStatus::Idle);
 }
 
 #[test]
@@ -380,17 +389,17 @@ fn agent_status_variants_are_distinct() {
 fn agent_status_field_is_writable() {
     let mut app = make_app();
 
-    app.status = AgentStatus::Running;
-    assert_eq!(app.status, AgentStatus::Running);
+    app.agent_io.status = AgentStatus::Running;
+    assert_eq!(app.agent_io.status, AgentStatus::Running);
 
-    app.status = AgentStatus::Error;
-    assert_eq!(app.status, AgentStatus::Error);
+    app.agent_io.status = AgentStatus::Error;
+    assert_eq!(app.agent_io.status, AgentStatus::Error);
 
-    app.status = AgentStatus::Aborted;
-    assert_eq!(app.status, AgentStatus::Aborted);
+    app.agent_io.status = AgentStatus::Aborted;
+    assert_eq!(app.agent_io.status, AgentStatus::Aborted);
 
-    app.status = AgentStatus::Idle;
-    assert_eq!(app.status, AgentStatus::Idle);
+    app.agent_io.status = AgentStatus::Idle;
+    assert_eq!(app.agent_io.status, AgentStatus::Idle);
 }
 
 // ---------------------------------------------------------------------------

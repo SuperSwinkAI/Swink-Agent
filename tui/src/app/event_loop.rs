@@ -30,19 +30,23 @@ impl App {
         let mut tick_interval = tokio::time::interval(tick_rate);
         let mut event_stream = crossterm::event::EventStream::new();
 
-        if self.messages.is_empty() {
+        if self.view.messages.is_empty() {
             self.push_system_message("Press F1 for help.".to_string());
         }
 
         loop {
-            if self.dirty {
+            if self.view.dirty {
                 terminal.draw(|frame| ui::render(frame, self))?;
-                self.dirty = false;
+                self.view.dirty = false;
             }
 
             if self.should_quit {
                 break;
             }
+
+            // Forward any input queued for a host-installed transport. A no-op
+            // on the default in-process path, which drives the agent directly.
+            self.flush_outbound().await;
 
             tokio::select! {
                 maybe_event = event_stream.next() => {
@@ -50,15 +54,15 @@ impl App {
                         self.handle_terminal_event(&event);
                     }
                 }
-                Some(event) = self.agent_rx.recv() => {
+                Some(event) = self.agent_io.transport.recv() => {
                     self.handle_agent_event(event);
                     // Drain any additional pending agent events before the next
                     // draw so rapid token bursts are batched into a single frame.
-                    while let Ok(event) = self.agent_rx.try_recv() {
+                    while let Some(event) = self.agent_io.transport.try_recv() {
                         self.handle_agent_event(event);
                     }
                 }
-                Some((request, responder)) = self.approval_rx.recv() => {
+                Some((request, responder)) = self.agent_io.approval_rx.recv() => {
                     self.handle_approval_request(request, responder);
                 }
                 _ = tick_interval.tick() => {
@@ -66,8 +70,8 @@ impl App {
                 }
             }
 
-            if self.open_editor_requested {
-                self.open_editor_requested = false;
+            if self.editor.open_editor_requested {
+                self.editor.open_editor_requested = false;
                 let editor = crate::editor::resolve_editor(self.config.editor_command.as_deref());
 
                 let _ = crate::restore_terminal();
@@ -80,7 +84,7 @@ impl App {
                     crossterm::event::EnableMouseCapture
                 );
                 terminal.clear()?;
-                self.dirty = true;
+                self.view.dirty = true;
                 event_stream = crossterm::event::EventStream::new();
 
                 match result {
@@ -101,12 +105,58 @@ impl App {
         Ok(())
     }
 
+    /// Flush user input queued by `send_to_agent` to the installed transport.
+    ///
+    /// Only ever has work when a host routed agent I/O through
+    /// [`App::with_transport`](App::with_transport); the in-process path
+    /// starts turns on the [`Agent`](swink_agent::Agent) directly and never
+    /// queues. A failed send surfaces like an in-process start failure: an
+    /// error message in the conversation and [`AgentStatus::Error`].
+    pub(super) async fn flush_outbound(&mut self) {
+        if self.agent_io.outbound.is_empty() {
+            return;
+        }
+        let queued = std::mem::take(&mut self.agent_io.outbound);
+        for input in queued {
+            let result = self.agent_io.transport.send(input).await;
+            if let Err(error) = result {
+                self.agent_io.status = AgentStatus::Error;
+                self.view.messages.push(DisplayMessage::new(
+                    MessageRole::Error,
+                    format!("Failed to send to agent: {error}"),
+                ));
+                self.view.dirty = true;
+            }
+        }
+    }
+
+    /// Apply agent events from the installed transport until its stream is
+    /// exhausted ([`TuiTransport::recv`](crate::transport::TuiTransport::recv)
+    /// returns `None`).
+    ///
+    /// [`App::run`] does this continuously inside its terminal event loop;
+    /// this method is the terminal-free equivalent, letting a host or test
+    /// drive an `App` through a
+    /// [`TuiTransport`](crate::transport::TuiTransport) — e.g. a mock
+    /// yielding scripted events — and assert on the resulting state. Note the
+    /// default in-process transport's stream only ends when the app is torn
+    /// down, so this is primarily useful with a transport installed via
+    /// [`App::with_transport`](App::with_transport).
+    pub async fn pump_transport_events(&mut self) {
+        loop {
+            let Some(event) = self.agent_io.transport.recv().await else {
+                break;
+            };
+            self.handle_agent_event(event);
+        }
+    }
+
     pub(super) fn handle_terminal_event(&mut self, event: &Event) {
         match event {
             Event::Key(key) => self.handle_key_event(*key),
             Event::Mouse(mouse) => self.handle_mouse_event(*mouse),
             Event::Resize(_, _) => {
-                self.dirty = true;
+                self.view.dirty = true;
             }
             _ => {}
         }
@@ -118,43 +168,44 @@ impl App {
                 if !self.mouse_in_conversation(mouse.column, mouse.row) {
                     return;
                 }
-                self.selection = None;
-                self.conversation.scroll_up(MOUSE_SCROLL_STEP);
-                self.dirty = true;
+                self.view.selection = None;
+                self.view.conversation.scroll_up(MOUSE_SCROLL_STEP);
+                self.view.dirty = true;
             }
             MouseEventKind::ScrollDown => {
                 if !self.mouse_in_conversation(mouse.column, mouse.row) {
                     return;
                 }
-                self.selection = None;
-                self.conversation
+                self.view.selection = None;
+                self.view
+                    .conversation
                     .scroll_down(MOUSE_SCROLL_STEP, self.conversation_page_height());
-                self.dirty = true;
+                self.view.dirty = true;
             }
             MouseEventKind::Down(MouseButton::Left) => {
                 if !self.mouse_in_conversation(mouse.column, mouse.row) {
-                    self.selection = None;
-                    self.dirty = true;
+                    self.view.selection = None;
+                    self.view.dirty = true;
                     return;
                 }
                 if let Some((row, col)) = self.inner_conversation_coords(mouse.column, mouse.row) {
-                    self.selection = Some(Selection::new(row, col));
-                    self.dirty = true;
+                    self.view.selection = Some(Selection::new(row, col));
+                    self.view.dirty = true;
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
-                if self.selection.is_none() {
+                if self.view.selection.is_none() {
                     return;
                 }
                 let (row, col) = self.clamped_conversation_coords(mouse.column, mouse.row);
-                if let Some(sel) = self.selection.as_mut() {
+                if let Some(sel) = self.view.selection.as_mut() {
                     sel.cursor = (row, col);
                     sel.dragging = true;
                 }
-                self.dirty = true;
+                self.view.dirty = true;
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                if let Some(sel) = self.selection.as_mut() {
+                if let Some(sel) = self.view.selection.as_mut() {
                     sel.dragging = false;
                 }
                 self.copy_selection_to_clipboard();
@@ -164,7 +215,7 @@ impl App {
     }
 
     const fn mouse_in_conversation(&self, column: u16, row: u16) -> bool {
-        let area = self.conversation_area;
+        let area = self.view.conversation_area;
         let within_x = column >= area.x && column < area.x.saturating_add(area.width);
         let within_y = row >= area.y && row < area.y.saturating_add(area.height);
         within_x && within_y
@@ -174,7 +225,7 @@ impl App {
     /// conversation's inner area (i.e. excluding the border). Returns `None`
     /// if the position falls outside the inner area.
     fn inner_conversation_coords(&self, column: u16, row: u16) -> Option<(u16, u16)> {
-        let area = self.conversation_area;
+        let area = self.view.conversation_area;
         let inner_x = area.x.checked_add(1)?;
         let inner_y = area.y.checked_add(1)?;
         let inner_w = area.width.saturating_sub(2);
@@ -194,7 +245,7 @@ impl App {
     /// edges instead of returning `None` — used during drag so the selection
     /// still extends when the cursor leaves the conversation area.
     fn clamped_conversation_coords(&self, column: u16, row: u16) -> (u16, u16) {
-        let area = self.conversation_area;
+        let area = self.view.conversation_area;
         let inner_x = area.x.saturating_add(1);
         let inner_y = area.y.saturating_add(1);
         let inner_w = area.width.saturating_sub(2);
@@ -208,8 +259,10 @@ impl App {
 
     /// Copy the current selection (if any) to the system clipboard.
     pub(super) fn copy_selection_to_clipboard(&mut self) {
-        let Some(sel) = self.selection else { return };
-        let Some(text) = self.conversation.selection_text(&sel) else {
+        let Some(sel) = self.view.selection else {
+            return;
+        };
+        let Some(text) = self.view.conversation.selection_text(&sel) else {
             return;
         };
         match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
@@ -218,7 +271,7 @@ impl App {
                 self.push_system_message(format!("Clipboard error: {error}"));
             }
         }
-        self.dirty = true;
+        self.view.dirty = true;
     }
 
     /// Feed one key event through the same path [`App::run`] uses.
@@ -235,30 +288,30 @@ impl App {
     ///
     /// let mut app = App::new(TuiConfig::default());
     /// app.handle_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
-    /// assert_eq!(app.input.lines(), ["h"]);
+    /// assert_eq!(app.editor.input.lines(), ["h"]);
     /// ```
     pub fn handle_key_event(&mut self, key: KeyEvent) {
         match (key.modifiers, key.code) {
             (KeyModifiers::CONTROL, KeyCode::Char('q')) => {
                 self.should_quit = true;
-                self.dirty = true;
+                self.view.dirty = true;
                 return;
             }
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
-                if self.selection.is_some() {
+                if self.view.selection.is_some() {
                     self.copy_selection_to_clipboard();
-                    self.selection = None;
-                } else if self.status == AgentStatus::Running {
+                    self.view.selection = None;
+                } else if self.agent_io.status == AgentStatus::Running {
                     self.abort_agent();
                 } else {
                     self.should_quit = true;
                 }
-                self.dirty = true;
+                self.view.dirty = true;
                 return;
             }
-            (_, KeyCode::Esc) if self.selection.is_some() => {
-                self.selection = None;
-                self.dirty = true;
+            (_, KeyCode::Esc) if self.view.selection.is_some() => {
+                self.view.selection = None;
+                self.view.dirty = true;
                 return;
             }
             _ => {}
@@ -270,64 +323,66 @@ impl App {
             return;
         }
 
-        if self.focus == Focus::Conversation {
+        if self.view.focus == Focus::Conversation {
             let page = self.conversation_page_height();
             match key.code {
-                KeyCode::Up => self.conversation.scroll_up(1),
-                KeyCode::Down => self.conversation.scroll_down(1, page),
-                KeyCode::PageUp => self.conversation.scroll_up(page),
-                KeyCode::PageDown => self.conversation.scroll_down(page, page),
-                KeyCode::F(1) => self.help_panel.toggle(),
-                _ => self.focus = Focus::Input,
+                KeyCode::Up => self.view.conversation.scroll_up(1),
+                KeyCode::Down => self.view.conversation.scroll_down(1, page),
+                KeyCode::PageUp => self.view.conversation.scroll_up(page),
+                KeyCode::PageDown => self.view.conversation.scroll_down(page, page),
+                KeyCode::F(1) => self.view.help_panel.toggle(),
+                _ => self.view.focus = Focus::Input,
             }
-            self.dirty = true;
-            if self.focus == Focus::Conversation {
+            self.view.dirty = true;
+            if self.view.focus == Focus::Conversation {
                 return;
             }
         }
 
         self.handle_input_key(key);
-        self.dirty = true;
+        self.view.dirty = true;
     }
 
     /// Handle modal prompts: trust follow-up, plan approval, tool approval.
     /// Returns `true` if the key was consumed by a modal.
     fn handle_modal_key(&mut self, key: KeyEvent) -> bool {
         // Priority 1: Trust follow-up prompt
-        if self.trust_follow_up.is_some() {
+        if self.agent_io.trust_follow_up.is_some() {
             match key.code {
                 KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
-                    if let Some(follow_up) = self.trust_follow_up.take() {
-                        self.session_trusted_tools.insert(follow_up.tool_name);
+                    if let Some(follow_up) = self.agent_io.trust_follow_up.take() {
+                        self.agent_io
+                            .session_trusted_tools
+                            .insert(follow_up.tool_name);
                     }
-                    self.dirty = true;
+                    self.view.dirty = true;
                     return true;
                 }
                 KeyCode::Char('n' | 'N') | KeyCode::Esc => {
-                    self.trust_follow_up = None;
-                    self.dirty = true;
+                    self.agent_io.trust_follow_up = None;
+                    self.view.dirty = true;
                     return true;
                 }
                 _ => {
                     // Clear follow-up on any other key, then re-process
-                    self.trust_follow_up = None;
-                    self.dirty = true;
+                    self.agent_io.trust_follow_up = None;
+                    self.view.dirty = true;
                     // Fall through to process the key normally
                 }
             }
         }
 
         // Priority 2: Plan approval prompt
-        if self.pending_plan_approval {
+        if self.mode.pending_plan_approval {
             match key.code {
                 KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
                     self.approve_plan();
-                    self.dirty = true;
+                    self.view.dirty = true;
                     return true;
                 }
                 KeyCode::Char('n' | 'N') | KeyCode::Esc => {
                     self.reject_plan();
-                    self.dirty = true;
+                    self.view.dirty = true;
                     return true;
                 }
                 _ => {
@@ -337,7 +392,7 @@ impl App {
         }
 
         // Priority 3: Per-hunk diff review (implies a pending approval)
-        if self.hunk_review.is_some() {
+        if self.agent_io.hunk_review.is_some() {
             match key.code {
                 KeyCode::Char('y' | 'Y') => self.decide_current_hunk(true),
                 KeyCode::Char('n' | 'N') => self.decide_current_hunk(false),
@@ -345,47 +400,47 @@ impl App {
                 KeyCode::Esc => self.cancel_hunk_review(),
                 _ => {}
             }
-            self.dirty = true;
+            self.view.dirty = true;
             return true;
         }
 
         // Priority 4: Tool approval prompt
-        if self.pending_approval.is_some() {
+        if self.agent_io.pending_approval.is_some() {
             match key.code {
                 KeyCode::Char('h' | 'H') => {
                     // Falls through to the plain prompt when there is no
                     // reviewable diff on this request.
                     self.start_hunk_review();
-                    self.dirty = true;
+                    self.view.dirty = true;
                     return true;
                 }
                 KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
-                    if let Some((req, responder)) = self.pending_approval.take() {
+                    if let Some((req, responder)) = self.agent_io.pending_approval.take() {
                         let _ = responder.send(ToolApproval::Approved);
                         // In Smart mode, offer trust follow-up
                         if self.approval_mode() == ApprovalMode::Smart {
-                            self.trust_follow_up = Some(TrustFollowUp::new(
+                            self.agent_io.trust_follow_up = Some(TrustFollowUp::new(
                                 req.tool_name,
                                 Instant::now() + Duration::from_secs(3),
                             ));
                         }
                     }
-                    self.dirty = true;
+                    self.view.dirty = true;
                     return true;
                 }
                 KeyCode::Char('a' | 'A') => {
-                    if let Some((req, responder)) = self.pending_approval.take() {
-                        self.session_trusted_tools.insert(req.tool_name);
+                    if let Some((req, responder)) = self.agent_io.pending_approval.take() {
+                        self.agent_io.session_trusted_tools.insert(req.tool_name);
                         let _ = responder.send(ToolApproval::Approved);
                     }
-                    self.dirty = true;
+                    self.view.dirty = true;
                     return true;
                 }
                 KeyCode::Char('n' | 'N') | KeyCode::Esc => {
-                    if let Some((_req, responder)) = self.pending_approval.take() {
+                    if let Some((_req, responder)) = self.agent_io.pending_approval.take() {
                         let _ = responder.send(ToolApproval::Rejected);
                     }
-                    self.dirty = true;
+                    self.view.dirty = true;
                     return true;
                 }
                 _ => {
@@ -409,15 +464,15 @@ impl App {
             return;
         }
 
-        let previous = self.path_completion.take();
-        let Some(query) = self.input.mention_query() else {
-            self.dirty |= previous.is_some();
+        let previous = self.editor.path_completion.take();
+        let Some(query) = self.editor.input.mention_query() else {
+            self.view.dirty |= previous.is_some();
             return;
         };
 
         let candidates = self.extensions.complete_path(&query.query);
         if candidates.is_empty() {
-            self.dirty |= previous.is_some();
+            self.view.dirty |= previous.is_some();
             return;
         }
 
@@ -429,12 +484,12 @@ impl App {
             .and_then(|prior| candidates.iter().position(|next| next == prior))
             .unwrap_or(0);
 
-        self.path_completion = Some(PathCompletion {
+        self.editor.path_completion = Some(PathCompletion {
             candidates,
             selected,
             start: query.start,
         });
-        self.dirty = true;
+        self.view.dirty = true;
     }
 
     /// Recompute whichever completion popup the cursor position calls for.
@@ -459,15 +514,15 @@ impl App {
             return;
         }
 
-        let previous = self.skill_completion.take();
-        let Some(query) = self.input.slash_query() else {
-            self.dirty |= previous.is_some();
+        let previous = self.editor.skill_completion.take();
+        let Some(query) = self.editor.input.slash_query() else {
+            self.view.dirty |= previous.is_some();
             return;
         };
 
         let candidates = self.extensions.complete_skills(&query.query);
         if candidates.is_empty() {
-            self.dirty |= previous.is_some();
+            self.view.dirty |= previous.is_some();
             return;
         }
 
@@ -480,14 +535,14 @@ impl App {
             .unwrap_or(0);
         let details = previous.map(|prior| prior.details).unwrap_or_default();
 
-        self.skill_completion = Some(SkillCompletion {
+        self.editor.skill_completion = Some(SkillCompletion {
             candidates,
             selected,
             start: query.start,
             details,
         });
         self.cache_selected_skill_details();
-        self.dirty = true;
+        self.view.dirty = true;
     }
 
     /// Fetch tier-2 details for the highlighted skill, unless already cached.
@@ -496,6 +551,7 @@ impl App {
     /// highlighted name per popup" holds by construction.
     fn cache_selected_skill_details(&mut self) {
         let Some(name) = self
+            .editor
             .skill_completion
             .as_ref()
             .and_then(SkillCompletion::selected_candidate)
@@ -504,6 +560,7 @@ impl App {
             return;
         };
         if self
+            .editor
             .skill_completion
             .as_ref()
             .is_some_and(|completion| completion.details.contains_key(&name))
@@ -512,23 +569,24 @@ impl App {
         }
 
         let details = self.extensions.skill_details(&name);
-        if let Some(completion) = self.skill_completion.as_mut() {
+        if let Some(completion) = self.editor.skill_completion.as_mut() {
             completion.details.insert(name, details);
         }
     }
 
     /// Accept the highlighted skill into the input, closing the popup.
     pub(super) fn accept_skill_completion(&mut self) {
-        let Some(completion) = self.skill_completion.take() else {
+        let Some(completion) = self.editor.skill_completion.take() else {
             return;
         };
         if let Some(candidate) = completion.selected_candidate() {
             // The trailing space terminates the token, which closes the popup
             // on the next refresh without a special case.
-            self.input
+            self.editor
+                .input
                 .replace_mention_query(completion.start, &format!("/{} ", candidate.name));
         }
-        self.dirty = true;
+        self.view.dirty = true;
     }
 
     /// Keys the `/skill` popup consumes while open. Returns whether it took
@@ -536,7 +594,7 @@ impl App {
     /// [`App::handle_path_completion_key`] — genericizing would drag a public
     /// struct into a shared abstraction for ~30 lines of code.
     fn handle_skill_completion_key(&mut self, key: KeyEvent) -> bool {
-        let Some(completion) = &mut self.skill_completion else {
+        let Some(completion) = &mut self.editor.skill_completion else {
             return false;
         };
 
@@ -553,26 +611,27 @@ impl App {
                 self.accept_skill_completion();
                 return true;
             }
-            (_, KeyCode::Esc) => self.skill_completion = None,
+            (_, KeyCode::Esc) => self.editor.skill_completion = None,
             _ => return false,
         }
 
-        self.dirty = true;
+        self.view.dirty = true;
         true
     }
 
     /// Accept the highlighted candidate into the input, closing the popup.
     pub(super) fn accept_path_completion(&mut self) {
-        let Some(completion) = self.path_completion.take() else {
+        let Some(completion) = self.editor.path_completion.take() else {
             return;
         };
         if let Some(candidate) = completion.selected_candidate() {
             // The trailing space terminates the mention, which closes the popup
             // on the next refresh without a special case.
-            self.input
+            self.editor
+                .input
                 .replace_mention_query(completion.start, &format!("@{} ", candidate.path));
         }
-        self.dirty = true;
+        self.view.dirty = true;
     }
 
     /// Keys the `@path` popup consumes while open. Returns whether it took the key.
@@ -581,7 +640,7 @@ impl App {
     /// than switching focus or submitting, and Esc dismisses rather than
     /// aborting the agent — each only while the popup is actually open.
     fn handle_path_completion_key(&mut self, key: KeyEvent) -> bool {
-        let Some(completion) = &mut self.path_completion else {
+        let Some(completion) = &mut self.editor.path_completion else {
             return false;
         };
 
@@ -592,11 +651,11 @@ impl App {
                 self.accept_path_completion();
                 return true;
             }
-            (_, KeyCode::Esc) => self.path_completion = None,
+            (_, KeyCode::Esc) => self.editor.path_completion = None,
             _ => return false,
         }
 
-        self.dirty = true;
+        self.view.dirty = true;
         true
     }
 
@@ -607,33 +666,33 @@ impl App {
     /// token, so each is followed by a single completion refresh.
     fn handle_editing_key(&mut self, key: KeyEvent) -> bool {
         match (key.modifiers, key.code) {
-            (KeyModifiers::SHIFT, KeyCode::Enter) => self.input.insert_newline(),
+            (KeyModifiers::SHIFT, KeyCode::Enter) => self.editor.input.insert_newline(),
             (_, KeyCode::Home) | (KeyModifiers::CONTROL, KeyCode::Char('a')) => {
-                self.input.move_home();
+                self.editor.input.move_home();
             }
             (_, KeyCode::End) | (KeyModifiers::CONTROL, KeyCode::Char('e')) => {
-                self.input.move_end();
+                self.editor.input.move_end();
             }
             (KeyModifiers::NONE, KeyCode::Up) => {
-                if self.input.cursor_row() == 0 {
-                    self.input.history_prev();
+                if self.editor.input.cursor_row() == 0 {
+                    self.editor.input.history_prev();
                 } else {
-                    self.input.move_up();
+                    self.editor.input.move_up();
                 }
             }
             (KeyModifiers::NONE, KeyCode::Down) => {
-                if self.input.cursor_row() + 1 >= self.input.line_count() {
-                    self.input.history_next();
+                if self.editor.input.cursor_row() + 1 >= self.editor.input.line_count() {
+                    self.editor.input.history_next();
                 } else {
-                    self.input.move_down();
+                    self.editor.input.move_down();
                 }
             }
-            (KeyModifiers::NONE, KeyCode::Left) => self.input.move_left(),
-            (KeyModifiers::NONE, KeyCode::Right) => self.input.move_right(),
-            (_, KeyCode::Backspace) => self.input.backspace(),
-            (_, KeyCode::Delete) => self.input.delete(),
+            (KeyModifiers::NONE, KeyCode::Left) => self.editor.input.move_left(),
+            (KeyModifiers::NONE, KeyCode::Right) => self.editor.input.move_right(),
+            (_, KeyCode::Backspace) => self.editor.input.backspace(),
+            (_, KeyCode::Delete) => self.editor.input.delete(),
             (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(character)) => {
-                self.input.insert_char(character);
+                self.editor.input.insert_char(character);
             }
             _ => return false,
         }
@@ -651,7 +710,7 @@ impl App {
         if self.handle_skill_completion_key(key) {
             return;
         }
-        if matches!(key.code, KeyCode::Esc) && self.status == AgentStatus::Running {
+        if matches!(key.code, KeyCode::Esc) && self.agent_io.status == AgentStatus::Running {
             self.abort_agent();
             return;
         }
@@ -664,7 +723,7 @@ impl App {
                 self.toggle_operating_mode();
             }
             (_, KeyCode::Tab) => {
-                self.focus = match self.focus {
+                self.view.focus = match self.view.focus {
                     Focus::Input => Focus::Conversation,
                     Focus::Conversation => Focus::Input,
                 };
@@ -674,18 +733,19 @@ impl App {
             }
             (_, KeyCode::PageUp) => {
                 let page = self.conversation_page_height();
-                self.conversation.scroll_up(page);
+                self.view.conversation.scroll_up(page);
             }
             (_, KeyCode::PageDown) => {
                 let page = self.conversation_page_height();
-                self.conversation.scroll_down(page, page);
+                self.view.conversation.scroll_down(page, page);
             }
             (_, KeyCode::F(1)) => {
-                self.help_panel.toggle();
+                self.view.help_panel.toggle();
             }
             (_, KeyCode::F(2)) => {
-                let target = self.selected_tool_block.or_else(|| {
-                    self.messages
+                let target = self.view.selected_tool_block.or_else(|| {
+                    self.view
+                        .messages
                         .iter()
                         .enumerate()
                         .rev()
@@ -694,7 +754,7 @@ impl App {
                 });
                 if let Some(index) = target {
                     self.toggle_collapse(index);
-                    self.selected_tool_block = Some(index);
+                    self.view.selected_tool_block = Some(index);
                 }
             }
             (_, KeyCode::F(3)) => {
@@ -714,12 +774,13 @@ impl App {
     }
 
     pub(super) fn submit_user_text(&mut self, text: String) {
-        if self.status != AgentStatus::Running {
-            self.messages
+        if self.agent_io.status != AgentStatus::Running {
+            self.view
+                .messages
                 .push(DisplayMessage::new(MessageRole::User, text.clone()));
             self.trim_messages_to_recent_turns();
         }
-        self.conversation.auto_scroll = true;
+        self.view.conversation.auto_scroll = true;
         self.send_to_agent(text);
     }
 
@@ -738,18 +799,18 @@ impl App {
     pub(super) fn submit_input(&mut self) {
         // Whatever is in the editor is what gets submitted; an open popup is
         // not an implicit accept.
-        self.path_completion = None;
-        self.skill_completion = None;
+        self.editor.path_completion = None;
+        self.editor.skill_completion = None;
 
         // Classify the pending input BEFORE draining the editor so that
         // secret-bearing commands (e.g. `#key <provider> <api-key>`) can be
         // submitted without entering the input history. See issue #614.
-        let pending = self.input.lines().join("\n");
+        let pending = self.editor.input.lines().join("\n");
         let sensitive = commands::is_sensitive_input(&pending);
         let submit_result = if sensitive {
-            self.input.submit_without_history()
+            self.editor.input.submit_without_history()
         } else {
-            self.input.submit()
+            self.editor.input.submit()
         };
         let Some(text) = submit_result else {
             return;
@@ -797,7 +858,7 @@ impl App {
             return;
         }
 
-        if self.status == AgentStatus::Running
+        if self.agent_io.status == AgentStatus::Running
             && Self::command_mutates_session_during_stream(&command)
         {
             self.push_system_message(
@@ -814,13 +875,13 @@ impl App {
                 return;
             }
             CommandResult::Clear => {
-                self.messages.clear();
-                self.conversation = crate::ui::conversation::ConversationView::new();
+                self.view.messages.clear();
+                self.view.conversation = crate::ui::conversation::ConversationView::new();
                 return;
             }
             CommandResult::ToggleHelp => {
-                self.help_panel.toggle();
-                self.dirty = true;
+                self.view.help_panel.toggle();
+                self.view.dirty = true;
                 return;
             }
             CommandResult::Feedback(msg) => {
@@ -838,7 +899,7 @@ impl App {
                 return;
             }
             CommandResult::SetSystemPrompt(prompt) => {
-                if let Some(agent) = &mut self.agent {
+                if let Some(agent) = &mut self.agent_io.agent {
                     agent.set_system_prompt(prompt);
                 }
                 self.push_system_message("System prompt updated.".to_string());
@@ -879,7 +940,7 @@ impl App {
                     ApprovalModeArg::Off => ApprovalMode::Bypassed,
                     ApprovalModeArg::Smart => ApprovalMode::Smart,
                 };
-                if let Some(agent) = &mut self.agent {
+                if let Some(agent) = &mut self.agent_io.agent {
                     agent.set_approval_mode(harness_mode);
                 }
                 let label = match mode {
@@ -893,7 +954,7 @@ impl App {
                 return;
             }
             CommandResult::OpenEditor => {
-                self.open_editor_requested = true;
+                self.editor.open_editor_requested = true;
                 return;
             }
             CommandResult::TogglePlanMode => {
@@ -906,12 +967,12 @@ impl App {
                 return;
             }
             CommandResult::UntrustTool(name) => {
-                self.session_trusted_tools.remove(&name);
+                self.agent_io.session_trusted_tools.remove(&name);
                 self.push_system_message(format!("Untrusted tool: {name}"));
                 return;
             }
             CommandResult::UntrustAll => {
-                self.session_trusted_tools.clear();
+                self.agent_io.session_trusted_tools.clear();
                 self.push_system_message("Cleared all trusted tools".to_string());
                 return;
             }
@@ -926,10 +987,11 @@ impl App {
                 };
                 let mut msg = format!("Tool approval: {label}");
                 if self.approval_mode() == ApprovalMode::Smart
-                    && !self.session_trusted_tools.is_empty()
+                    && !self.agent_io.session_trusted_tools.is_empty()
                 {
                     msg.push_str("\nTrusted tools: ");
                     let mut tools: Vec<&str> = self
+                        .agent_io
                         .session_trusted_tools
                         .iter()
                         .map(String::as_str)
@@ -948,6 +1010,7 @@ impl App {
     fn copy_to_clipboard(&mut self, content: ClipboardContent) {
         let text = match content {
             ClipboardContent::Last => self
+                .view
                 .messages
                 .iter()
                 .rev()
@@ -955,6 +1018,7 @@ impl App {
                 .map(|message| message.content.clone()),
             ClipboardContent::All => {
                 let all: String = self
+                    .view
                     .messages
                     .iter()
                     .map(|message| {
@@ -975,6 +1039,7 @@ impl App {
                 Some(all)
             }
             ClipboardContent::Code => self
+                .view
                 .messages
                 .iter()
                 .rev()

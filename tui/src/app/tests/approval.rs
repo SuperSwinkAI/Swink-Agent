@@ -25,18 +25,20 @@ fn make_app_with_mode(mode: ApprovalMode) -> App {
 #[tokio::test]
 async fn smart_mode_auto_approves_trusted_tool() {
     let mut app = make_app_with_mode(ApprovalMode::Smart);
-    app.session_trusted_tools.insert("bash".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("bash".to_string());
 
     let (tx, rx) = tokio::sync::oneshot::channel();
     let request =
         ToolApprovalRequest::new("call_1", "bash", serde_json::json!({"command": "ls"}), true);
 
-    app.approval_tx.send((request, tx)).await.unwrap();
+    app.agent_io.approval_tx.send((request, tx)).await.unwrap();
 
-    let (req, responder) = app.approval_rx.recv().await.unwrap();
+    let (req, responder) = app.agent_io.approval_rx.recv().await.unwrap();
     app.handle_approval_request(req, responder);
 
-    assert!(app.pending_approval.is_none());
+    assert!(app.agent_io.pending_approval.is_none());
     assert_eq!(rx.await.unwrap(), ToolApproval::Approved);
 }
 
@@ -49,7 +51,7 @@ async fn smart_mode_prompts_for_untrusted_tool() {
 
     app.handle_approval_request(request, tx);
 
-    assert!(app.pending_approval.is_some());
+    assert!(app.agent_io.pending_approval.is_some());
 }
 
 #[tokio::test]
@@ -58,13 +60,13 @@ async fn always_approve_adds_to_trusted_set() {
 
     let (tx, rx) = tokio::sync::oneshot::channel();
     let request = ToolApprovalRequest::new("call_3", "bash", serde_json::json!({}), true);
-    app.pending_approval = Some((request, tx));
+    app.agent_io.pending_approval = Some((request, tx));
 
     let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
     app.handle_key_event(key);
 
-    assert!(app.session_trusted_tools.contains("bash"));
-    assert!(app.pending_approval.is_none());
+    assert!(app.agent_io.session_trusted_tools.contains("bash"));
+    assert!(app.agent_io.pending_approval.is_none());
     assert_eq!(rx.await.unwrap(), ToolApproval::Approved);
 }
 
@@ -75,23 +77,29 @@ async fn reset_clears_trusted_tools() {
 
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
-    app.session_trusted_tools.insert("bash".to_string());
-    app.session_trusted_tools.insert("read_file".to_string());
-    assert_eq!(app.session_trusted_tools.len(), 2);
+    app.agent_io
+        .session_trusted_tools
+        .insert("bash".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("read_file".to_string());
+    assert_eq!(app.agent_io.session_trusted_tools.len(), 2);
 
-    if let Some(agent) = &mut app.agent {
+    if let Some(agent) = &mut app.agent_io.agent {
         agent.reset();
     }
-    app.messages.clear();
-    app.session_trusted_tools.clear();
+    app.view.messages.clear();
+    app.agent_io.session_trusted_tools.clear();
 
-    assert!(app.session_trusted_tools.is_empty());
+    assert!(app.agent_io.session_trusted_tools.is_empty());
 }
 
 #[tokio::test]
 async fn query_approval_mode_shows_smart() {
     let mut app = make_app_with_mode(ApprovalMode::Smart);
-    app.session_trusted_tools.insert("bash".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("bash".to_string());
 
     let label = match app.approval_mode() {
         ApprovalMode::Enabled => "enabled",
@@ -102,9 +110,11 @@ async fn query_approval_mode_shows_smart() {
         _ => "unknown",
     };
     let mut msg = format!("Tool approval: {label}");
-    if app.approval_mode() == ApprovalMode::Smart && !app.session_trusted_tools.is_empty() {
+    if app.approval_mode() == ApprovalMode::Smart && !app.agent_io.session_trusted_tools.is_empty()
+    {
         msg.push_str("\nTrusted tools: ");
         let mut tools: Vec<&str> = app
+            .agent_io
             .session_trusted_tools
             .iter()
             .map(String::as_str)
@@ -135,7 +145,7 @@ async fn smart_mode_auto_approves_untrusted_readonly_tool() {
     app.handle_approval_request(request, tx);
 
     assert_eq!(rx.await.unwrap(), ToolApproval::Approved);
-    assert!(app.pending_approval.is_none());
+    assert!(app.agent_io.pending_approval.is_none());
 }
 
 #[tokio::test]
@@ -146,7 +156,7 @@ async fn smart_mode_prompts_for_write_tool() {
     let request = ToolApprovalRequest::new("call_w", "write_file", serde_json::json!({}), true);
 
     app.handle_approval_request(request, tx);
-    assert!(app.pending_approval.is_some());
+    assert!(app.agent_io.pending_approval.is_some());
 }
 
 #[tokio::test]
@@ -158,7 +168,7 @@ async fn enabled_mode_prompts_for_all_tools() {
 
     app.handle_approval_request(request, tx);
     assert!(
-        app.pending_approval.is_some(),
+        app.agent_io.pending_approval.is_some(),
         "Enabled mode should prompt for all tools"
     );
 }
@@ -194,17 +204,20 @@ async fn trust_follow_up_triggers_after_approval_in_smart_mode() {
 
     let (tx, _rx) = tokio::sync::oneshot::channel();
     let request = ToolApprovalRequest::new("call_t", "bash", serde_json::json!({}), true);
-    app.pending_approval = Some((request, tx));
+    app.agent_io.pending_approval = Some((request, tx));
 
     // Press 'y' to approve
     let key = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
     app.handle_key_event(key);
 
     assert!(
-        app.trust_follow_up.is_some(),
+        app.agent_io.trust_follow_up.is_some(),
         "trust follow-up should trigger in Smart mode"
     );
-    assert_eq!(app.trust_follow_up.as_ref().unwrap().tool_name, "bash");
+    assert_eq!(
+        app.agent_io.trust_follow_up.as_ref().unwrap().tool_name,
+        "bash"
+    );
 }
 
 #[tokio::test]
@@ -213,13 +226,13 @@ async fn trust_follow_up_not_triggered_in_enabled_mode() {
 
     let (tx, _rx) = tokio::sync::oneshot::channel();
     let request = ToolApprovalRequest::new("call_e", "bash", serde_json::json!({}), true);
-    app.pending_approval = Some((request, tx));
+    app.agent_io.pending_approval = Some((request, tx));
 
     let key = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
     app.handle_key_event(key);
 
     assert!(
-        app.trust_follow_up.is_none(),
+        app.agent_io.trust_follow_up.is_none(),
         "trust follow-up should NOT trigger in Enabled mode"
     );
 }
@@ -227,13 +240,13 @@ async fn trust_follow_up_not_triggered_in_enabled_mode() {
 #[tokio::test]
 async fn trust_follow_up_not_triggered_in_bypassed_mode() {
     let app = App::new(TuiConfig::default());
-    assert!(app.trust_follow_up.is_none());
+    assert!(app.agent_io.trust_follow_up.is_none());
 }
 
 #[tokio::test]
 async fn trust_follow_up_y_adds_to_session_trusted() {
     let mut app = App::new(TuiConfig::default());
-    app.trust_follow_up = Some(TrustFollowUp {
+    app.agent_io.trust_follow_up = Some(TrustFollowUp {
         tool_name: "bash".to_string(),
         expires_at: Instant::now() + Duration::from_secs(3),
     });
@@ -241,14 +254,14 @@ async fn trust_follow_up_y_adds_to_session_trusted() {
     let key = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
     app.handle_key_event(key);
 
-    assert!(app.session_trusted_tools.contains("bash"));
-    assert!(app.trust_follow_up.is_none());
+    assert!(app.agent_io.session_trusted_tools.contains("bash"));
+    assert!(app.agent_io.trust_follow_up.is_none());
 }
 
 #[tokio::test]
 async fn trust_follow_up_n_does_not_trust() {
     let mut app = App::new(TuiConfig::default());
-    app.trust_follow_up = Some(TrustFollowUp {
+    app.agent_io.trust_follow_up = Some(TrustFollowUp {
         tool_name: "bash".to_string(),
         expires_at: Instant::now() + Duration::from_secs(3),
     });
@@ -256,14 +269,14 @@ async fn trust_follow_up_n_does_not_trust() {
     let key = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
     app.handle_key_event(key);
 
-    assert!(!app.session_trusted_tools.contains("bash"));
-    assert!(app.trust_follow_up.is_none());
+    assert!(!app.agent_io.session_trusted_tools.contains("bash"));
+    assert!(app.agent_io.trust_follow_up.is_none());
 }
 
 #[test]
 fn trust_follow_up_timeout_clears() {
     let mut app = App::new(TuiConfig::default());
-    app.trust_follow_up = Some(TrustFollowUp {
+    app.agent_io.trust_follow_up = Some(TrustFollowUp {
         tool_name: "bash".to_string(),
         expires_at: instant_secs_ago(1), // already expired
     });
@@ -271,7 +284,7 @@ fn trust_follow_up_timeout_clears() {
     app.tick();
 
     assert!(
-        app.trust_follow_up.is_none(),
+        app.agent_io.trust_follow_up.is_none(),
         "expired trust follow-up should be cleared on tick"
     );
 }
@@ -279,7 +292,9 @@ fn trust_follow_up_timeout_clears() {
 #[tokio::test]
 async fn trusted_tool_auto_approves_in_smart_mode() {
     let mut app = make_app_with_mode(ApprovalMode::Smart);
-    app.session_trusted_tools.insert("bash".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("bash".to_string());
 
     let (tx, rx) = tokio::sync::oneshot::channel();
     let request = ToolApprovalRequest::new("call_trusted", "bash", serde_json::json!({}), true);
@@ -287,7 +302,7 @@ async fn trusted_tool_auto_approves_in_smart_mode() {
     app.handle_approval_request(request, tx);
 
     assert!(
-        app.pending_approval.is_none(),
+        app.agent_io.pending_approval.is_none(),
         "trusted tool should auto-approve"
     );
     assert_eq!(rx.await.unwrap(), ToolApproval::Approved);
@@ -296,7 +311,9 @@ async fn trusted_tool_auto_approves_in_smart_mode() {
 #[tokio::test]
 async fn trusted_tool_still_prompts_in_enabled_mode() {
     let mut app = make_app_with_mode(ApprovalMode::Enabled);
-    app.session_trusted_tools.insert("bash".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("bash".to_string());
 
     let (tx, _rx) = tokio::sync::oneshot::channel();
     let request = ToolApprovalRequest::new("call_te", "bash", serde_json::json!({}), true);
@@ -304,7 +321,7 @@ async fn trusted_tool_still_prompts_in_enabled_mode() {
     app.handle_approval_request(request, tx);
 
     assert!(
-        app.pending_approval.is_some(),
+        app.agent_io.pending_approval.is_some(),
         "Enabled mode should prompt even for trusted tools"
     );
 }
@@ -313,7 +330,7 @@ async fn trusted_tool_still_prompts_in_enabled_mode() {
 fn session_trust_not_persisted() {
     let app = App::new(TuiConfig::default());
     assert!(
-        app.session_trusted_tools.is_empty(),
+        app.agent_io.session_trusted_tools.is_empty(),
         "new App should have no trusted tools"
     );
 }
@@ -355,24 +372,32 @@ fn untrust_all_command() {
 #[test]
 fn untrust_specific_removes_from_set() {
     let mut app = App::new(TuiConfig::default());
-    app.session_trusted_tools.insert("bash".to_string());
-    app.session_trusted_tools.insert("write_file".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("bash".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("write_file".to_string());
 
-    app.session_trusted_tools.remove("bash");
+    app.agent_io.session_trusted_tools.remove("bash");
 
-    assert!(!app.session_trusted_tools.contains("bash"));
-    assert!(app.session_trusted_tools.contains("write_file"));
+    assert!(!app.agent_io.session_trusted_tools.contains("bash"));
+    assert!(app.agent_io.session_trusted_tools.contains("write_file"));
 }
 
 #[test]
 fn untrust_all_clears_set() {
     let mut app = App::new(TuiConfig::default());
-    app.session_trusted_tools.insert("bash".to_string());
-    app.session_trusted_tools.insert("write_file".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("bash".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("write_file".to_string());
 
-    app.session_trusted_tools.clear();
+    app.agent_io.session_trusted_tools.clear();
 
-    assert!(app.session_trusted_tools.is_empty());
+    assert!(app.agent_io.session_trusted_tools.is_empty());
 }
 
 // ─── Edge Cases ──────────────────────────────────────────────
@@ -380,7 +405,7 @@ fn untrust_all_clears_set() {
 #[tokio::test]
 async fn trust_follow_up_cleared_on_new_approval() {
     let mut app = make_app_with_mode(ApprovalMode::Smart);
-    app.trust_follow_up = Some(TrustFollowUp {
+    app.agent_io.trust_follow_up = Some(TrustFollowUp {
         tool_name: "old_tool".to_string(),
         expires_at: Instant::now() + Duration::from_secs(3),
     });
@@ -391,31 +416,31 @@ async fn trust_follow_up_cleared_on_new_approval() {
     app.handle_approval_request(request, tx);
 
     assert!(
-        app.trust_follow_up.is_none(),
+        app.agent_io.trust_follow_up.is_none(),
         "trust follow-up should be cleared when new approval arrives"
     );
-    assert!(app.pending_approval.is_some());
+    assert!(app.agent_io.pending_approval.is_some());
 }
 
 #[tokio::test]
 async fn concurrent_plan_and_tool_approval_plan_takes_precedence() {
     let mut app = App::new(TuiConfig::default());
-    app.pending_plan_approval = true;
+    app.mode.pending_plan_approval = true;
 
     let (tx, _rx) = tokio::sync::oneshot::channel();
     let request = ToolApprovalRequest::new("call_c", "bash", serde_json::json!({}), true);
-    app.pending_approval = Some((request, tx));
+    app.agent_io.pending_approval = Some((request, tx));
 
     // Press 'y' — plan approval should take precedence
     let key = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
     app.handle_key_event(key);
 
     assert!(
-        !app.pending_plan_approval,
+        !app.mode.pending_plan_approval,
         "plan approval should be handled"
     );
     assert!(
-        app.pending_approval.is_some(),
+        app.agent_io.pending_approval.is_some(),
         "tool approval should not have been handled"
     );
 }

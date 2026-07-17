@@ -56,8 +56,9 @@ use tracing::warn;
 use swink_agent::{Agent, ToolApproval, ToolApprovalRequest};
 
 pub use app::{
-    AgentStatus, App, DisplayMessage, HunkReview, MessageRole, OperatingMode, PathCompletion,
-    SkillCompletion, TrustFollowUp, TurnUsage,
+    AgentIo, AgentStatus, App, DisplayMessage, EditorState, HunkReview, MessageRole, ModeState,
+    OperatingMode, PathCompletion, SessionPersistence, SkillCompletion, TrustFollowUp, TurnUsage,
+    UsageTotals, ViewState,
 };
 pub use config::TuiConfig;
 pub use error::TuiError;
@@ -182,8 +183,8 @@ pub async fn launch(
 /// let extensions = TuiExtensions::new().with_command("spend", |app, _args| {
 ///     CustomCommandOutcome::Feedback(format!(
 ///         "{} turn(s), ${:.4}",
-///         app.turn_usage.len(),
-///         app.total_cost
+///         app.usage.turn_usage.len(),
+///         app.usage.total_cost
 ///     ))
 /// });
 ///

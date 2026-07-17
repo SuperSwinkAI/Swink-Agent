@@ -125,8 +125,9 @@ loop {
         Some(event) = terminal_events.next() => {
             handle_terminal_event(event, &mut app);
         }
-        // 2. Agent events (streamed via mpsc forwarder task)
-        Some(agent_event) = agent_rx.recv() => {
+        // 2. Agent events (consumed from the TuiTransport; the default
+        //    InProcessTransport wraps the mpsc forwarder task)
+        Some(agent_event) = transport.recv() => {
             handle_agent_event(agent_event, &mut app);
         }
         // 3. Tick timer (spinners, elapsed time, tool fade)
@@ -135,9 +136,9 @@ loop {
         }
     }
     // Re-render only if state changed
-    if app.dirty {
+    if app.view.dirty {
         terminal.draw(|frame| ui::render(frame, &app))?;
-        app.dirty = false;
+        app.view.dirty = false;
     }
 }
 ```
@@ -319,7 +320,7 @@ supplies *in code* goes on `TuiExtensions`, passed via `App::with_extensions` or
 
 ```rust,ignore
 let extensions = TuiExtensions::new().with_command("spend", |app, _args| {
-    CustomCommandOutcome::Feedback(format!("${:.4}", app.total_cost))
+    CustomCommandOutcome::Feedback(format!("${:.4}", app.usage.total_cost))
 });
 launch_with_extensions(config, &mut terminal, options, extensions).await?;
 ```

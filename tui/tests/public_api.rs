@@ -10,7 +10,8 @@ use swink_agent::{
 };
 use swink_agent_tui::{
     App, CustomCommandOutcome, InProcessTransport, MessageRole, PathCandidate, SkillCandidate,
-    TuiConfig, TuiExtensions, TuiTransport, UserInput, parse_mentions, parse_skill_invocation,
+    TransportError, TuiConfig, TuiExtensions, TuiTransport, UserInput, parse_mentions,
+    parse_skill_invocation,
 };
 
 #[test]
@@ -45,10 +46,10 @@ fn app_state_is_observable_from_outside_the_crate() {
 
     app.handle_agent_event(stubbed_turn("claude-sonnet-4-6", 1_200, 340, 0.0042));
 
-    assert_eq!(app.total_input_tokens, 1_200);
-    assert_eq!(app.total_output_tokens, 340);
-    assert!((app.total_cost - 0.0042).abs() < 1e-9);
-    assert_eq!(app.model_name, "claude-sonnet-4-6");
+    assert_eq!(app.usage.total_input_tokens, 1_200);
+    assert_eq!(app.usage.total_output_tokens, 340);
+    assert!((app.usage.total_cost - 0.0042).abs() < 1e-9);
+    assert_eq!(app.mode.model_name, "claude-sonnet-4-6");
 }
 
 /// The per-turn breakdown behind `/usage` is public, so a host can render its
@@ -60,11 +61,11 @@ fn per_turn_usage_is_observable_from_outside_the_crate() {
     app.handle_agent_event(stubbed_turn("model-a", 100, 20, 0.01));
     app.handle_agent_event(stubbed_turn("model-b", 200, 30, 0.02));
 
-    assert_eq!(app.turn_usage.len(), 2);
-    assert_eq!(app.turn_usage[0].model_id, "model-a");
-    assert_eq!(app.turn_usage[1].input_tokens, 200);
-    assert!((app.turn_usage[1].cost - 0.02).abs() < 1e-9);
-    assert!((app.total_cost - 0.03).abs() < 1e-9);
+    assert_eq!(app.usage.turn_usage.len(), 2);
+    assert_eq!(app.usage.turn_usage[0].model_id, "model-a");
+    assert_eq!(app.usage.turn_usage[1].input_tokens, 200);
+    assert!((app.usage.turn_usage[1].cost - 0.02).abs() < 1e-9);
+    assert!((app.usage.total_cost - 0.03).abs() < 1e-9);
 }
 
 /// Issue #1084 §2: a host must be able to register commands without forking the
@@ -75,14 +76,14 @@ fn host_commands_are_registrable_from_outside_the_crate() {
     let extensions = TuiExtensions::new().with_command("spend", |app: &App, _args: &str| {
         CustomCommandOutcome::Feedback(format!(
             "{} turn(s), ${:.4}",
-            app.turn_usage.len(),
-            app.total_cost
+            app.usage.turn_usage.len(),
+            app.usage.total_cost
         ))
     });
     assert_eq!(extensions.command_names().collect::<Vec<_>>(), ["spend"]);
 
     let app = App::new(TuiConfig::default()).with_extensions(extensions);
-    assert_eq!(app.turn_usage.len(), 0);
+    assert_eq!(app.usage.turn_usage.len(), 0);
 }
 
 async fn recv_transport_event(transport: &mut InProcessTransport) -> AgentEvent {
@@ -166,6 +167,70 @@ async fn in_process_transport_processes_queued_inputs_in_order() {
     assert_eq!(collect_turn_reply(&mut transport).await, "queued reply");
 }
 
+/// A downstream mock transport, proving the trait is implementable — and an
+/// `App` drivable through it — entirely from outside the crate.
+struct MockWireTransport {
+    events: Vec<AgentEvent>,
+}
+
+impl TuiTransport for MockWireTransport {
+    fn send(
+        &self,
+        _input: UserInput,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), TransportError>> + Send + '_>>
+    {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn recv(
+        &mut self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<AgentEvent>> + Send + '_>> {
+        let event = if self.events.is_empty() {
+            None
+        } else {
+            Some(self.events.remove(0))
+        };
+        Box::pin(async move { event })
+    }
+
+    fn try_recv(&mut self) -> Option<AgentEvent> {
+        if self.events.is_empty() {
+            None
+        } else {
+            Some(self.events.remove(0))
+        }
+    }
+}
+
+/// An `App` accepts a host-supplied `TuiTransport` and can be driven from its
+/// event stream without a terminal or an in-process agent.
+#[tokio::test]
+async fn an_app_can_be_driven_through_a_mock_transport() {
+    let events = vec![
+        AgentEvent::AgentStart,
+        stubbed_turn("wire-model", 11, 4, 0.25),
+        AgentEvent::AgentEnd {
+            messages: Arc::new(Vec::new()),
+        },
+    ];
+    let mut app =
+        App::new(TuiConfig::default()).with_transport(Box::new(MockWireTransport { events }));
+
+    app.pump_transport_events().await;
+
+    assert_eq!(app.usage.total_input_tokens, 11);
+    assert_eq!(app.usage.total_output_tokens, 4);
+    assert!((app.usage.total_cost - 0.25).abs() < 1e-9);
+    assert_eq!(app.mode.model_name, "wire-model");
+    assert!(
+        app.view
+            .messages
+            .iter()
+            .any(|message| message.role == MessageRole::Assistant && message.content == "stub"),
+        "the scripted assistant reply should reach the conversation"
+    );
+}
+
 // ─── @path file mentions (issue #1093) ───────────────────────────────────
 
 /// The `@path` seam has to be usable from outside the crate: a downstream host
@@ -188,6 +253,7 @@ fn a_host_can_drive_path_completion_through_the_public_api() {
     }
 
     let completion = app
+        .editor
         .path_completion
         .as_ref()
         .expect("popup should be open on a public App");
@@ -200,8 +266,8 @@ fn a_host_can_drive_path_completion_through_the_public_api() {
     // ...and the host can select and accept through the same public surface.
     app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-    assert_eq!(app.input.lines(), ["@src/main.rs "]);
-    assert!(app.path_completion.is_none());
+    assert_eq!(app.editor.input.lines(), ["@src/main.rs "]);
+    assert!(app.editor.path_completion.is_none());
 }
 
 /// `parse_mentions` is public so a host's resolver can reuse the TUI's parsing
@@ -260,6 +326,7 @@ async fn a_host_resolver_expands_mentions_only_on_submit() {
 
     // The transcript still shows what the user typed, not the expansion.
     let displayed = app
+        .view
         .messages
         .iter()
         .find(|message| message.role == MessageRole::User)
@@ -295,6 +362,7 @@ fn a_host_can_drive_skill_completion_through_the_public_api() {
     app.handle_key_event(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
 
     let completion = app
+        .editor
         .skill_completion
         .as_ref()
         .expect("popup should be open on a public App");
@@ -312,8 +380,8 @@ fn a_host_can_drive_skill_completion_through_the_public_api() {
     // ...and the host can select and accept through the same public surface.
     app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-    assert_eq!(app.input.lines(), ["/review "]);
-    assert!(app.skill_completion.is_none());
+    assert_eq!(app.editor.input.lines(), ["/review "]);
+    assert!(app.editor.skill_completion.is_none());
 }
 
 /// `parse_skill_invocation` is public so a host's resolver can reuse the TUI's
@@ -368,6 +436,7 @@ async fn a_host_skill_resolver_expands_only_on_submit() {
 
     // The transcript still shows what the user typed, not the expansion.
     let displayed = app
+        .view
         .messages
         .iter()
         .find(|message| message.role == MessageRole::User)

@@ -43,10 +43,10 @@ impl App {
     /// Persist the current session. Returns an error if the save failed so that
     /// callers can surface it to the user instead of silently dropping failures.
     pub(super) fn auto_save_session(&mut self) -> io::Result<()> {
-        let Some(ref store) = self.session_store else {
+        let Some(ref store) = self.session.session_store else {
             return Ok(());
         };
-        let Some(ref agent) = self.agent else {
+        let Some(ref agent) = self.agent_io.agent else {
             return Ok(());
         };
         let state = agent.state();
@@ -59,38 +59,47 @@ impl App {
 
         // Build the meta to send to the store. Preserve `created_at` and the
         // optimistic-concurrency `sequence` from the last successful save.
-        let meta = match self.session_meta.clone() {
+        let meta = match self.session.session_meta.clone() {
             Some(mut existing) => {
-                existing.id.clone_from(&self.session_id);
-                existing.title.clone_from(&self.model_name);
+                existing.id.clone_from(&self.session.session_id);
+                existing.title.clone_from(&self.mode.model_name);
                 existing.updated_at = now;
                 existing
             }
-            None => SessionMeta::new(self.session_id.clone(), self.model_name.clone(), now, now),
+            None => SessionMeta::new(
+                self.session.session_id.clone(),
+                self.mode.model_name.clone(),
+                now,
+                now,
+            ),
         };
 
         match store.save_full(
-            &self.session_id,
+            &self.session.session_id,
             &meta,
             &state.messages,
             &session_state_snapshot,
         ) {
             Ok(persisted_meta) => {
-                self.session_meta = Some(persisted_meta);
+                self.session.session_meta = Some(persisted_meta);
                 Ok(())
             }
             Err(error) => {
-                warn!(session_id = %self.session_id, error = %error, "failed to save session");
+                warn!(
+                    session_id = %self.session.session_id,
+                    error = %error,
+                    "failed to save session"
+                );
                 Err(error)
             }
         }
     }
 
     pub(super) fn save_session(&mut self) {
-        info!(session_id = %self.session_id, "saving session");
+        info!(session_id = %self.session.session_id, "saving session");
         match self.auto_save_session() {
             Ok(()) => {
-                self.push_system_message(format!("Session saved: {}", self.session_id));
+                self.push_system_message(format!("Session saved: {}", self.session.session_id));
             }
             Err(error) => {
                 self.push_system_message(format!("Failed to save session: {error}"));
@@ -99,13 +108,14 @@ impl App {
     }
 
     pub(super) fn load_session(&mut self, id: &str) -> io::Result<()> {
-        let Some(ref store) = self.session_store else {
+        let Some(ref store) = self.session.session_store else {
             warn!("session persistence unavailable");
             self.push_system_message("Session persistence unavailable.".to_string());
             return Err(io::Error::other("session persistence unavailable"));
         };
         info!(session_id = %id, "loading session");
         let registry = self
+            .agent_io
             .agent
             .as_ref()
             .and_then(|a| a.custom_message_registry());
@@ -164,13 +174,13 @@ impl App {
                         &_ => {}
                     }
                 }
-                self.messages = display_messages;
-                self.session_id = id.to_string();
-                self.model_name.clone_from(&meta.title);
-                self.session_meta = Some(meta.clone());
-                self.conversation = ConversationView::new();
+                self.view.messages = display_messages;
+                self.session.session_id = id.to_string();
+                self.mode.model_name.clone_from(&meta.title);
+                self.session.session_meta = Some(meta.clone());
+                self.view.conversation = ConversationView::new();
                 self.trim_messages_to_recent_turns();
-                if let Some(agent) = &mut self.agent {
+                if let Some(agent) = &mut self.agent_io.agent {
                     *agent
                         .session_state()
                         .write()
@@ -180,7 +190,7 @@ impl App {
                 self.push_system_message(format!(
                     "Loaded session: {} ({} messages)",
                     id,
-                    self.messages.len()
+                    self.view.messages.len()
                 ));
                 Ok(())
             }
@@ -203,7 +213,7 @@ impl App {
     pub(super) fn list_sessions(&mut self) {
         use std::fmt::Write;
 
-        let Some(ref store) = self.session_store else {
+        let Some(ref store) = self.session.session_store else {
             self.push_system_message("Session persistence unavailable.".to_string());
             return;
         };
@@ -214,7 +224,7 @@ impl App {
             Ok(sessions) => {
                 let mut text = String::from("Saved sessions:\n");
                 for session in &sessions {
-                    let current = if session.id == self.session_id {
+                    let current = if session.id == self.session.session_id {
                         " (current)"
                     } else {
                         ""

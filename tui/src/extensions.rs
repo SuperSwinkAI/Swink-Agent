@@ -17,7 +17,7 @@
 //! use swink_agent_tui::{CustomCommandOutcome, TuiExtensions};
 //!
 //! let extensions = TuiExtensions::new().with_command("budget", |app, _args| {
-//!     CustomCommandOutcome::Feedback(format!("Spent ${:.4}", app.total_cost))
+//!     CustomCommandOutcome::Feedback(format!("Spent ${:.4}", app.usage.total_cost))
 //! });
 //!
 //! assert_eq!(extensions.command_names().collect::<Vec<_>>(), ["budget"]);
@@ -635,10 +635,10 @@ mod tests {
     #[test]
     fn handler_can_read_app_state() {
         let extensions = TuiExtensions::new().with_command("cost", |app, _args| {
-            CustomCommandOutcome::Feedback(format!("{:.2}", app.total_cost))
+            CustomCommandOutcome::Feedback(format!("{:.2}", app.usage.total_cost))
         });
         let mut app = app();
-        app.total_cost = 1.5;
+        app.usage.total_cost = 1.5;
         assert_eq!(
             extensions.dispatch(&app, "cost", ""),
             Some("1.50".to_string())

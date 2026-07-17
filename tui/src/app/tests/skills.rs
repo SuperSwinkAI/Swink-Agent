@@ -98,7 +98,7 @@ async fn skill_body_is_read_at_submit_and_never_while_typing() {
     // a completion refresh (and may fetch tier-2 details — but never tier 3).
     type_text(&mut app, "/deploy");
     assert!(
-        app.skill_completion.is_some(),
+        app.editor.skill_completion.is_some(),
         "completion popup should be open mid-invocation"
     );
     assert_eq!(
@@ -109,7 +109,7 @@ async fn skill_body_is_read_at_submit_and_never_while_typing() {
 
     // Arguments close the popup (whitespace ends the token); still no resolve.
     type_text(&mut app, " prod");
-    assert!(app.skill_completion.is_none());
+    assert!(app.editor.skill_completion.is_none());
     press(&mut app, KeyCode::Left);
     press(&mut app, KeyCode::Right);
     assert_eq!(
@@ -139,6 +139,7 @@ async fn skill_body_is_read_at_submit_and_never_while_typing() {
         ["<skill:deploy>BODY</skill> prod"]
     );
     let displayed = app
+        .view
         .messages
         .iter()
         .find(|message| message.role == MessageRole::User)
@@ -153,7 +154,15 @@ fn skill_details_are_fetched_once_per_highlight() {
     let (mut app, details, _resolver) = spied_app();
 
     type_text(&mut app, "/");
-    assert_eq!(app.skill_completion.as_ref().unwrap().candidates.len(), 2);
+    assert_eq!(
+        app.editor
+            .skill_completion
+            .as_ref()
+            .unwrap()
+            .candidates
+            .len(),
+        2
+    );
     assert_eq!(details.calls_for("deploy"), 1, "highlight fetches deploy");
     assert_eq!(
         details.calls_for("review"),
@@ -177,7 +186,15 @@ fn skill_details_are_fetched_once_per_highlight() {
 
     // Narrowing the query rebuilds the popup but carries the cache.
     type_text(&mut app, "d");
-    assert_eq!(app.skill_completion.as_ref().unwrap().candidates.len(), 1);
+    assert_eq!(
+        app.editor
+            .skill_completion
+            .as_ref()
+            .unwrap()
+            .candidates
+            .len(),
+        1
+    );
     assert_eq!(
         details.calls_for("deploy"),
         1,
@@ -186,7 +203,11 @@ fn skill_details_are_fetched_once_per_highlight() {
 
     // The cached details are what the renderer reads.
     assert_eq!(
-        app.skill_completion.as_ref().unwrap().selected_details(),
+        app.editor
+            .skill_completion
+            .as_ref()
+            .unwrap()
+            .selected_details(),
         Some("deploy instructions")
     );
 }
@@ -199,12 +220,13 @@ fn an_unknown_slash_command_still_hits_the_unknown_command_fallback() {
 
     type_text(&mut app, "/nope");
     assert!(
-        app.skill_completion.is_none(),
+        app.editor.skill_completion.is_none(),
         "no candidates for an unknown name"
     );
     press(&mut app, KeyCode::Enter);
 
     let feedback = app
+        .view
         .messages
         .iter()
         .find(|message| message.role == MessageRole::System)
@@ -222,13 +244,15 @@ fn a_known_skill_bypasses_the_unknown_command_fallback() {
     press(&mut app, KeyCode::Enter);
 
     assert!(
-        app.messages
+        app.view
+            .messages
             .iter()
             .any(|message| message.role == MessageRole::User && message.content == "/deploy"),
         "a known skill submits as a prompt"
     );
     assert!(
-        !app.messages
+        !app.view
+            .messages
             .iter()
             .any(|message| message.content.contains("Unknown command")),
         "a known skill must not fall through to the built-in table"
@@ -250,14 +274,15 @@ fn a_host_command_shadows_a_same_named_skill() {
     press(&mut app, KeyCode::Enter);
 
     assert!(
-        app.messages
+        app.view.messages
             .iter()
             .any(|message| message.role == MessageRole::System
                 && message.content == "host handled"),
         "host commands match before skills"
     );
     assert!(
-        !app.messages
+        !app.view
+            .messages
             .iter()
             .any(|message| message.role == MessageRole::User),
         "the shadowed skill must not also submit as a prompt"
@@ -273,7 +298,8 @@ fn a_hash_sigil_never_routes_to_a_skill() {
     press(&mut app, KeyCode::Enter);
 
     assert!(
-        app.messages
+        app.view
+            .messages
             .iter()
             .any(|message| message.content.contains("Unknown command: #deploy")),
         "only the leading-/ form is a skill invocation"
@@ -345,7 +371,11 @@ fn typing_a_leading_slash_opens_the_popup_with_every_candidate() {
 
     type_text(&mut app, "/");
 
-    let completion = app.skill_completion.as_ref().expect("popup should open");
+    let completion = app
+        .editor
+        .skill_completion
+        .as_ref()
+        .expect("popup should open");
     assert_eq!(completion.candidates.len(), 2);
     assert_eq!(completion.selected, 0);
     assert_eq!(
@@ -361,6 +391,7 @@ fn typing_narrows_the_candidate_list() {
     type_text(&mut app, "/re");
 
     let completion = app
+        .editor
         .skill_completion
         .as_ref()
         .expect("popup should stay open");
@@ -372,7 +403,7 @@ fn typing_narrows_the_candidate_list() {
 fn a_mid_sentence_slash_does_not_open_the_popup() {
     let (mut app, _details, _resolver) = spied_app();
     type_text(&mut app, "see /dep");
-    assert!(app.skill_completion.is_none());
+    assert!(app.editor.skill_completion.is_none());
 }
 
 #[test]
@@ -382,7 +413,7 @@ fn a_slash_on_a_second_line_does_not_open_the_popup() {
     app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
     type_text(&mut app, "/dep");
     assert!(
-        app.skill_completion.is_none(),
+        app.editor.skill_completion.is_none(),
         "invocations are leading-first-line only"
     );
 }
@@ -391,7 +422,7 @@ fn a_slash_on_a_second_line_does_not_open_the_popup() {
 fn no_popup_without_a_registered_provider() {
     let mut app = App::new(TuiConfig::default());
     type_text(&mut app, "/dep");
-    assert!(app.skill_completion.is_none());
+    assert!(app.editor.skill_completion.is_none());
 }
 
 #[test]
@@ -401,8 +432,11 @@ fn tab_accepts_the_highlighted_skill() {
     type_text(&mut app, "/re");
     press(&mut app, KeyCode::Tab);
 
-    assert_eq!(app.input.lines(), ["/review "]);
-    assert!(app.skill_completion.is_none(), "accepting closes the popup");
+    assert_eq!(app.editor.input.lines(), ["/review "]);
+    assert!(
+        app.editor.skill_completion.is_none(),
+        "accepting closes the popup"
+    );
 }
 
 #[test]
@@ -412,8 +446,11 @@ fn enter_accepts_the_skill_instead_of_submitting() {
     type_text(&mut app, "/de");
     press(&mut app, KeyCode::Enter);
 
-    assert_eq!(app.input.lines(), ["/deploy "]);
-    assert!(app.messages.is_empty(), "Enter must not have submitted");
+    assert_eq!(app.editor.input.lines(), ["/deploy "]);
+    assert!(
+        app.view.messages.is_empty(),
+        "Enter must not have submitted"
+    );
     assert_eq!(resolver.call_count(), 0, "Enter must not have resolved");
 }
 
@@ -422,21 +459,21 @@ fn down_and_up_move_the_highlight_and_wrap() {
     let (mut app, _details, _resolver) = spied_app();
 
     type_text(&mut app, "/");
-    assert_eq!(app.skill_completion.as_ref().unwrap().selected, 0);
+    assert_eq!(app.editor.skill_completion.as_ref().unwrap().selected, 0);
 
     press(&mut app, KeyCode::Down);
-    assert_eq!(app.skill_completion.as_ref().unwrap().selected, 1);
+    assert_eq!(app.editor.skill_completion.as_ref().unwrap().selected, 1);
 
     press(&mut app, KeyCode::Down);
     assert_eq!(
-        app.skill_completion.as_ref().unwrap().selected,
+        app.editor.skill_completion.as_ref().unwrap().selected,
         0,
         "Down from the last candidate wraps to the first"
     );
 
     press(&mut app, KeyCode::Up);
     assert_eq!(
-        app.skill_completion.as_ref().unwrap().selected,
+        app.editor.skill_completion.as_ref().unwrap().selected,
         1,
         "Up from the first candidate wraps to the last"
     );
@@ -449,8 +486,8 @@ fn escape_dismisses_the_popup_and_leaves_the_text() {
     type_text(&mut app, "/dep");
     press(&mut app, KeyCode::Esc);
 
-    assert!(app.skill_completion.is_none());
-    assert_eq!(app.input.lines(), ["/dep"]);
+    assert!(app.editor.skill_completion.is_none());
+    assert_eq!(app.editor.input.lines(), ["/dep"]);
 }
 
 #[test]
@@ -460,7 +497,7 @@ fn submitting_does_not_implicitly_accept_an_open_popup() {
     type_text(&mut app, "/dep");
     app.submit_input();
 
-    assert!(app.skill_completion.is_none());
+    assert!(app.editor.skill_completion.is_none());
 }
 
 #[test]
@@ -472,17 +509,17 @@ fn at_most_one_popup_is_ever_open() {
 
     let mut app = App::new(TuiConfig::default()).with_extensions(extensions.clone());
     type_text(&mut app, "/dep");
-    assert!(app.skill_completion.is_some());
+    assert!(app.editor.skill_completion.is_some());
     assert!(
-        app.path_completion.is_none(),
+        app.editor.path_completion.is_none(),
         "a leading slash token is not a mention"
     );
 
     let mut app = App::new(TuiConfig::default()).with_extensions(extensions);
     type_text(&mut app, "look at @src");
-    assert!(app.path_completion.is_some());
+    assert!(app.editor.path_completion.is_some());
     assert!(
-        app.skill_completion.is_none(),
+        app.editor.skill_completion.is_none(),
         "a mention is not a skill invocation"
     );
 }

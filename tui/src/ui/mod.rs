@@ -37,11 +37,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         render_size_warning(frame, area.width, area.height);
         return;
     }
-    let input_height = app.input.height();
-    let mut tool_height = app.tool_panel.height();
+    let input_height = app.editor.input.height();
+    let mut tool_height = app.view.tool_panel.height();
     // Account for extra prompt lines (plan approval, trust follow-up).
-    let has_trust_follow_up = app.trust_follow_up.is_some();
-    let has_plan_approval = app.pending_plan_approval;
+    let has_trust_follow_up = app.agent_io.trust_follow_up.is_some();
+    let has_plan_approval = app.mode.pending_plan_approval;
     if has_plan_approval {
         tool_height = tool_height.max(3) + 1; // at least borders + 1 line
     }
@@ -52,9 +52,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Queued-message overlay: visible while pending_steered is non-empty or
     // fading out after AgentEnd. Height = 1 line per queued message + 2 borders,
     // capped at 5 visible lines total.
-    let steered_visible = !app.pending_steered.is_empty() || app.steered_fade_ticks > 0;
+    let steered_visible =
+        !app.agent_io.pending_steered.is_empty() || app.view.steered_fade_ticks > 0;
     let steered_height: u16 = if steered_visible {
-        let lines = u16::try_from(app.pending_steered.len().max(1)).unwrap_or(u16::MAX);
+        let lines = u16::try_from(app.agent_io.pending_steered.len().max(1)).unwrap_or(u16::MAX);
         (lines + 2).min(7)
     } else {
         0
@@ -62,7 +63,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Per-hunk review overlay: sized to the current hunk plus borders and the
     // key hint line, capped so it can never crowd out the conversation.
-    let hunk_height: u16 = app.hunk_review.as_ref().map_or(0, |review| {
+    let hunk_height: u16 = app.agent_io.hunk_review.as_ref().map_or(0, |review| {
         let hunk_lines = review
             .hunks
             .get(review.cursor)
@@ -96,7 +97,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let full_conv_area = chunks[idx];
     idx += 1;
 
-    let help_width = app.help_panel.width();
+    let help_width = app.view.help_panel.width();
     let (conv_area, help_area) =
         if help_width > 0 && full_conv_area.width >= help_width + MIN_CONV_WIDTH {
             let h_chunks = Layout::default()
@@ -146,65 +147,78 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let status_area = chunks[idx];
 
     // Render conversation
-    app.conversation_area = conv_area;
-    app.conversation_visible_height = conv_area.height.saturating_sub(2) as usize;
-    app.conversation.render(
+    app.view.conversation_area = conv_area;
+    app.view.conversation_visible_height = conv_area.height.saturating_sub(2) as usize;
+    app.view.conversation.render(
         frame,
         conv_area,
-        &app.messages,
+        &app.view.messages,
         app.config.show_thinking,
-        app.focus == Focus::Conversation,
-        app.blink_on,
-        app.selected_tool_block,
-        app.selection.as_ref(),
+        app.view.focus == Focus::Conversation,
+        app.view.blink_on,
+        app.view.selected_tool_block,
+        app.view.selection.as_ref(),
     );
 
     // Render help panel
     if let Some(area) = help_area {
-        app.help_panel.render(frame, area);
+        app.view.help_panel.render(frame, area);
     }
 
     // Render tool panel
     if let Some(area) = tool_area {
-        let trust_name = app.trust_follow_up.as_ref().map(|f| f.tool_name.as_str());
+        let trust_name = app
+            .agent_io
+            .trust_follow_up
+            .as_ref()
+            .map(|f| f.tool_name.as_str());
         // Only advertise `h` while the plain prompt is showing — once a review
         // is open its own panel lists the keys.
         let hunk_reviewable =
-            app.hunk_review.is_none() && app.pending_approval_has_reviewable_diff();
-        app.tool_panel.render_with_prompts(
+            app.agent_io.hunk_review.is_none() && app.pending_approval_has_reviewable_diff();
+        app.view.tool_panel.render_with_prompts(
             frame,
             area,
-            app.pending_plan_approval,
+            app.mode.pending_plan_approval,
             trust_name,
             hunk_reviewable,
         );
     }
 
     // Render per-hunk review overlay
-    if let Some((area, review)) = hunk_area.zip(app.hunk_review.as_ref()) {
+    if let Some((area, review)) = hunk_area.zip(app.agent_io.hunk_review.as_ref()) {
         render_hunk_review(frame, area, review);
     }
 
     // Render steered message overlay
     if let Some(area) = steered_area {
-        render_steered_overlay(frame, area, &app.pending_steered, app.steered_fade_ticks);
+        render_steered_overlay(
+            frame,
+            area,
+            &app.agent_io.pending_steered,
+            app.view.steered_fade_ticks,
+        );
     }
 
     // Render input
-    let status_hint = match app.status {
+    let status_hint = match app.agent_io.status {
         crate::app::AgentStatus::Running => "running...",
         crate::app::AgentStatus::Error => "error",
         crate::app::AgentStatus::Aborted => "aborted",
         crate::app::AgentStatus::Idle => "",
     };
-    app.input
-        .render(frame, input_area, app.focus == Focus::Input, status_hint);
+    app.editor.input.render(
+        frame,
+        input_area,
+        app.view.focus == Focus::Input,
+        status_hint,
+    );
 
     // Render whichever completion popup is open (at most one ever is) over
     // the conversation, above the input.
-    if let Some(completion) = &app.path_completion {
+    if let Some(completion) = &app.editor.path_completion {
         completion::render(frame, input_area, completion);
-    } else if let Some(completion) = &app.skill_completion {
+    } else if let Some(completion) = &app.editor.skill_completion {
         completion::render_skills(frame, input_area, completion);
     }
 

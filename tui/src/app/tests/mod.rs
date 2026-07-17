@@ -9,4 +9,5 @@ mod persistence;
 mod plan_mode;
 mod skills;
 mod tool_blocks;
+mod transport_driven;
 mod usage_command;

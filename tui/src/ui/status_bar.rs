@@ -15,16 +15,16 @@ use crate::theme::ColorMode;
 
 /// Render the status bar.
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
-    let (status_text, status_color) = match app.status {
+    let (status_text, status_color) = match app.agent_io.status {
         AgentStatus::Idle => ("IDLE", theme::status_idle()),
         AgentStatus::Running => ("RUNNING", theme::status_running()),
         AgentStatus::Error => ("ERROR", theme::status_error()),
         AgentStatus::Aborted => ("ABORTED", theme::status_aborted()),
     };
 
-    let elapsed = format::format_elapsed(app.session_start);
-    let input_tokens = format::format_tokens(app.total_input_tokens);
-    let output_tokens = format::format_tokens(app.total_output_tokens);
+    let elapsed = format::format_elapsed(app.session.session_start);
+    let input_tokens = format::format_tokens(app.usage.total_input_tokens);
+    let output_tokens = format::format_tokens(app.usage.total_output_tokens);
 
     let mut spans = vec![Span::styled(
         format!(" {status_text} "),
@@ -32,7 +32,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     )];
 
     // Operating mode badge (only in Plan mode)
-    if app.operating_mode == OperatingMode::Plan {
+    if app.mode.operating_mode == OperatingMode::Plan {
         spans.push(Span::styled(
             " PLAN ",
             Style::default().fg(theme::bar_bg()).bg(theme::plan_color()),
@@ -55,19 +55,19 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
 
     spans.extend([
         Span::raw("  "),
-        Span::styled(&app.model_name, theme::dim()),
+        Span::styled(&app.mode.model_name, theme::dim()),
         Span::raw("  │  "),
         Span::raw(format!("↓{input_tokens} ↑{output_tokens}")),
         Span::raw("  │  "),
-        Span::raw(format!("${:.4}", app.total_cost)),
+        Span::raw(format!("${:.4}", app.usage.total_cost)),
         Span::raw("  │  "),
         Span::styled(elapsed, theme::dim()),
     ]);
 
     // Context window gauge
-    if app.context_budget > 0 {
+    if app.usage.context_budget > 0 {
         let (gauge, pct) =
-            format::format_context_gauge(app.context_tokens_used, app.context_budget);
+            format::format_context_gauge(app.usage.context_tokens_used, app.usage.context_budget);
         let gauge_color = if pct < 60.0 {
             theme::context_green()
         } else if pct < 85.0 {
@@ -81,7 +81,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     // Show retry indicator
-    if let Some(attempt) = app.retry_attempt {
+    if let Some(attempt) = app.agent_io.retry_attempt {
         spans.push(Span::raw("  │  "));
         spans.push(Span::styled(
             format!("Retrying... (attempt {attempt})"),
