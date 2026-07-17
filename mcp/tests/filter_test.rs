@@ -4,7 +4,9 @@ mod common;
 
 use std::collections::HashMap;
 
-use swink_agent_mcp::{McpConnection, McpManager, McpServerConfig, McpTransport, ToolFilter};
+use swink_agent_mcp::{
+    McpConnection, McpManager, McpServerConfig, McpServiceHandle, McpTransport, ToolFilter,
+};
 
 fn five_tool_config() -> common::MockServerConfig {
     common::MockServerConfig::new(vec![
@@ -45,7 +47,7 @@ async fn filter_allow_list_includes_only_matching_tools() {
         Some(ToolFilter::new().with_allow(vec!["tool_a".into(), "tool_b".into()])),
     );
 
-    let conn = McpConnection::from_service(config, service, None)
+    let conn = McpConnection::from_service(config, McpServiceHandle::from_rmcp(service), None)
         .await
         .expect("connection should succeed");
 
@@ -68,7 +70,7 @@ async fn filter_deny_list_excludes_matching_tools() {
         Some(ToolFilter::new().with_deny(vec!["tool_c".into()])),
     );
 
-    let conn = McpConnection::from_service(config, service, None)
+    let conn = McpConnection::from_service(config, McpServiceHandle::from_rmcp(service), None)
         .await
         .expect("connection should succeed");
 
@@ -96,7 +98,7 @@ async fn filter_allow_then_deny_applied_in_order() {
         ),
     );
 
-    let conn = McpConnection::from_service(config, service, None)
+    let conn = McpConnection::from_service(config, McpServiceHandle::from_rmcp(service), None)
         .await
         .expect("connection should succeed");
 
@@ -116,7 +118,7 @@ async fn no_filter_returns_all_tools() {
 
     let config = stub_config("no-filter-test", None);
 
-    let conn = McpConnection::from_service(config, service, None)
+    let conn = McpConnection::from_service(config, McpServiceHandle::from_rmcp(service), None)
         .await
         .expect("connection should succeed");
 

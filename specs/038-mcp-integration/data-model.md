@@ -57,7 +57,7 @@ Runtime state for an active MCP server connection.
 | Field | Type | Description |
 |-------|------|-------------|
 | config | McpServerConfig | The configuration that produced this connection (public field). |
-| discovered_tools | Vec\<rmcp::model::Tool\> | Raw tool definitions discovered from the server, before namespacing/filtering (public field). |
+| discovered_tools | Vec\<McpToolInfo\> | Owned tool metadata discovered from the server, before namespacing/filtering (public field). |
 | state | Arc\<Mutex\<...\>\> | Shared connection status and peer handle (private; read via `status()`). |
 | event_tx | Option\<UnboundedSender\<AgentEvent\>\> | Optional channel for emitting MCP lifecycle events (private). |
 
@@ -71,6 +71,20 @@ Runtime state for an active MCP server connection.
 |---------|-------------|
 | Connected | Server is reachable and tools are available. |
 | Disconnected | Server is unreachable; tool calls fail immediately. Unit variant — no `reason` payload; disconnect reasons are logged separately, not carried on the enum. |
+
+### McpToolInfo
+
+Owned metadata for a tool discovered from an MCP server. Decoupled from `rmcp` wire types so no `rmcp` type crosses the crate's public boundary (see the public-api contract's rmcp-insulation section).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| name | String | Tool name as advertised by the server (before prefixing/sanitization). |
+| description | String | Human-readable description (empty when the server omits one). |
+| input_schema | Value | JSON Schema for the tool's input parameters. |
+
+### McpServiceHandle
+
+Opaque newtype around a pre-established `rmcp` client service, consumed by `McpConnection::from_service`. Constructed via `McpServiceHandle::from_rmcp` — the crate's single deliberate `rmcp` seam (externally managed transports are `rmcp` services by construction).
 
 ### McpTool
 

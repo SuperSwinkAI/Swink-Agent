@@ -278,7 +278,24 @@ pub async fn spawn_mock_connection(
         mcp_config = mcp_config.with_tool_prefix(prefix);
     }
 
-    swink_agent_mcp::McpConnection::from_service(mcp_config, service, None)
-        .await
-        .expect("mock connection should succeed")
+    swink_agent_mcp::McpConnection::from_service(
+        mcp_config,
+        swink_agent_mcp::McpServiceHandle::from_rmcp(service),
+        None,
+    )
+    .await
+    .expect("mock connection should succeed")
+}
+
+/// Discover the echo tool's owned metadata from an in-process mock server.
+///
+/// Convenience for tests that construct an `McpTool` directly and only need
+/// realistic discovered-tool metadata.
+pub async fn echo_tool_info() -> swink_agent_mcp::McpToolInfo {
+    let conn = spawn_mock_connection("echo-info-source", None, vec![]).await;
+    conn.discovered_tools
+        .iter()
+        .find(|tool| tool.name == "echo")
+        .expect("mock server should advertise echo tool")
+        .clone()
 }

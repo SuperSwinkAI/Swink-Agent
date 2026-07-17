@@ -11,7 +11,8 @@ use rmcp::transport::streamable_http_server::{
 };
 use swink_agent::{AgentEvent, AgentTool, ContentBlock, SessionState};
 use swink_agent_mcp::{
-    McpConnection, McpConnectionStatus, McpManager, McpServerConfig, McpTool, McpTransport,
+    McpConnection, McpConnectionStatus, McpManager, McpServerConfig, McpServiceHandle, McpTool,
+    McpTransport,
 };
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::oneshot;
@@ -126,9 +127,10 @@ async fn explicit_shutdown_emits_disconnect_event() {
     )
     .with_requires_approval(false);
 
-    let conn = McpConnection::from_service(config, service, Some(event_tx))
-        .await
-        .expect("connection should succeed");
+    let conn =
+        McpConnection::from_service(config, McpServiceHandle::from_rmcp(service), Some(event_tx))
+            .await
+            .expect("connection should succeed");
 
     let _connect = event_rx.try_recv().expect("connect event");
     let _discovery = event_rx.try_recv().expect("discovery event");
@@ -286,9 +288,10 @@ async fn monitor_detects_transport_close_and_emits_event() {
     )
     .with_requires_approval(false);
 
-    let conn = McpConnection::from_service(config, service, Some(event_tx))
-        .await
-        .expect("connection should succeed");
+    let conn =
+        McpConnection::from_service(config, McpServiceHandle::from_rmcp(service), Some(event_tx))
+            .await
+            .expect("connection should succeed");
 
     assert_eq!(
         conn.status(),
@@ -422,11 +425,10 @@ async fn sse_session_expiry_recovers_without_wrapper_disconnect() {
         sessions.clear();
     }
 
-    let result = conn
+    let agent_result = conn
         .call_tool("echo", serde_json::json!({ "text": "reconnected" }))
         .await
         .expect("tool call should transparently recover after session expiry");
-    let agent_result = swink_agent_mcp::convert::call_result_to_agent_result(&result);
     let text = ContentBlock::extract_text(&agent_result.content);
     assert!(
         text.contains("reconnected"),
@@ -475,9 +477,10 @@ async fn connected_event_emitted_after_handshake() {
     )
     .with_requires_approval(false);
 
-    let _conn = McpConnection::from_service(config, service, Some(event_tx))
-        .await
-        .expect("connection should succeed");
+    let _conn =
+        McpConnection::from_service(config, McpServiceHandle::from_rmcp(service), Some(event_tx))
+            .await
+            .expect("connection should succeed");
 
     let first = event_rx.try_recv().expect("connect event should be queued");
     match first {
@@ -507,9 +510,10 @@ async fn tools_discovered_event_emitted_after_discovery() {
     )
     .with_requires_approval(false);
 
-    let conn = McpConnection::from_service(config, service, Some(event_tx))
-        .await
-        .expect("connection should succeed");
+    let conn =
+        McpConnection::from_service(config, McpServiceHandle::from_rmcp(service), Some(event_tx))
+            .await
+            .expect("connection should succeed");
 
     // Drain events in order and assert we see connect followed by discovery.
     let connect_evt = event_rx.try_recv().expect("connect event should fire");
@@ -557,9 +561,10 @@ async fn tool_call_events_bracket_successful_call() {
     )
     .with_requires_approval(false);
 
-    let conn = McpConnection::from_service(config, service, Some(event_tx))
-        .await
-        .expect("connection should succeed");
+    let conn =
+        McpConnection::from_service(config, McpServiceHandle::from_rmcp(service), Some(event_tx))
+            .await
+            .expect("connection should succeed");
 
     // Drain the connect + discovery events emitted during construction.
     let _connect = event_rx.try_recv().expect("connect event");
@@ -647,9 +652,10 @@ async fn tool_call_completed_event_reports_error_on_failure() {
     )
     .with_requires_approval(false);
 
-    let conn = McpConnection::from_service(config, service, Some(event_tx))
-        .await
-        .expect("connection should succeed");
+    let conn =
+        McpConnection::from_service(config, McpServiceHandle::from_rmcp(service), Some(event_tx))
+            .await
+            .expect("connection should succeed");
 
     // Drain connect + discovery events so only call-related events remain.
     let _connect = event_rx.try_recv().expect("connect event");
@@ -714,10 +720,7 @@ async fn tool_call_completed_event_reports_error_on_failure() {
 /// returning an error `AgentToolResult`, not panicking or hanging.
 #[tokio::test]
 async fn mcp_tool_execute_on_disconnected_returns_error_result() {
-    let mock_cfg = common::MockServerConfig::new(vec![]);
-    let client = common::spawn_mock_server_with_client(&mock_cfg).await;
-    let tools = client.peer().list_all_tools().await.unwrap();
-    let echo_def = tools.iter().find(|t| t.name == "echo").unwrap();
+    let echo_def = common::echo_tool_info().await;
 
     let config = McpServerConfig::new(
         "disconnected-server",
@@ -729,7 +732,7 @@ async fn mcp_tool_execute_on_disconnected_returns_error_result() {
     )
     .with_requires_approval(false);
     let conn = Arc::new(McpConnection::disconnected(config));
-    let tool = McpTool::new(echo_def, None, "disconnected-server", false, conn);
+    let tool = McpTool::new(&echo_def, None, "disconnected-server", false, conn);
 
     let cancel = tokio_util::sync::CancellationToken::new();
     let state = Arc::new(std::sync::RwLock::new(SessionState::default()));
