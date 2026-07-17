@@ -14,7 +14,7 @@ use swink_agent::compose_provider_safe_tool_name;
 use swink_agent::{AgentTool, AgentToolResult, ToolFuture, ToolMetadata};
 
 use crate::connection::McpConnection;
-use crate::convert;
+use crate::tool_info::McpToolInfo;
 
 /// An MCP-discovered tool that implements `AgentTool`.
 ///
@@ -38,31 +38,26 @@ pub struct McpTool {
 }
 
 impl McpTool {
-    /// Create a new MCP tool wrapper.
+    /// Create a new MCP tool wrapper from owned tool metadata (typically an
+    /// entry of [`McpConnection::discovered_tools`]).
     ///
     /// If `prefix` is provided, the tool name becomes a provider-safe
     /// `{prefix}_{original_name}`. Otherwise the original name is sanitized and
     /// bounded without adding a namespace.
-    ///
-    /// **Stability note:** This function takes an `&rmcp::model::Tool`
-    /// parameter, exposing an external crate's type across this crate's
-    /// public boundary. Exposed rmcp types may change with rmcp major
-    /// version bumps without a swink-agent-mcp major bump.
     pub fn new(
-        tool: &rmcp::model::Tool,
+        tool: &McpToolInfo,
         prefix: Option<&str>,
         server_name: &str,
         requires_approval: bool,
         connection: Arc<McpConnection>,
     ) -> Self {
-        let (original_name, description, input_schema) = convert::tool_definition(tool);
-        let name = compose_provider_safe_tool_name(prefix, &original_name);
+        let name = compose_provider_safe_tool_name(prefix, &tool.name);
 
         Self {
             name,
-            original_name,
-            description,
-            input_schema,
+            original_name: tool.name.clone(),
+            description: tool.description.clone(),
+            input_schema: tool.input_schema.clone(),
             server_name: server_name.to_string(),
             requires_approval,
             connection,
@@ -139,10 +134,7 @@ impl AgentTool for McpTool {
 
             let agent_result = tokio::select! {
                 result = self.connection.call_tool(&original_name, params) => {
-                    match result {
-                        Ok(call_result) => convert::call_result_to_agent_result(&call_result),
-                        Err(e) => AgentToolResult::error(e.to_string()),
-                    }
+                    result.unwrap_or_else(|e| AgentToolResult::error(e.to_string()))
                 }
                 () = cancellation_token.cancelled() => {
                     AgentToolResult::error("MCP tool call cancelled")

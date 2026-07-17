@@ -300,7 +300,7 @@ async fn from_service_discovers_tools() {
     let names: Vec<_> = conn
         .discovered_tools
         .iter()
-        .map(|t| t.name.as_ref())
+        .map(|t| t.name.as_str())
         .collect();
     assert!(
         names.contains(&"echo"),
@@ -523,11 +523,10 @@ async fn sse_resolver_auth_refreshes_during_session_recovery() {
     *current_token.write().await = "rotated-token".to_string();
     session_manager.sessions.write().await.clear();
 
-    let result = conn
+    let agent_result = conn
         .call_tool("echo", serde_json::json!({ "text": "recovered" }))
         .await
         .expect("tool call should recover with the refreshed bearer token");
-    let agent_result = swink_agent_mcp::convert::call_result_to_agent_result(&result);
     let text = ContentBlock::extract_text(&agent_result.content);
     assert!(
         text.contains("recovered"),

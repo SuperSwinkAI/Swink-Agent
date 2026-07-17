@@ -8,13 +8,13 @@ use std::time::{Duration, Instant};
 
 use axum::Router;
 use rmcp::ServerHandler;
-use rmcp::model::{ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool};
+use rmcp::model::{ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo};
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
 use serde_json::json;
-use swink_agent_mcp::{McpManager, McpServerConfig, McpTransport};
+use swink_agent_mcp::{McpManager, McpServerConfig, McpToolInfo, McpTransport};
 
 /// T019: Connect to two mock servers with prefixes, verify tools are prefixed
 /// correctly (`prefix_toolname`).
@@ -147,15 +147,14 @@ fn mock_config(server_name: &str) -> McpServerConfig {
     .with_requires_approval(false)
 }
 
-fn mock_tool(name: &str) -> Tool {
-    let schema = json!({
-        "type": "object",
-        "properties": {},
-    });
-    Tool::new(
-        name.to_owned(),
+fn mock_tool(name: &str) -> McpToolInfo {
+    McpToolInfo::new(
+        name,
         format!("Mock tool: {name}"),
-        schema.as_object().expect("object schema").clone(),
+        json!({
+            "type": "object",
+            "properties": {},
+        }),
     )
 }
 

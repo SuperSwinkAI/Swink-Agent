@@ -5,30 +5,21 @@ mod common;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use rmcp::model::Tool;
 use serde_json::json;
 use swink_agent::AgentTool;
 use swink_agent::{MAX_TOOL_NAME_LEN, TOOL_NAME_HASH_HEX_LEN};
-use swink_agent_mcp::McpTool;
-use swink_agent_mcp::convert;
+use swink_agent_mcp::{McpTool, McpToolInfo};
 
 /// T011: Create `McpTool` from discovered tool, verify `name()`, `description()`,
 /// `parameters_schema()` return correct values from MCP server.
 #[tokio::test]
 async fn mcp_tool_exposes_correct_trait_methods() {
-    let config = common::MockServerConfig::new(vec![]);
-    let client = common::spawn_mock_server_with_client(&config).await;
-
-    let tools = client.peer().list_all_tools().await.unwrap();
-    assert!(!tools.is_empty(), "should discover at least the echo tool");
-
-    // Find the echo tool.
-    let echo_tool_def = tools.iter().find(|t| t.name == "echo").unwrap();
+    let echo_tool_def = common::echo_tool_info().await;
 
     let mock_connection = create_mock_connection();
 
     let mcp_tool = McpTool::new(
-        echo_tool_def,
+        &echo_tool_def,
         None, // no prefix
         "test-server",
         false,
@@ -49,16 +40,12 @@ async fn mcp_tool_exposes_correct_trait_methods() {
 /// Test that tool prefix is applied correctly.
 #[tokio::test]
 async fn mcp_tool_applies_prefix() {
-    let config = common::MockServerConfig::new(vec![]);
-    let client = common::spawn_mock_server_with_client(&config).await;
-
-    let tools = client.peer().list_all_tools().await.unwrap();
-    let echo_tool_def = tools.iter().find(|t| t.name == "echo").unwrap();
+    let echo_tool_def = common::echo_tool_info().await;
 
     let mock_connection = create_mock_connection();
 
     let mcp_tool = McpTool::new(
-        echo_tool_def,
+        &echo_tool_def,
         Some("fs"), // with prefix
         "test-server",
         true,
@@ -107,27 +94,16 @@ async fn mcp_tool_truncates_long_prefixed_name_with_hash_suffix() {
     assert_eq!(mcp_tool.original_name(), "b".repeat(80));
 }
 
-/// T012: Execute `McpTool`, verify call is forwarded to MCP server and result
-/// is converted to `AgentToolResult`.
+/// T012: Execute a tool call end-to-end, verify the call is forwarded to the
+/// MCP server and the result is converted to `AgentToolResult`.
 #[tokio::test]
 async fn mcp_tool_executes_and_returns_result() {
-    let config = common::MockServerConfig::new(vec![]);
-    let client = common::spawn_mock_server_with_client(&config).await;
+    let conn = common::spawn_mock_connection("exec-test-server", None, vec![]).await;
 
-    // Verify the echo tool exists.
-    let _tools = client.peer().list_all_tools().await.unwrap();
-
-    // For execution, we need a real connection. We'll test this by directly
-    // calling the rmcp peer to verify the server works end-to-end.
-    let mut params = rmcp::model::CallToolRequestParams::new("echo");
-    params.arguments = Some({
-        let mut map = serde_json::Map::new();
-        map.insert("text".to_string(), serde_json::json!("hello world"));
-        map
-    });
-
-    let result = client.peer().call_tool(params).await.unwrap();
-    let agent_result = convert::call_result_to_agent_result(&result);
+    let agent_result = conn
+        .call_tool("echo", serde_json::json!({"text": "hello world"}))
+        .await
+        .expect("echo call should succeed");
 
     assert!(!agent_result.is_error, "echo tool should not return error");
     assert!(!agent_result.content.is_empty(), "should have content");
@@ -143,15 +119,11 @@ async fn mcp_tool_executes_and_returns_result() {
 /// Test that `approval_context` returns the params.
 #[tokio::test]
 async fn mcp_tool_approval_context_returns_params() {
-    let config = common::MockServerConfig::new(vec![]);
-    let client = common::spawn_mock_server_with_client(&config).await;
-
-    let tools = client.peer().list_all_tools().await.unwrap();
-    let echo_tool_def = tools.iter().find(|t| t.name == "echo").unwrap();
+    let echo_tool_def = common::echo_tool_info().await;
 
     let mock_connection = create_mock_connection();
 
-    let mcp_tool = McpTool::new(echo_tool_def, None, "test-server", true, mock_connection);
+    let mcp_tool = McpTool::new(&echo_tool_def, None, "test-server", true, mock_connection);
 
     let params = serde_json::json!({"text": "hello"});
     let context = mcp_tool.approval_context(&params);
@@ -174,14 +146,13 @@ fn create_mock_connection() -> Arc<swink_agent_mcp::McpConnection> {
     Arc::new(swink_agent_mcp::McpConnection::disconnected(config))
 }
 
-fn mock_tool(name: &str) -> Tool {
-    let schema = json!({
-        "type": "object",
-        "properties": {},
-    });
-    Tool::new(
-        name.to_owned(),
+fn mock_tool(name: &str) -> McpToolInfo {
+    McpToolInfo::new(
+        name,
         format!("Mock tool: {name}"),
-        schema.as_object().expect("object schema").clone(),
+        json!({
+            "type": "object",
+            "properties": {},
+        }),
     )
 }

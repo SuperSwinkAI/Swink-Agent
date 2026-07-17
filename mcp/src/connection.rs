@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use futures::stream::BoxStream;
 use reqwest::header::{HeaderName, HeaderValue};
-use rmcp::model::{CallToolRequestParams, CallToolResult, ClientInfo, Implementation};
+use rmcp::model::{CallToolRequestParams, ClientInfo, Implementation};
 use rmcp::service::{Peer, QuitReason, RoleClient, RunningService, ServiceExt};
 use rmcp::transport::TokioChildProcess;
 use rmcp::transport::streamable_http_client::{
@@ -21,14 +21,52 @@ use rmcp::transport::streamable_http_client::{
 use serde_json::Value;
 use sse_stream::{Error as SseError, Sse};
 use swink_agent::{
-    AgentEvent, CredentialError, CredentialResolver, CredentialType, ResolvedCredential,
+    AgentEvent, AgentToolResult, CredentialError, CredentialResolver, CredentialType,
+    ResolvedCredential,
 };
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
 use crate::config::{McpServerConfig, McpTransport, SseBearerAuth};
+use crate::convert;
 use crate::error::McpError;
+use crate::tool_info::McpToolInfo;
+
+/// Opaque handle around a pre-established MCP client service.
+///
+/// Wraps an `rmcp` `RunningService` so [`McpConnection::from_service`] and the
+/// rest of the crate's public API stay free of `rmcp` types.
+pub struct McpServiceHandle {
+    inner: RunningService<RoleClient, ClientInfo>,
+}
+
+impl McpServiceHandle {
+    /// Wrap a pre-established `rmcp` client service.
+    ///
+    /// **Stability note:** this constructor is the crate's single deliberate
+    /// `rmcp` seam. It must accept `rmcp::service::RunningService` because
+    /// externally managed transports and in-process test servers are `rmcp`
+    /// services by construction — there is no owned representation to convert
+    /// from. This one signature may change with `rmcp` major version bumps
+    /// without a swink-agent-mcp major bump; every other public signature in
+    /// this crate uses owned types and is insulated.
+    #[must_use]
+    pub fn from_rmcp(service: RunningService<RoleClient, ClientInfo>) -> Self {
+        Self { inner: service }
+    }
+
+    /// Unwrap back into the underlying `rmcp` service.
+    pub(crate) fn into_inner(self) -> RunningService<RoleClient, ClientInfo> {
+        self.inner
+    }
+}
+
+impl std::fmt::Debug for McpServiceHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McpServiceHandle").finish_non_exhaustive()
+    }
+}
 
 /// Status of an MCP server connection.
 #[non_exhaustive]
@@ -179,12 +217,9 @@ impl StreamableHttpClient for ResolverBackedSseHttpClient {
 pub struct McpConnection {
     /// The server configuration used to establish this connection.
     pub config: McpServerConfig,
-    /// Discovered tools from the server (raw rmcp tool definitions).
-    ///
-    /// **Stability note:** This field exposes `rmcp::model::Tool` directly.
-    /// Exposed rmcp types may change with rmcp major version bumps without a
-    /// swink-agent-mcp major bump.
-    pub discovered_tools: Vec<rmcp::model::Tool>,
+    /// Discovered tools from the server, as owned metadata captured at
+    /// discovery time (before namespacing/filtering).
+    pub discovered_tools: Vec<McpToolInfo>,
     /// Shared connection state used by callers, shutdown, and the monitor task.
     state: Arc<Mutex<McpConnectionState>>,
     /// Optional event channel for emitting MCP lifecycle events such as
@@ -239,21 +274,18 @@ impl McpConnection {
         self.event_tx.as_ref()
     }
 
-    /// Create a connection from a pre-established rmcp service.
+    /// Create a connection from a pre-established service.
     ///
     /// Performs tool discovery on the already-connected service and spawns the
     /// background lifecycle monitor. Useful for testing with in-process mock
-    /// servers or when the transport is managed externally.
-    ///
-    /// **Stability note:** This function takes an `rmcp::service::RunningService`
-    /// parameter, exposing an external crate's type across this crate's public
-    /// boundary. Exposed rmcp types may change with rmcp major version bumps
-    /// without a swink-agent-mcp major bump.
+    /// servers or when the transport is managed externally — wrap the `rmcp`
+    /// service in an [`McpServiceHandle`] via [`McpServiceHandle::from_rmcp`].
     pub async fn from_service(
         config: McpServerConfig,
-        service: RunningService<RoleClient, ClientInfo>,
+        service: McpServiceHandle,
         event_tx: Option<UnboundedSender<AgentEvent>>,
     ) -> Result<Self, McpError> {
+        let service = service.into_inner();
         let peer = service.peer().clone();
 
         // Handshake already completed before we were given the service.
@@ -261,14 +293,17 @@ impl McpConnection {
             crate::event::server_connected(&config.name)
         });
 
-        let discovered_tools =
-            peer.list_all_tools()
-                .await
-                .map_err(|source| McpError::ProtocolError {
-                    server: config.name.clone(),
-                    context: "tool discovery",
-                    source: Box::new(source),
-                })?;
+        let discovered_tools: Vec<McpToolInfo> = peer
+            .list_all_tools()
+            .await
+            .map_err(|source| McpError::ProtocolError {
+                server: config.name.clone(),
+                context: "tool discovery",
+                source: Box::new(source),
+            })?
+            .iter()
+            .map(McpToolInfo::from_rmcp)
+            .collect();
 
         info!(
             server = %config.name,
@@ -372,6 +407,10 @@ impl McpConnection {
                     source: Box::new(source),
                 })?,
         };
+        let discovered_tools: Vec<McpToolInfo> = discovered_tools
+            .iter()
+            .map(McpToolInfo::from_rmcp)
+            .collect();
 
         info!(
             server = %config.name,
@@ -546,17 +585,15 @@ impl McpConnection {
 
     /// Call a tool on the connected MCP server.
     ///
-    /// Returns an error if the connection is disconnected.
+    /// The raw MCP result is converted into an owned [`AgentToolResult`];
+    /// unsupported content types degrade to descriptive text blocks.
     ///
-    /// **Stability note:** This function returns `rmcp::model::CallToolResult`,
-    /// exposing an external crate's type across this crate's public boundary.
-    /// Exposed rmcp types may change with rmcp major version bumps without a
-    /// swink-agent-mcp major bump.
+    /// Returns an error if the connection is disconnected.
     pub async fn call_tool(
         &self,
         tool_name: &str,
         arguments: Value,
-    ) -> Result<CallToolResult, McpError> {
+    ) -> Result<AgentToolResult, McpError> {
         let peer = {
             let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             if state.status == McpConnectionStatus::Disconnected {
@@ -596,6 +633,7 @@ impl McpConnection {
 
         peer.call_tool(params)
             .await
+            .map(|result| convert::call_result_to_agent_result(&result))
             .map_err(|source| McpError::ToolCallFailed {
                 server: self.config.name.clone(),
                 tool: tool_name.to_string(),

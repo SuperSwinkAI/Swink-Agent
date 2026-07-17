@@ -14,7 +14,7 @@ use swink_agent::{
     ContentBlock, Cost, LlmMessage, ModelSpec, PreDispatchPolicy, PreDispatchVerdict, StopReason,
     ToolApproval, ToolApprovalRequest, ToolDispatchContext, Usage,
 };
-use swink_agent_mcp::{McpConnection, McpServerConfig, McpTool, McpTransport};
+use swink_agent_mcp::{McpConnection, McpServerConfig, McpServiceHandle, McpTool, McpTransport};
 use tokio_util::sync::CancellationToken;
 
 type ApprovalCaptures = Arc<Mutex<Vec<(String, Option<Value>)>>>;
@@ -119,7 +119,7 @@ async fn make_echo_tool(requires_approval: bool) -> Arc<dyn AgentTool> {
     )
     .with_requires_approval(requires_approval);
     let conn = Arc::new(
-        McpConnection::from_service(config, client, None)
+        McpConnection::from_service(config, McpServiceHandle::from_rmcp(client), None)
             .await
             .unwrap(),
     );
@@ -171,13 +171,10 @@ fn disconnected_connection(requires_approval: bool) -> (McpServerConfig, Arc<Mcp
 /// T027: `McpTool` with `requires_approval=true` returns true from trait method.
 #[tokio::test]
 async fn mcp_tool_requires_approval_true_when_configured() {
-    let config = common::MockServerConfig::new(vec![]);
-    let client = common::spawn_mock_server_with_client(&config).await;
-    let tools = client.peer().list_all_tools().await.unwrap();
-    let echo_def = tools.iter().find(|t| t.name == "echo").unwrap();
+    let echo_def = common::echo_tool_info().await;
 
     let (_, conn) = disconnected_connection(true);
-    let tool = McpTool::new(echo_def, None, "policy-test-server", true, conn);
+    let tool = McpTool::new(&echo_def, None, "policy-test-server", true, conn);
 
     assert!(
         tool.requires_approval(),
@@ -188,13 +185,10 @@ async fn mcp_tool_requires_approval_true_when_configured() {
 /// T028: `McpTool` with `requires_approval=false` returns false.
 #[tokio::test]
 async fn mcp_tool_requires_approval_false_when_configured() {
-    let config = common::MockServerConfig::new(vec![]);
-    let client = common::spawn_mock_server_with_client(&config).await;
-    let tools = client.peer().list_all_tools().await.unwrap();
-    let echo_def = tools.iter().find(|t| t.name == "echo").unwrap();
+    let echo_def = common::echo_tool_info().await;
 
     let (_, conn) = disconnected_connection(false);
-    let tool = McpTool::new(echo_def, None, "policy-test-server", false, conn);
+    let tool = McpTool::new(&echo_def, None, "policy-test-server", false, conn);
 
     assert!(
         !tool.requires_approval(),
@@ -205,13 +199,10 @@ async fn mcp_tool_requires_approval_false_when_configured() {
 /// T029: `approval_context` returns the full params as context.
 #[tokio::test]
 async fn mcp_tool_approval_context_returns_params_for_policy_inspection() {
-    let config = common::MockServerConfig::new(vec![]);
-    let client = common::spawn_mock_server_with_client(&config).await;
-    let tools = client.peer().list_all_tools().await.unwrap();
-    let echo_def = tools.iter().find(|t| t.name == "echo").unwrap();
+    let echo_def = common::echo_tool_info().await;
 
     let (_, conn) = disconnected_connection(true);
-    let tool = McpTool::new(echo_def, None, "policy-test-server", true, conn);
+    let tool = McpTool::new(&echo_def, None, "policy-test-server", true, conn);
 
     let params = serde_json::json!({
         "text": "sensitive-input",
@@ -234,13 +225,10 @@ async fn mcp_tool_approval_context_returns_params_for_policy_inspection() {
 /// stay available to approval and policy code.
 #[tokio::test]
 async fn mcp_tool_approval_context_is_redacted_in_tool_approval_request_debug() {
-    let config = common::MockServerConfig::new(vec![]);
-    let client = common::spawn_mock_server_with_client(&config).await;
-    let tools = client.peer().list_all_tools().await.unwrap();
-    let echo_def = tools.iter().find(|t| t.name == "echo").unwrap();
+    let echo_def = common::echo_tool_info().await;
 
     let (_, conn) = disconnected_connection(true);
-    let tool = McpTool::new(echo_def, None, "policy-test-server", true, conn);
+    let tool = McpTool::new(&echo_def, None, "policy-test-server", true, conn);
 
     let params = serde_json::json!({
         "Authorization": "Bearer top-secret",
@@ -264,13 +252,10 @@ async fn mcp_tool_approval_context_is_redacted_in_tool_approval_request_debug() 
 /// Verifies the contract that MCP tools always expose params to approval/policy gates.
 #[tokio::test]
 async fn mcp_tool_always_provides_approval_context() {
-    let config = common::MockServerConfig::new(vec![]);
-    let client = common::spawn_mock_server_with_client(&config).await;
-    let tools = client.peer().list_all_tools().await.unwrap();
-    let echo_def = tools.iter().find(|t| t.name == "echo").unwrap();
+    let echo_def = common::echo_tool_info().await;
 
     let (_, conn) = disconnected_connection(true);
-    let tool = McpTool::new(echo_def, None, "policy-test-server", true, conn);
+    let tool = McpTool::new(&echo_def, None, "policy-test-server", true, conn);
 
     // Empty params
     let empty = Value::Null;

@@ -26,6 +26,15 @@
 //! mcp.connect_all().await?;
 //! let tools = mcp.tools();
 //! ```
+//!
+//! # `rmcp` insulation
+//!
+//! The public API exposes only owned types ([`McpToolInfo`],
+//! `swink_agent::AgentToolResult`, …) — no `rmcp` type appears in public
+//! signatures, so an `rmcp` major version bump cannot force a semver-major
+//! bump on this crate. The single deliberate exception is
+//! [`McpServiceHandle::from_rmcp`], which wraps an externally managed `rmcp`
+//! service; see its stability note.
 /// Ensure a process-wide default rustls crypto provider is installed.
 ///
 /// The workspace builds reqwest with `rustls-no-provider` (#1110), so a
@@ -39,14 +48,16 @@ pub(crate) fn ensure_default_crypto_provider() {
 
 mod config;
 mod connection;
-pub mod convert;
+mod convert;
 mod error;
 pub mod event;
 mod manager;
 mod tool;
+mod tool_info;
 
 pub use config::{McpServerConfig, McpTransport, SseBearerAuth, ToolFilter};
-pub use connection::{McpConnection, McpConnectionStatus};
+pub use connection::{McpConnection, McpConnectionStatus, McpServiceHandle};
 pub use error::McpError;
 pub use manager::McpManager;
 pub use tool::McpTool;
+pub use tool_info::McpToolInfo;

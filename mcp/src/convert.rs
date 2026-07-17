@@ -1,7 +1,10 @@
 //! Conversion functions between `rmcp` types and `swink-agent` types.
+//!
+//! Internal module: no `rmcp` type may cross this crate's public boundary,
+//! so these conversions are applied before results leave the crate (see
+//! [`McpConnection::call_tool`](crate::McpConnection::call_tool)).
 
 use rmcp::model::{CallToolResult, ContentBlock as McpContentBlock, ResourceContents};
-use serde_json::Value;
 use swink_agent::{AgentToolResult, ContentBlock};
 
 /// Convert an `rmcp` content block to a `swink-agent` `ContentBlock`.
@@ -55,12 +58,108 @@ pub fn call_result_to_agent_result(result: &CallToolResult) -> AgentToolResult {
     AgentToolResult::new(content, is_error)
 }
 
-/// Extract tool definition fields from an `rmcp` `Tool`.
-///
-/// Returns `(name, description, input_schema)`.
-pub fn tool_definition(tool: &rmcp::model::Tool) -> (String, String, Value) {
-    let name = tool.name.to_string();
-    let description = tool.description.as_deref().unwrap_or("").to_string();
-    let input_schema = tool.schema_as_json_value();
-    (name, description, input_schema)
+#[cfg(test)]
+mod tests {
+    use rmcp::model::{CallToolResult, ContentBlock as McpContentBlock};
+    use swink_agent::ContentBlock;
+
+    use super::{call_result_to_agent_result, content_to_block};
+
+    #[test]
+    fn text_content_conversion() {
+        let content = McpContentBlock::text("hello world");
+        let block = content_to_block(&content);
+        match block {
+            ContentBlock::Text { text } => assert_eq!(text, "hello world"),
+            other => panic!("expected Text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn image_content_conversion() {
+        let content = McpContentBlock::image("aW1hZ2VkYXRh", "image/png");
+        let block = content_to_block(&content);
+        match block {
+            ContentBlock::Image { source } => match source {
+                swink_agent::ImageSource::Base64 { data, media_type } => {
+                    assert_eq!(data, "aW1hZ2VkYXRh");
+                    assert_eq!(media_type, "image/png");
+                }
+                other => panic!("expected Base64 image source, got {other:?}"),
+            },
+            other => panic!("expected Image, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn error_result_conversion() {
+        let result = {
+            let mut r = CallToolResult::default();
+            r.content = vec![McpContentBlock::text("something went wrong")];
+            r.is_error = Some(true);
+            r
+        };
+        let agent_result = call_result_to_agent_result(&result);
+        assert!(agent_result.is_error);
+        assert_eq!(agent_result.content.len(), 1);
+        match &agent_result.content[0] {
+            ContentBlock::Text { text } => assert_eq!(text, "something went wrong"),
+            other => panic!("expected Text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_content_handling() {
+        let result = {
+            let mut r = CallToolResult::default();
+            r.content = vec![];
+            r.is_error = Some(false);
+            r
+        };
+        let agent_result = call_result_to_agent_result(&result);
+        assert!(!agent_result.is_error);
+        assert_eq!(agent_result.content.len(), 1);
+        match &agent_result.content[0] {
+            ContentBlock::Text { text } => assert_eq!(text, ""),
+            other => panic!("expected Text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_error_content_handling() {
+        let result = {
+            let mut r = CallToolResult::default();
+            r.content = vec![];
+            r.is_error = Some(true);
+            r
+        };
+        let agent_result = call_result_to_agent_result(&result);
+        assert!(agent_result.is_error);
+    }
+
+    #[test]
+    fn success_result_conversion() {
+        let result = {
+            let mut r = CallToolResult::default();
+            r.content = vec![McpContentBlock::text("success output")];
+            r.is_error = Some(false);
+            r
+        };
+        let agent_result = call_result_to_agent_result(&result);
+        assert!(!agent_result.is_error);
+        assert_eq!(agent_result.content.len(), 1);
+    }
+
+    #[test]
+    fn resource_content_fallback() {
+        let content = McpContentBlock::embedded_text("file:///tmp/test.txt", "file content here");
+        let block = content_to_block(&content);
+        match block {
+            ContentBlock::Text { text } => {
+                assert!(text.contains("file:///tmp/test.txt"));
+                assert!(text.contains("file content here"));
+            }
+            other => panic!("expected Text fallback for resource, got {other:?}"),
+        }
+    }
 }
