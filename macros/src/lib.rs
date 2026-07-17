@@ -9,6 +9,27 @@
 //! - `#[tool(name = "...", description = "...")]` — wraps an async function as
 //!   an `AgentTool` implementation. Schema is derived from a hidden params struct
 //!   via `schemars`, replacing the previous bespoke type mapper.
+//!
+//! # Scope: external SDK consumers
+//!
+//! These macros target **downstream users of the `swink-agent` SDK** who want
+//! to turn a plain async function into a tool with minimal ceremony. They are
+//! intentionally **not** used by the built-in tools inside the `swink-agent`
+//! crate itself, for two structural reasons:
+//!
+//! 1. The expansion names the SDK by its external path (`swink_agent::…`), so
+//!    it cannot be invoked from within the `swink-agent` crate without an
+//!    `extern crate self` alias.
+//! 2. `#[tool]` produces a stateless unit struct whose `label()` equals its
+//!    `name()`. The built-in tools carry constructor state (stores, execution
+//!    roots), human-readable labels, `deny_unknown_fields` schemas, and
+//!    `execution_root`/`approval_context` overrides — capabilities the macro
+//!    deliberately does not model, keeping its surface small.
+//!
+//! The generated code is exercised end-to-end against the real `AgentTool`
+//! trait by this crate's integration tests (`tests/`) and the runnable
+//! `examples/derived_tool.rs`, both of which compile against the actual
+//! `swink-agent` crate — so the macros cannot silently drift from the trait.
 
 mod tool_attr;
 mod tool_schema;
