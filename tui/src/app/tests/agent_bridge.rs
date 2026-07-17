@@ -24,40 +24,40 @@ async fn multi_turn_send_and_receive() {
     app.set_agent(agent);
 
     app.send_to_agent("hello".to_string());
-    assert_eq!(app.status, AgentStatus::Running);
+    assert_eq!(app.agent_io.status, AgentStatus::Running);
 
     drain_agent_events_until_idle(&mut app).await;
 
     assert_eq!(
-        app.status,
+        app.agent_io.status,
         AgentStatus::Idle,
         "app should be idle after first turn"
     );
     assert!(
-        app.messages
+        app.view.messages
             .iter()
             .any(|m| m.role == MessageRole::Assistant && m.content == "first response"),
         "first response should appear in display messages"
     );
 
     app.send_to_agent("follow up".to_string());
-    assert_eq!(app.status, AgentStatus::Running);
+    assert_eq!(app.agent_io.status, AgentStatus::Running);
 
     drain_agent_events_until_idle(&mut app).await;
 
     assert_eq!(
-        app.status,
+        app.agent_io.status,
         AgentStatus::Idle,
         "app should be idle after second turn"
     );
     assert!(
-        app.messages
+        app.view.messages
             .iter()
             .any(|m| m.role == MessageRole::Assistant && m.content == "second response"),
         "second response should appear in display messages"
     );
     assert!(
-        !app.messages.iter().any(|m| m.role == MessageRole::Error),
+        !app.view.messages.iter().any(|m| m.role == MessageRole::Error),
         "no error messages should appear during multi-turn"
     );
 }
@@ -70,17 +70,17 @@ async fn agent_state_transitions_through_events() {
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
 
-    assert_eq!(app.status, AgentStatus::Idle);
+    assert_eq!(app.agent_io.status, AgentStatus::Idle);
 
     app.handle_agent_event(AgentEvent::AgentStart);
-    assert_eq!(app.status, AgentStatus::Running);
+    assert_eq!(app.agent_io.status, AgentStatus::Running);
 
     app.handle_agent_event(AgentEvent::AgentEnd {
         messages: Arc::new(Vec::new()),
     });
-    assert_eq!(app.status, AgentStatus::Idle);
+    assert_eq!(app.agent_io.status, AgentStatus::Idle);
 
-    let agent_ref = app.agent.as_ref().unwrap();
+    let agent_ref = app.agent_io.agent.as_ref().unwrap();
     assert!(
         !agent_ref.state().is_running,
         "agent internal is_running should be false after AgentEnd"
@@ -104,7 +104,7 @@ async fn three_turn_conversation() {
         drain_agent_events_until_idle(&mut app).await;
 
         assert_eq!(
-            app.status,
+            app.agent_io.status,
             AgentStatus::Idle,
             "should be idle after turn {}",
             i + 1
@@ -122,7 +122,7 @@ async fn three_turn_conversation() {
         vec!["response one", "response two", "response three"]
     );
     assert!(
-        !app.messages.iter().any(|m| m.role == MessageRole::Error),
+        !app.view.messages.iter().any(|m| m.role == MessageRole::Error),
         "no errors across three turns"
     );
 }
@@ -135,8 +135,8 @@ async fn message_end_updates_context_tokens_used() {
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
 
-    assert_eq!(app.context_budget, 100_000);
-    assert_eq!(app.context_tokens_used, 0);
+    assert_eq!(app.usage.context_budget, 100_000);
+    assert_eq!(app.usage.context_tokens_used, 0);
 
     let message = AssistantMessage::new(vec![], String::new(), "mock-model")
         .with_usage(
@@ -149,7 +149,7 @@ async fn message_end_updates_context_tokens_used() {
         .with_timestamp(0);
 
     app.handle_agent_event(AgentEvent::MessageEnd { message });
-    assert_eq!(app.context_tokens_used, 50_000);
+    assert_eq!(app.usage.context_tokens_used, 50_000);
 }
 
 #[tokio::test]
@@ -159,13 +159,13 @@ async fn reset_clears_context_tokens() {
 
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
-    app.context_tokens_used = 75_000;
+    app.usage.context_tokens_used = 75_000;
 
-    if let Some(agent) = &mut app.agent {
+    if let Some(agent) = &mut app.agent_io.agent {
         agent.reset();
     }
-    app.context_tokens_used = 0;
-    assert_eq!(app.context_tokens_used, 0);
+    app.usage.context_tokens_used = 0;
+    assert_eq!(app.usage.context_tokens_used, 0);
 }
 
 #[tokio::test]
@@ -192,12 +192,12 @@ async fn error_response_allows_retry() {
     drain_agent_events_until_idle(&mut app).await;
 
     assert_eq!(
-        app.status,
+        app.agent_io.status,
         AgentStatus::Idle,
         "should return to idle even after an error response"
     );
     assert!(
-        app.messages
+        app.view.messages
             .iter()
             .any(|m| m.content.contains("something broke")),
         "error response should be visible in the conversation"
@@ -206,9 +206,9 @@ async fn error_response_allows_retry() {
     app.send_to_agent("try again".to_string());
     drain_agent_events_until_idle(&mut app).await;
 
-    assert_eq!(app.status, AgentStatus::Idle);
+    assert_eq!(app.agent_io.status, AgentStatus::Idle);
     assert!(
-        app.messages
+        app.view.messages
             .iter()
             .any(|m| m.role == MessageRole::Assistant && m.content == "recovered"),
         "recovery response should appear"
@@ -235,35 +235,35 @@ async fn cycle_model_applies_and_restores_provider_binding_on_send() {
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
 
-    assert_eq!(app.model_name, primary_model.model_id);
+    assert_eq!(app.mode.model_name, primary_model.model_id);
 
     app.cycle_model();
-    assert_eq!(app.model_name, extra_model.model_id);
-    assert_eq!(app.pending_model, Some(extra_model.clone()));
+    assert_eq!(app.mode.model_name, extra_model.model_id);
+    assert_eq!(app.mode.pending_model, Some(extra_model.clone()));
 
     app.send_to_agent("hello extra".to_string());
     drain_agent_events_until_idle(&mut app).await;
 
     assert!(
-        app.messages
+        app.view.messages
             .iter()
             .any(|m| m.role == MessageRole::Assistant && m.content == "from extra")
     );
-    assert_eq!(app.model_name, extra_model.model_id);
+    assert_eq!(app.mode.model_name, extra_model.model_id);
 
     app.cycle_model();
-    assert_eq!(app.model_name, primary_model.model_id);
-    assert_eq!(app.pending_model, Some(primary_model.clone()));
+    assert_eq!(app.mode.model_name, primary_model.model_id);
+    assert_eq!(app.mode.pending_model, Some(primary_model.clone()));
 
     app.send_to_agent("hello primary".to_string());
     drain_agent_events_until_idle(&mut app).await;
 
     assert!(
-        app.messages
+        app.view.messages
             .iter()
             .any(|m| m.role == MessageRole::Assistant && m.content == "from primary after restore")
     );
-    assert_eq!(app.model_name, primary_model.model_id);
+    assert_eq!(app.mode.model_name, primary_model.model_id);
 }
 
 #[tokio::test]
@@ -271,9 +271,9 @@ async fn turn_end_renders_tool_results_with_diff_data_and_trims_old_turns() {
     let mut app = App::new(TuiConfig::default());
 
     for turn in 1..=21 {
-        app.messages
+        app.view.messages
             .push(make_user_message(&format!("user {turn}")));
-        app.messages
+        app.view.messages
             .push(make_assistant_message(&format!("assistant {turn}")));
     }
 
@@ -377,9 +377,9 @@ fn tool_execution_update_surfaces_live_tool_output() {
         partial: AgentToolResult::text("Finished test profile"),
     });
 
-    assert_eq!(app.tool_panel.active.len(), 1);
+    assert_eq!(app.view.tool_panel.active.len(), 1);
     assert_eq!(
-        app.tool_panel.active[0].streamed_output,
+        app.view.tool_panel.active[0].streamed_output,
         "Compiling swink-agent-tui\nFinished test profile"
     );
 }

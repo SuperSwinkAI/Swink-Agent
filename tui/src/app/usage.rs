@@ -45,17 +45,17 @@ impl App {
     /// operator-declared `[pricing]` rates reports `$0.0000` — the report says
     /// so explicitly rather than implying the turns were free.
     pub(crate) fn usage_report(&self) -> String {
-        if self.turn_usage.is_empty() {
+        if self.usage.turn_usage.is_empty() {
             return "No usage recorded yet — send a prompt first.".to_string();
         }
 
         let mut out = String::new();
-        let turns = self.turn_usage.len();
+        let turns = self.usage.turn_usage.len();
         let plural = if turns == 1 { "" } else { "s" };
         let _ = writeln!(out, "Usage — {turns} turn{plural}");
         out.push('\n');
 
-        for (index, turn) in self.turn_usage.iter().enumerate() {
+        for (index, turn) in self.usage.turn_usage.iter().enumerate() {
             let _ = writeln!(
                 out,
                 "  {:>3}  {:<28}  ↓{:>7} ↑{:>7}  ${:.4}",
@@ -83,21 +83,21 @@ impl App {
             }
         }
 
-        let cache_read: u64 = self.turn_usage.iter().map(|t| t.cache_read_tokens).sum();
-        let cache_write: u64 = self.turn_usage.iter().map(|t| t.cache_write_tokens).sum();
+        let cache_read: u64 = self.usage.turn_usage.iter().map(|t| t.cache_read_tokens).sum();
+        let cache_write: u64 = self.usage.turn_usage.iter().map(|t| t.cache_write_tokens).sum();
 
         out.push('\n');
         let _ = writeln!(
             out,
             "  Total  ↓{} ↑{}  cache ↓{} ↑{}  ${:.4}",
-            format::format_tokens(self.total_input_tokens),
-            format::format_tokens(self.total_output_tokens),
+            format::format_tokens(self.usage.total_input_tokens),
+            format::format_tokens(self.usage.total_output_tokens),
             format::format_tokens(cache_read),
             format::format_tokens(cache_write),
-            self.total_cost,
+            self.usage.total_cost,
         );
 
-        if self.total_cost == 0.0 {
+        if self.usage.total_cost == 0.0 {
             let unpriced: Vec<&str> = by_model
                 .iter()
                 .filter(|(_, totals)| totals.cost == 0.0)
@@ -117,7 +117,7 @@ impl App {
     /// report across renders.
     fn usage_by_model(&self) -> BTreeMap<String, ModelTotals> {
         let mut by_model: BTreeMap<String, ModelTotals> = BTreeMap::new();
-        for turn in &self.turn_usage {
+        for turn in &self.usage.turn_usage {
             let totals = by_model.entry(turn.model_id.clone()).or_default();
             totals.turns += 1;
             totals.input += turn.input_tokens;
@@ -155,10 +155,10 @@ mod tests {
 
     fn app_with(turns: Vec<TurnUsage>) -> App {
         let mut app = App::new(TuiConfig::default());
-        app.total_input_tokens = turns.iter().map(|t| t.input_tokens).sum();
-        app.total_output_tokens = turns.iter().map(|t| t.output_tokens).sum();
-        app.total_cost = turns.iter().map(|t| t.cost).sum();
-        app.turn_usage = turns;
+        app.usage.total_input_tokens = turns.iter().map(|t| t.input_tokens).sum();
+        app.usage.total_output_tokens = turns.iter().map(|t| t.output_tokens).sum();
+        app.usage.total_cost = turns.iter().map(|t| t.cost).sum();
+        app.usage.turn_usage = turns;
         app
     }
 

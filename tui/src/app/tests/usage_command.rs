@@ -8,13 +8,13 @@ use crate::extensions::{CustomCommandOutcome, TuiExtensions};
 
 fn type_command(app: &mut App, text: &str) {
     for c in text.chars() {
-        app.input.insert_char(c);
+        app.editor.input.insert_char(c);
     }
     app.submit_input();
 }
 
 fn last_message(app: &App) -> &DisplayMessage {
-    app.messages.last().expect("a message should be pushed")
+    app.view.messages.last().expect("a message should be pushed")
 }
 
 fn stubbed_turn(model_id: &str, input: u64, output: u64, cost: f64) -> AgentEvent {
@@ -58,7 +58,7 @@ fn slash_usage_is_not_forwarded_to_the_agent() {
     type_command(&mut app, "/usage");
 
     // Only the system feedback message; the command never became a user turn.
-    assert_eq!(app.messages.len(), 1);
+    assert_eq!(app.view.messages.len(), 1);
     assert_eq!(last_message(&app).role, MessageRole::System);
 }
 
@@ -66,18 +66,18 @@ fn slash_usage_is_not_forwarded_to_the_agent() {
 fn reset_clears_the_per_turn_breakdown() {
     let mut app = App::new(TuiConfig::default());
     app.handle_agent_event(stubbed_turn("model-a", 1_000, 200, 0.01));
-    assert_eq!(app.turn_usage.len(), 1);
+    assert_eq!(app.usage.turn_usage.len(), 1);
 
     app.reset_session_state();
 
-    assert!(app.turn_usage.is_empty());
-    assert!((app.total_cost).abs() < 1e-9);
+    assert!(app.usage.turn_usage.is_empty());
+    assert!((app.usage.total_cost).abs() < 1e-9);
 }
 
 #[test]
 fn host_command_runs_and_pushes_its_feedback() {
     let extensions = TuiExtensions::new().with_command("spend", |app: &App, _args: &str| {
-        CustomCommandOutcome::Feedback(format!("spent ${:.4}", app.total_cost))
+        CustomCommandOutcome::Feedback(format!("spent ${:.4}", app.usage.total_cost))
     });
     let mut app = App::new(TuiConfig::default()).with_extensions(extensions);
     app.handle_agent_event(stubbed_turn("model-a", 10, 5, 0.5));

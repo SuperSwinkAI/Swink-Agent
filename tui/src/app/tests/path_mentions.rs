@@ -70,7 +70,7 @@ async fn mentions_resolve_at_submit_and_never_while_typing() {
     // keystrokes runs a completion refresh.
     type_text(&mut app, "explain @src/lib.rs");
     assert!(
-        app.path_completion.is_some(),
+        app.editor.path_completion.is_some(),
         "completion popup should be open mid-mention"
     );
     assert_eq!(
@@ -197,7 +197,7 @@ fn typing_an_at_sign_opens_the_popup_with_every_candidate() {
 
     type_text(&mut app, "look at @");
 
-    let completion = app.path_completion.as_ref().expect("popup should open");
+    let completion = app.editor.path_completion.as_ref().expect("popup should open");
     assert_eq!(completion.candidates.len(), 3);
     assert_eq!(completion.selected, 0);
 }
@@ -224,14 +224,14 @@ fn a_query_matching_nothing_closes_the_popup() {
 
     type_text(&mut app, "@zzz");
 
-    assert!(app.path_completion.is_none());
+    assert!(app.editor.path_completion.is_none());
 }
 
 #[test]
 fn no_popup_without_a_registered_provider() {
     let mut app = App::new(TuiConfig::default());
     type_text(&mut app, "look at @src/");
-    assert!(app.path_completion.is_none());
+    assert!(app.editor.path_completion.is_none());
 }
 
 #[test]
@@ -242,8 +242,8 @@ fn tab_accepts_the_highlighted_candidate() {
     type_text(&mut app, "look at @src/m");
     press(&mut app, KeyCode::Tab);
 
-    assert_eq!(app.input.lines(), ["look at @src/main.rs "]);
-    assert!(app.path_completion.is_none(), "accepting closes the popup");
+    assert_eq!(app.editor.input.lines(), ["look at @src/main.rs "]);
+    assert!(app.editor.path_completion.is_none(), "accepting closes the popup");
 }
 
 #[test]
@@ -254,8 +254,8 @@ fn enter_accepts_the_candidate_instead_of_submitting() {
     type_text(&mut app, "@src/m");
     press(&mut app, KeyCode::Enter);
 
-    assert_eq!(app.input.lines(), ["@src/main.rs "]);
-    assert!(app.messages.is_empty(), "Enter must not have submitted");
+    assert_eq!(app.editor.input.lines(), ["@src/main.rs "]);
+    assert!(app.view.messages.is_empty(), "Enter must not have submitted");
     assert_eq!(spy.call_count(), 0, "Enter must not have resolved");
 }
 
@@ -275,7 +275,7 @@ async fn enter_submits_normally_once_the_popup_is_closed() {
 
     press(&mut app, KeyCode::Enter); // popup closed, so this submits
 
-    assert!(app.input.is_empty(), "second Enter submits the prompt");
+    assert!(app.editor.input.is_empty(), "second Enter submits the prompt");
     assert_eq!(spy.call_count(), 1);
     drain_agent_events_until_idle(&mut app).await;
     assert_eq!(
@@ -290,24 +290,24 @@ fn down_and_up_move_the_highlight_and_wrap() {
     let mut app = App::new(TuiConfig::default()).with_extensions(extensions_with_spy(&spy));
 
     type_text(&mut app, "@");
-    assert_eq!(app.path_completion.as_ref().unwrap().selected, 0);
+    assert_eq!(app.editor.path_completion.as_ref().unwrap().selected, 0);
 
     press(&mut app, KeyCode::Down);
-    assert_eq!(app.path_completion.as_ref().unwrap().selected, 1);
+    assert_eq!(app.editor.path_completion.as_ref().unwrap().selected, 1);
 
     press(&mut app, KeyCode::Up);
-    assert_eq!(app.path_completion.as_ref().unwrap().selected, 0);
+    assert_eq!(app.editor.path_completion.as_ref().unwrap().selected, 0);
 
     press(&mut app, KeyCode::Up);
     assert_eq!(
-        app.path_completion.as_ref().unwrap().selected,
+        app.editor.path_completion.as_ref().unwrap().selected,
         2,
         "Up from the first candidate wraps to the last"
     );
 
     press(&mut app, KeyCode::Down);
     assert_eq!(
-        app.path_completion.as_ref().unwrap().selected,
+        app.editor.path_completion.as_ref().unwrap().selected,
         0,
         "Down from the last candidate wraps to the first"
     );
@@ -326,11 +326,11 @@ fn down_navigates_the_popup_rather_than_input_history() {
     press(&mut app, KeyCode::Up);
 
     assert_eq!(
-        app.input.lines(),
+        app.editor.input.lines(),
         ["@"],
         "Up moved the popup highlight, not the input history"
     );
-    assert_eq!(app.path_completion.as_ref().unwrap().selected, 2);
+    assert_eq!(app.editor.path_completion.as_ref().unwrap().selected, 2);
 }
 
 #[test]
@@ -341,8 +341,8 @@ fn escape_dismisses_the_popup_and_leaves_the_text() {
     type_text(&mut app, "@src/m");
     press(&mut app, KeyCode::Esc);
 
-    assert!(app.path_completion.is_none());
-    assert_eq!(app.input.lines(), ["@src/m"]);
+    assert!(app.editor.path_completion.is_none());
+    assert_eq!(app.editor.input.lines(), ["@src/m"]);
 }
 
 #[test]
@@ -354,9 +354,9 @@ fn accepting_a_candidate_lets_the_user_keep_typing() {
     press(&mut app, KeyCode::Tab);
     type_text(&mut app, "and go");
 
-    assert_eq!(app.input.lines(), ["@src/main.rs and go"]);
+    assert_eq!(app.editor.input.lines(), ["@src/main.rs and go"]);
     assert!(
-        app.path_completion.is_none(),
+        app.editor.path_completion.is_none(),
         "the trailing space ends the mention, so the popup stays closed"
     );
 }
@@ -367,10 +367,10 @@ fn a_space_after_a_mention_closes_the_popup() {
     let mut app = App::new(TuiConfig::default()).with_extensions(extensions_with_spy(&spy));
 
     type_text(&mut app, "@src/m");
-    assert!(app.path_completion.is_some());
+    assert!(app.editor.path_completion.is_some());
 
     type_text(&mut app, " ");
-    assert!(app.path_completion.is_none());
+    assert!(app.editor.path_completion.is_none());
 }
 
 #[test]
@@ -379,11 +379,11 @@ fn backspacing_back_into_a_mention_reopens_the_popup() {
     let mut app = App::new(TuiConfig::default()).with_extensions(extensions_with_spy(&spy));
 
     type_text(&mut app, "@src/m ");
-    assert!(app.path_completion.is_none());
+    assert!(app.editor.path_completion.is_none());
 
     press(&mut app, KeyCode::Backspace);
     assert!(
-        app.path_completion.is_some(),
+        app.editor.path_completion.is_some(),
         "removing the space puts the cursor back inside the mention"
     );
 }
@@ -396,7 +396,7 @@ fn the_highlight_survives_narrowing_the_query() {
     type_text(&mut app, "@src/");
     press(&mut app, KeyCode::Down); // highlight src/main.rs
     assert_eq!(
-        app.path_completion
+        app.editor.path_completion
             .as_ref()
             .unwrap()
             .selected_candidate()
@@ -407,7 +407,7 @@ fn the_highlight_survives_narrowing_the_query() {
 
     type_text(&mut app, "m"); // narrows to just src/main.rs
     assert_eq!(
-        app.path_completion
+        app.editor.path_completion
             .as_ref()
             .unwrap()
             .selected_candidate()
@@ -428,7 +428,7 @@ fn submitting_does_not_implicitly_accept_an_open_popup() {
     type_text(&mut app, "@src/m");
     app.submit_input();
 
-    assert!(app.path_completion.is_none());
+    assert!(app.editor.path_completion.is_none());
 }
 
 #[test]
@@ -439,7 +439,7 @@ fn an_email_address_does_not_open_the_popup() {
     type_text(&mut app, "mail wes@src");
 
     assert!(
-        app.path_completion.is_none(),
+        app.editor.path_completion.is_none(),
         "an @ inside a word is not a mention"
     );
 }

@@ -18,23 +18,23 @@ async fn toggle_operating_mode_changes_mode() {
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
 
-    assert_eq!(app.operating_mode, OperatingMode::Execute);
+    assert_eq!(app.mode.operating_mode, OperatingMode::Execute);
 
     app.toggle_operating_mode();
-    assert_eq!(app.operating_mode, OperatingMode::Plan);
+    assert_eq!(app.mode.operating_mode, OperatingMode::Plan);
 
     // Toggling from Plan now shows approval prompt instead of directly exiting
     app.toggle_operating_mode();
-    assert!(app.pending_plan_approval);
+    assert!(app.mode.pending_plan_approval);
     assert_eq!(
-        app.operating_mode,
+        app.mode.operating_mode,
         OperatingMode::Plan,
         "should stay in Plan until approved"
     );
 
     // Approve the plan to exit
     app.approve_plan();
-    assert_eq!(app.operating_mode, OperatingMode::Execute);
+    assert_eq!(app.mode.operating_mode, OperatingMode::Execute);
 }
 
 #[tokio::test]
@@ -45,11 +45,11 @@ async fn plan_mode_filters_tools() {
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
 
-    assert_eq!(app.agent.as_ref().unwrap().state().tools.len(), 2);
+    assert_eq!(app.agent_io.agent.as_ref().unwrap().state().tools.len(), 2);
 
     app.enter_plan_mode();
 
-    let tools = &app.agent.as_ref().unwrap().state().tools;
+    let tools = &app.agent_io.agent.as_ref().unwrap().state().tools;
     assert_eq!(tools.len(), 1);
     assert_eq!(tools[0].name(), "read_file");
 }
@@ -64,7 +64,7 @@ async fn plan_mode_modifies_system_prompt() {
 
     app.enter_plan_mode();
 
-    let prompt = &app.agent.as_ref().unwrap().state().system_prompt;
+    let prompt = &app.agent_io.agent.as_ref().unwrap().state().system_prompt;
     assert!(
         prompt.contains("planning mode"),
         "system prompt should contain planning mode addendum"
@@ -80,10 +80,10 @@ async fn exit_plan_mode_restores_tools() {
     app.set_agent(agent);
 
     app.enter_plan_mode();
-    assert_eq!(app.agent.as_ref().unwrap().state().tools.len(), 1);
+    assert_eq!(app.agent_io.agent.as_ref().unwrap().state().tools.len(), 1);
 
     app.exit_plan_mode();
-    assert_eq!(app.agent.as_ref().unwrap().state().tools.len(), 2);
+    assert_eq!(app.agent_io.agent.as_ref().unwrap().state().tools.len(), 2);
 }
 
 #[tokio::test]
@@ -94,12 +94,12 @@ async fn exit_plan_mode_restores_system_prompt() {
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
 
-    let original_prompt = app.agent.as_ref().unwrap().state().system_prompt.clone();
+    let original_prompt = app.agent_io.agent.as_ref().unwrap().state().system_prompt.clone();
 
     app.enter_plan_mode();
     app.exit_plan_mode();
 
-    let restored_prompt = &app.agent.as_ref().unwrap().state().system_prompt;
+    let restored_prompt = &app.agent_io.agent.as_ref().unwrap().state().system_prompt;
     assert_eq!(
         &original_prompt, restored_prompt,
         "system prompt should be restored after exiting plan mode"
@@ -115,19 +115,19 @@ async fn reset_exits_plan_mode() {
     app.set_agent(agent);
 
     app.enter_plan_mode();
-    assert_eq!(app.operating_mode, OperatingMode::Plan);
+    assert_eq!(app.mode.operating_mode, OperatingMode::Plan);
 
-    if let Some(agent) = &mut app.agent {
+    if let Some(agent) = &mut app.agent_io.agent {
         agent.reset();
     }
-    app.messages.clear();
-    app.operating_mode = OperatingMode::Execute;
-    app.saved_tools = None;
-    app.saved_system_prompt = None;
+    app.view.messages.clear();
+    app.mode.operating_mode = OperatingMode::Execute;
+    app.mode.saved_tools = None;
+    app.mode.saved_system_prompt = None;
 
-    assert_eq!(app.operating_mode, OperatingMode::Execute);
-    assert!(app.saved_tools.is_none());
-    assert!(app.saved_system_prompt.is_none());
+    assert_eq!(app.mode.operating_mode, OperatingMode::Execute);
+    assert!(app.mode.saved_tools.is_none());
+    assert!(app.mode.saved_system_prompt.is_none());
 }
 
 #[tokio::test]
@@ -137,12 +137,12 @@ async fn reset_command_restores_agent_after_plan_mode() {
 
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
-    let original_prompt = app.agent.as_ref().unwrap().state().system_prompt.clone();
+    let original_prompt = app.agent_io.agent.as_ref().unwrap().state().system_prompt.clone();
 
     app.enter_plan_mode();
-    assert_eq!(app.agent.as_ref().unwrap().state().tools.len(), 1);
+    assert_eq!(app.agent_io.agent.as_ref().unwrap().state().tools.len(), 1);
     assert!(
-        app.agent
+        app.agent_io.agent
             .as_ref()
             .unwrap()
             .state()
@@ -153,13 +153,13 @@ async fn reset_command_restores_agent_after_plan_mode() {
     type_input(&mut app, "/reset");
     app.submit_input();
 
-    let agent = app.agent.as_ref().unwrap();
-    assert_eq!(app.operating_mode, OperatingMode::Execute);
+    let agent = app.agent_io.agent.as_ref().unwrap();
+    assert_eq!(app.mode.operating_mode, OperatingMode::Execute);
     assert_eq!(agent.state().tools.len(), 2);
     assert_eq!(agent.state().system_prompt, original_prompt);
-    assert!(app.saved_tools.is_none());
-    assert!(app.saved_system_prompt.is_none());
-    assert!(!app.pending_plan_approval);
+    assert!(app.mode.saved_tools.is_none());
+    assert!(app.mode.saved_system_prompt.is_none());
+    assert!(!app.mode.pending_plan_approval);
 }
 
 #[tokio::test]
@@ -170,21 +170,21 @@ async fn shift_tab_toggles_plan_mode() {
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
 
-    assert_eq!(app.operating_mode, OperatingMode::Execute);
+    assert_eq!(app.mode.operating_mode, OperatingMode::Execute);
 
     let key = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
     app.handle_key_event(key);
-    assert_eq!(app.operating_mode, OperatingMode::Plan);
+    assert_eq!(app.mode.operating_mode, OperatingMode::Plan);
 
     // Second Shift+Tab shows approval prompt (stays in Plan)
     let key = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
     app.handle_key_event(key);
-    assert!(app.pending_plan_approval);
-    assert_eq!(app.operating_mode, OperatingMode::Plan);
+    assert!(app.mode.pending_plan_approval);
+    assert_eq!(app.mode.operating_mode, OperatingMode::Plan);
 
     // Approve plan to exit
     app.approve_plan();
-    assert_eq!(app.operating_mode, OperatingMode::Execute);
+    assert_eq!(app.mode.operating_mode, OperatingMode::Execute);
 }
 
 // ─── Plan Mode & Approval ─────────────────────────────────────
@@ -196,10 +196,10 @@ async fn plan_toggle_enters_plan_mode() {
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
 
-    assert_eq!(app.operating_mode, OperatingMode::Execute);
+    assert_eq!(app.mode.operating_mode, OperatingMode::Execute);
 
     app.toggle_operating_mode();
-    assert_eq!(app.operating_mode, OperatingMode::Plan);
+    assert_eq!(app.mode.operating_mode, OperatingMode::Plan);
 }
 
 #[tokio::test]
@@ -210,13 +210,13 @@ async fn plan_toggle_shows_approval_prompt() {
     app.set_agent(agent);
 
     app.enter_plan_mode();
-    assert_eq!(app.operating_mode, OperatingMode::Plan);
+    assert_eq!(app.mode.operating_mode, OperatingMode::Plan);
 
     // Toggle again — should show approval instead of exiting
     app.toggle_operating_mode();
-    assert!(app.pending_plan_approval);
+    assert!(app.mode.pending_plan_approval);
     assert_eq!(
-        app.operating_mode,
+        app.mode.operating_mode,
         OperatingMode::Plan,
         "should stay in Plan until approved"
     );
@@ -232,7 +232,7 @@ async fn plan_approval_y_exits_plan_and_sends_messages() {
     app.enter_plan_mode();
 
     // Add plan-mode assistant messages
-    app.messages.push(DisplayMessage {
+    app.view.messages.push(DisplayMessage {
         role: MessageRole::Assistant,
         content: "step 1: read files".to_string(),
         thinking: None,
@@ -244,7 +244,7 @@ async fn plan_approval_y_exits_plan_and_sends_messages() {
         plan_mode: true,
         diff_data: None,
     });
-    app.messages.push(DisplayMessage {
+    app.view.messages.push(DisplayMessage {
         role: MessageRole::Assistant,
         content: "step 2: modify code".to_string(),
         thinking: None,
@@ -257,11 +257,11 @@ async fn plan_approval_y_exits_plan_and_sends_messages() {
         diff_data: None,
     });
 
-    app.pending_plan_approval = true;
+    app.mode.pending_plan_approval = true;
     app.approve_plan();
 
-    assert_eq!(app.operating_mode, OperatingMode::Execute);
-    assert!(!app.pending_plan_approval);
+    assert_eq!(app.mode.operating_mode, OperatingMode::Execute);
+    assert!(!app.mode.pending_plan_approval);
 
     // Verify the plan was sent as a user message
     let user_msgs: Vec<&str> = app
@@ -286,11 +286,11 @@ async fn plan_approval_n_stays_in_plan() {
     app.set_agent(agent);
 
     app.enter_plan_mode();
-    app.pending_plan_approval = true;
+    app.mode.pending_plan_approval = true;
     app.reject_plan();
 
-    assert_eq!(app.operating_mode, OperatingMode::Plan);
-    assert!(!app.pending_plan_approval);
+    assert_eq!(app.mode.operating_mode, OperatingMode::Plan);
+    assert!(!app.mode.pending_plan_approval);
 }
 
 #[tokio::test]
@@ -302,13 +302,13 @@ async fn plan_approval_empty_plan_skips_send() {
 
     app.enter_plan_mode();
     // No assistant messages added
-    app.pending_plan_approval = true;
+    app.mode.pending_plan_approval = true;
     app.approve_plan();
 
-    assert_eq!(app.operating_mode, OperatingMode::Execute);
+    assert_eq!(app.mode.operating_mode, OperatingMode::Execute);
     // No user message should have been created for the plan
     assert!(
-        !app.messages
+        !app.view.messages
             .iter()
             .any(|m| m.role == MessageRole::User && !m.content.is_empty()),
         "empty plan should not send a user message"
@@ -321,11 +321,11 @@ async fn plan_toggle_ignored_while_agent_running() {
     let agent = make_test_agent_with_tools(stream_fn);
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
-    app.status = AgentStatus::Running;
+    app.agent_io.status = AgentStatus::Running;
 
     app.toggle_operating_mode();
     assert_eq!(
-        app.operating_mode,
+        app.mode.operating_mode,
         OperatingMode::Execute,
         "toggle should be ignored while running"
     );
@@ -341,7 +341,7 @@ async fn plan_messages_concatenated_with_separator() {
     app.enter_plan_mode();
 
     for step in &["step 1", "step 2", "step 3"] {
-        app.messages.push(DisplayMessage {
+        app.view.messages.push(DisplayMessage {
             role: MessageRole::Assistant,
             content: step.to_string(),
             thinking: None,
@@ -355,7 +355,7 @@ async fn plan_messages_concatenated_with_separator() {
         });
     }
 
-    app.pending_plan_approval = true;
+    app.mode.pending_plan_approval = true;
     app.approve_plan();
 
     let plan_msg = app
@@ -376,15 +376,15 @@ async fn plan_approval_ignores_prior_plan_sessions() {
 
     let mut stale_plan = DisplayMessage::new(MessageRole::Assistant, "stale plan".to_string());
     stale_plan.plan_mode = true;
-    app.messages.push(stale_plan);
+    app.view.messages.push(stale_plan);
 
     app.enter_plan_mode();
 
     let mut current_plan = DisplayMessage::new(MessageRole::Assistant, "current plan".to_string());
     current_plan.plan_mode = true;
-    app.messages.push(current_plan);
+    app.view.messages.push(current_plan);
 
-    app.pending_plan_approval = true;
+    app.mode.pending_plan_approval = true;
     app.approve_plan();
 
     let plan_msg = app
@@ -407,7 +407,7 @@ async fn plan_mode_only_collects_assistant_messages() {
     app.enter_plan_mode();
 
     // Add user message (should be excluded)
-    app.messages.push(DisplayMessage {
+    app.view.messages.push(DisplayMessage {
         role: MessageRole::User,
         content: "please plan".to_string(),
         thinking: None,
@@ -421,7 +421,7 @@ async fn plan_mode_only_collects_assistant_messages() {
     });
 
     // Add assistant message (should be included)
-    app.messages.push(DisplayMessage {
+    app.view.messages.push(DisplayMessage {
         role: MessageRole::Assistant,
         content: "here is the plan".to_string(),
         thinking: None,
@@ -435,7 +435,7 @@ async fn plan_mode_only_collects_assistant_messages() {
     });
 
     // Add tool result (should be excluded)
-    app.messages.push(DisplayMessage {
+    app.view.messages.push(DisplayMessage {
         role: MessageRole::ToolResult,
         content: "file contents".to_string(),
         thinking: None,
@@ -448,7 +448,7 @@ async fn plan_mode_only_collects_assistant_messages() {
         diff_data: None,
     });
 
-    app.pending_plan_approval = true;
+    app.mode.pending_plan_approval = true;
     app.approve_plan();
 
     // Find the user message that was created by approve_plan (not the original "please plan")
@@ -474,7 +474,7 @@ async fn plan_badge_shown_in_plan_mode() {
     app.set_agent(agent);
 
     app.enter_plan_mode();
-    assert_eq!(app.operating_mode, OperatingMode::Plan);
+    assert_eq!(app.mode.operating_mode, OperatingMode::Plan);
     // The status bar rendering checks operating_mode == Plan to show badge.
     // We verify the state is correct; rendering is tested visually.
 }
@@ -489,15 +489,15 @@ async fn plan_toggle_during_plan_approval_ignored() {
     app.set_agent(agent);
 
     app.enter_plan_mode();
-    app.pending_plan_approval = true;
+    app.mode.pending_plan_approval = true;
 
     // Try to toggle again — should be ignored
     app.toggle_operating_mode();
     assert!(
-        app.pending_plan_approval,
+        app.mode.pending_plan_approval,
         "plan approval should still be pending"
     );
-    assert_eq!(app.operating_mode, OperatingMode::Plan);
+    assert_eq!(app.mode.operating_mode, OperatingMode::Plan);
 }
 
 #[tokio::test]
@@ -507,11 +507,11 @@ async fn plan_mode_removes_write_tools() {
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
 
-    assert_eq!(app.agent.as_ref().unwrap().state().tools.len(), 2);
+    assert_eq!(app.agent_io.agent.as_ref().unwrap().state().tools.len(), 2);
 
     app.enter_plan_mode();
 
-    let tools = &app.agent.as_ref().unwrap().state().tools;
+    let tools = &app.agent_io.agent.as_ref().unwrap().state().tools;
     assert_eq!(tools.len(), 1);
     assert_eq!(tools[0].name(), "read_file");
     assert!(
@@ -530,7 +530,7 @@ async fn plan_approval_y_key_approves() {
     app.set_agent(agent);
 
     app.enter_plan_mode();
-    app.messages.push(DisplayMessage {
+    app.view.messages.push(DisplayMessage {
         role: MessageRole::Assistant,
         content: "the plan".to_string(),
         thinking: None,
@@ -542,13 +542,13 @@ async fn plan_approval_y_key_approves() {
         plan_mode: true,
         diff_data: None,
     });
-    app.pending_plan_approval = true;
+    app.mode.pending_plan_approval = true;
 
     let key = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
     app.handle_key_event(key);
 
-    assert!(!app.pending_plan_approval);
-    assert_eq!(app.operating_mode, OperatingMode::Execute);
+    assert!(!app.mode.pending_plan_approval);
+    assert_eq!(app.mode.operating_mode, OperatingMode::Execute);
 }
 
 #[tokio::test]
@@ -559,14 +559,14 @@ async fn plan_approval_n_key_rejects() {
     app.set_agent(agent);
 
     app.enter_plan_mode();
-    app.pending_plan_approval = true;
+    app.mode.pending_plan_approval = true;
 
     let key = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
     app.handle_key_event(key);
 
-    assert!(!app.pending_plan_approval);
+    assert!(!app.mode.pending_plan_approval);
     assert_eq!(
-        app.operating_mode,
+        app.mode.operating_mode,
         OperatingMode::Plan,
         "should stay in plan mode after rejection"
     );
@@ -580,13 +580,13 @@ async fn shift_tab_ignored_while_running() {
     let agent = make_test_agent_with_tools(stream_fn);
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
-    app.status = AgentStatus::Running;
+    app.agent_io.status = AgentStatus::Running;
 
     let key = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
     app.handle_key_event(key);
 
     assert_eq!(
-        app.operating_mode,
+        app.mode.operating_mode,
         OperatingMode::Execute,
         "Shift+Tab should be ignored while running"
     );
@@ -594,6 +594,6 @@ async fn shift_tab_ignored_while_running() {
 
 fn type_input(app: &mut App, s: &str) {
     for c in s.chars() {
-        app.input.insert_char(c);
+        app.editor.input.insert_char(c);
     }
 }

@@ -182,8 +182,8 @@ pub async fn launch(
 /// let extensions = TuiExtensions::new().with_command("spend", |app, _args| {
 ///     CustomCommandOutcome::Feedback(format!(
 ///         "{} turn(s), ${:.4}",
-///         app.turn_usage.len(),
-///         app.total_cost
+///         app.usage.turn_usage.len(),
+///         app.usage.total_cost
 ///     ))
 /// });
 ///

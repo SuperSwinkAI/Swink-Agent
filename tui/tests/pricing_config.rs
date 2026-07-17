@@ -71,14 +71,14 @@ async fn operator_declared_pricing_prices_a_model_absent_from_the_catalog() {
 
     let app = run_turn_into_app(agent, config).await;
 
-    assert_eq!(app.total_input_tokens, 1_000_000);
+    assert_eq!(app.usage.total_input_tokens, 1_000_000);
     assert!(
-        (app.total_cost - 2.50).abs() < 1e-9,
+        (app.usage.total_cost - 2.50).abs() < 1e-9,
         "expected the operator's $2.50/M rate to reach the status bar, got ${:.4}",
-        app.total_cost
+        app.usage.total_cost
     );
-    assert_eq!(app.turn_usage.len(), 1);
-    assert!((app.turn_usage[0].cost - 2.50).abs() < 1e-9);
+    assert_eq!(app.usage.turn_usage.len(), 1);
+    assert!((app.usage.turn_usage[0].cost - 2.50).abs() < 1e-9);
 }
 
 /// Operator-declared rates must beat the compiled catalog, not merely fill gaps
@@ -97,9 +97,9 @@ async fn operator_declared_pricing_takes_precedence_over_the_builtin_catalog() {
     let app = run_turn_into_app(agent, config).await;
 
     assert!(
-        (app.total_cost - 1.00).abs() < 1e-9,
+        (app.usage.total_cost - 1.00).abs() < 1e-9,
         "operator rate ($1.00/M) should win over the catalog's $3.00/M, got ${:.4}",
-        app.total_cost
+        app.usage.total_cost
     );
 }
 
@@ -118,9 +118,9 @@ async fn pricing_for_another_model_leaves_catalog_pricing_intact() {
     let app = run_turn_into_app(agent, config).await;
 
     assert!(
-        (app.total_cost - 3.00).abs() < 1e-9,
+        (app.usage.total_cost - 3.00).abs() < 1e-9,
         "expected catalog pricing ($3.00/M), got ${:.4}",
-        app.total_cost
+        app.usage.total_cost
     );
 }
 
@@ -134,7 +134,7 @@ async fn catalog_pricing_still_applies_with_no_pricing_section() {
 
     let app = run_turn_into_app(agent, config).await;
 
-    assert!((app.total_cost - 3.00).abs() < 1e-9, "{}", app.total_cost);
+    assert!((app.usage.total_cost - 3.00).abs() < 1e-9, "{}", app.usage.total_cost);
 }
 
 /// An unknown model with no declared rates honestly reports zero rather than
@@ -148,6 +148,6 @@ async fn unknown_model_without_declared_rates_reports_zero_cost() {
 
     let app = run_turn_into_app(agent, config).await;
 
-    assert_eq!(app.total_input_tokens, 1_000_000);
-    assert!((app.total_cost).abs() < 1e-9);
+    assert_eq!(app.usage.total_input_tokens, 1_000_000);
+    assert!((app.usage.total_cost).abs() < 1e-9);
 }

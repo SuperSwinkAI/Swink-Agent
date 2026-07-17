@@ -45,10 +45,10 @@ fn app_state_is_observable_from_outside_the_crate() {
 
     app.handle_agent_event(stubbed_turn("claude-sonnet-4-6", 1_200, 340, 0.0042));
 
-    assert_eq!(app.total_input_tokens, 1_200);
-    assert_eq!(app.total_output_tokens, 340);
-    assert!((app.total_cost - 0.0042).abs() < 1e-9);
-    assert_eq!(app.model_name, "claude-sonnet-4-6");
+    assert_eq!(app.usage.total_input_tokens, 1_200);
+    assert_eq!(app.usage.total_output_tokens, 340);
+    assert!((app.usage.total_cost - 0.0042).abs() < 1e-9);
+    assert_eq!(app.mode.model_name, "claude-sonnet-4-6");
 }
 
 /// The per-turn breakdown behind `/usage` is public, so a host can render its
@@ -60,11 +60,11 @@ fn per_turn_usage_is_observable_from_outside_the_crate() {
     app.handle_agent_event(stubbed_turn("model-a", 100, 20, 0.01));
     app.handle_agent_event(stubbed_turn("model-b", 200, 30, 0.02));
 
-    assert_eq!(app.turn_usage.len(), 2);
-    assert_eq!(app.turn_usage[0].model_id, "model-a");
-    assert_eq!(app.turn_usage[1].input_tokens, 200);
-    assert!((app.turn_usage[1].cost - 0.02).abs() < 1e-9);
-    assert!((app.total_cost - 0.03).abs() < 1e-9);
+    assert_eq!(app.usage.turn_usage.len(), 2);
+    assert_eq!(app.usage.turn_usage[0].model_id, "model-a");
+    assert_eq!(app.usage.turn_usage[1].input_tokens, 200);
+    assert!((app.usage.turn_usage[1].cost - 0.02).abs() < 1e-9);
+    assert!((app.usage.total_cost - 0.03).abs() < 1e-9);
 }
 
 /// Issue #1084 §2: a host must be able to register commands without forking the
@@ -75,14 +75,14 @@ fn host_commands_are_registrable_from_outside_the_crate() {
     let extensions = TuiExtensions::new().with_command("spend", |app: &App, _args: &str| {
         CustomCommandOutcome::Feedback(format!(
             "{} turn(s), ${:.4}",
-            app.turn_usage.len(),
-            app.total_cost
+            app.usage.turn_usage.len(),
+            app.usage.total_cost
         ))
     });
     assert_eq!(extensions.command_names().collect::<Vec<_>>(), ["spend"]);
 
     let app = App::new(TuiConfig::default()).with_extensions(extensions);
-    assert_eq!(app.turn_usage.len(), 0);
+    assert_eq!(app.usage.turn_usage.len(), 0);
 }
 
 async fn recv_transport_event(transport: &mut InProcessTransport) -> AgentEvent {
@@ -200,8 +200,8 @@ fn a_host_can_drive_path_completion_through_the_public_api() {
     // ...and the host can select and accept through the same public surface.
     app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-    assert_eq!(app.input.lines(), ["@src/main.rs "]);
-    assert!(app.path_completion.is_none());
+    assert_eq!(app.editor.input.lines(), ["@src/main.rs "]);
+    assert!(app.editor.path_completion.is_none());
 }
 
 /// `parse_mentions` is public so a host's resolver can reuse the TUI's parsing
@@ -312,8 +312,8 @@ fn a_host_can_drive_skill_completion_through_the_public_api() {
     // ...and the host can select and accept through the same public surface.
     app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-    assert_eq!(app.input.lines(), ["/review "]);
-    assert!(app.skill_completion.is_none());
+    assert_eq!(app.editor.input.lines(), ["/review "]);
+    assert!(app.editor.skill_completion.is_none());
 }
 
 /// `parse_skill_invocation` is public so a host's resolver can reuse the TUI's
