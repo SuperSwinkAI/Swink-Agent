@@ -15,6 +15,19 @@ Proc macros for [`swink-agent`](https://crates.io/crates/swink-agent) — turn a
 - `#[schemars(description = "...")]` and other `schemars` attributes pass through unchanged — schema customization is delegated entirely to the `schemars` SDK, this crate adds no attribute language of its own
 - `#[tool(...)]` applies only to async functions; on a struct field it is a compile error (it is not a helper attribute of `#[derive(ToolSchema)]`)
 
+## Scope: external SDK consumers
+
+This crate targets **downstream users of the `swink-agent` SDK** who want to turn a plain async function into a tool with minimal ceremony. The built-in tools inside the `swink-agent` crate itself intentionally hand-roll the `AgentTool` trait and do not use these macros:
+
+- The macro expansion names the SDK by its external path (`swink_agent::…`), which is not resolvable from within the `swink-agent` crate itself.
+- `#[tool]` generates a stateless unit struct whose `label()` equals its `name()`; the built-ins need constructor state (artifact stores, execution roots), human-readable labels, `deny_unknown_fields` schemas, and `execution_root`/`approval_context` overrides — capabilities the macro deliberately does not model.
+
+To keep the macros from silently drifting away from the real trait, the integration tests in [`tests/`](tests/) and the runnable example [`examples/derived_tool.rs`](examples/derived_tool.rs) both compile and execute the generated tools against the actual `swink-agent` crate:
+
+```sh
+cargo run -p swink-agent-macros --example derived_tool
+```
+
 ## Quick Start
 
 ```toml
