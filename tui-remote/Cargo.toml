@@ -1,0 +1,44 @@
+[package]
+name = "swink-agent-tui-remote"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Remote transport for the swink-agent TUI — drive the terminal UI against an agent served over JSON-RPC"
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["tui", "jsonrpc", "ipc", "llm", "agent"]
+categories = ["command-line-utilities", "network-programming"]
+
+[lib]
+name = "swink_agent_tui_remote"
+path = "src/lib.rs"
+
+[[bin]]
+name = "swink-tui-remote"
+path = "src/bin/swink_tui_remote.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+cli = ["dep:clap", "dep:tracing-subscriber", "dep:tracing-appender", "dep:dirs"]
+
+[dependencies]
+swink-agent = { path = "..", version = "0.12.0", default-features = false }
+swink-agent-tui = { path = "../tui", version = "0.12.0", default-features = false }
+swink-agent-rpc = { path = "../rpc", version = "0.12.0", default-features = false, features = ["client"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
+tracing.workspace = true
+clap = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"], optional = true }
+tracing-appender = { version = "0.2.5", optional = true }
+dirs = { workspace = true, optional = true }
+
+[dev-dependencies]
+swink-agent = { path = "..", default-features = false, features = ["testkit"] }
+swink-agent-rpc = { path = "../rpc", version = "0.12.0" }
+tokio = { workspace = true, features = ["full", "test-util"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true
