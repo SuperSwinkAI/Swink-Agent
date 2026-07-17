@@ -17,7 +17,9 @@ async fn tool_result_has_collapsed_fields() {
 #[tokio::test]
 async fn toggle_collapse_toggles_state() {
     let mut app = App::new(TuiConfig::default());
-    app.view.messages.push(make_tool_result_message("tool output"));
+    app.view
+        .messages
+        .push(make_tool_result_message("tool output"));
 
     assert!(!app.view.messages[0].collapsed);
 

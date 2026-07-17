@@ -10,7 +10,8 @@ use swink_agent::{
 };
 use swink_agent_tui::{
     App, CustomCommandOutcome, InProcessTransport, MessageRole, PathCandidate, SkillCandidate,
-    TuiConfig, TuiExtensions, TuiTransport, UserInput, parse_mentions, parse_skill_invocation,
+    TransportError, TuiConfig, TuiExtensions, TuiTransport, UserInput, parse_mentions,
+    parse_skill_invocation,
 };
 
 #[test]
@@ -164,6 +165,70 @@ async fn in_process_transport_processes_queued_inputs_in_order() {
 
     assert_eq!(collect_turn_reply(&mut transport).await, "queued reply");
     assert_eq!(collect_turn_reply(&mut transport).await, "queued reply");
+}
+
+/// A downstream mock transport, proving the trait is implementable — and an
+/// `App` drivable through it — entirely from outside the crate.
+struct MockWireTransport {
+    events: Vec<AgentEvent>,
+}
+
+impl TuiTransport for MockWireTransport {
+    fn send(
+        &self,
+        _input: UserInput,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), TransportError>> + Send + '_>>
+    {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn recv(
+        &mut self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<AgentEvent>> + Send + '_>> {
+        let event = if self.events.is_empty() {
+            None
+        } else {
+            Some(self.events.remove(0))
+        };
+        Box::pin(async move { event })
+    }
+
+    fn try_recv(&mut self) -> Option<AgentEvent> {
+        if self.events.is_empty() {
+            None
+        } else {
+            Some(self.events.remove(0))
+        }
+    }
+}
+
+/// An `App` accepts a host-supplied `TuiTransport` and can be driven from its
+/// event stream without a terminal or an in-process agent.
+#[tokio::test]
+async fn an_app_can_be_driven_through_a_mock_transport() {
+    let events = vec![
+        AgentEvent::AgentStart,
+        stubbed_turn("wire-model", 11, 4, 0.25),
+        AgentEvent::AgentEnd {
+            messages: Arc::new(Vec::new()),
+        },
+    ];
+    let mut app =
+        App::new(TuiConfig::default()).with_transport(Box::new(MockWireTransport { events }));
+
+    app.pump_transport_events().await;
+
+    assert_eq!(app.usage.total_input_tokens, 11);
+    assert_eq!(app.usage.total_output_tokens, 4);
+    assert!((app.usage.total_cost - 0.25).abs() < 1e-9);
+    assert_eq!(app.mode.model_name, "wire-model");
+    assert!(
+        app.view
+            .messages
+            .iter()
+            .any(|message| message.role == MessageRole::Assistant && message.content == "stub"),
+        "the scripted assistant reply should reach the conversation"
+    );
 }
 
 // ─── @path file mentions (issue #1093) ───────────────────────────────────

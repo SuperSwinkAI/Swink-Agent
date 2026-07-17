@@ -134,7 +134,11 @@ async fn catalog_pricing_still_applies_with_no_pricing_section() {
 
     let app = run_turn_into_app(agent, config).await;
 
-    assert!((app.usage.total_cost - 3.00).abs() < 1e-9, "{}", app.usage.total_cost);
+    assert!(
+        (app.usage.total_cost - 3.00).abs() < 1e-9,
+        "{}",
+        app.usage.total_cost
+    );
 }
 
 /// An unknown model with no declared rates honestly reports zero rather than

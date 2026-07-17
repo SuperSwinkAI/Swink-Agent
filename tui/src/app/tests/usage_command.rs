@@ -14,7 +14,10 @@ fn type_command(app: &mut App, text: &str) {
 }
 
 fn last_message(app: &App) -> &DisplayMessage {
-    app.view.messages.last().expect("a message should be pushed")
+    app.view
+        .messages
+        .last()
+        .expect("a message should be pushed")
 }
 
 fn stubbed_turn(model_id: &str, input: u64, output: u64, cost: f64) -> AgentEvent {

@@ -25,7 +25,9 @@ fn make_app_with_mode(mode: ApprovalMode) -> App {
 #[tokio::test]
 async fn smart_mode_auto_approves_trusted_tool() {
     let mut app = make_app_with_mode(ApprovalMode::Smart);
-    app.agent_io.session_trusted_tools.insert("bash".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("bash".to_string());
 
     let (tx, rx) = tokio::sync::oneshot::channel();
     let request =
@@ -75,8 +77,12 @@ async fn reset_clears_trusted_tools() {
 
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
-    app.agent_io.session_trusted_tools.insert("bash".to_string());
-    app.agent_io.session_trusted_tools.insert("read_file".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("bash".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("read_file".to_string());
     assert_eq!(app.agent_io.session_trusted_tools.len(), 2);
 
     if let Some(agent) = &mut app.agent_io.agent {
@@ -91,7 +97,9 @@ async fn reset_clears_trusted_tools() {
 #[tokio::test]
 async fn query_approval_mode_shows_smart() {
     let mut app = make_app_with_mode(ApprovalMode::Smart);
-    app.agent_io.session_trusted_tools.insert("bash".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("bash".to_string());
 
     let label = match app.approval_mode() {
         ApprovalMode::Enabled => "enabled",
@@ -102,8 +110,7 @@ async fn query_approval_mode_shows_smart() {
         _ => "unknown",
     };
     let mut msg = format!("Tool approval: {label}");
-    if app.approval_mode() == ApprovalMode::Smart
-        && !app.agent_io.session_trusted_tools.is_empty()
+    if app.approval_mode() == ApprovalMode::Smart && !app.agent_io.session_trusted_tools.is_empty()
     {
         msg.push_str("\nTrusted tools: ");
         let mut tools: Vec<&str> = app
@@ -206,7 +213,10 @@ async fn trust_follow_up_triggers_after_approval_in_smart_mode() {
         app.agent_io.trust_follow_up.is_some(),
         "trust follow-up should trigger in Smart mode"
     );
-    assert_eq!(app.agent_io.trust_follow_up.as_ref().unwrap().tool_name, "bash");
+    assert_eq!(
+        app.agent_io.trust_follow_up.as_ref().unwrap().tool_name,
+        "bash"
+    );
 }
 
 #[tokio::test]
@@ -281,7 +291,9 @@ fn trust_follow_up_timeout_clears() {
 #[tokio::test]
 async fn trusted_tool_auto_approves_in_smart_mode() {
     let mut app = make_app_with_mode(ApprovalMode::Smart);
-    app.agent_io.session_trusted_tools.insert("bash".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("bash".to_string());
 
     let (tx, rx) = tokio::sync::oneshot::channel();
     let request = ToolApprovalRequest::new("call_trusted", "bash", serde_json::json!({}), true);
@@ -298,7 +310,9 @@ async fn trusted_tool_auto_approves_in_smart_mode() {
 #[tokio::test]
 async fn trusted_tool_still_prompts_in_enabled_mode() {
     let mut app = make_app_with_mode(ApprovalMode::Enabled);
-    app.agent_io.session_trusted_tools.insert("bash".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("bash".to_string());
 
     let (tx, _rx) = tokio::sync::oneshot::channel();
     let request = ToolApprovalRequest::new("call_te", "bash", serde_json::json!({}), true);
@@ -357,8 +371,12 @@ fn untrust_all_command() {
 #[test]
 fn untrust_specific_removes_from_set() {
     let mut app = App::new(TuiConfig::default());
-    app.agent_io.session_trusted_tools.insert("bash".to_string());
-    app.agent_io.session_trusted_tools.insert("write_file".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("bash".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("write_file".to_string());
 
     app.agent_io.session_trusted_tools.remove("bash");
 
@@ -369,8 +387,12 @@ fn untrust_specific_removes_from_set() {
 #[test]
 fn untrust_all_clears_set() {
     let mut app = App::new(TuiConfig::default());
-    app.agent_io.session_trusted_tools.insert("bash".to_string());
-    app.agent_io.session_trusted_tools.insert("write_file".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("bash".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("write_file".to_string());
 
     app.agent_io.session_trusted_tools.clear();
 

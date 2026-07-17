@@ -44,17 +44,21 @@ impl App {
                 break;
             }
 
+            // Forward any input queued for a host-installed transport. A no-op
+            // on the default in-process path, which drives the agent directly.
+            self.flush_outbound().await;
+
             tokio::select! {
                 maybe_event = event_stream.next() => {
                     if let Some(Ok(event)) = maybe_event {
                         self.handle_terminal_event(&event);
                     }
                 }
-                Some(event) = self.agent_io.agent_rx.recv() => {
+                Some(event) = self.agent_io.transport.recv() => {
                     self.handle_agent_event(event);
                     // Drain any additional pending agent events before the next
                     // draw so rapid token bursts are batched into a single frame.
-                    while let Ok(event) = self.agent_io.agent_rx.try_recv() {
+                    while let Some(event) = self.agent_io.transport.try_recv() {
                         self.handle_agent_event(event);
                     }
                 }
@@ -101,6 +105,52 @@ impl App {
         Ok(())
     }
 
+    /// Flush user input queued by `send_to_agent` to the installed transport.
+    ///
+    /// Only ever has work when a host routed agent I/O through
+    /// [`App::with_transport`](App::with_transport); the in-process path
+    /// starts turns on the [`Agent`](swink_agent::Agent) directly and never
+    /// queues. A failed send surfaces like an in-process start failure: an
+    /// error message in the conversation and [`AgentStatus::Error`].
+    pub(super) async fn flush_outbound(&mut self) {
+        if self.agent_io.outbound.is_empty() {
+            return;
+        }
+        let queued = std::mem::take(&mut self.agent_io.outbound);
+        for input in queued {
+            let result = self.agent_io.transport.send(input).await;
+            if let Err(error) = result {
+                self.agent_io.status = AgentStatus::Error;
+                self.view.messages.push(DisplayMessage::new(
+                    MessageRole::Error,
+                    format!("Failed to send to agent: {error}"),
+                ));
+                self.view.dirty = true;
+            }
+        }
+    }
+
+    /// Apply agent events from the installed transport until its stream is
+    /// exhausted ([`TuiTransport::recv`](crate::transport::TuiTransport::recv)
+    /// returns `None`).
+    ///
+    /// [`App::run`] does this continuously inside its terminal event loop;
+    /// this method is the terminal-free equivalent, letting a host or test
+    /// drive an `App` through a
+    /// [`TuiTransport`](crate::transport::TuiTransport) — e.g. a mock
+    /// yielding scripted events — and assert on the resulting state. Note the
+    /// default in-process transport's stream only ends when the app is torn
+    /// down, so this is primarily useful with a transport installed via
+    /// [`App::with_transport`](App::with_transport).
+    pub async fn pump_transport_events(&mut self) {
+        loop {
+            let Some(event) = self.agent_io.transport.recv().await else {
+                break;
+            };
+            self.handle_agent_event(event);
+        }
+    }
+
     pub(super) fn handle_terminal_event(&mut self, event: &Event) {
         match event {
             Event::Key(key) => self.handle_key_event(*key),
@@ -127,7 +177,8 @@ impl App {
                     return;
                 }
                 self.view.selection = None;
-                self.view.conversation
+                self.view
+                    .conversation
                     .scroll_down(MOUSE_SCROLL_STEP, self.conversation_page_height());
                 self.view.dirty = true;
             }
@@ -208,7 +259,9 @@ impl App {
 
     /// Copy the current selection (if any) to the system clipboard.
     pub(super) fn copy_selection_to_clipboard(&mut self) {
-        let Some(sel) = self.view.selection else { return };
+        let Some(sel) = self.view.selection else {
+            return;
+        };
         let Some(text) = self.view.conversation.selection_text(&sel) else {
             return;
         };
@@ -298,7 +351,9 @@ impl App {
             match key.code {
                 KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
                     if let Some(follow_up) = self.agent_io.trust_follow_up.take() {
-                        self.agent_io.session_trusted_tools.insert(follow_up.tool_name);
+                        self.agent_io
+                            .session_trusted_tools
+                            .insert(follow_up.tool_name);
                     }
                     self.view.dirty = true;
                     return true;
@@ -525,7 +580,8 @@ impl App {
         if let Some(candidate) = completion.selected_candidate() {
             // The trailing space terminates the token, which closes the popup
             // on the next refresh without a special case.
-            self.editor.input
+            self.editor
+                .input
                 .replace_mention_query(completion.start, &format!("/{} ", candidate.name));
         }
         self.view.dirty = true;
@@ -569,7 +625,8 @@ impl App {
         if let Some(candidate) = completion.selected_candidate() {
             // The trailing space terminates the mention, which closes the popup
             // on the next refresh without a special case.
-            self.editor.input
+            self.editor
+                .input
                 .replace_mention_query(completion.start, &format!("@{} ", candidate.path));
         }
         self.view.dirty = true;
@@ -685,7 +742,8 @@ impl App {
             }
             (_, KeyCode::F(2)) => {
                 let target = self.view.selected_tool_block.or_else(|| {
-                    self.view.messages
+                    self.view
+                        .messages
                         .iter()
                         .enumerate()
                         .rev()
@@ -715,7 +773,8 @@ impl App {
 
     pub(super) fn submit_user_text(&mut self, text: String) {
         if self.agent_io.status != AgentStatus::Running {
-            self.view.messages
+            self.view
+                .messages
                 .push(DisplayMessage::new(MessageRole::User, text.clone()));
             self.trim_messages_to_recent_turns();
         }

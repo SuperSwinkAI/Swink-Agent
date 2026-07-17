@@ -153,7 +153,15 @@ fn skill_details_are_fetched_once_per_highlight() {
     let (mut app, details, _resolver) = spied_app();
 
     type_text(&mut app, "/");
-    assert_eq!(app.editor.skill_completion.as_ref().unwrap().candidates.len(), 2);
+    assert_eq!(
+        app.editor
+            .skill_completion
+            .as_ref()
+            .unwrap()
+            .candidates
+            .len(),
+        2
+    );
     assert_eq!(details.calls_for("deploy"), 1, "highlight fetches deploy");
     assert_eq!(
         details.calls_for("review"),
@@ -177,7 +185,15 @@ fn skill_details_are_fetched_once_per_highlight() {
 
     // Narrowing the query rebuilds the popup but carries the cache.
     type_text(&mut app, "d");
-    assert_eq!(app.editor.skill_completion.as_ref().unwrap().candidates.len(), 1);
+    assert_eq!(
+        app.editor
+            .skill_completion
+            .as_ref()
+            .unwrap()
+            .candidates
+            .len(),
+        1
+    );
     assert_eq!(
         details.calls_for("deploy"),
         1,
@@ -186,7 +202,11 @@ fn skill_details_are_fetched_once_per_highlight() {
 
     // The cached details are what the renderer reads.
     assert_eq!(
-        app.editor.skill_completion.as_ref().unwrap().selected_details(),
+        app.editor
+            .skill_completion
+            .as_ref()
+            .unwrap()
+            .selected_details(),
         Some("deploy instructions")
     );
 }
@@ -222,13 +242,15 @@ fn a_known_skill_bypasses_the_unknown_command_fallback() {
     press(&mut app, KeyCode::Enter);
 
     assert!(
-        app.view.messages
+        app.view
+            .messages
             .iter()
             .any(|message| message.role == MessageRole::User && message.content == "/deploy"),
         "a known skill submits as a prompt"
     );
     assert!(
-        !app.view.messages
+        !app.view
+            .messages
             .iter()
             .any(|message| message.content.contains("Unknown command")),
         "a known skill must not fall through to the built-in table"
@@ -257,7 +279,8 @@ fn a_host_command_shadows_a_same_named_skill() {
         "host commands match before skills"
     );
     assert!(
-        !app.view.messages
+        !app.view
+            .messages
             .iter()
             .any(|message| message.role == MessageRole::User),
         "the shadowed skill must not also submit as a prompt"
@@ -273,7 +296,8 @@ fn a_hash_sigil_never_routes_to_a_skill() {
     press(&mut app, KeyCode::Enter);
 
     assert!(
-        app.view.messages
+        app.view
+            .messages
             .iter()
             .any(|message| message.content.contains("Unknown command: #deploy")),
         "only the leading-/ form is a skill invocation"
@@ -345,7 +369,11 @@ fn typing_a_leading_slash_opens_the_popup_with_every_candidate() {
 
     type_text(&mut app, "/");
 
-    let completion = app.editor.skill_completion.as_ref().expect("popup should open");
+    let completion = app
+        .editor
+        .skill_completion
+        .as_ref()
+        .expect("popup should open");
     assert_eq!(completion.candidates.len(), 2);
     assert_eq!(completion.selected, 0);
     assert_eq!(
@@ -402,7 +430,10 @@ fn tab_accepts_the_highlighted_skill() {
     press(&mut app, KeyCode::Tab);
 
     assert_eq!(app.editor.input.lines(), ["/review "]);
-    assert!(app.editor.skill_completion.is_none(), "accepting closes the popup");
+    assert!(
+        app.editor.skill_completion.is_none(),
+        "accepting closes the popup"
+    );
 }
 
 #[test]
@@ -413,7 +444,10 @@ fn enter_accepts_the_skill_instead_of_submitting() {
     press(&mut app, KeyCode::Enter);
 
     assert_eq!(app.editor.input.lines(), ["/deploy "]);
-    assert!(app.view.messages.is_empty(), "Enter must not have submitted");
+    assert!(
+        app.view.messages.is_empty(),
+        "Enter must not have submitted"
+    );
     assert_eq!(resolver.call_count(), 0, "Enter must not have resolved");
 }
 

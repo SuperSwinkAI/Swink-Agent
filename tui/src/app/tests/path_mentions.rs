@@ -197,7 +197,11 @@ fn typing_an_at_sign_opens_the_popup_with_every_candidate() {
 
     type_text(&mut app, "look at @");
 
-    let completion = app.editor.path_completion.as_ref().expect("popup should open");
+    let completion = app
+        .editor
+        .path_completion
+        .as_ref()
+        .expect("popup should open");
     assert_eq!(completion.candidates.len(), 3);
     assert_eq!(completion.selected, 0);
 }
@@ -243,7 +247,10 @@ fn tab_accepts_the_highlighted_candidate() {
     press(&mut app, KeyCode::Tab);
 
     assert_eq!(app.editor.input.lines(), ["look at @src/main.rs "]);
-    assert!(app.editor.path_completion.is_none(), "accepting closes the popup");
+    assert!(
+        app.editor.path_completion.is_none(),
+        "accepting closes the popup"
+    );
 }
 
 #[test]
@@ -255,7 +262,10 @@ fn enter_accepts_the_candidate_instead_of_submitting() {
     press(&mut app, KeyCode::Enter);
 
     assert_eq!(app.editor.input.lines(), ["@src/main.rs "]);
-    assert!(app.view.messages.is_empty(), "Enter must not have submitted");
+    assert!(
+        app.view.messages.is_empty(),
+        "Enter must not have submitted"
+    );
     assert_eq!(spy.call_count(), 0, "Enter must not have resolved");
 }
 
@@ -275,7 +285,10 @@ async fn enter_submits_normally_once_the_popup_is_closed() {
 
     press(&mut app, KeyCode::Enter); // popup closed, so this submits
 
-    assert!(app.editor.input.is_empty(), "second Enter submits the prompt");
+    assert!(
+        app.editor.input.is_empty(),
+        "second Enter submits the prompt"
+    );
     assert_eq!(spy.call_count(), 1);
     drain_agent_events_until_idle(&mut app).await;
     assert_eq!(
@@ -396,7 +409,8 @@ fn the_highlight_survives_narrowing_the_query() {
     type_text(&mut app, "@src/");
     press(&mut app, KeyCode::Down); // highlight src/main.rs
     assert_eq!(
-        app.editor.path_completion
+        app.editor
+            .path_completion
             .as_ref()
             .unwrap()
             .selected_candidate()
@@ -407,7 +421,8 @@ fn the_highlight_survives_narrowing_the_query() {
 
     type_text(&mut app, "m"); // narrows to just src/main.rs
     assert_eq!(
-        app.editor.path_completion
+        app.editor
+            .path_completion
             .as_ref()
             .unwrap()
             .selected_candidate()

@@ -134,7 +134,10 @@ fn display_message_diff_data_defaults_to_none() {
 fn context_gauge_fields_default_to_zero() {
     let app = make_app();
     assert_eq!(app.usage.context_budget, 0, "budget should start at zero");
-    assert_eq!(app.usage.context_tokens_used, 0, "used should start at zero");
+    assert_eq!(
+        app.usage.context_tokens_used, 0,
+        "used should start at zero"
+    );
 }
 
 #[test]
@@ -320,8 +323,12 @@ fn session_trusted_tools_starts_empty() {
 #[test]
 fn session_trusted_tools_tracks_tool_names() {
     let mut app = make_app();
-    app.agent_io.session_trusted_tools.insert("ReadFile".to_string());
-    app.agent_io.session_trusted_tools.insert("ListDir".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("ReadFile".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("ListDir".to_string());
 
     assert!(app.agent_io.session_trusted_tools.contains("ReadFile"));
     assert!(app.agent_io.session_trusted_tools.contains("ListDir"));
@@ -337,7 +344,9 @@ fn smart_mode_trust_semantics() {
     // Tools NOT in the set require approval prompts.
     // This mirrors the logic in `handle_approval_request`.
     let mut app = make_app();
-    app.agent_io.session_trusted_tools.insert("ReadFile".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("ReadFile".to_string());
 
     let trusted = app.agent_io.session_trusted_tools.contains("ReadFile");
     let untrusted = app.agent_io.session_trusted_tools.contains("WriteFile");

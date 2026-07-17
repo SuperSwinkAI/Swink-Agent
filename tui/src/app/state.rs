@@ -15,6 +15,7 @@ use swink_agent::{
 use crate::config::TuiConfig;
 use crate::extensions::{PathCandidate, SkillCandidate};
 use crate::session::JsonlSessionStore;
+use crate::transport::{InProcessTransport, TuiTransport, UserInput};
 use crate::ui::conversation::ConversationView;
 use crate::ui::help_panel::HelpPanel;
 use crate::ui::input::InputEditor;
@@ -523,10 +524,24 @@ pub struct AgentIo {
     pub retry_attempt: Option<u32>,
     /// Agent instance (if connected).
     pub(crate) agent: Option<Agent>,
-    /// Sender for agent events.
+    /// Sender for agent events. The in-process bridge (`agent_bridge.rs`)
+    /// forwards the agent's stream into this channel; `transport` owns the
+    /// receive side.
     pub(crate) agent_tx: mpsc::Sender<AgentEvent>,
-    /// Receiver for agent events.
-    pub(crate) agent_rx: mpsc::Receiver<AgentEvent>,
+    /// Transport the event loop consumes [`AgentEvent`]s from and — when a
+    /// host installed one via [`App::with_transport`](App::with_transport) —
+    /// sends user input through.
+    ///
+    /// Defaults to an [`InProcessTransport`] wrapping the receive side of
+    /// `agent_tx`, so the in-process bridge keeps working unchanged.
+    pub(crate) transport: Box<dyn TuiTransport>,
+    /// True once a host replaced the default in-process wiring via
+    /// [`App::with_transport`](App::with_transport). Routes `send_to_agent`
+    /// through `transport` instead of driving the in-process [`Agent`].
+    pub(crate) external_transport: bool,
+    /// User input queued for [`TuiTransport::send`]; flushed by the event
+    /// loop. Only ever populated when `external_transport` is set.
+    pub(crate) outbound: Vec<UserInput>,
     /// Receiver for tool approval requests from the agent callback.
     pub(crate) approval_rx: mpsc::Receiver<(ToolApprovalRequest, oneshot::Sender<ToolApproval>)>,
     /// Sender for tool approval requests (cloned into the approval callback).
@@ -545,16 +560,26 @@ pub struct AgentIo {
 }
 
 impl AgentIo {
-    /// Fresh agent I/O state: no agent connected, new event and approval channels.
+    /// Fresh agent I/O state: no agent connected, new approval channel, and an
+    /// [`InProcessTransport`] wired to a new event channel.
     pub(crate) fn new() -> Self {
-        let (agent_tx, agent_rx) = mpsc::channel(256);
+        let (agent_tx, event_rx) = mpsc::channel(256);
         let (approval_tx, approval_rx) = mpsc::channel(16);
+        // The in-process drive path never calls `TuiTransport::send` — the
+        // bridge in `agent_bridge.rs` starts turns on the `Agent` directly —
+        // so the input side is dropped here: a stray `send` fails fast with
+        // `ChannelClosed` instead of queueing input nothing will ever read.
+        let (input_tx, _unused_input_rx) = mpsc::channel(1);
+        let transport: Box<dyn TuiTransport> =
+            Box::new(InProcessTransport::from_channels(input_tx, event_rx));
         Self {
             status: AgentStatus::Idle,
             retry_attempt: None,
             agent: None,
             agent_tx,
-            agent_rx,
+            transport,
+            external_transport: false,
+            outbound: Vec::new(),
             approval_rx,
             approval_tx,
             pending_approval: None,

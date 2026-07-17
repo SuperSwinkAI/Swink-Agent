@@ -34,7 +34,8 @@ async fn multi_turn_send_and_receive() {
         "app should be idle after first turn"
     );
     assert!(
-        app.view.messages
+        app.view
+            .messages
             .iter()
             .any(|m| m.role == MessageRole::Assistant && m.content == "first response"),
         "first response should appear in display messages"
@@ -51,13 +52,17 @@ async fn multi_turn_send_and_receive() {
         "app should be idle after second turn"
     );
     assert!(
-        app.view.messages
+        app.view
+            .messages
             .iter()
             .any(|m| m.role == MessageRole::Assistant && m.content == "second response"),
         "second response should appear in display messages"
     );
     assert!(
-        !app.view.messages.iter().any(|m| m.role == MessageRole::Error),
+        !app.view
+            .messages
+            .iter()
+            .any(|m| m.role == MessageRole::Error),
         "no error messages should appear during multi-turn"
     );
 }
@@ -122,7 +127,10 @@ async fn three_turn_conversation() {
         vec!["response one", "response two", "response three"]
     );
     assert!(
-        !app.view.messages.iter().any(|m| m.role == MessageRole::Error),
+        !app.view
+            .messages
+            .iter()
+            .any(|m| m.role == MessageRole::Error),
         "no errors across three turns"
     );
 }
@@ -197,7 +205,8 @@ async fn error_response_allows_retry() {
         "should return to idle even after an error response"
     );
     assert!(
-        app.view.messages
+        app.view
+            .messages
             .iter()
             .any(|m| m.content.contains("something broke")),
         "error response should be visible in the conversation"
@@ -208,7 +217,8 @@ async fn error_response_allows_retry() {
 
     assert_eq!(app.agent_io.status, AgentStatus::Idle);
     assert!(
-        app.view.messages
+        app.view
+            .messages
             .iter()
             .any(|m| m.role == MessageRole::Assistant && m.content == "recovered"),
         "recovery response should appear"
@@ -245,7 +255,8 @@ async fn cycle_model_applies_and_restores_provider_binding_on_send() {
     drain_agent_events_until_idle(&mut app).await;
 
     assert!(
-        app.view.messages
+        app.view
+            .messages
             .iter()
             .any(|m| m.role == MessageRole::Assistant && m.content == "from extra")
     );
@@ -259,7 +270,8 @@ async fn cycle_model_applies_and_restores_provider_binding_on_send() {
     drain_agent_events_until_idle(&mut app).await;
 
     assert!(
-        app.view.messages
+        app.view
+            .messages
             .iter()
             .any(|m| m.role == MessageRole::Assistant && m.content == "from primary after restore")
     );
@@ -271,9 +283,11 @@ async fn turn_end_renders_tool_results_with_diff_data_and_trims_old_turns() {
     let mut app = App::new(TuiConfig::default());
 
     for turn in 1..=21 {
-        app.view.messages
+        app.view
+            .messages
             .push(make_user_message(&format!("user {turn}")));
-        app.view.messages
+        app.view
+            .messages
             .push(make_assistant_message(&format!("assistant {turn}")));
     }
 

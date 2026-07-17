@@ -14,6 +14,20 @@
 //! - [`TuiTransport::send`] accepts [`UserInput`] and forwards it to the agent.
 //! - [`TuiTransport::recv`] yields [`AgentEvent`] items as they arrive, returning
 //!   `None` when the stream is exhausted.
+//!
+//! # How the app consumes this
+//!
+//! [`App`](crate::App) always reads agent events through a boxed
+//! `TuiTransport`. By default that is an [`InProcessTransport`] wrapped
+//! around the internal event channel the in-process agent bridge feeds, and
+//! prompts are started on the [`Agent`] directly — behavior is unchanged. A
+//! host can replace the wiring with
+//! [`App::with_transport`](crate::App::with_transport), after which submitted
+//! prompts are delivered through [`TuiTransport::send`] and the backend on
+//! the other side of the transport (e.g. a remote agent service) owns the
+//! turn lifecycle. [`App::pump_transport_events`](crate::App::pump_transport_events)
+//! drives an `App` from a transport without a terminal, which is what a mock
+//! transport test wants.
 
 use futures::StreamExt as _;
 use tokio::sync::mpsc;

@@ -89,10 +89,10 @@ pub(super) fn make_test_agent_with_models(
     )
 }
 
-/// Drain all pending agent events from the channel, feeding them back
+/// Drain all pending agent events from the transport, feeding them back
 /// to the app (which in turn calls `agent.handle_stream_event`).
 pub(super) fn drain_agent_events(app: &mut App) {
-    while let Ok(event) = app.agent_io.agent_rx.try_recv() {
+    while let Some(event) = app.agent_io.transport.try_recv() {
         app.handle_agent_event(event);
     }
 }
@@ -104,10 +104,10 @@ pub(super) async fn drain_agent_events_until_idle(app: &mut App) {
             break;
         }
 
-        let event = tokio::time::timeout(Duration::from_secs(1), app.agent_io.agent_rx.recv())
+        let event = tokio::time::timeout(Duration::from_secs(1), app.agent_io.transport.recv())
             .await
             .expect("agent should emit an event while running")
-            .expect("agent event channel should stay open while running");
+            .expect("agent event stream should stay open while running");
         app.handle_agent_event(event);
     }
 }

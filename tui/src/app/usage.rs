@@ -83,8 +83,18 @@ impl App {
             }
         }
 
-        let cache_read: u64 = self.usage.turn_usage.iter().map(|t| t.cache_read_tokens).sum();
-        let cache_write: u64 = self.usage.turn_usage.iter().map(|t| t.cache_write_tokens).sum();
+        let cache_read: u64 = self
+            .usage
+            .turn_usage
+            .iter()
+            .map(|t| t.cache_read_tokens)
+            .sum();
+        let cache_write: u64 = self
+            .usage
+            .turn_usage
+            .iter()
+            .map(|t| t.cache_write_tokens)
+            .sum();
 
         out.push('\n');
         let _ = writeln!(

@@ -94,7 +94,14 @@ async fn exit_plan_mode_restores_system_prompt() {
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
 
-    let original_prompt = app.agent_io.agent.as_ref().unwrap().state().system_prompt.clone();
+    let original_prompt = app
+        .agent_io
+        .agent
+        .as_ref()
+        .unwrap()
+        .state()
+        .system_prompt
+        .clone();
 
     app.enter_plan_mode();
     app.exit_plan_mode();
@@ -137,12 +144,20 @@ async fn reset_command_restores_agent_after_plan_mode() {
 
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
-    let original_prompt = app.agent_io.agent.as_ref().unwrap().state().system_prompt.clone();
+    let original_prompt = app
+        .agent_io
+        .agent
+        .as_ref()
+        .unwrap()
+        .state()
+        .system_prompt
+        .clone();
 
     app.enter_plan_mode();
     assert_eq!(app.agent_io.agent.as_ref().unwrap().state().tools.len(), 1);
     assert!(
-        app.agent_io.agent
+        app.agent_io
+            .agent
             .as_ref()
             .unwrap()
             .state()
@@ -308,7 +323,8 @@ async fn plan_approval_empty_plan_skips_send() {
     assert_eq!(app.mode.operating_mode, OperatingMode::Execute);
     // No user message should have been created for the plan
     assert!(
-        !app.view.messages
+        !app.view
+            .messages
             .iter()
             .any(|m| m.role == MessageRole::User && !m.content.is_empty()),
         "empty plan should not send a user message"

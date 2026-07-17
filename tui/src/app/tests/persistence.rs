@@ -45,7 +45,8 @@ async fn load_session_restores_error_messages_with_role_and_content() {
 
     // The user message should also be present
     assert_eq!(
-        app.view.messages
+        app.view
+            .messages
             .iter()
             .filter(|m| m.role == MessageRole::User)
             .count(),
@@ -334,7 +335,8 @@ async fn load_session_with_corrupted_saved_state_keeps_in_memory_state_and_repor
     };
     assert_eq!(draft, Some("keep me".to_string()));
     assert!(
-        app.view.messages
+        app.view
+            .messages
             .iter()
             .any(|message| message.content.contains("Failed to load session")),
         "load failures should surface a user-visible system message"
@@ -358,13 +360,15 @@ async fn hash_key_command_stores_through_the_fake_keychain() {
     app.store_key("openai", "sk-app-path-sentinel-1111");
 
     assert!(
-        app.view.messages
+        app.view
+            .messages
             .iter()
             .any(|message| message.content.contains("API key stored for: openai")),
         "store_key should report success via the fake backend, not fail or hang"
     );
     assert!(
-        !app.view.messages
+        !app.view
+            .messages
             .iter()
             .any(|message| message.content.contains("Failed to store key")),
         "the fake backend must not report a storage failure"
@@ -380,7 +384,8 @@ async fn hash_keys_command_reads_through_the_fake_keychain() {
     app.list_keys();
 
     assert!(
-        app.view.messages
+        app.view
+            .messages
             .iter()
             .any(|message| message.content.contains("Provider credentials:")),
         "list_keys should render the provider table without touching the keychain"

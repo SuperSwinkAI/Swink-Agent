@@ -125,8 +125,9 @@ loop {
         Some(event) = terminal_events.next() => {
             handle_terminal_event(event, &mut app);
         }
-        // 2. Agent events (streamed via mpsc forwarder task)
-        Some(agent_event) = agent_rx.recv() => {
+        // 2. Agent events (consumed from the TuiTransport; the default
+        //    InProcessTransport wraps the mpsc forwarder task)
+        Some(agent_event) = transport.recv() => {
             handle_agent_event(agent_event, &mut app);
         }
         // 3. Tick timer (spinners, elapsed time, tool fade)

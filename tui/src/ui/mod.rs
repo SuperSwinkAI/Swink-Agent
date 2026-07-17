@@ -167,7 +167,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Render tool panel
     if let Some(area) = tool_area {
-        let trust_name = app.agent_io.trust_follow_up.as_ref().map(|f| f.tool_name.as_str());
+        let trust_name = app
+            .agent_io
+            .trust_follow_up
+            .as_ref()
+            .map(|f| f.tool_name.as_str());
         // Only advertise `h` while the plain prompt is showing — once a review
         // is open its own panel lists the keys.
         let hunk_reviewable =
@@ -203,8 +207,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         crate::app::AgentStatus::Aborted => "aborted",
         crate::app::AgentStatus::Idle => "",
     };
-    app.editor.input
-        .render(frame, input_area, app.view.focus == Focus::Input, status_hint);
+    app.editor.input.render(
+        frame,
+        input_area,
+        app.view.focus == Focus::Input,
+        status_hint,
+    );
 
     // Render whichever completion popup is open (at most one ever is) over
     // the conversation, above the input.

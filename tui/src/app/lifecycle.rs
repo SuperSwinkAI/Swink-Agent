@@ -71,6 +71,32 @@ impl App {
         self
     }
 
+    /// Route agent I/O through `transport`, replacing the default in-process wiring.
+    ///
+    /// Once installed, submitted prompts are forwarded through
+    /// [`TuiTransport::send`](crate::transport::TuiTransport::send) — the
+    /// backend behind the transport decides whether a message starts a new
+    /// turn or steers a running one — and the event loop consumes
+    /// [`AgentEvent`](swink_agent::AgentEvent)s from
+    /// [`TuiTransport::recv`](crate::transport::TuiTransport::recv). Turn I/O
+    /// no longer touches the in-process [`Agent`], so install either an agent
+    /// (via [`set_agent`](Self::set_agent)) or a transport, not both.
+    ///
+    /// Without this call the default path is unchanged: `App` drives the
+    /// agent passed to [`set_agent`](Self::set_agent) directly and receives
+    /// its events over an internal channel wrapped in an
+    /// [`InProcessTransport`](crate::transport::InProcessTransport).
+    ///
+    /// Consuming builder so it chains after `App::new(config)`, alongside
+    /// [`with_extensions`](Self::with_extensions) and
+    /// [`with_session_store`](Self::with_session_store).
+    #[must_use]
+    pub fn with_transport(mut self, transport: Box<dyn crate::transport::TuiTransport>) -> Self {
+        self.agent_io.transport = transport;
+        self.agent_io.external_transport = true;
+        self
+    }
+
     /// Replace the session store and session ID assigned by [`App::new`].
     ///
     /// Consuming builder so it chains cleanly after `App::new(config)`. Use this
@@ -85,7 +111,8 @@ impl App {
     }
 
     pub(super) fn push_system_message(&mut self, content: String) {
-        self.view.messages
+        self.view
+            .messages
             .push(DisplayMessage::new(MessageRole::System, content));
     }
 
@@ -176,8 +203,11 @@ impl App {
 
     /// Set the agent instance for this app.
     pub fn set_agent(&mut self, agent: Agent) {
-        self.mode.model_name.clone_from(&agent.state().model.model_id);
-        self.mode.available_models
+        self.mode
+            .model_name
+            .clone_from(&agent.state().model.model_id);
+        self.mode
+            .available_models
             .clone_from(&agent.state().available_models);
         self.mode.model_index = 0;
         self.usage.context_budget = 100_000;
@@ -191,7 +221,8 @@ impl App {
     /// [`swink_agent::AgentOptions::with_approval_mode`] before constructing the agent to
     /// control startup behavior.
     pub fn approval_mode(&self) -> ApprovalMode {
-        self.agent_io.agent
+        self.agent_io
+            .agent
             .as_ref()
             .map(Agent::approval_mode)
             .unwrap_or_default()
@@ -309,7 +340,8 @@ impl App {
             .collect();
 
         if user_indices.len() <= MAX_VISIBLE_TURNS {
-            self.view.conversation
+            self.view
+                .conversation
                 .clamp_scroll_offset(self.conversation_page_height());
             return;
         }
@@ -321,12 +353,14 @@ impl App {
             .selected_tool_block
             .and_then(|index| index.checked_sub(trim_start))
             .filter(|&index| {
-                self.view.messages
+                self.view
+                    .messages
                     .get(index)
                     .is_some_and(|message| message.role == MessageRole::ToolResult)
             });
 
-        self.view.conversation
+        self.view
+            .conversation
             .clamp_scroll_offset(self.conversation_page_height());
     }
 }

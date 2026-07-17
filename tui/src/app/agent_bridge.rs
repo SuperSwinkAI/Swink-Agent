@@ -16,7 +16,7 @@ use super::state::{
 
 impl App {
     pub(super) fn send_to_agent(&mut self, text: String) {
-        if self.agent_io.agent.is_none() {
+        if !self.agent_io.external_transport && self.agent_io.agent.is_none() {
             return;
         }
 
@@ -39,6 +39,21 @@ impl App {
         // itself — a SKILL.md containing `@/etc/passwd` must NOT induce a host
         // file read.
         let outbound = self.extensions.resolve_skill(&outbound).unwrap_or(outbound);
+
+        // Host-installed transport: queue the expanded text for the event
+        // loop to flush through `TuiTransport::send`. The backend behind the
+        // transport decides whether this starts a new turn or steers a
+        // running one; mirror the queued-message overlay locally (raw `text`,
+        // like the in-process steer path) so the UX matches.
+        if self.agent_io.external_transport {
+            if self.agent_io.status == AgentStatus::Running {
+                self.agent_io.pending_steered.push(text);
+            }
+            self.agent_io
+                .outbound
+                .push(crate::transport::UserInput::new(outbound));
+            return;
+        }
 
         let Some(agent) = &mut self.agent_io.agent else {
             return;
@@ -140,7 +155,8 @@ impl App {
                 // them — so the display order matches the logical turn order.
                 if !self.agent_io.pending_steered.is_empty() {
                     for text in self.agent_io.pending_steered.drain(..) {
-                        self.view.messages
+                        self.view
+                            .messages
                             .push(DisplayMessage::new(MessageRole::User, text));
                     }
                     self.view.steered_fade_ticks = 10;
@@ -194,7 +210,9 @@ impl App {
                 self.usage.total_input_tokens += message.usage.input;
                 self.usage.total_output_tokens += message.usage.output;
                 self.usage.total_cost += message.cost.total;
-                self.usage.turn_usage.push(TurnUsage::from_message(&message));
+                self.usage
+                    .turn_usage
+                    .push(TurnUsage::from_message(&message));
                 self.usage.context_tokens_used = message.usage.input;
                 self.mode.model_name.clone_from(&message.model_id);
             }
@@ -239,7 +257,8 @@ impl App {
                 // (e.g. cancelled mid-turn), promote any remaining steered messages.
                 if !self.agent_io.pending_steered.is_empty() {
                     for text in self.agent_io.pending_steered.drain(..) {
-                        self.view.messages
+                        self.view
+                            .messages
                             .push(DisplayMessage::new(MessageRole::User, text));
                     }
                     self.view.steered_fade_ticks = 10;
@@ -256,7 +275,8 @@ impl App {
                 name,
                 arguments,
             } => {
-                self.view.tool_panel
+                self.view
+                    .tool_panel
                     .set_awaiting_approval(&id, &name, &arguments);
             }
             AgentEvent::ToolApprovalResolved { id, approved, .. } => {
@@ -274,7 +294,10 @@ impl App {
     ) {
         let smart_auto_approved = self.approval_mode() == swink_agent::ApprovalMode::Smart
             && (!request.requires_approval
-                || self.agent_io.session_trusted_tools.contains(&request.tool_name));
+                || self
+                    .agent_io
+                    .session_trusted_tools
+                    .contains(&request.tool_name));
         if smart_auto_approved {
             let _ = responder.send(ToolApproval::Approved);
         } else {
@@ -293,7 +316,8 @@ impl App {
     /// a write whose content is identical to what is on disk, say), in which
     /// case pressing `h` simply does nothing.
     pub fn pending_approval_has_reviewable_diff(&self) -> bool {
-        self.agent_io.pending_approval
+        self.agent_io
+            .pending_approval
             .as_ref()
             .and_then(|(request, _)| request.context.as_ref())
             .is_some_and(|context| {
@@ -446,7 +470,8 @@ impl App {
                  the remaining hunks were applied."
             )
         };
-        self.view.messages
+        self.view
+            .messages
             .push(DisplayMessage::new(MessageRole::System, notice));
         self.view.conversation.auto_scroll = true;
 
@@ -503,7 +528,8 @@ impl App {
         // Send concatenated plan as user message if non-empty.
         let plan_text = plan_messages.join("\n\n---\n\n");
         if !plan_text.is_empty() {
-            self.view.messages
+            self.view
+                .messages
                 .push(DisplayMessage::new(MessageRole::User, plan_text.clone()));
             self.trim_messages_to_recent_turns();
             self.view.conversation.auto_scroll = true;
@@ -532,8 +558,10 @@ impl App {
 
     pub(super) fn restore_plan_mode_state(&mut self) {
         if let Some(agent) = &mut self.agent_io.agent
-            && let (Some(tools), Some(prompt)) =
-                (self.mode.saved_tools.take(), self.mode.saved_system_prompt.take())
+            && let (Some(tools), Some(prompt)) = (
+                self.mode.saved_tools.take(),
+                self.mode.saved_system_prompt.take(),
+            )
         {
             agent.exit_plan_mode(tools, prompt);
         }

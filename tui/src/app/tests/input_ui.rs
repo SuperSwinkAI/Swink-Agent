@@ -129,9 +129,11 @@ async fn trim_messages_keeps_newest_twenty_turns() {
     let mut app = App::new(TuiConfig::default());
 
     for turn in 1..=25 {
-        app.view.messages
+        app.view
+            .messages
             .push(make_user_message(&format!("user {turn}")));
-        app.view.messages
+        app.view
+            .messages
             .push(make_assistant_message(&format!("assistant {turn}")));
     }
 
@@ -153,12 +155,16 @@ async fn trim_messages_repairs_selected_tool_block() {
     let mut app = App::new(TuiConfig::default());
 
     for turn in 1..=21 {
-        app.view.messages
+        app.view
+            .messages
             .push(make_user_message(&format!("user {turn}")));
         if turn == 21 {
-            app.view.messages.push(make_tool_result_message("tool output"));
+            app.view
+                .messages
+                .push(make_tool_result_message("tool output"));
         } else {
-            app.view.messages
+            app.view
+                .messages
                 .push(make_assistant_message(&format!("assistant {turn}")));
         }
     }
@@ -166,7 +172,10 @@ async fn trim_messages_repairs_selected_tool_block() {
 
     app.trim_messages_to_recent_turns();
 
-    assert_eq!(app.view.selected_tool_block, Some(app.view.messages.len() - 1));
+    assert_eq!(
+        app.view.selected_tool_block,
+        Some(app.view.messages.len() - 1)
+    );
     assert!(matches!(
         app.view.messages[app.view.selected_tool_block.unwrap()].role,
         MessageRole::ToolResult
@@ -180,9 +189,11 @@ async fn trim_messages_clamps_scroll_offset() {
     app.view.conversation.scroll_offset = 40;
 
     for turn in 1..=25 {
-        app.view.messages
+        app.view
+            .messages
             .push(make_user_message(&format!("user {turn}")));
-        app.view.messages
+        app.view
+            .messages
             .push(make_assistant_message(&format!("assistant {turn}")));
     }
     app.view.conversation.set_rendered_lines_for_test(12);
@@ -268,7 +279,10 @@ fn tick_toggles_blink_and_sets_dirty() {
         app.tick();
     }
 
-    assert!(!app.view.blink_on, "blink should have toggled after 23 ticks");
+    assert!(
+        !app.view.blink_on,
+        "blink should have toggled after 23 ticks"
+    );
     assert!(app.view.dirty, "dirty should be set when agent is running");
 }
 
@@ -364,7 +378,11 @@ async fn repeated_auto_save_preserves_created_at_and_advances_sequence() {
     // First save: auto-save writes transcript and session-state together, so
     // the store sequence advances once.
     app.auto_save_session().expect("first save should succeed");
-    let first_meta = app.session.session_meta.clone().expect("meta set after save");
+    let first_meta = app
+        .session
+        .session_meta
+        .clone()
+        .expect("meta set after save");
     let created_at = first_meta.created_at;
     assert_eq!(first_meta.sequence, 1, "local sequence mirrors the store");
 
@@ -423,7 +441,11 @@ async fn auto_save_after_load_preserves_created_at_and_continues_sequence() {
     app.set_agent(agent);
     app.load_session(session_id).unwrap();
 
-    let loaded_meta = app.session.session_meta.clone().expect("meta set after load");
+    let loaded_meta = app
+        .session
+        .session_meta
+        .clone()
+        .expect("meta set after load");
     assert_eq!(loaded_meta.sequence, 1);
     assert_eq!(loaded_meta.created_at, original_created);
 
@@ -507,12 +529,19 @@ async fn slash_thinking_updates_agent_model_and_display_flag() {
     app.submit_input();
 
     assert_eq!(
-        app.agent_io.agent.as_ref().unwrap().state().model.thinking_level,
+        app.agent_io
+            .agent
+            .as_ref()
+            .unwrap()
+            .state()
+            .model
+            .thinking_level,
         ThinkingLevel::Medium
     );
     assert!(app.config.show_thinking);
     assert!(
-        app.view.messages
+        app.view
+            .messages
             .last()
             .is_some_and(|msg| msg.content.contains("Medium"))
     );
@@ -521,7 +550,13 @@ async fn slash_thinking_updates_agent_model_and_display_flag() {
     app.submit_input();
 
     assert_eq!(
-        app.agent_io.agent.as_ref().unwrap().state().model.thinking_level,
+        app.agent_io
+            .agent
+            .as_ref()
+            .unwrap()
+            .state()
+            .model
+            .thinking_level,
         ThinkingLevel::Off
     );
     assert!(!app.config.show_thinking);
@@ -547,7 +582,10 @@ async fn slash_thinking_updates_pending_model_before_next_send() {
     app.submit_input();
 
     assert_eq!(
-        app.mode.pending_model.as_ref().map(|model| model.thinking_level),
+        app.mode
+            .pending_model
+            .as_ref()
+            .map(|model| model.thinking_level),
         Some(ThinkingLevel::High)
     );
     assert_eq!(
@@ -566,7 +604,8 @@ async fn running_clear_command_is_blocked_without_clearing_messages() {
     app.submit_input();
 
     assert!(
-        app.view.messages
+        app.view
+            .messages
             .iter()
             .any(|message| message.role == MessageRole::User && message.content == "keep me"),
         "running #clear must not remove existing transcript messages"
@@ -600,13 +639,15 @@ async fn running_load_command_is_blocked_without_switching_sessions() {
 
     assert_eq!(app.session.session_id, "active-session");
     assert!(
-        app.view.messages
+        app.view
+            .messages
             .iter()
             .any(|message| message.role == MessageRole::User && message.content == "active"),
         "running #load must not replace the active transcript"
     );
     assert!(
-        !app.view.messages
+        !app.view
+            .messages
             .iter()
             .any(|message| message.role == MessageRole::User && message.content == "loaded"),
         "running #load must not restore another session"
@@ -618,7 +659,9 @@ async fn running_reset_command_is_blocked_without_resetting_state() {
     let mut app = App::new(TuiConfig::default());
     app.agent_io.status = AgentStatus::Running;
     app.mode.operating_mode = OperatingMode::Plan;
-    app.agent_io.session_trusted_tools.insert("write_file".to_string());
+    app.agent_io
+        .session_trusted_tools
+        .insert("write_file".to_string());
     app.view.messages.push(make_user_message("keep me"));
 
     type_input(&mut app, "/reset");
@@ -627,7 +670,8 @@ async fn running_reset_command_is_blocked_without_resetting_state() {
     assert_eq!(app.mode.operating_mode, OperatingMode::Plan);
     assert!(app.agent_io.session_trusted_tools.contains("write_file"));
     assert!(
-        app.view.messages
+        app.view
+            .messages
             .iter()
             .any(|message| message.role == MessageRole::User && message.content == "keep me"),
         "running /reset must not clear current UI state"
@@ -774,18 +818,23 @@ async fn editor_style_submission_queues_once_while_running() {
     app.submit_user_text("queued from editor".to_string());
 
     assert!(
-        !app.view.messages
+        !app.view
+            .messages
             .iter()
             .any(|message| message.role == MessageRole::User
                 && message.content == "queued from editor"),
         "running submission should stay queued until MessageStart promotion"
     );
-    assert_eq!(app.agent_io.pending_steered, vec!["queued from editor".to_string()]);
+    assert_eq!(
+        app.agent_io.pending_steered,
+        vec!["queued from editor".to_string()]
+    );
 
     app.handle_agent_event(AgentEvent::MessageStart);
 
     assert_eq!(
-        app.view.messages
+        app.view
+            .messages
             .iter()
             .filter(|message| {
                 message.role == MessageRole::User && message.content == "queued from editor"
@@ -795,7 +844,8 @@ async fn editor_style_submission_queues_once_while_running() {
         "queued submission should be promoted into the transcript exactly once"
     );
     assert!(
-        app.view.messages
+        app.view
+            .messages
             .last()
             .is_some_and(|message| message.role == MessageRole::Assistant && message.is_streaming),
         "assistant streaming placeholder should still be added after promotion"
