@@ -115,6 +115,7 @@ impl App {
         };
         info!(session_id = %id, "loading session");
         let registry = self
+            .agent_io
             .agent
             .as_ref()
             .and_then(|a| a.custom_message_registry());

@@ -114,6 +114,7 @@ async fn query_approval_mode_shows_smart() {
     {
         msg.push_str("\nTrusted tools: ");
         let mut tools: Vec<&str> = app
+            .agent_io
             .session_trusted_tools
             .iter()
             .map(String::as_str)

@@ -140,6 +140,7 @@ async fn trim_messages_keeps_newest_twenty_turns() {
     app.trim_messages_to_recent_turns();
 
     let visible_users: Vec<&str> = app
+        .view
         .messages
         .iter()
         .filter(|message| message.role == MessageRole::User)
@@ -226,6 +227,7 @@ async fn load_session_keeps_full_agent_state_but_trims_visible_history() {
     app.load_session(session_id).unwrap();
 
     let visible_turns = app
+        .view
         .messages
         .iter()
         .filter(|message| message.role == MessageRole::User)
@@ -864,6 +866,7 @@ fn copy_code_extracts_all_fenced_blocks_from_last_assistant_message() {
     ));
 
     let copied = app
+        .view
         .messages
         .iter()
         .rev()

@@ -139,6 +139,7 @@ async fn skill_body_is_read_at_submit_and_never_while_typing() {
         ["<skill:deploy>BODY</skill> prod"]
     );
     let displayed = app
+        .view
         .messages
         .iter()
         .find(|message| message.role == MessageRole::User)
@@ -225,6 +226,7 @@ fn an_unknown_slash_command_still_hits_the_unknown_command_fallback() {
     press(&mut app, KeyCode::Enter);
 
     let feedback = app
+        .view
         .messages
         .iter()
         .find(|message| message.role == MessageRole::System)
@@ -389,6 +391,7 @@ fn typing_narrows_the_candidate_list() {
     type_text(&mut app, "/re");
 
     let completion = app
+        .editor
         .skill_completion
         .as_ref()
         .expect("popup should stay open");

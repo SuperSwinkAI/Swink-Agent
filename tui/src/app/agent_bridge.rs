@@ -189,6 +189,7 @@ impl App {
                 let (content, thinking) = DisplayMessage::assistant_content(&message);
 
                 if let Some(msg) = self
+                    .view
                     .messages
                     .last_mut()
                     .filter(|msg| msg.is_streaming && msg.role == MessageRole::Assistant)
@@ -516,6 +517,7 @@ impl App {
 
         // Collect assistant messages from the active plan-mode session.
         let plan_messages: Vec<String> = self
+            .view
             .messages
             .iter()
             .skip(session_start)

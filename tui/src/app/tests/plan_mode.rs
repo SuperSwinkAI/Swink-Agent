@@ -280,6 +280,7 @@ async fn plan_approval_y_exits_plan_and_sends_messages() {
 
     // Verify the plan was sent as a user message
     let user_msgs: Vec<&str> = app
+        .view
         .messages
         .iter()
         .filter(|m| m.role == MessageRole::User)
@@ -375,6 +376,7 @@ async fn plan_messages_concatenated_with_separator() {
     app.approve_plan();
 
     let plan_msg = app
+        .view
         .messages
         .iter()
         .find(|m| m.role == MessageRole::User && m.content.contains("step 1"))
@@ -404,6 +406,7 @@ async fn plan_approval_ignores_prior_plan_sessions() {
     app.approve_plan();
 
     let plan_msg = app
+        .view
         .messages
         .iter()
         .find(|m| m.role == MessageRole::User && m.content.contains("current plan"))
@@ -469,6 +472,7 @@ async fn plan_mode_only_collects_assistant_messages() {
 
     // Find the user message that was created by approve_plan (not the original "please plan")
     let plan_msgs: Vec<&str> = app
+        .view
         .messages
         .iter()
         .filter(|m| m.role == MessageRole::User && !m.plan_mode)

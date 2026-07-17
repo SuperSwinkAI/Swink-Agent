@@ -253,6 +253,7 @@ fn a_host_can_drive_path_completion_through_the_public_api() {
     }
 
     let completion = app
+        .editor
         .path_completion
         .as_ref()
         .expect("popup should be open on a public App");
@@ -325,6 +326,7 @@ async fn a_host_resolver_expands_mentions_only_on_submit() {
 
     // The transcript still shows what the user typed, not the expansion.
     let displayed = app
+        .view
         .messages
         .iter()
         .find(|message| message.role == MessageRole::User)
@@ -360,6 +362,7 @@ fn a_host_can_drive_skill_completion_through_the_public_api() {
     app.handle_key_event(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
 
     let completion = app
+        .editor
         .skill_completion
         .as_ref()
         .expect("popup should be open on a public App");
@@ -433,6 +436,7 @@ async fn a_host_skill_resolver_expands_only_on_submit() {
 
     // The transcript still shows what the user typed, not the expansion.
     let displayed = app
+        .view
         .messages
         .iter()
         .find(|message| message.role == MessageRole::User)

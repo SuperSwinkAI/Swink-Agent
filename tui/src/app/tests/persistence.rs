@@ -36,6 +36,7 @@ async fn load_session_restores_error_messages_with_role_and_content() {
 
     // Should have: user message, error message, system "Loaded session" message
     let error_msgs: Vec<_> = app
+        .view
         .messages
         .iter()
         .filter(|m| m.role == MessageRole::Error)
@@ -90,6 +91,7 @@ async fn load_session_error_with_text_content_uses_text() {
     app.load_session(session_id).unwrap();
 
     let error_msgs: Vec<_> = app
+        .view
         .messages
         .iter()
         .filter(|m| m.role == MessageRole::Error)
@@ -138,6 +140,7 @@ async fn load_session_restores_assistant_thinking_blocks() {
     app.load_session(session_id).unwrap();
 
     let assistant_msg = app
+        .view
         .messages
         .iter()
         .find(|m| m.role == MessageRole::Assistant && m.content == "final answer")
@@ -180,6 +183,7 @@ async fn load_session_restores_tool_result_error_role() {
     app.load_session(session_id).unwrap();
 
     let restored = app
+        .view
         .messages
         .iter()
         .find(|message| message.content == "permission denied")

@@ -117,6 +117,7 @@ async fn three_turn_conversation() {
     }
 
     let assistant_msgs: Vec<&str> = app
+        .view
         .messages
         .iter()
         .filter(|m| m.role == MessageRole::Assistant)
@@ -338,6 +339,7 @@ async fn turn_end_renders_tool_results_with_diff_data_and_trims_old_turns() {
     });
 
     let visible_users: Vec<_> = app
+        .view
         .messages
         .iter()
         .filter(|message| message.role == MessageRole::User)
@@ -348,6 +350,7 @@ async fn turn_end_renders_tool_results_with_diff_data_and_trims_old_turns() {
     assert_eq!(visible_users.last(), Some(&"user 21"));
 
     let tool_result = app
+        .view
         .messages
         .iter()
         .find(|message| message.role == MessageRole::ToolResult)

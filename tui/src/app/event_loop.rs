@@ -551,6 +551,7 @@ impl App {
     /// highlighted name per popup" holds by construction.
     fn cache_selected_skill_details(&mut self) {
         let Some(name) = self
+            .editor
             .skill_completion
             .as_ref()
             .and_then(SkillCompletion::selected_candidate)
@@ -559,6 +560,7 @@ impl App {
             return;
         };
         if self
+            .editor
             .skill_completion
             .as_ref()
             .is_some_and(|completion| completion.details.contains_key(&name))
@@ -989,6 +991,7 @@ impl App {
                 {
                     msg.push_str("\nTrusted tools: ");
                     let mut tools: Vec<&str> = self
+                        .agent_io
                         .session_trusted_tools
                         .iter()
                         .map(String::as_str)
@@ -1007,6 +1010,7 @@ impl App {
     fn copy_to_clipboard(&mut self, content: ClipboardContent) {
         let text = match content {
             ClipboardContent::Last => self
+                .view
                 .messages
                 .iter()
                 .rev()
@@ -1014,6 +1018,7 @@ impl App {
                 .map(|message| message.content.clone()),
             ClipboardContent::All => {
                 let all: String = self
+                    .view
                     .messages
                     .iter()
                     .map(|message| {
@@ -1034,6 +1039,7 @@ impl App {
                 Some(all)
             }
             ClipboardContent::Code => self
+                .view
                 .messages
                 .iter()
                 .rev()

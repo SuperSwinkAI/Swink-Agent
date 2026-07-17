@@ -125,6 +125,7 @@ async fn conversation_shows_the_raw_mention_while_the_agent_sees_the_expansion()
     drain_agent_events_until_idle(&mut app).await;
 
     let displayed = app
+        .view
         .messages
         .iter()
         .find(|message| message.role == MessageRole::User)
@@ -214,6 +215,7 @@ fn typing_narrows_the_candidate_list() {
     type_text(&mut app, "@src/m");
 
     let completion = app
+        .editor
         .path_completion
         .as_ref()
         .expect("popup should stay open");

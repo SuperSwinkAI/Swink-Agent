@@ -279,6 +279,7 @@ async fn rejected_hunks_are_reported_to_the_agent() {
 
     // Locally the user sees which hunks were reverted...
     let notice = app
+        .view
         .messages
         .iter()
         .find(|message| message.role == MessageRole::System)

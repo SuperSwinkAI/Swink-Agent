@@ -252,6 +252,7 @@ impl App {
     /// Select the previous tool result block. Returns true if a tool block exists.
     pub(super) fn select_prev_tool_block(&mut self) -> bool {
         let tool_indices: Vec<usize> = self
+            .view
             .messages
             .iter()
             .enumerate()
@@ -277,6 +278,7 @@ impl App {
     /// Select the next tool result block. Returns true if a tool block exists.
     pub(super) fn select_next_tool_block(&mut self) -> bool {
         let tool_indices: Vec<usize> = self
+            .view
             .messages
             .iter()
             .enumerate()
@@ -332,6 +334,7 @@ impl App {
 
     pub(super) fn trim_messages_to_recent_turns(&mut self) {
         let user_indices: Vec<usize> = self
+            .view
             .messages
             .iter()
             .enumerate()
@@ -350,6 +353,7 @@ impl App {
         self.view.messages.drain(0..trim_start);
 
         self.view.selected_tool_block = self
+            .view
             .selected_tool_block
             .and_then(|index| index.checked_sub(trim_start))
             .filter(|&index| {
