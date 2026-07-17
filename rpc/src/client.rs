@@ -97,6 +97,9 @@ impl AgentClient {
 
     /// Send a prompt and collect all events, returning when the turn ends.
     ///
+    /// For live delivery — a UI rendering events as the agent produces them —
+    /// use [`prompt_text_with`](Self::prompt_text_with) instead.
+    ///
     /// # Errors
     ///
     /// Returns an error if the connection is lost or the server returns an error.
@@ -104,11 +107,35 @@ impl AgentClient {
         &mut self,
         text: impl Into<String>,
     ) -> Result<Vec<AgentEvent>, RpcError> {
-        let events = self.run_turn(text.into()).await?;
+        let mut events = Vec::new();
+        self.run_turn(text.into(), &mut |event| events.push(event))
+            .await?;
         Ok(events)
     }
 
-    async fn run_turn(&mut self, text: String) -> Result<Vec<AgentEvent>, RpcError> {
+    /// Send a prompt, invoking `on_event` for each [`AgentEvent`] as it
+    /// arrives, and return when the turn ends.
+    ///
+    /// Unlike [`prompt_text`](Self::prompt_text), events are delivered while
+    /// the turn is still running, so a caller can stream them into a UI or a
+    /// channel instead of waiting for the batch at turn end.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection is lost or the server returns an error.
+    pub async fn prompt_text_with(
+        &mut self,
+        text: impl Into<String>,
+        mut on_event: impl FnMut(AgentEvent) + Send,
+    ) -> Result<(), RpcError> {
+        self.run_turn(text.into(), &mut on_event).await
+    }
+
+    async fn run_turn(
+        &mut self,
+        text: String,
+        on_event: &mut (dyn FnMut(AgentEvent) + Send),
+    ) -> Result<(), RpcError> {
         let params = PromptParams {
             text,
             session_id: None,
@@ -120,30 +147,31 @@ impl AgentClient {
         let prompt_fut = sender.request::<_, PromptResult>(method::PROMPT, &params);
         let mut prompt_fut = std::pin::pin!(prompt_fut);
 
-        let mut events = Vec::new();
-
         loop {
             tokio::select! {
                 result = &mut prompt_fut => {
                     result?;
-                    self.drain_ready_incoming(&mut events).await?;
+                    self.drain_ready_incoming(on_event).await?;
                     break;
                 }
                 incoming = self.peer.recv_incoming() => {
                     match incoming {
                         None => return Err(RpcError::disconnected()),
-                        Some(incoming) => self.handle_incoming(incoming, &mut events).await?,
+                        Some(incoming) => self.handle_incoming(incoming, on_event).await?,
                     }
                 }
             }
         }
 
-        Ok(events)
+        Ok(())
     }
 
-    async fn drain_ready_incoming(&mut self, events: &mut Vec<AgentEvent>) -> Result<(), RpcError> {
+    async fn drain_ready_incoming(
+        &mut self,
+        on_event: &mut (dyn FnMut(AgentEvent) + Send),
+    ) -> Result<(), RpcError> {
         while let Some(incoming) = self.peer.try_recv_incoming() {
-            self.handle_incoming(incoming, events).await?;
+            self.handle_incoming(incoming, on_event).await?;
         }
         Ok(())
     }
@@ -151,14 +179,14 @@ impl AgentClient {
     async fn handle_incoming(
         &self,
         incoming: IncomingMessage,
-        events: &mut Vec<AgentEvent>,
+        on_event: &mut (dyn FnMut(AgentEvent) + Send),
     ) -> Result<(), RpcError> {
         match incoming {
             IncomingMessage::Notification { method: m, params } if m == method::AGENT_EVENT => {
                 if let Some(event) =
                     params.and_then(|v| serde_json::from_value::<AgentEvent>(v).ok())
                 {
-                    events.push(event);
+                    on_event(event);
                 }
             }
             IncomingMessage::Request {
@@ -286,6 +314,52 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert!(matches!(events[0], AgentEvent::AgentStart));
         assert!(matches!(events[1], AgentEvent::TurnStart));
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn prompt_text_with_streams_events_through_the_callback() {
+        let (mut client, mut server) = make_client_pair();
+        let server_sender = server.sender();
+        let (client_done_tx, client_done_rx) = oneshot::channel();
+
+        let server_task = tokio::spawn(async move {
+            let incoming = server.recv_incoming().await.unwrap();
+            let IncomingMessage::Request { id, method, .. } = incoming else {
+                panic!("expected prompt request");
+            };
+            assert_eq!(method, method::PROMPT);
+
+            server_sender
+                .notify(method::AGENT_EVENT, &AgentEvent::AgentStart)
+                .await
+                .unwrap();
+            server_sender
+                .notify(method::AGENT_EVENT, &AgentEvent::TurnStart)
+                .await
+                .unwrap();
+            server_sender
+                .respond_ok(
+                    id,
+                    PromptResult {
+                        turn_id: "6".into(),
+                    },
+                )
+                .await
+                .unwrap();
+            let _ = client_done_rx.await;
+        });
+
+        let mut seen = Vec::new();
+        client
+            .prompt_text_with("hello streaming", |event| seen.push(event))
+            .await
+            .unwrap();
+        let _ = client_done_tx.send(());
+
+        assert_eq!(seen.len(), 2);
+        assert!(matches!(seen[0], AgentEvent::AgentStart));
+        assert!(matches!(seen[1], AgentEvent::TurnStart));
         server_task.await.unwrap();
     }
 

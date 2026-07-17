@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "adapters", "artifacts", "auth", "eval", "eval-judges", "evolve", "local-llm", "macros", "mcp", "memory", "patterns", "plugins/web", "policies", "rpc", "tui", "xtask"]
+members = [".", "adapters", "artifacts", "auth", "eval", "eval-judges", "evolve", "local-llm", "macros", "mcp", "memory", "patterns", "plugins/web", "policies", "rpc", "tui", "tui-remote", "xtask"]
 resolver = "2"
 
 [workspace.package]
