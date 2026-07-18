@@ -5874,6 +5874,7 @@ version = "0.12.0"
 dependencies = [
  "clap",
  "dirs",
+ "serde_json",
  "swink-agent",
  "swink-agent-rpc",
  "swink-agent-tui",
