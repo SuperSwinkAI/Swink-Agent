@@ -9,11 +9,12 @@ use crossterm::event::{
 use futures::StreamExt;
 use ratatui::{Terminal, backend::CrosstermBackend};
 
-use swink_agent::{ApprovalMode, ToolApproval};
+use swink_agent::{ApprovalMode, SessionState, ToolApproval};
 
-use super::state::{PathCompletion, Selection, SkillCompletion, TrustFollowUp};
+use super::state::{ControlFollowUp, PathCompletion, Selection, SkillCompletion, TrustFollowUp};
 use crate::commands::{self, ApprovalModeArg, ClipboardContent, CommandResult};
 use crate::theme;
+use crate::transport::{ControlRequest, ControlResponse, TransportError};
 use crate::ui;
 
 use super::render_helpers::extract_code_blocks;
@@ -44,8 +45,12 @@ impl App {
                 break;
             }
 
-            // Forward any input queued for a host-installed transport. A no-op
-            // on the default in-process path, which drives the agent directly.
+            // Forward any control requests, then any input, queued for a
+            // host-installed transport. Both are no-ops on the default
+            // in-process path, which drives the agent directly. Controls
+            // flush first so e.g. a pending model change lands before the
+            // prompt it should apply to.
+            self.flush_controls().await;
             self.flush_outbound().await;
 
             tokio::select! {
@@ -130,6 +135,118 @@ impl App {
         }
     }
 
+    /// Flush control requests queued by sync handlers to the installed
+    /// transport, applying each response as it arrives.
+    ///
+    /// Only ever has work when a host routed agent I/O through
+    /// [`App::with_transport`](App::with_transport). Runs before
+    /// [`flush_outbound`](App::flush_outbound) on the event loop's flush
+    /// pass so control effects (abort, model change, ...) land ahead of any
+    /// queued prompt. An [`Unsupported`](TransportError::Unsupported) reply
+    /// surfaces as a status message — except for auto-save, which keeps its
+    /// old silent skip — and any other error surfaces verbatim.
+    pub(super) async fn flush_controls(&mut self) {
+        if self.agent_io.pending_controls.is_empty() {
+            return;
+        }
+        let queued = std::mem::take(&mut self.agent_io.pending_controls);
+        for control in queued {
+            let result = self.agent_io.transport.control(control.request).await;
+            self.apply_control_outcome(control.label, control.follow_up, result);
+        }
+    }
+
+    /// Apply one control response (or error) per its queued follow-up.
+    fn apply_control_outcome(
+        &mut self,
+        label: &'static str,
+        follow_up: ControlFollowUp,
+        result: Result<ControlResponse, TransportError>,
+    ) {
+        match result {
+            Err(TransportError::Unsupported) => {
+                // Auto-save over a turn-I/O-only transport keeps the old
+                // behavior: skip silently rather than nag on every turn end.
+                if !matches!(follow_up, ControlFollowUp::SaveSnapshot { announce: false }) {
+                    self.push_system_message(format!("{label}: not supported by remote backend"));
+                }
+            }
+            Err(error) => {
+                self.push_system_message(format!("{label} failed: {error}"));
+            }
+            Ok(response) => self.apply_control_response(label, follow_up, response),
+        }
+        self.view.dirty = true;
+    }
+
+    /// Apply a successful control response per its queued follow-up.
+    fn apply_control_response(
+        &mut self,
+        label: &'static str,
+        follow_up: ControlFollowUp,
+        response: ControlResponse,
+    ) {
+        match (follow_up, response) {
+            (ControlFollowUp::Discard, _) => {}
+            (
+                ControlFollowUp::PopulateModelsAndCycle,
+                ControlResponse::Models { available, current },
+            ) => {
+                self.mode.model_index = available
+                    .iter()
+                    .position(|model| model.model_id == current.model_id)
+                    .unwrap_or(0);
+                self.mode.available_models = available;
+                self.mode.model_name.clone_from(&current.model_id);
+                // Perform the cycle the F4 press asked for, now that the
+                // list is known; the chosen model is applied via `SetModel`
+                // on the next send, as usual. Guarded so a backend that
+                // reports no models cannot re-trigger the `ListModels` fetch.
+                if !self.mode.available_models.is_empty() {
+                    self.cycle_model();
+                }
+            }
+            (ControlFollowUp::ShowApprovalMode, ControlResponse::ApprovalMode(mode)) => {
+                let report = self.approval_mode_report(mode);
+                self.push_system_message(report);
+            }
+            (
+                ControlFollowUp::SaveSnapshot { announce },
+                ControlResponse::SessionSnapshot { messages, state },
+            ) => {
+                let state = state.unwrap_or_else(|| SessionState::new().snapshot());
+                match self.persist_remote_snapshot(&messages, &state) {
+                    Ok(()) => {
+                        if announce {
+                            self.push_system_message(format!(
+                                "Session saved: {}",
+                                self.session.session_id
+                            ));
+                        }
+                    }
+                    Err(error) => {
+                        if announce {
+                            self.push_system_message(format!("Failed to save session: {error}"));
+                        }
+                    }
+                }
+            }
+            // A backend answering with the wrong response shape is a bug on
+            // its side; surface it rather than guessing — except for silent
+            // auto-save, which must never nag on turn end (same policy as
+            // `Unsupported` above).
+            (follow_up, _) => {
+                if matches!(follow_up, ControlFollowUp::SaveSnapshot { announce: false }) {
+                    tracing::warn!("{label}: unexpected response from remote backend");
+                } else {
+                    self.push_system_message(format!(
+                        "{label}: unexpected response from remote backend"
+                    ));
+                }
+            }
+        }
+    }
+
     /// Apply agent events from the installed transport until its stream is
     /// exhausted ([`TuiTransport::recv`](crate::transport::TuiTransport::recv)
     /// returns `None`).
@@ -141,9 +258,13 @@ impl App {
     /// yielding scripted events — and assert on the resulting state. Note the
     /// default in-process transport's stream only ends when the app is torn
     /// down, so this is primarily useful with a transport installed via
-    /// [`App::with_transport`](App::with_transport).
+    /// [`App::with_transport`](App::with_transport). Control requests queued
+    /// by the handled events (e.g. auto-save's session snapshot at
+    /// `AgentEnd`) are flushed between events, mirroring [`App::run`]'s
+    /// flush pass.
     pub async fn pump_transport_events(&mut self) {
         loop {
+            self.flush_controls().await;
             let Some(event) = self.agent_io.transport.recv().await else {
                 break;
             };
@@ -901,6 +1022,12 @@ impl App {
             CommandResult::SetSystemPrompt(prompt) => {
                 if let Some(agent) = &mut self.agent_io.agent {
                     agent.set_system_prompt(prompt);
+                } else if self.agent_io.external_transport {
+                    self.queue_control(
+                        "set system prompt",
+                        ControlRequest::SetSystemPrompt(prompt),
+                        ControlFollowUp::Discard,
+                    );
                 }
                 self.push_system_message("System prompt updated.".to_string());
                 self.trim_messages_to_recent_turns();
@@ -942,6 +1069,12 @@ impl App {
                 };
                 if let Some(agent) = &mut self.agent_io.agent {
                     agent.set_approval_mode(harness_mode);
+                } else if self.agent_io.external_transport {
+                    self.queue_control(
+                        "set approval mode",
+                        ControlRequest::SetApprovalMode(harness_mode),
+                        ControlFollowUp::Discard,
+                    );
                 }
                 let label = match mode {
                     ApprovalModeArg::On => "enabled",
@@ -977,28 +1110,18 @@ impl App {
                 return;
             }
             CommandResult::QueryApprovalMode => {
-                let label = match self.approval_mode() {
-                    ApprovalMode::Enabled => "enabled",
-                    ApprovalMode::Bypassed => "disabled (auto-approve)",
-                    ApprovalMode::Smart => {
-                        "smart (auto-approve read-only and trusted tools, prompt for writes)"
-                    }
-                    _ => "unknown",
-                };
-                let mut msg = format!("Tool approval: {label}");
-                if self.approval_mode() == ApprovalMode::Smart
-                    && !self.agent_io.session_trusted_tools.is_empty()
-                {
-                    msg.push_str("\nTrusted tools: ");
-                    let mut tools: Vec<&str> = self
-                        .agent_io
-                        .session_trusted_tools
-                        .iter()
-                        .map(String::as_str)
-                        .collect();
-                    tools.sort_unstable();
-                    msg.push_str(&tools.join(", "));
+                if self.agent_io.agent.is_none() && self.agent_io.external_transport {
+                    // `approval_mode()` would misreport the remote's mode as
+                    // the local default; ask the backend and display whatever
+                    // it answers on the flush pass instead.
+                    self.queue_control(
+                        "query approval mode",
+                        ControlRequest::QueryApprovalMode,
+                        ControlFollowUp::ShowApprovalMode,
+                    );
+                    return;
                 }
+                let msg = self.approval_mode_report(self.approval_mode());
                 self.push_system_message(msg);
                 return;
             }

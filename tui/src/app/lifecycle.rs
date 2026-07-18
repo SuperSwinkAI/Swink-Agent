@@ -9,11 +9,12 @@ use swink_agent::{Agent, ApprovalMode, ThinkingLevel, ToolApproval, ToolApproval
 use crate::config::TuiConfig;
 use crate::session::JsonlSessionStore;
 use crate::theme;
+use crate::transport::ControlRequest;
 use crate::ui::conversation::ConversationView;
 
 use super::state::{
-    AgentIo, AgentStatus, App, DisplayMessage, EditorState, MessageRole, ModeState,
-    SessionPersistence, UsageTotals, ViewState,
+    AgentIo, AgentStatus, App, ControlFollowUp, DisplayMessage, EditorState, MessageRole,
+    ModeState, PendingControl, SessionPersistence, UsageTotals, ViewState,
 };
 use super::{AUTO_COLLAPSE_SECS, MAX_VISIBLE_TURNS};
 
@@ -78,7 +79,13 @@ impl App {
     /// backend behind the transport decides whether a message starts a new
     /// turn or steers a running one — and the event loop consumes
     /// [`AgentEvent`](swink_agent::AgentEvent)s from
-    /// [`TuiTransport::recv`](crate::transport::TuiTransport::recv). Turn I/O
+    /// [`TuiTransport::recv`](crate::transport::TuiTransport::recv). Control
+    /// operations — abort, model cycling, thinking level, approval mode,
+    /// system prompt, reset, plan mode, session snapshot/restore — are
+    /// issued through
+    /// [`TuiTransport::control`](crate::transport::TuiTransport::control); a
+    /// transport that keeps the default `control` degrades to a status
+    /// notice per operation (and a silent skip for auto-save). Turn I/O
     /// no longer touches the in-process [`Agent`], so install either an agent
     /// (via [`set_agent`](Self::set_agent)) or a transport, not both.
     ///
@@ -116,9 +123,34 @@ impl App {
             .push(DisplayMessage::new(MessageRole::System, content));
     }
 
+    /// Queue a control-plane request for the installed transport.
+    ///
+    /// Only meaningful in transport mode. The queue is drained by
+    /// `App::flush_controls` on the event loop's flush pass (and by
+    /// [`pump_transport_events`](App::pump_transport_events)), which awaits
+    /// each request and applies the response — or surfaces the error — per
+    /// `follow_up`. `label` names the operation in those error messages.
+    pub(super) fn queue_control(
+        &mut self,
+        label: &'static str,
+        request: ControlRequest,
+        follow_up: ControlFollowUp,
+    ) {
+        self.agent_io.pending_controls.push(PendingControl {
+            label,
+            request,
+            follow_up,
+        });
+    }
+
     pub(super) fn abort_agent(&mut self) {
         if let Some(agent) = &mut self.agent_io.agent {
             agent.abort();
+        } else if self.agent_io.external_transport {
+            // Queued before the local status flip below so a transport error
+            // surfaces on the flush pass; the Aborted UX stays immediate
+            // while the backend actually cancels the remote turn.
+            self.queue_control("abort", ControlRequest::Abort, ControlFollowUp::Discard);
         }
         self.agent_io.status = AgentStatus::Aborted;
         if let Some(msg) = self.view.messages.last_mut()
@@ -134,6 +166,8 @@ impl App {
         self.restore_plan_mode_state();
         if let Some(agent) = &mut self.agent_io.agent {
             agent.reset();
+        } else if self.agent_io.external_transport {
+            self.queue_control("reset", ControlRequest::Reset, ControlFollowUp::Discard);
         }
         self.view.messages.clear();
         self.view.conversation = ConversationView::new();
@@ -228,6 +262,33 @@ impl App {
             .unwrap_or_default()
     }
 
+    /// Human-readable report of an approval mode, plus any session-trusted
+    /// tools. Shared by the `#approval` query on the in-process path and the
+    /// transport-mode [`ControlRequest::QueryApprovalMode`] response.
+    pub(super) fn approval_mode_report(&self, mode: ApprovalMode) -> String {
+        let label = match mode {
+            ApprovalMode::Enabled => "enabled",
+            ApprovalMode::Bypassed => "disabled (auto-approve)",
+            ApprovalMode::Smart => {
+                "smart (auto-approve read-only and trusted tools, prompt for writes)"
+            }
+            _ => "unknown",
+        };
+        let mut msg = format!("Tool approval: {label}");
+        if mode == ApprovalMode::Smart && !self.agent_io.session_trusted_tools.is_empty() {
+            msg.push_str("\nTrusted tools: ");
+            let mut tools: Vec<&str> = self
+                .agent_io
+                .session_trusted_tools
+                .iter()
+                .map(String::as_str)
+                .collect();
+            tools.sort_unstable();
+            msg.push_str(&tools.join(", "));
+        }
+        msg
+    }
+
     /// Get a clone of the approval request sender for use in the agent callback.
     pub fn approval_sender(
         &self,
@@ -303,7 +364,23 @@ impl App {
 
     /// Cycle to the next available model. Updates the status bar immediately;
     /// the model change is applied on the next [`send_to_agent`](Self::send_to_agent) call.
+    ///
+    /// In transport mode the model list is not seeded from an in-process
+    /// agent, so the first press fetches it from the backend
+    /// ([`ControlRequest::ListModels`]); the response populates
+    /// `mode.available_models` and performs the deferred cycle.
     pub(super) fn cycle_model(&mut self) {
+        if self.agent_io.external_transport
+            && self.agent_io.agent.is_none()
+            && self.mode.available_models.is_empty()
+        {
+            self.queue_control(
+                "list models",
+                ControlRequest::ListModels,
+                ControlFollowUp::PopulateModelsAndCycle,
+            );
+            return;
+        }
         if self.mode.available_models.len() <= 1 {
             return;
         }
@@ -317,6 +394,12 @@ impl App {
     pub(super) fn set_thinking_level(&mut self, level: ThinkingLevel) {
         if let Some(agent) = &mut self.agent_io.agent {
             agent.set_thinking_level(level);
+        } else if self.agent_io.external_transport {
+            self.queue_control(
+                "set thinking level",
+                ControlRequest::SetThinkingLevel(level),
+                ControlFollowUp::Discard,
+            );
         }
         if let Some(model) = self.mode.available_models.get_mut(self.mode.model_index) {
             model.thinking_level = level;

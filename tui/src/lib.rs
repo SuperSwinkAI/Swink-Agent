@@ -70,7 +70,9 @@ pub use mentions::{PathMention, parse_mentions};
 pub use session::JsonlSessionStore;
 pub use skills::{SkillInvocation, parse_skill_invocation};
 pub use swink_agent::{ApprovalMode, ModelRates, PricingTable};
-pub use transport::{InProcessTransport, TransportError, TuiTransport, UserInput};
+pub use transport::{
+    ControlRequest, ControlResponse, InProcessTransport, TransportError, TuiTransport, UserInput,
+};
 pub use ui::conversation::ConversationView;
 pub use ui::diff::{DiffData, Hunk};
 pub use ui::input::{InputEditor, MentionQuery};

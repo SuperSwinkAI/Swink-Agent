@@ -10,9 +10,10 @@ use tracing::{info, warn};
 
 use crate::credentials;
 use crate::session::{SessionMeta, SessionStore};
+use crate::transport::ControlRequest;
 use crate::ui::conversation::ConversationView;
 
-use super::state::{App, DisplayMessage, MessageRole};
+use super::state::{App, ControlFollowUp, DisplayMessage, MessageRole};
 
 impl App {
     fn restored_tool_result_message(tool_result: &ToolResultMessage) -> Option<DisplayMessage> {
@@ -40,26 +41,11 @@ impl App {
         Some(message)
     }
 
-    /// Persist the current session. Returns an error if the save failed so that
-    /// callers can surface it to the user instead of silently dropping failures.
-    pub(super) fn auto_save_session(&mut self) -> io::Result<()> {
-        let Some(ref store) = self.session.session_store else {
-            return Ok(());
-        };
-        let Some(ref agent) = self.agent_io.agent else {
-            return Ok(());
-        };
-        let state = agent.state();
-        let session_state_snapshot = agent
-            .session_state()
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .snapshot();
+    /// Build the metadata for the next save. Preserves `created_at` and the
+    /// optimistic-concurrency `sequence` from the last successful save.
+    fn next_session_meta(&self) -> SessionMeta {
         let now = now_utc();
-
-        // Build the meta to send to the store. Preserve `created_at` and the
-        // optimistic-concurrency `sequence` from the last successful save.
-        let meta = match self.session.session_meta.clone() {
+        match self.session.session_meta.clone() {
             Some(mut existing) => {
                 existing.id.clone_from(&self.session.session_id);
                 existing.title.clone_from(&self.mode.model_name);
@@ -72,7 +58,39 @@ impl App {
                 now,
                 now,
             ),
+        }
+    }
+
+    /// Persist the current session. Returns an error if the save failed so that
+    /// callers can surface it to the user instead of silently dropping failures.
+    ///
+    /// In transport mode the transcript lives behind the transport, so this
+    /// queues a [`ControlRequest::SnapshotSession`] instead and returns
+    /// `Ok(())`; the flush pass persists the response through
+    /// [`persist_remote_snapshot`](Self::persist_remote_snapshot). A
+    /// turn-I/O-only transport answers `Unsupported`, which keeps the old
+    /// behavior of silently saving nothing.
+    pub(super) fn auto_save_session(&mut self) -> io::Result<()> {
+        let Some(ref store) = self.session.session_store else {
+            return Ok(());
         };
+        let Some(ref agent) = self.agent_io.agent else {
+            if self.agent_io.external_transport {
+                self.queue_control(
+                    "session snapshot",
+                    ControlRequest::SnapshotSession,
+                    ControlFollowUp::SaveSnapshot { announce: false },
+                );
+            }
+            return Ok(());
+        };
+        let state = agent.state();
+        let session_state_snapshot = agent
+            .session_state()
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .snapshot();
+        let meta = self.next_session_meta();
 
         match store.save_full(
             &self.session.session_id,
@@ -95,8 +113,49 @@ impl App {
         }
     }
 
+    /// Persist a transcript+state snapshot returned by the backend over the
+    /// transport ([`ControlRequest::SnapshotSession`]).
+    ///
+    /// Same store path and meta handling as
+    /// [`auto_save_session`](Self::auto_save_session); only the payload
+    /// source differs (remote snapshot vs. in-process agent).
+    pub(super) fn persist_remote_snapshot(
+        &mut self,
+        messages: &[AgentMessage],
+        state: &serde_json::Value,
+    ) -> io::Result<()> {
+        let Some(ref store) = self.session.session_store else {
+            return Ok(());
+        };
+        let meta = self.next_session_meta();
+        match store.save_full(&self.session.session_id, &meta, messages, state) {
+            Ok(persisted_meta) => {
+                self.session.session_meta = Some(persisted_meta);
+                Ok(())
+            }
+            Err(error) => {
+                warn!(
+                    session_id = %self.session.session_id,
+                    error = %error,
+                    "failed to save session"
+                );
+                Err(error)
+            }
+        }
+    }
+
     pub(super) fn save_session(&mut self) {
         info!(session_id = %self.session.session_id, "saving session");
+        if self.agent_io.agent.is_none() && self.agent_io.external_transport {
+            // The snapshot round-trips through the backend; the flush pass
+            // reports the save outcome (`announce`) when it lands.
+            self.queue_control(
+                "save session",
+                ControlRequest::SnapshotSession,
+                ControlFollowUp::SaveSnapshot { announce: true },
+            );
+            return;
+        }
         match self.auto_save_session() {
             Ok(()) => {
                 self.push_system_message(format!("Session saved: {}", self.session.session_id));
@@ -121,7 +180,10 @@ impl App {
             .and_then(|a| a.custom_message_registry());
         let result: io::Result<_> = (|| {
             let (meta, messages, saved_state) = store.load_full(id, registry)?;
-            let restored_state = match saved_state {
+            // Validate the snapshot up front for both drive modes; the raw
+            // value is kept alongside so transport mode can forward it to
+            // the backend as loaded.
+            let restored_state = match saved_state.clone() {
                 Some(snapshot) => {
                     SessionState::restore_from_snapshot(snapshot).map_err(|error| {
                         io::Error::new(
@@ -133,11 +195,11 @@ impl App {
                 None => SessionState::new(),
             };
 
-            Ok((meta, messages, restored_state))
+            Ok((meta, messages, saved_state, restored_state))
         })();
 
         match result {
-            Ok((meta, messages, restored_state)) => {
+            Ok((meta, messages, saved_state, restored_state)) => {
                 let mut display_messages = Vec::new();
                 for msg in &messages {
                     match msg {
@@ -186,6 +248,19 @@ impl App {
                         .write()
                         .unwrap_or_else(std::sync::PoisonError::into_inner) = restored_state;
                     agent.set_messages(messages);
+                } else if self.agent_io.external_transport {
+                    // Push the loaded transcript and state into the remote
+                    // agent so the backend's conversation matches the
+                    // restored display. On `Unsupported` the flush pass
+                    // shows a notice while the local display stays restored.
+                    self.queue_control(
+                        "restore session",
+                        ControlRequest::RestoreSession {
+                            messages,
+                            state: saved_state,
+                        },
+                        ControlFollowUp::Discard,
+                    );
                 }
                 self.push_system_message(format!(
                     "Loaded session: {} ({} messages)",
