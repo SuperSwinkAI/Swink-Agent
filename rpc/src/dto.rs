@@ -5,7 +5,7 @@
 //! that were not designed with a wire protocol in mind.
 
 use serde::{Deserialize, Serialize};
-use swink_agent::{ToolApproval, ToolApprovalRequest};
+use swink_agent::{ApprovalMode, ModelSpec, ThinkingLevel, ToolApproval, ToolApprovalRequest};
 
 // Used only by the handshake parsers below (and their tests), which are gated
 // on the `client`/`server` features — so this import carries the same gate.
@@ -288,9 +288,156 @@ impl From<&ToolApproval> for ToolApprovalDto {
     }
 }
 
+// ─── Control plane (protocol 1.1) ─────────────────────────────────────────────
+
+/// Empty acknowledgement result for control-plane requests.
+///
+/// Returned by the methods that carry no response data (`model.set`,
+/// `thinking.set`, `approval.set`, `system_prompt.set`, `agent.reset`,
+/// `plan.enter`, `plan.exit`, `session.restore`). Serializes as `{}` on
+/// the wire.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct Ack {}
+
+impl Ack {
+    /// Construct a new `Ack`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {}
+    }
+}
+
+/// Result of the `model.list` request.
+#[non_exhaustive]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelListResult {
+    /// Models registered on the server via
+    /// `AgentOptions::with_available_models` (may be empty).
+    pub available: Vec<ModelSpec>,
+    /// The model the agent is currently using.
+    pub current: ModelSpec,
+}
+
+impl ModelListResult {
+    /// Construct a new `ModelListResult`.
+    #[must_use]
+    pub fn new(available: Vec<ModelSpec>, current: ModelSpec) -> Self {
+        Self { available, current }
+    }
+}
+
+/// Parameters for the `model.set` request.
+#[non_exhaustive]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelSetParams {
+    /// The model to switch to.
+    pub model: ModelSpec,
+}
+
+impl ModelSetParams {
+    /// Construct a new `ModelSetParams`.
+    #[must_use]
+    pub fn new(model: ModelSpec) -> Self {
+        Self { model }
+    }
+}
+
+/// Parameters for the `thinking.set` request.
+#[non_exhaustive]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThinkingSetParams {
+    /// The thinking level to apply to the current model.
+    pub level: ThinkingLevel,
+}
+
+impl ThinkingSetParams {
+    /// Construct a new `ThinkingSetParams`.
+    #[must_use]
+    pub fn new(level: ThinkingLevel) -> Self {
+        Self { level }
+    }
+}
+
+/// Result of the `approval.get` request.
+#[non_exhaustive]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalGetResult {
+    /// The agent's current approval mode.
+    pub mode: ApprovalMode,
+}
+
+impl ApprovalGetResult {
+    /// Construct a new `ApprovalGetResult`.
+    #[must_use]
+    pub fn new(mode: ApprovalMode) -> Self {
+        Self { mode }
+    }
+}
+
+/// Parameters for the `approval.set` request.
+#[non_exhaustive]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalSetParams {
+    /// The approval mode to switch to.
+    pub mode: ApprovalMode,
+}
+
+impl ApprovalSetParams {
+    /// Construct a new `ApprovalSetParams`.
+    #[must_use]
+    pub fn new(mode: ApprovalMode) -> Self {
+        Self { mode }
+    }
+}
+
+/// Parameters for the `system_prompt.set` request.
+#[non_exhaustive]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemPromptSetParams {
+    /// The replacement system prompt.
+    pub prompt: String,
+}
+
+impl SystemPromptSetParams {
+    /// Construct a new `SystemPromptSetParams`.
+    #[must_use]
+    pub fn new(prompt: impl Into<String>) -> Self {
+        Self {
+            prompt: prompt.into(),
+        }
+    }
+}
+
+/// A portable session snapshot — the result of `session.snapshot` and the
+/// parameters of `session.restore`.
+///
+/// `messages` uses the same per-message representation `swink-agent-memory`
+/// writes to JSONL: LLM messages are raw `LlmMessage` JSON, custom messages
+/// are a `{"type": ..., "data": ..., "_custom": true}` envelope. A client can
+/// therefore feed each element to a `SessionStore` line-for-line (and vice
+/// versa). `state` is the serialized `swink_agent::SessionState` snapshot.
+#[non_exhaustive]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSnapshot {
+    /// The message transcript, one JSON value per message.
+    pub messages: Vec<serde_json::Value>,
+    /// The session key-value state, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<serde_json::Value>,
+}
+
+impl SessionSnapshot {
+    /// Construct a new `SessionSnapshot`.
+    #[must_use]
+    pub fn new(messages: Vec<serde_json::Value>, state: Option<serde_json::Value>) -> Self {
+        Self { messages, state }
+    }
+}
+
 // ─── Protocol constants ───────────────────────────────────────────────────────
 
-pub const PROTOCOL_VERSION: &str = "1.0";
+pub const PROTOCOL_VERSION: &str = "1.1";
 
 pub mod method {
     pub const INITIALIZE: &str = "initialize";
@@ -300,11 +447,131 @@ pub mod method {
     pub const SHUTDOWN: &str = "shutdown";
     pub const AGENT_EVENT: &str = "agent.event";
     pub const TOOL_APPROVE: &str = "tool.approve";
+
+    // Control plane (protocol 1.1) — client→server requests, only served
+    // between turns.
+    pub const MODEL_LIST: &str = "model.list";
+    pub const MODEL_SET: &str = "model.set";
+    pub const THINKING_SET: &str = "thinking.set";
+    pub const APPROVAL_GET: &str = "approval.get";
+    pub const APPROVAL_SET: &str = "approval.set";
+    pub const SYSTEM_PROMPT_SET: &str = "system_prompt.set";
+    pub const AGENT_RESET: &str = "agent.reset";
+    pub const PLAN_ENTER: &str = "plan.enter";
+    pub const PLAN_EXIT: &str = "plan.exit";
+    pub const SESSION_SNAPSHOT: &str = "session.snapshot";
+    pub const SESSION_RESTORE: &str = "session.restore";
+
+    /// Returns `true` for control-plane request methods (protocol 1.1).
+    ///
+    /// While a turn is in flight the server answers these with
+    /// [`RpcError::BUSY`](crate::jsonrpc::RpcError::BUSY) instead of
+    /// executing them; between turns they are served from the main dispatch
+    /// loop. The `cancel` notification (not a control-plane request) remains
+    /// the mid-turn-safe way to abort a running turn.
+    #[must_use]
+    pub fn is_control(method: &str) -> bool {
+        matches!(
+            method,
+            MODEL_LIST
+                | MODEL_SET
+                | THINKING_SET
+                | APPROVAL_GET
+                | APPROVAL_SET
+                | SYSTEM_PROMPT_SET
+                | AGENT_RESET
+                | PLAN_ENTER
+                | PLAN_EXIT
+                | SESSION_SNAPSHOT
+                | SESSION_RESTORE
+        )
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn protocol_version_advertises_control_plane_capability() {
+        // 1.1 added the control-plane methods (model.*, approval.*, plan.*,
+        // session.*, thinking.set, system_prompt.set, agent.reset).
+        assert_eq!(PROTOCOL_VERSION, "1.1");
+    }
+
+    #[test]
+    fn control_methods_are_classified_for_busy_handling() {
+        for m in [
+            method::MODEL_LIST,
+            method::MODEL_SET,
+            method::THINKING_SET,
+            method::APPROVAL_GET,
+            method::APPROVAL_SET,
+            method::SYSTEM_PROMPT_SET,
+            method::AGENT_RESET,
+            method::PLAN_ENTER,
+            method::PLAN_EXIT,
+            method::SESSION_SNAPSHOT,
+            method::SESSION_RESTORE,
+        ] {
+            assert!(method::is_control(m), "{m} should be a control method");
+        }
+
+        for m in [
+            method::INITIALIZE,
+            method::INITIALIZED,
+            method::PROMPT,
+            method::CANCEL,
+            method::SHUTDOWN,
+            method::AGENT_EVENT,
+            method::TOOL_APPROVE,
+            "rpc.unknown",
+        ] {
+            assert!(!method::is_control(m), "{m} should not be a control method");
+        }
+    }
+
+    #[test]
+    fn ack_serializes_as_empty_object() {
+        let encoded = serde_json::to_value(Ack::new()).unwrap();
+        assert_eq!(encoded, serde_json::json!({}));
+
+        let _decoded: Ack = serde_json::from_value(serde_json::json!({})).unwrap();
+    }
+
+    #[test]
+    fn approval_params_round_trip_snake_case_modes() {
+        let encoded = serde_json::to_value(ApprovalSetParams::new(ApprovalMode::Bypassed)).unwrap();
+        assert_eq!(encoded, serde_json::json!({"mode": "bypassed"}));
+
+        let decoded: ApprovalGetResult =
+            serde_json::from_value(serde_json::json!({"mode": "smart"})).unwrap();
+        assert_eq!(decoded.mode, ApprovalMode::Smart);
+    }
+
+    #[test]
+    fn session_snapshot_omits_absent_state_and_round_trips() {
+        let empty = SessionSnapshot::new(Vec::new(), None);
+        let encoded = serde_json::to_value(&empty).unwrap();
+        assert!(
+            encoded.get("state").is_none(),
+            "absent state should stay off the wire"
+        );
+
+        let snapshot = SessionSnapshot::new(
+            vec![serde_json::json!({"role": "user"})],
+            Some(serde_json::json!({"data": {"k": 1}})),
+        );
+        let decoded: SessionSnapshot =
+            serde_json::from_value(serde_json::to_value(&snapshot).unwrap()).unwrap();
+        assert_eq!(decoded.messages, snapshot.messages);
+        assert_eq!(decoded.state, snapshot.state);
+
+        // `state` may also be omitted entirely in `session.restore` params.
+        let decoded: SessionSnapshot =
+            serde_json::from_value(serde_json::json!({"messages": []})).unwrap();
+        assert!(decoded.state.is_none());
+    }
 
     #[test]
     fn initialize_params_accept_current_protocol_version() {

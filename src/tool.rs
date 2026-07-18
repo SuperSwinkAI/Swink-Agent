@@ -433,7 +433,8 @@ impl fmt::Debug for ToolApprovalRequest {
 
 /// Controls whether the approval gate is active.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ApprovalMode {
     /// Every tool call goes through the approval callback.
     Enabled,

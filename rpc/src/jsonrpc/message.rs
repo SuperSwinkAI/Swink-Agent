@@ -68,6 +68,10 @@ impl RpcError {
     pub const UNAVAILABLE: i64 = -32096;
     /// Application: Request timed out waiting for a response.
     pub const TIMEOUT: i64 = -32095;
+    /// Application: A turn is in progress; the control-plane request was
+    /// rejected. Retry after the turn ends, or abort it with the `cancel`
+    /// notification (the only mid-turn-safe control operation).
+    pub const BUSY: i64 = -32094;
 
     pub fn parse_error(msg: impl Into<String>) -> Self {
         Self {
@@ -137,6 +141,14 @@ impl RpcError {
         Self {
             code: Self::TIMEOUT,
             message: "request timed out".into(),
+            data: None,
+        }
+    }
+
+    pub fn busy() -> Self {
+        Self {
+            code: Self::BUSY,
+            message: "turn in progress".into(),
             data: None,
         }
     }
