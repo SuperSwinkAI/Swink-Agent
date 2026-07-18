@@ -28,6 +28,7 @@ swink-agent = { path = "..", version = "0.12.0", default-features = false }
 swink-agent-tui = { path = "../tui", version = "0.12.0", default-features = false }
 swink-agent-rpc = { path = "../rpc", version = "0.12.0", default-features = false, features = ["client"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
+serde_json.workspace = true
 tracing.workspace = true
 clap = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"], optional = true }

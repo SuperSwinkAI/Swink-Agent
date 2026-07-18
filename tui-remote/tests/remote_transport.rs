@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use swink_agent::{AgentEvent, AgentOptions, ContentBlock, StreamFn};
 use swink_agent_rpc::AgentServer;
-use swink_agent_tui::{TuiTransport, UserInput};
+use swink_agent_tui::{ControlRequest, ControlResponse, TuiTransport, UserInput};
 use swink_agent_tui_remote::RemoteTransport;
 
 fn test_agent_options(response: &'static str) -> AgentOptions {
@@ -165,4 +165,168 @@ async fn failed_turn_surfaces_a_synthetic_agent_end() {
             .any(|e| matches!(e, AgentEvent::AgentEnd { .. })),
         "a failed turn must still end with AgentEnd so the UI leaves its streaming state"
     );
+}
+
+// ─── Control-plane e2e ────────────────────────────────────────────────────────
+
+/// Issue one control request with a timeout, panicking on a hung bridge.
+async fn control(
+    transport: &mut RemoteTransport,
+    request: ControlRequest,
+) -> Result<ControlResponse, swink_agent_tui::TransportError> {
+    tokio::time::timeout(Duration::from_secs(5), transport.control(request))
+        .await
+        .expect("control request did not complete in time")
+}
+
+#[tokio::test]
+async fn model_list_and_set_round_trip_over_the_wire() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("swink.sock");
+
+    let server = AgentServer::bind(&path, || Ok(test_agent_options("unused"))).unwrap();
+    let server_task = tokio::spawn(server.serve());
+    wait_for_secured_socket(&path).await;
+
+    let mut transport = RemoteTransport::connect(&path).await.unwrap();
+
+    let listed = control(&mut transport, ControlRequest::ListModels)
+        .await
+        .expect("model.list should succeed");
+    let ControlResponse::Models { available, current } = listed else {
+        panic!("expected Models response, got {listed:?}");
+    };
+    assert_eq!(current, swink_agent::testing::default_model());
+    assert_eq!(available, vec![swink_agent::testing::default_model()]);
+
+    let next = swink_agent::ModelSpec::new("test", "remote-next");
+    let ack = control(&mut transport, ControlRequest::SetModel(next))
+        .await
+        .expect("model.set should succeed");
+    assert!(matches!(ack, ControlResponse::Ack));
+
+    let relisted = control(&mut transport, ControlRequest::ListModels)
+        .await
+        .expect("model.list after set should succeed");
+    let ControlResponse::Models { current, .. } = relisted else {
+        panic!("expected Models response, got {relisted:?}");
+    };
+    assert_eq!(current.model_id, "remote-next");
+
+    server_task.abort();
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn session_snapshot_reflects_a_completed_turn() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("swink.sock");
+
+    let server = AgentServer::bind(&path, || Ok(test_agent_options("snapshot me"))).unwrap();
+    let server_task = tokio::spawn(server.serve());
+    wait_for_secured_socket(&path).await;
+
+    let mut transport = RemoteTransport::connect(&path).await.unwrap();
+
+    transport.send(UserInput::new("hello")).await.unwrap();
+    let _ = collect_turn(&mut transport).await;
+
+    let snapshot = control(&mut transport, ControlRequest::SnapshotSession)
+        .await
+        .expect("session.snapshot should succeed");
+    let ControlResponse::SessionSnapshot { messages, state } = snapshot else {
+        panic!("expected SessionSnapshot response, got {snapshot:?}");
+    };
+    assert_eq!(
+        messages.len(),
+        2,
+        "one user + one assistant message expected, got {messages:?}"
+    );
+    assert!(state.is_some());
+
+    // Round-trip: reset wipes the transcript, restore brings it back.
+    control(&mut transport, ControlRequest::Reset)
+        .await
+        .expect("agent.reset should succeed");
+    let wiped = control(&mut transport, ControlRequest::SnapshotSession)
+        .await
+        .expect("snapshot after reset should succeed");
+    let ControlResponse::SessionSnapshot {
+        messages: wiped, ..
+    } = wiped
+    else {
+        panic!("expected SessionSnapshot response");
+    };
+    assert!(wiped.is_empty(), "reset should clear the transcript");
+
+    control(
+        &mut transport,
+        ControlRequest::RestoreSession { messages, state },
+    )
+    .await
+    .expect("session.restore should succeed");
+    let restored = control(&mut transport, ControlRequest::SnapshotSession)
+        .await
+        .expect("snapshot after restore should succeed");
+    let ControlResponse::SessionSnapshot {
+        messages: restored, ..
+    } = restored
+    else {
+        panic!("expected SessionSnapshot response");
+    };
+    assert_eq!(restored.len(), 2, "restore should reinstall the transcript");
+
+    server_task.abort();
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn plan_mode_enters_and_exits_over_the_wire() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("swink.sock");
+
+    let server = AgentServer::bind(&path, || Ok(test_agent_options("unused"))).unwrap();
+    let server_task = tokio::spawn(server.serve());
+    wait_for_secured_socket(&path).await;
+
+    let mut transport = RemoteTransport::connect(&path).await.unwrap();
+
+    control(&mut transport, ControlRequest::EnterPlanMode)
+        .await
+        .expect("plan.enter should succeed");
+    // Double-enter is a backend-side error, surfaced as an I/O-style error.
+    let double = control(&mut transport, ControlRequest::EnterPlanMode).await;
+    assert!(double.is_err(), "second plan.enter must fail");
+    control(&mut transport, ControlRequest::ExitPlanMode)
+        .await
+        .expect("plan.exit should succeed");
+
+    server_task.abort();
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn approval_mode_query_reports_the_server_default() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("swink.sock");
+
+    let server = AgentServer::bind(&path, || Ok(test_agent_options("unused"))).unwrap();
+    let server_task = tokio::spawn(server.serve());
+    wait_for_secured_socket(&path).await;
+
+    let mut transport = RemoteTransport::connect(&path).await.unwrap();
+
+    let mode = control(&mut transport, ControlRequest::QueryApprovalMode)
+        .await
+        .expect("approval.get should succeed");
+    assert!(
+        matches!(
+            mode,
+            ControlResponse::ApprovalMode(swink_agent::ApprovalMode::Smart)
+        ),
+        "Smart is the server default, got {mode:?}"
+    );
+
+    server_task.abort();
+    let _ = server_task.await;
 }
