@@ -14,8 +14,9 @@ name: Release
 # the publish job will push a pre-release version to crates.io.
 #
 # Publish order (path deps replaced with registry versions by cargo):
-#   swink-agent → swink-agent-macros → {adapters, memory, policies, artifacts,
-#   auth, eval, local-llm, mcp, patterns, plugin-web} → swink-agent-tui
+#   swink-agent → swink-agent-macros → {memory, policies, artifacts,
+#   auth, eval, local-llm, mcp, patterns, plugin-web} → adapters →
+#   swink-agent-rpc → swink-agent-tui → swink-agent-tui-remote
 #
 # A 20-second sleep between each publish gives crates.io time to index the
 # crate before dependent crates attempt to resolve it.
@@ -98,7 +99,9 @@ jobs:
       # tier 1: auth, memory, policies, artifacts, eval, local-llm, mcp,
       #         patterns, plugin-web (depend only on swink-agent)
       # tier 2: adapters (depends on swink-agent + swink-agent-auth)
-      # tier 3: tui (depends on swink-agent + adapters + memory + local-llm)
+      # tier 3: rpc (depends on swink-agent; cli feature pulls adapters),
+      #         tui (depends on swink-agent + adapters + memory + local-llm)
+      # tier 4: tui-remote (depends on swink-agent + tui + rpc)
       #
       # `cargo publish --dry-run` is used for tier 0 (no internal deps to
       # resolve via registry). For tier 1+, we use `cargo package --list`
@@ -133,14 +136,18 @@ jobs:
         run: cargo package --list --allow-dirty -p swink-agent-plugin-web >/dev/null
       - name: Package swink-agent-adapters
         run: cargo package --list --allow-dirty -p swink-agent-adapters >/dev/null
+      - name: Package swink-agent-rpc
+        run: cargo package --list --allow-dirty -p swink-agent-rpc >/dev/null
       - name: Package swink-agent-tui
         run: cargo package --list --allow-dirty -p swink-agent-tui >/dev/null
+      - name: Package swink-agent-tui-remote
+        run: cargo package --list --allow-dirty -p swink-agent-tui-remote >/dev/null
 
   publish:
     name: Publish to crates.io
     needs: publish-dry-run
     runs-on: ubuntu-latest
-    # 13 crates, each built + verified by crates.io, with 40s sleeps between
+    # 15 crates, each built + verified by crates.io, with 40s sleeps between
     # (~8 min of sleep alone) — generous but bounded.
     timeout-minutes: 90
     environment: release
@@ -156,13 +163,15 @@ jobs:
       # tier 1: auth → memory, policies, artifacts, eval, local-llm, mcp,
       #         patterns, plugin-web (depend only on swink-agent)
       # tier 2: adapters (depends on swink-agent + swink-agent-auth)
-      # tier 3: tui (depends on swink-agent + adapters + memory + local-llm)
+      # tier 3: rpc (depends on swink-agent; cli feature pulls adapters),
+      #         tui (depends on swink-agent + adapters + memory + local-llm)
+      # tier 4: tui-remote (depends on swink-agent + tui + rpc)
       #
       # Skip-if-published makes the job idempotent: if a run fails midway
       # (crates.io rate limit, network, etc.), re-running the workflow
       # skips already-published versions and retries only the missing ones.
       #
-      # Sleep is 40s for version-update releases where all 13 crates already
+      # Sleep is 40s for version-update releases where all crates already
       # exist on crates.io. FIRST-PUBLISH releases (where a crate has never
       # been published) hit crates.io's "5 new crates / 10 min" rate limit
       # after the 5th new crate. If the rate limit fires, wait 10 minutes
@@ -188,7 +197,9 @@ jobs:
             "40 swink-agent-patterns"
             "40 swink-agent-plugin-web"
             "40 swink-agent-adapters"
-            "0 swink-agent-tui"
+            "40 swink-agent-rpc"
+            "40 swink-agent-tui"
+            "0 swink-agent-tui-remote"
           )
 
           for entry in "${publish_order[@]}"; do

@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-18
+
 ### Added
+- `rpc`: control-plane methods (protocol 1.1) — `model.list`/`model.set`, `thinking.set`, `approval.get`/`approval.set`, `system_prompt.set`, `agent.reset`, `plan.enter`/`plan.exit` (the server holds the non-serializable saved tool set), `session.snapshot`/`session.restore` — with typed `AgentClient` helpers, `AgentClient::sender()` for out-of-band traffic, and a new `RpcError::BUSY` (-32094) answered to control requests while a turn is in flight (#1161)
+- `tui`: `TuiTransport::control` seam — `ControlRequest`/`ControlResponse` plus `TransportError::Unsupported` (default impl, so existing transports keep compiling); with an external transport installed, the App now routes abort, model cycling (lazy `ListModels`), thinking level, approval mode set/query, system prompt, reset, plan mode, and session save/load through the transport instead of silently no-opping; the in-process path is behavior-unchanged (#1162)
+- `tui-remote`: `RemoteTransport` implements the control plane over JSON-RPC — prompts and control requests share one ordered bridge queue (deferred `model.set` lands before the next prompt), abort rides an out-of-band `cancel` notification, and session snapshot/restore uses the memory-JSONL wire representation; a pre-1.1 server degrades to turn-I/O-only via `Unsupported` (#1163)
 - `patterns`: first integration test suite (17 tests: pipeline sequential/parallel/loop execution, merge strategies, exit conditions, event ordering, failure propagation) (#1137)
 - `eval`: `RawSession::otel_spans` constructor for OTel-backed raw sessions (#1144)
 - `rpc`: `PeerSender` requests now carry a 10-minute default timeout (`DEFAULT_REQUEST_TIMEOUT`, error code `TIMEOUT = -32095`) so a dead peer can no longer hang a caller (#1141)
@@ -16,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `macros`: crate is now explicitly scoped to external SDK consumers, with a compile-checked `derived_tool` example exercising `#[tool]` and `#[derive(ToolSchema)]` end-to-end against the real `AgentTool` trait — in-tree builtins intentionally hand-roll the trait (#1149)
 
 ### Changed
+- `local-llm`: hf-hub 0.5 → 1.0 (`HFClient` + `ProgressHandler`; the removed `api::tokio` API is gone) — drops the workspace's second reqwest stack (single reqwest 0.13 in the lockfile); cached model loads now revalidate via If-None-Match when online and fall back to the local cache when offline (#1159)
+- release pipeline: `swink-agent-rpc` and `swink-agent-tui-remote` added to the crates.io publish order and dry-run gate — first publish of both crates (#1164)
 - **tui**: `App` state is now grouped into cohesive sub-structs — `view`, `editor`, `agent_io`, `mode`, `session`, `usage` — replacing ~50 flat fields; embedders must update field paths (e.g. `app.total_cost` → `app.usage.total_cost`), names and visibilities are unchanged (#1151)
 - **tui**: `App` consumes agent events through the `TuiTransport` seam — `App::with_transport` routes turn I/O through a host-supplied transport, `App::pump_transport_events` drives an `App` without a terminal; the default in-process path is behavior-unchanged (#1151)
 - **mcp**: public API no longer exposes `rmcp` types — `McpConnection::discovered_tools` is now `Vec<McpToolInfo>` (new owned type), `call_tool` returns `AgentToolResult`, `McpTool::new` takes `&McpToolInfo`, the `convert` module is private, and `from_service` takes an opaque `McpServiceHandle` (`McpServiceHandle::from_rmcp` is the single documented rmcp seam); rmcp major bumps no longer force a semver-major on `swink-agent-mcp` (#1150)
@@ -34,13 +41,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - test layout: integration tests consolidated into per-crate suites — root 61→2, eval 64→1, adapters 20→2 test binaries; former per-file `#![cfg(...)]` gates now live on `mod` lines in `tests/suite/main.rs`; the two `no_default_features.rs` sentinels stay standalone (#1147)
 
 ### Fixed
+- `rpc`: the server now mirrors streamed events into agent state via `handle_stream_event`, so remote sessions keep assistant context across turns and `session.snapshot` reads the live transcript instead of a stale one (#1161)
 - `eval`: `JudgeVerdict::new` no longer clamps at construction — clamping and `ScoreClamped` detail recording (FR-021) stay in `dispatch_judge`; the constructor clamp introduced by the sweep hid out-of-range judge scores from that instrumentation (#1146)
 - coverage workflow: tarpaulin config key is `out`, not `generate` — first green coverage run on integration (#1134)
 - `eval`: lost-wakeup hang — `Notified` future `.enable()`d before the condition re-check, with a 30s timeout backstop (#1144)
 - `adapters`: `prefix_start_if_unstarted` feature-gated to its bedrock/proxy callers; single-feature builds (e.g. `--features anthropic`) no longer fail `-D dead-code` (#1142)
 - API seams from the non_exhaustive sweep closed: missing constructors/re-exports, `ScriptToolDef`/`OtelInitConfig` (feature-gated escapees), latent all-features test lints (#1135)
 
-## [0.12.0] - 2026-07-15
 
 ### Changed — public API hardened with #[non_exhaustive] (gap 1)
 
@@ -566,7 +573,8 @@ are folded in here rather than kept as a phantom release.
 
 Major additions: Gemma 4 local inference, `BlockAccumulator` for streaming event assembly, `schemars`-based proc-macro engine, multi-agent patterns and artifact service, MCP integration, plugin system, policy slots, credential management, TUI session management, and web browse plugin. 42 specs implemented across the 0.6 lifecycle.
 
-[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.11.0...v0.12.0
 [0.7.8]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.7...v0.7.8
 [0.7.7]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.5...v0.7.6
