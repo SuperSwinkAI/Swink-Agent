@@ -21,7 +21,7 @@
 - **Gemma 4 tool calls** — `ToolCallParser` handles `<|tool_call>call:{name}{args}<tool_call|>`. IDs are UUIDs.
 - **Partial delimiter matching must be UTF-8 safe** — only slice at character boundaries.
 - **`LazyLoader` waiters** — `wait_until_ready()` returns on `Unloaded`/`Failed`/`Ready`; `ensure_ready()` re-checks after every wakeup.
-- **`hf-hub` progress handlers are clone-per-chunk** — aggregate through shared state.
+- **`hf-hub` 1.0 shares one progress handler** (`on_progress(&self)`) — aggregate through interior mutability; `DownloadEvent::Progress` carries per-file *deltas* with cumulative per-file byte counts.
 
 ## Build & Test
 
