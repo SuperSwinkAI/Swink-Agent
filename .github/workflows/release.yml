@@ -37,7 +37,10 @@ env:
 jobs:
   verify:
     name: Verify (${{ matrix.os }})
-    timeout-minutes: 45
+    # macOS runners need the headroom: the all-features cargo test build hit
+    # the old 45-minute budget at v0.12.0 (clippy was warm-cached and fast;
+    # the test build was not).
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
