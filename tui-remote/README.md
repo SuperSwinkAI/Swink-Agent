@@ -35,10 +35,15 @@ app.run(&mut terminal).await?;
 
 ## Scope
 
-The transport carries **turn I/O only** — user input out, `AgentEvent`s back.
-Control-plane operations that need an in-process `Agent` (abort, model
-cycling, plan mode, session save/load) are not available over the wire until
-the `TuiTransport` trait grows control methods.
+The transport carries turn I/O (user input out, `AgentEvent`s back) and the
+`TuiTransport` control plane: abort, model listing/cycling, thinking level,
+approval mode, system prompt, reset, plan mode, and session snapshot/restore
+(protocol 1.1). Control requests queue in order with prompts; abort is sent
+out-of-band as a `cancel` notification so it works mid-turn.
+
+Session snapshots use the memory-JSONL wire representation. Custom messages
+are skipped with a warning on the client side (no `CustomMessageRegistry`
+over the wire).
 
 Tool approval is decided server-side: without a client approval handler,
 `tool.approve` requests are auto-approved. Configure the approval mode in the
