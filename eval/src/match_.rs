@@ -10,6 +10,7 @@ use crate::score::Score;
 use crate::types::{EvalCase, EvalMetricResult, ExpectedToolCall, Invocation, RecordedToolCall};
 
 /// How to compare actual tool calls against expected.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MatchMode {

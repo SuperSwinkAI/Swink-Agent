@@ -22,6 +22,7 @@ use crate::types::{
 // ─── StreamTransport ─────────────────────────────────────────────────────────
 
 /// Transport protocol for streaming responses.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StreamTransport {
@@ -37,6 +38,7 @@ pub enum StreamTransport {
 /// Adapters translate this to provider-specific cache markers at request
 /// construction time. Adapters that don't support caching silently ignore
 /// the strategy.
+#[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub enum CacheStrategy {
     /// No caching (default) — no cache markers injected.
@@ -69,19 +71,66 @@ pub type OnRawPayload = Arc<dyn Fn(&str) + Send + Sync>;
 /// Provider-native serving options, primarily for self-hosted/local backends.
 ///
 /// Provider-agnostic names; each adapter maps them onto its protocol's native
-/// knobs and silently ignores fields its protocol has no equivalent for:
+/// knobs and silently ignores fields its protocol has no equivalent for
+/// (marked `—` below). `extra` is the exception: every adapter either honors
+/// it or rejects it loudly — never a silent no-op:
 ///
-/// | Field            | Ollama                | OpenAI-compatible (OpenAI, Azure, xAI) |
-/// |------------------|-----------------------|----------------------------------------|
-/// | `context_length` | `options.num_ctx`     | —                                      |
-/// | `top_p`          | `options.top_p`       | `top_p`                                |
-/// | `keep_alive`     | `keep_alive`          | —                                      |
-/// | `extra`          | merged into `options` | merged into the request body           |
+/// | Adapter | `context_length` | `top_p` | `keep_alive` | `format` | `extra` |
+/// |---|---|---|---|---|---|
+/// | Ollama | `options.num_ctx` | `options.top_p` | `keep_alive` | `format` (top level) | merged into `options` |
+/// | OpenAI-compatible (OpenAI, Azure, xAI) | — | `top_p` | — | `response_format` | merged into the body (top level) |
+/// | Mistral | — | — | — | — | merged into the body (top level) |
+/// | Anthropic | — | — | — | — | merged into the body (top level) |
+/// | Google (Gemini) | — | — | — | — | merged into `generationConfig` |
+/// | AWS Bedrock | — | — | — | — | `additionalModelRequestFields` |
+/// | Proxy | — | — | — | — | unsupported: dropped with a `tracing` warning naming the keys |
+///
+/// # `extra`: merge targets and key names
+///
+/// `extra` keys are the provider's *wire* names, verbatim — e.g. snake_case
+/// `top_k` for Anthropic and Ollama, camelCase `topK` for Gemini. Each adapter
+/// merges them where that provider keeps its native generation knobs:
+///
+/// - **Anthropic** — top level of the `/v1/messages` body (`top_k`,
+///   `stop_sequences`, `metadata`, `service_tier`, …).
+/// - **Google (Gemini)** — inside `generationConfig` (`topK`, `topP`,
+///   `candidateCount`, `stopSequences`, `responseMimeType`, `seed`, …),
+///   mirroring Ollama's `options` namespace.
+/// - **AWS Bedrock** — as the Converse API's `additionalModelRequestFields`
+///   object, its own verbatim pass-through for model-native parameters
+///   beyond the base `inferenceConfig` set (e.g. `top_k` for Anthropic
+///   models on Bedrock).
+/// - **Proxy** — the proxy wire protocol has a fixed options schema with no
+///   pass-through channel, so `extra` is *not* supported: non-empty `extra`
+///   is dropped with one `tracing::warn!` per stream call naming the keys.
+///
+/// Keys the provider does not recognize are surfaced by the provider API
+/// itself (Anthropic, Gemini, and Bedrock all reject unknown fields with an
+/// HTTP 4xx), so a typo fails loudly rather than silently.
+///
+/// # Ollama: top-level fields vs `options.*`
+///
+/// Ollama splits its request body in two: *sampling* knobs live under the
+/// nested `options` object (`num_ctx`, `top_p`, `temperature`, …), while
+/// *request-level* knobs are top-level siblings of `model`/`messages`
+/// (`keep_alive`, `format`). The distinction is protocol-level, not
+/// stylistic — Ollama ignores `options.format` entirely, so JSON mode is
+/// only reachable as a top-level `format` field.
+///
+/// This is why [`format`] is a typed field rather than an `extra` entry: the
+/// Ollama adapter merges `extra` into `options.*`, which structurally cannot
+/// express a top-level field. [`keep_alive`] is typed for the same reason.
+/// Conversely, `top_p` and `context_length` map into `options.*` and could in
+/// principle have been expressed through `extra`.
 ///
 /// `extra` is the escape hatch for provider knobs without a typed field
 /// (e.g. Ollama's `repeat_penalty`). On key collision, typed fields win over
 /// `extra` entries. The default (all `None`, empty `extra`) leaves request
 /// bodies byte-identical to builds without serving options.
+///
+/// [`format`]: ServingOptions::format
+/// [`keep_alive`]: ServingOptions::keep_alive
+#[non_exhaustive]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ServingOptions {
     /// Model context window to serve this request with (Ollama `num_ctx`).
@@ -91,12 +140,80 @@ pub struct ServingOptions {
     /// How long the backend should keep the model loaded after the request
     /// (Ollama `keep_alive`, e.g. `"5m"`).
     pub keep_alive: Option<String>,
+    /// Structured-output ("JSON mode") constraint for the response.
+    ///
+    /// `None` (the default) leaves request bodies untouched. See
+    /// [`ResponseFormat`] for the per-adapter wire mapping.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<ResponseFormat>,
     /// Additional provider-native options passed through verbatim.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub extra: std::collections::BTreeMap<String, Value>,
 }
 
+/// Structured-output constraint for a response ("JSON mode").
+///
+/// Adapters map this onto their protocol's native structured-output knob and
+/// silently ignore it when the protocol has no equivalent:
+///
+/// | Variant     | Ollama (top-level `format`) | OpenAI-compatible (`response_format`)                                     |
+/// |-------------|-----------------------------|---------------------------------------------------------------------------|
+/// | `Json`      | `"json"`                    | `{"type": "json_object"}`                                                 |
+/// | `Schema(s)` | `s` (the schema verbatim)   | `{"type": "json_schema", "json_schema": {"name": …, "schema": s, …}}`     |
+///
+/// In both variants `s` is a bare [JSON Schema] object. Ollama consumes it
+/// verbatim; the OpenAI-compatible adapter wraps it in the `json_schema`
+/// envelope that protocol requires. Callers therefore pass the same value
+/// regardless of backend.
+///
+/// [JSON Schema]: https://json-schema.org/
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseFormat {
+    /// Constrain the response to some syntactically valid JSON value.
+    Json,
+    /// Constrain the response to a specific JSON Schema.
+    Schema(Value),
+}
+
 impl ServingOptions {
+    /// Set the model context window to serve this request with (Ollama `num_ctx`).
+    #[must_use]
+    pub const fn with_context_length(mut self, context_length: u64) -> Self {
+        self.context_length = Some(context_length);
+        self
+    }
+
+    /// Set the nucleus-sampling probability mass.
+    #[must_use]
+    pub const fn with_top_p(mut self, top_p: f64) -> Self {
+        self.top_p = Some(top_p);
+        self
+    }
+
+    /// Set how long the backend should keep the model loaded after the
+    /// request (Ollama `keep_alive`, e.g. `"5m"`).
+    #[must_use]
+    pub fn with_keep_alive(mut self, keep_alive: impl Into<String>) -> Self {
+        self.keep_alive = Some(keep_alive.into());
+        self
+    }
+
+    /// Set the structured-output ("JSON mode") constraint for the response.
+    #[must_use]
+    pub fn with_format(mut self, format: ResponseFormat) -> Self {
+        self.format = Some(format);
+        self
+    }
+
+    /// Set additional provider-native options passed through verbatim.
+    #[must_use]
+    pub fn with_extra(mut self, extra: std::collections::BTreeMap<String, Value>) -> Self {
+        self.extra = extra;
+        self
+    }
+
     /// True when nothing is set — adapters can skip serialization work.
     pub fn is_default(&self) -> bool {
         *self == Self::default()
@@ -106,6 +223,7 @@ impl ServingOptions {
 // ─── StreamOptions ───────────────────────────────────────────────────────────
 
 /// Per-call configuration passed through to the LLM provider.
+#[non_exhaustive]
 #[derive(Clone, Default)]
 pub struct StreamOptions {
     /// Sampling temperature (optional).
@@ -124,6 +242,64 @@ pub struct StreamOptions {
     pub on_raw_payload: Option<OnRawPayload>,
     /// Provider-native serving options (local backends). Default = none set.
     pub serving: ServingOptions,
+}
+
+impl StreamOptions {
+    /// Set the sampling temperature.
+    #[must_use]
+    pub const fn with_temperature(mut self, temperature: f64) -> Self {
+        self.temperature = Some(temperature);
+        self
+    }
+
+    /// Set the output token limit.
+    #[must_use]
+    pub const fn with_max_tokens(mut self, max_tokens: u64) -> Self {
+        self.max_tokens = Some(max_tokens);
+        self
+    }
+
+    /// Set the provider-side session identifier for caching.
+    #[must_use]
+    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = Some(session_id.into());
+        self
+    }
+
+    /// Set a dynamically resolved API key for this specific request.
+    #[must_use]
+    pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
+        self.api_key = Some(api_key.into());
+        self
+    }
+
+    /// Set the preferred transport protocol.
+    #[must_use]
+    pub const fn with_transport(mut self, transport: StreamTransport) -> Self {
+        self.transport = transport;
+        self
+    }
+
+    /// Set the provider-agnostic caching configuration.
+    #[must_use]
+    pub fn with_cache_strategy(mut self, cache_strategy: CacheStrategy) -> Self {
+        self.cache_strategy = cache_strategy;
+        self
+    }
+
+    /// Set a callback for observing raw SSE data lines before parsing.
+    #[must_use]
+    pub fn with_on_raw_payload(mut self, on_raw_payload: OnRawPayload) -> Self {
+        self.on_raw_payload = Some(on_raw_payload);
+        self
+    }
+
+    /// Set the provider-native serving options (local backends).
+    #[must_use]
+    pub fn with_serving(mut self, serving: ServingOptions) -> Self {
+        self.serving = serving;
+        self
+    }
 }
 
 impl std::fmt::Debug for StreamOptions {
@@ -346,6 +522,7 @@ impl AssistantMessageEvent {
 ///
 /// The `delta` field uses [`Cow<'static, str>`] to avoid cloning on the hot
 /// path when the caller can transfer ownership of the underlying `String`.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AssistantMessageDelta {

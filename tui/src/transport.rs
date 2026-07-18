@@ -10,17 +10,46 @@
 //!
 //! # Design
 //!
-//! The trait is intentionally minimal:
+//! The trait separates turn I/O from control:
 //! - [`TuiTransport::send`] accepts [`UserInput`] and forwards it to the agent.
 //! - [`TuiTransport::recv`] yields [`AgentEvent`] items as they arrive, returning
 //!   `None` when the stream is exhausted.
+//! - [`TuiTransport::control`] carries everything out-of-band to a turn —
+//!   abort, model selection, thinking level, approval mode, system prompt,
+//!   reset, plan mode, and session snapshot/restore — as a
+//!   [`ControlRequest`] → [`ControlResponse`] round trip. It has a default
+//!   implementation returning [`TransportError::Unsupported`], so a
+//!   turn-I/O-only transport is still a complete implementation: the
+//!   [`App`](crate::App) degrades to a status notice (or a silent skip, for
+//!   auto-save) when the backend cannot service a control request.
+//!
+//! # How the app consumes this
+//!
+//! [`App`](crate::App) always reads agent events through a boxed
+//! `TuiTransport`. By default that is an [`InProcessTransport`] wrapped
+//! around the internal event channel the in-process agent bridge feeds, and
+//! prompts are started on the [`Agent`] directly — behavior is unchanged. A
+//! host can replace the wiring with
+//! [`App::with_transport`](crate::App::with_transport), after which submitted
+//! prompts are delivered through [`TuiTransport::send`], the backend on
+//! the other side of the transport (e.g. a remote agent service) owns the
+//! turn lifecycle, and control operations (Ctrl-C abort, F4 model cycling,
+//! `#approval`/`#system`/`#reset`, plan mode, session save/load) are issued
+//! through [`TuiTransport::control`] instead of a local [`Agent`] handle.
+//! [`App::pump_transport_events`](crate::App::pump_transport_events)
+//! drives an `App` from a transport without a terminal, which is what a mock
+//! transport test wants.
 
 use futures::StreamExt as _;
 use tokio::sync::mpsc;
 
-use swink_agent::{Agent, AgentEvent, AgentMessage, ContentBlock, LlmMessage, UserMessage};
+use swink_agent::{
+    Agent, AgentEvent, AgentMessage, ApprovalMode, ContentBlock, LlmMessage, ModelSpec,
+    ThinkingLevel, UserMessage,
+};
 
 /// Plain text input from the user, ready to be sent to the agent.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct UserInput {
     /// The text content of the user's message.
@@ -34,7 +63,87 @@ impl UserInput {
     }
 }
 
+/// A control-plane request from the TUI to the agent backend.
+///
+/// Everything here is out-of-band relative to turn I/O
+/// ([`TuiTransport::send`] / [`TuiTransport::recv`]): aborting a running
+/// turn, switching models, changing modes, and moving session snapshots.
+/// Issued through [`TuiTransport::control`]; the expected reply shape for
+/// each variant is documented on [`ControlResponse`].
+#[non_exhaustive]
+#[derive(Debug)]
+pub enum ControlRequest {
+    /// Abort the running turn, if any. Expects [`ControlResponse::Ack`].
+    Abort,
+    /// List the models the backend can switch between. Expects
+    /// [`ControlResponse::Models`].
+    ListModels,
+    /// Switch the model used for subsequent turns. Expects
+    /// [`ControlResponse::Ack`].
+    SetModel(ModelSpec),
+    /// Set the thinking level for subsequent turns. Expects
+    /// [`ControlResponse::Ack`].
+    SetThinkingLevel(ThinkingLevel),
+    /// Set the tool approval mode. Expects [`ControlResponse::Ack`].
+    SetApprovalMode(ApprovalMode),
+    /// Ask which tool approval mode is active. Expects
+    /// [`ControlResponse::ApprovalMode`].
+    QueryApprovalMode,
+    /// Replace the system prompt. Expects [`ControlResponse::Ack`].
+    SetSystemPrompt(String),
+    /// Reset the agent's conversation state. Expects
+    /// [`ControlResponse::Ack`].
+    Reset,
+    /// Enter plan mode (read-only tools). The backend owns the saved tool
+    /// set and system prompt for the round trip. Expects
+    /// [`ControlResponse::Ack`].
+    EnterPlanMode,
+    /// Exit plan mode, restoring the tool set and system prompt the backend
+    /// saved on [`ControlRequest::EnterPlanMode`]. Expects
+    /// [`ControlResponse::Ack`].
+    ExitPlanMode,
+    /// Ask for the backend's current transcript and session state, e.g. to
+    /// persist them client-side. Expects
+    /// [`ControlResponse::SessionSnapshot`].
+    SnapshotSession,
+    /// Replace the backend's transcript and session state, e.g. after the
+    /// client loaded a saved session. Expects [`ControlResponse::Ack`].
+    RestoreSession {
+        /// Full transcript to install.
+        messages: Vec<AgentMessage>,
+        /// Session state snapshot (see
+        /// [`SessionState::snapshot`](swink_agent::SessionState::snapshot)),
+        /// or `None` to reset the state.
+        state: Option<serde_json::Value>,
+    },
+}
+
+/// A successful reply to a [`ControlRequest`].
+#[non_exhaustive]
+#[derive(Debug)]
+pub enum ControlResponse {
+    /// The request was applied; there is nothing to return.
+    Ack,
+    /// Reply to [`ControlRequest::ListModels`].
+    Models {
+        /// Models the backend can switch between.
+        available: Vec<ModelSpec>,
+        /// The model currently in use.
+        current: ModelSpec,
+    },
+    /// Reply to [`ControlRequest::QueryApprovalMode`].
+    ApprovalMode(ApprovalMode),
+    /// Reply to [`ControlRequest::SnapshotSession`].
+    SessionSnapshot {
+        /// The backend's current transcript.
+        messages: Vec<AgentMessage>,
+        /// Session state snapshot, or `None` if the backend has none.
+        state: Option<serde_json::Value>,
+    },
+}
+
 /// Error type for transport operations.
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum TransportError {
     /// The underlying channel or connection has closed.
@@ -45,9 +154,43 @@ pub enum TransportError {
     #[error("failed to start agent stream: {0}")]
     StreamStart(String),
 
+    /// The transport does not support this operation.
+    #[error("operation not supported by this transport")]
+    Unsupported,
+
     /// I/O error on the transport connection.
     #[error("transport I/O error: {0}")]
     Io(#[from] std::io::Error),
+}
+
+impl TransportError {
+    /// Create a [`TransportError::ChannelClosed`].
+    ///
+    /// For [`TuiTransport`] implementations reporting that their underlying
+    /// channel or connection has closed.
+    #[must_use]
+    pub const fn channel_closed() -> Self {
+        Self::ChannelClosed
+    }
+
+    /// Create a [`TransportError::StreamStart`] with the given reason.
+    ///
+    /// For [`TuiTransport`] implementations reporting a failure to start the
+    /// agent prompt stream.
+    #[must_use]
+    pub fn stream_start(reason: impl Into<String>) -> Self {
+        Self::StreamStart(reason.into())
+    }
+
+    /// Create a [`TransportError::Unsupported`].
+    ///
+    /// For [`TuiTransport`] implementations — including the default
+    /// [`TuiTransport::control`] — reporting that the requested operation is
+    /// not supported by this transport.
+    #[must_use]
+    pub const fn unsupported() -> Self {
+        Self::Unsupported
+    }
 }
 
 /// Abstraction over message exchange between the TUI and the agent backend.
@@ -70,6 +213,29 @@ pub trait TuiTransport: Send {
 
     /// Non-blocking receive: returns `Some(event)` if one is ready, otherwise `None`.
     fn try_recv(&mut self) -> Option<AgentEvent>;
+
+    /// Issue a control-plane request and await the backend's response.
+    ///
+    /// Control requests are out-of-band relative to turn I/O: aborting a
+    /// running turn, switching models, changing approval or plan mode, and
+    /// moving session snapshots (see [`ControlRequest`]). The default
+    /// implementation rejects every request with
+    /// [`TransportError::Unsupported`], so existing turn-I/O-only transports
+    /// keep compiling — the [`App`](crate::App) degrades gracefully by
+    /// surfacing an "unsupported" notice (or silently skipping auto-save)
+    /// instead of pretending the operation happened.
+    ///
+    /// [`InProcessTransport`] deliberately keeps the default: in in-process
+    /// mode the `App` drives the [`Agent`] directly and never calls this.
+    fn control(
+        &mut self,
+        request: ControlRequest,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<ControlResponse, TransportError>> + Send + '_>,
+    > {
+        let _ = request;
+        Box::pin(async { Err(TransportError::unsupported()) })
+    }
 }
 
 /// In-process transport that bridges user input to an [`Agent`] running in the
@@ -105,11 +271,10 @@ impl InProcessTransport {
 
         tokio::spawn(async move {
             while let Some(input) = input_rx.recv().await {
-                let user_msg = AgentMessage::Llm(LlmMessage::User(UserMessage {
-                    content: vec![ContentBlock::Text { text: input.text }],
-                    timestamp: swink_agent::now_timestamp(),
-                    cache_hint: None,
-                }));
+                let user_msg = AgentMessage::Llm(LlmMessage::User(
+                    UserMessage::new(vec![ContentBlock::Text { text: input.text }])
+                        .with_timestamp(swink_agent::now_timestamp()),
+                ));
 
                 match agent.prompt_stream(vec![user_msg]) {
                     Ok(stream) => {
@@ -178,6 +343,22 @@ mod tests {
     use super::*;
     use tokio::sync::mpsc;
 
+    #[test]
+    fn transport_error_constructors_build_expected_variants() {
+        assert!(matches!(
+            TransportError::channel_closed(),
+            TransportError::ChannelClosed
+        ));
+        match TransportError::stream_start("boom") {
+            TransportError::StreamStart(reason) => assert_eq!(reason, "boom"),
+            other => panic!("unexpected variant: {other:?}"),
+        }
+        assert!(matches!(
+            TransportError::unsupported(),
+            TransportError::Unsupported
+        ));
+    }
+
     // ---------------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------------
@@ -245,6 +426,106 @@ mod tests {
     fn transport_error_display() {
         let err = TransportError::ChannelClosed;
         assert_eq!(err.to_string(), "transport channel closed");
+    }
+
+    /// Verify that `TransportError::Unsupported` formats as expected.
+    #[test]
+    fn transport_error_unsupported_display() {
+        let err = TransportError::Unsupported;
+        assert_eq!(err.to_string(), "operation not supported by this transport");
+    }
+
+    /// A transport that does not override `control` rejects every request
+    /// with `Unsupported` — the seam is opt-in.
+    #[tokio::test]
+    async fn default_control_returns_unsupported() {
+        let mut transport: Box<dyn TuiTransport> = Box::new(MockTransport::new(Vec::new()));
+
+        let result = transport.control(ControlRequest::Abort).await;
+        assert!(matches!(result, Err(TransportError::Unsupported)));
+
+        let result = transport.control(ControlRequest::ListModels).await;
+        assert!(matches!(result, Err(TransportError::Unsupported)));
+    }
+
+    /// A mock that records every control request and replies from a script.
+    struct RecordingControlTransport {
+        inner: MockTransport,
+        requests: Vec<ControlRequest>,
+        responses: std::collections::VecDeque<Result<ControlResponse, TransportError>>,
+    }
+
+    impl TuiTransport for RecordingControlTransport {
+        fn send(
+            &self,
+            input: UserInput,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<(), TransportError>> + Send + '_>,
+        > {
+            self.inner.send(input)
+        }
+
+        fn recv(
+            &mut self,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<AgentEvent>> + Send + '_>>
+        {
+            self.inner.recv()
+        }
+
+        fn try_recv(&mut self) -> Option<AgentEvent> {
+            self.inner.try_recv()
+        }
+
+        fn control(
+            &mut self,
+            request: ControlRequest,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<ControlResponse, TransportError>>
+                    + Send
+                    + '_,
+            >,
+        > {
+            self.requests.push(request);
+            let response = self
+                .responses
+                .pop_front()
+                .unwrap_or_else(|| Err(TransportError::Unsupported));
+            Box::pin(async move { response })
+        }
+    }
+
+    /// Overriding `control` lets an implementation observe requests and
+    /// script responses — the contract the App-side routing relies on.
+    #[tokio::test]
+    async fn overridden_control_records_requests_and_scripts_responses() {
+        let mut transport = RecordingControlTransport {
+            inner: MockTransport::new(Vec::new()),
+            requests: Vec::new(),
+            responses: [
+                Ok(ControlResponse::Ack),
+                Ok(ControlResponse::ApprovalMode(ApprovalMode::Smart)),
+            ]
+            .into(),
+        };
+
+        let first = transport.control(ControlRequest::Abort).await;
+        assert!(matches!(first, Ok(ControlResponse::Ack)));
+
+        let second = transport.control(ControlRequest::QueryApprovalMode).await;
+        assert!(matches!(
+            second,
+            Ok(ControlResponse::ApprovalMode(ApprovalMode::Smart))
+        ));
+
+        assert!(matches!(
+            transport.requests[..],
+            [ControlRequest::Abort, ControlRequest::QueryApprovalMode]
+        ));
+
+        // Script exhausted: falls back to Unsupported.
+        let third = transport.control(ControlRequest::Reset).await;
+        assert!(matches!(third, Err(TransportError::Unsupported)));
     }
 
     /// Verify that a mock `TuiTransport` implementation can be used as a trait object.

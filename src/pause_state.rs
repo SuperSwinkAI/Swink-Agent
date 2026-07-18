@@ -18,11 +18,11 @@ pub struct PendingMessageSnapshot {
 ///
 /// `run_single_turn` drains pending messages into `LoopState.context_messages` and
 /// then clears the `PendingMessageSnapshot`. In the window between that drain and
-/// the next `TurnEnd` event (which is when `Agent.in_flight_messages` is updated),
-/// a concurrent `pause()` call would miss the newly consumed messages. This
-/// snapshot is updated immediately after the drain so that `pause()` can read the
-/// full loop context, including messages that are already in `context_messages` but
-/// not yet reflected in `in_flight_messages`.
+/// the next `TurnEnd` event (which is when the turn is written back to the agent's
+/// `state.messages`), a concurrent `pause()` call would miss the newly consumed
+/// messages. This snapshot is updated immediately after the drain so that `pause()`
+/// can read the full loop context, including messages that are already in
+/// `context_messages` but not yet reflected in `state.messages`.
 #[doc(hidden)]
 #[derive(Default)]
 pub struct LoopContextSnapshot {

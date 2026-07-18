@@ -16,6 +16,7 @@ use crate::types::ModelSpec;
 // ─── RetryConfig ─────────────────────────────────────────────────────────────
 
 /// Serializable representation of [`DefaultRetryStrategy`](crate::DefaultRetryStrategy) parameters.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetryConfig {
     /// Maximum number of attempts (including the initial call).
@@ -71,6 +72,41 @@ impl RetryConfig {
             jitter: self.jitter,
         }
     }
+
+    /// Set the maximum number of attempts (including the initial call).
+    #[must_use]
+    pub const fn with_max_attempts(mut self, n: u32) -> Self {
+        self.max_attempts = n;
+        self
+    }
+
+    /// Set the base delay in milliseconds before the first retry.
+    #[must_use]
+    pub const fn with_base_delay_ms(mut self, ms: u64) -> Self {
+        self.base_delay_ms = ms;
+        self
+    }
+
+    /// Set the maximum delay cap in milliseconds.
+    #[must_use]
+    pub const fn with_max_delay_ms(mut self, ms: u64) -> Self {
+        self.max_delay_ms = ms;
+        self
+    }
+
+    /// Set the exponential multiplier per attempt.
+    #[must_use]
+    pub const fn with_multiplier(mut self, m: f64) -> Self {
+        self.multiplier = m;
+        self
+    }
+
+    /// Enable or disable jitter.
+    #[must_use]
+    pub const fn with_jitter(mut self, j: bool) -> Self {
+        self.jitter = j;
+        self
+    }
 }
 
 // ─── StreamOptionsConfig ─────────────────────────────────────────────────────
@@ -79,6 +115,7 @@ impl RetryConfig {
 ///
 /// The `api_key` field is intentionally omitted — secrets should not be
 /// persisted in config snapshots.
+#[non_exhaustive]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StreamOptionsConfig {
     /// Sampling temperature.
@@ -128,11 +165,47 @@ impl StreamOptionsConfig {
             serving: self.serving.clone(),
         }
     }
+
+    /// Set the sampling temperature.
+    #[must_use]
+    pub const fn with_temperature(mut self, temperature: f64) -> Self {
+        self.temperature = Some(temperature);
+        self
+    }
+
+    /// Set the output token limit.
+    #[must_use]
+    pub const fn with_max_tokens(mut self, max_tokens: u64) -> Self {
+        self.max_tokens = Some(max_tokens);
+        self
+    }
+
+    /// Set the provider-side session identifier.
+    #[must_use]
+    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = Some(session_id.into());
+        self
+    }
+
+    /// Set the preferred transport protocol.
+    #[must_use]
+    pub const fn with_transport(mut self, transport: StreamTransport) -> Self {
+        self.transport = transport;
+        self
+    }
+
+    /// Set the provider-native serving options (local backends).
+    #[must_use]
+    pub fn with_serving(mut self, serving: crate::stream::ServingOptions) -> Self {
+        self.serving = serving;
+        self
+    }
 }
 
 // ─── SteeringMode / FollowUpMode serde wrappers ─────────────────────────────
 
 /// Serializable mirror of [`SteeringMode`](crate::SteeringMode).
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SteeringModeConfig {
@@ -160,6 +233,7 @@ impl From<SteeringModeConfig> for crate::agent::SteeringMode {
 }
 
 /// Serializable mirror of [`FollowUpMode`](crate::FollowUpMode).
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FollowUpModeConfig {
@@ -187,6 +261,7 @@ impl From<FollowUpModeConfig> for crate::agent::FollowUpMode {
 }
 
 /// Serializable mirror of [`ApprovalMode`](crate::ApprovalMode).
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalModeConfig {
@@ -201,6 +276,7 @@ pub enum ApprovalModeConfig {
 /// Serializable representation of [`CacheConfig`](crate::context_cache::CacheConfig).
 ///
 /// Duration is stored as milliseconds for serde-friendliness.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheConfigData {
     /// Time-to-live in milliseconds.
@@ -222,6 +298,16 @@ impl From<&crate::context_cache::CacheConfig> for CacheConfigData {
 }
 
 impl CacheConfigData {
+    /// Create a new cache config snapshot.
+    #[must_use]
+    pub const fn new(ttl_ms: u64, min_tokens: usize, cache_intervals: usize) -> Self {
+        Self {
+            ttl_ms,
+            min_tokens,
+            cache_intervals,
+        }
+    }
+
     /// Convert back to a [`CacheConfig`](crate::context_cache::CacheConfig).
     #[must_use]
     pub const fn to_cache_config(&self) -> crate::context_cache::CacheConfig {
@@ -290,6 +376,7 @@ impl From<ApprovalModeConfig> for ApprovalMode {
 /// let opts = AgentOptions::from_config(config, stream_fn, convert_to_llm)
 ///     .with_tools(re_register_tools(&config.tool_names));
 /// ```
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     /// System prompt sent to the LLM.
@@ -348,6 +435,96 @@ const fn default_structured_output_max_retries() -> usize {
 }
 
 impl AgentConfig {
+    /// Create a new config with the required fields; everything else takes
+    /// its default value (matching the serde defaults used on deserialize).
+    #[must_use]
+    pub fn new(system_prompt: impl Into<String>, model: ModelSpec) -> Self {
+        Self {
+            system_prompt: system_prompt.into(),
+            model,
+            tool_names: Vec::new(),
+            retry: RetryConfig::default(),
+            stream_options: StreamOptionsConfig::default(),
+            steering_mode: SteeringModeConfig::default(),
+            follow_up_mode: FollowUpModeConfig::default(),
+            structured_output_max_retries: default_structured_output_max_retries(),
+            approval_mode: ApprovalModeConfig::default(),
+            plan_mode_addendum: None,
+            cache_config: None,
+            extra: serde_json::Value::Null,
+        }
+    }
+
+    /// Set the routing-key names of tools to re-register on restore.
+    #[must_use]
+    pub fn with_tool_names(mut self, tool_names: Vec<String>) -> Self {
+        self.tool_names = tool_names;
+        self
+    }
+
+    /// Set the retry strategy parameters.
+    #[must_use]
+    pub fn with_retry(mut self, retry: RetryConfig) -> Self {
+        self.retry = retry;
+        self
+    }
+
+    /// Set the per-call stream options.
+    #[must_use]
+    pub fn with_stream_options(mut self, stream_options: StreamOptionsConfig) -> Self {
+        self.stream_options = stream_options;
+        self
+    }
+
+    /// Set the steering queue drain mode.
+    #[must_use]
+    pub const fn with_steering_mode(mut self, steering_mode: SteeringModeConfig) -> Self {
+        self.steering_mode = steering_mode;
+        self
+    }
+
+    /// Set the follow-up queue drain mode.
+    #[must_use]
+    pub const fn with_follow_up_mode(mut self, follow_up_mode: FollowUpModeConfig) -> Self {
+        self.follow_up_mode = follow_up_mode;
+        self
+    }
+
+    /// Set the max retries for structured output validation.
+    #[must_use]
+    pub const fn with_structured_output_max_retries(mut self, max_retries: usize) -> Self {
+        self.structured_output_max_retries = max_retries;
+        self
+    }
+
+    /// Set the approval mode for the tool gate.
+    #[must_use]
+    pub const fn with_approval_mode(mut self, approval_mode: ApprovalModeConfig) -> Self {
+        self.approval_mode = approval_mode;
+        self
+    }
+
+    /// Set the plan mode addendum appended to the system prompt.
+    #[must_use]
+    pub fn with_plan_mode_addendum(mut self, addendum: impl Into<String>) -> Self {
+        self.plan_mode_addendum = Some(addendum.into());
+        self
+    }
+
+    /// Set the context caching configuration.
+    #[must_use]
+    pub fn with_cache_config(mut self, cache_config: CacheConfigData) -> Self {
+        self.cache_config = Some(cache_config);
+        self
+    }
+
+    /// Set the arbitrary application-specific extension data.
+    #[must_use]
+    pub fn with_extra(mut self, extra: serde_json::Value) -> Self {
+        self.extra = extra;
+        self
+    }
+
     /// Restore an [`AgentOptions`](crate::AgentOptions) builder from this config.
     ///
     /// The caller must supply the required non-serializable arguments
@@ -503,6 +680,40 @@ mod tests {
     }
 
     #[test]
+    fn retry_config_builders_set_every_field() {
+        let config = RetryConfig::default()
+            .with_max_attempts(7)
+            .with_base_delay_ms(250)
+            .with_max_delay_ms(9000)
+            .with_multiplier(4.0)
+            .with_jitter(false);
+        assert_eq!(config.max_attempts, 7);
+        assert_eq!(config.base_delay_ms, 250);
+        assert_eq!(config.max_delay_ms, 9000);
+        assert!((config.multiplier - 4.0).abs() < f64::EPSILON);
+        assert!(!config.jitter);
+    }
+
+    #[test]
+    fn stream_options_config_builders_set_every_field() {
+        let serving = crate::stream::ServingOptions {
+            context_length: Some(2048),
+            ..Default::default()
+        };
+        let config = StreamOptionsConfig::default()
+            .with_temperature(0.3)
+            .with_max_tokens(1024)
+            .with_session_id("sess-9")
+            .with_transport(StreamTransport::Sse)
+            .with_serving(serving);
+        assert_eq!(config.temperature, Some(0.3));
+        assert_eq!(config.max_tokens, Some(1024));
+        assert_eq!(config.session_id.as_deref(), Some("sess-9"));
+        assert_eq!(config.transport, StreamTransport::Sse);
+        assert_eq!(config.serving.context_length, Some(2048));
+    }
+
+    #[test]
     fn stream_options_config_roundtrip() {
         let config = StreamOptionsConfig {
             temperature: Some(0.7),
@@ -512,6 +723,7 @@ mod tests {
             serving: crate::stream::ServingOptions {
                 context_length: Some(8192),
                 keep_alive: Some("5m".into()),
+                format: Some(crate::stream::ResponseFormat::Json),
                 ..Default::default()
             },
         };
@@ -522,6 +734,43 @@ mod tests {
         assert_eq!(restored.session_id.as_deref(), Some("sess-123"));
         assert_eq!(restored.serving.context_length, Some(8192));
         assert_eq!(restored.serving.keep_alive.as_deref(), Some("5m"));
+        assert_eq!(
+            restored.serving.format,
+            Some(crate::stream::ResponseFormat::Json)
+        );
+    }
+
+    /// `ResponseFormat::Schema` survives a config round-trip, and a `None`
+    /// format adds no key to the serialized form.
+    #[test]
+    fn stream_options_config_roundtrips_response_format_schema() {
+        let schema = serde_json::json!({ "type": "object" });
+        let config = StreamOptionsConfig {
+            serving: crate::stream::ServingOptions {
+                format: Some(crate::stream::ResponseFormat::Schema(schema.clone())),
+                ..Default::default()
+            },
+            ..StreamOptionsConfig::default()
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let restored: StreamOptionsConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            restored.serving.format,
+            Some(crate::stream::ResponseFormat::Schema(schema))
+        );
+
+        let without = serde_json::to_string(&StreamOptionsConfig {
+            serving: crate::stream::ServingOptions {
+                context_length: Some(8192),
+                ..Default::default()
+            },
+            ..StreamOptionsConfig::default()
+        })
+        .unwrap();
+        assert!(
+            !without.contains("format"),
+            "`format: None` must not add config noise: {without}"
+        );
     }
 
     #[test]

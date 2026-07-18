@@ -81,6 +81,40 @@ impl std::fmt::Debug for AdapterBase {
     }
 }
 
+/// Merge [`ServingOptions::extra`] entries into a JSON request-body map.
+///
+/// Single implementation of the documented merge rule shared by every
+/// adapter: **typed request fields win over colliding `extra` keys**, so any
+/// `extra` entry whose key appears in `typed_keys` is discarded. Every other
+/// entry is inserted verbatim, overwriting a pre-existing entry with the same
+/// key.
+///
+/// Callers decide what "typed" means for their wire format:
+/// - adapters that serialize a typed struct (OAI transport, Mistral,
+///   Anthropic, Gemini, Bedrock) pass the static list of field names the
+///   struct can emit;
+/// - adapters that build the map imperatively (Ollama) pass only the keys
+///   they are about to insert, so an *unset* typed knob leaves the matching
+///   `extra` entry intact.
+///
+/// `allow(dead_code)`: live only under provider features that build JSON
+/// request bodies (same rationale as [`AdapterBase`]).
+///
+/// [`ServingOptions::extra`]: swink_agent::ServingOptions
+#[allow(dead_code)]
+pub(crate) fn merge_extra(
+    body: &mut serde_json::Map<String, serde_json::Value>,
+    extra: &std::collections::BTreeMap<String, serde_json::Value>,
+    typed_keys: &[&str],
+) {
+    for (key, value) in extra {
+        if typed_keys.contains(&key.as_str()) {
+            continue;
+        }
+        body.insert(key.clone(), value.clone());
+    }
+}
+
 /// Prefix a pre-stream terminal error with `Start` so the core accumulator
 /// still receives a valid stream envelope.
 #[must_use]
@@ -100,6 +134,40 @@ pub fn cancelled_error(message: impl Into<String>) -> swink_agent::AssistantMess
         error_kind: None,
         retry_after: None,
     }
+}
+
+/// If `started` is false, mark it true and prefix `event` with a synthetic
+/// `Start` (via [`pre_stream_error`]); otherwise return `event` unprefixed.
+#[cfg(any(feature = "bedrock", feature = "proxy"))]
+#[must_use]
+pub fn prefix_start_if_unstarted(
+    event: swink_agent::AssistantMessageEvent,
+    started: &mut bool,
+) -> Vec<swink_agent::AssistantMessageEvent> {
+    if *started {
+        return vec![event];
+    }
+    *started = true;
+    Vec::from(pre_stream_error(event))
+}
+
+/// Ensure a process-wide default rustls crypto provider is installed.
+///
+/// The workspace builds reqwest with `rustls-no-provider` so that the
+/// default aws-lc-rs provider — whose `aws-lc-sys` build requires `cc` and
+/// CMake (plus NASM on Windows) — never enters a consumer's dependency
+/// tree (#1110). In that configuration reqwest refuses to construct a
+/// `Client` (it panics in `ClientBuilder::build`) until a process default
+/// [`rustls::crypto::CryptoProvider`] exists, so this installs ring.
+///
+/// Idempotent and race-safe: if a provider is already installed —
+/// including a different one chosen by the host application, e.g.
+/// aws-lc-rs for FIPS — the existing installation wins and this is a
+/// no-op. Every adapter constructor calls it before building its HTTP
+/// client; hosts that build their own `reqwest::Client` against the same
+/// feature unification should call it too.
+pub fn ensure_default_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
 /// Build the default HTTP client used by remote adapters.
@@ -127,6 +195,7 @@ pub(crate) fn adapter_http_client_with_timeouts(
     connect_timeout: Duration,
     read_timeout: Duration,
 ) -> reqwest::Client {
+    ensure_default_crypto_provider();
     reqwest::Client::builder()
         .connect_timeout(connect_timeout)
         .read_timeout(read_timeout)
@@ -217,6 +286,41 @@ mod tests {
     use tokio::sync::oneshot;
 
     #[test]
+    fn merge_extra_typed_keys_win() {
+        let extra: std::collections::BTreeMap<String, serde_json::Value> = [
+            ("temperature".to_string(), serde_json::json!(0.1)),
+            ("top_k".to_string(), serde_json::json!(40)),
+        ]
+        .into_iter()
+        .collect();
+        let mut body = serde_json::Map::new();
+        body.insert("temperature".to_string(), serde_json::json!(0.7));
+
+        merge_extra(&mut body, &extra, &["temperature"]);
+
+        assert_eq!(body["temperature"], serde_json::json!(0.7));
+        assert_eq!(body["top_k"], serde_json::json!(40));
+    }
+
+    #[test]
+    fn merge_extra_overwrites_untyped_collisions() {
+        let extra = std::collections::BTreeMap::from([("seed".to_string(), serde_json::json!(2))]);
+        let mut body = serde_json::Map::new();
+        body.insert("seed".to_string(), serde_json::json!(1));
+
+        merge_extra(&mut body, &extra, &[]);
+
+        assert_eq!(body["seed"], serde_json::json!(2));
+    }
+
+    #[test]
+    fn merge_extra_empty_is_noop() {
+        let mut body = serde_json::Map::new();
+        merge_extra(&mut body, &std::collections::BTreeMap::new(), &["model"]);
+        assert!(body.is_empty());
+    }
+
+    #[test]
     fn trailing_slash_stripped() {
         let base = AdapterBase::new("https://api.example.com/", "key");
         assert_eq!(base.base_url, "https://api.example.com");
@@ -258,6 +362,13 @@ mod tests {
         ));
     }
 
+    #[cfg(any(
+        feature = "ollama",
+        feature = "azure",
+        feature = "proxy",
+        feature = "gemini",
+        feature = "bedrock"
+    ))]
     #[tokio::test]
     async fn race_pre_stream_cancellation_short_circuits() {
         let token = CancellationToken::new();
@@ -298,6 +409,7 @@ mod tests {
             }
         });
 
+        ensure_default_crypto_provider();
         let response = reqwest::Client::new()
             .get(format!("http://{addr}/"))
             .send()
@@ -342,6 +454,7 @@ mod tests {
             }
         });
 
+        ensure_default_crypto_provider();
         let response = reqwest::Client::new()
             .get(format!("http://{addr}/"))
             .send()
@@ -392,6 +505,7 @@ mod tests {
         assert!(err.is_timeout(), "expected reqwest timeout, got: {err}");
     }
 
+    #[cfg(feature = "ollama")]
     #[test]
     fn local_read_timeout_exceeds_hosted_default() {
         // The local-inference client exists specifically to outlast the hosted
@@ -400,6 +514,7 @@ mod tests {
         assert!(LOCAL_READ_TIMEOUT > DEFAULT_READ_TIMEOUT);
     }
 
+    #[cfg(feature = "ollama")]
     #[test]
     fn local_adapter_http_client_builds() {
         let _client = local_adapter_http_client();

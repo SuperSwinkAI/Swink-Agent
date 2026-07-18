@@ -28,6 +28,7 @@ use crate::types::Invocation;
 // ─── Error ──────────────────────────────────────────────────────────────────
 
 /// Errors produced by training-format exporters.
+#[non_exhaustive]
 #[derive(Debug, Error)]
 pub enum ExportError {
     /// JSON serialization failed.
@@ -59,6 +60,7 @@ pub enum TrainingFormat {
 // ─── Options ────────────────────────────────────────────────────────────────
 
 /// Options controlling how traces are exported.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct ExportOptions {
     /// Target output format.
@@ -111,6 +113,27 @@ impl ExportOptions {
             include_metadata: true,
         }
     }
+
+    /// Set the target output format.
+    #[must_use]
+    pub fn with_format(mut self, format: TrainingFormat) -> Self {
+        self.format = format;
+        self
+    }
+
+    /// Set the minimum quality score a trace must have to be included.
+    #[must_use]
+    pub fn with_quality_threshold(mut self, quality_threshold: f32) -> Self {
+        self.quality_threshold = quality_threshold;
+        self
+    }
+
+    /// Set whether per-record metadata is included in exported records.
+    #[must_use]
+    pub fn with_include_metadata(mut self, include_metadata: bool) -> Self {
+        self.include_metadata = include_metadata;
+        self
+    }
 }
 
 // ─── ScoredTrace ────────────────────────────────────────────────────────────
@@ -118,6 +141,7 @@ impl ExportOptions {
 /// An [`Invocation`] paired with a quality score and the originating case.
 ///
 /// Built from [`EvalCaseResult`] values collected during a run.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct ScoredTrace {
     /// The captured execution trace.
@@ -130,6 +154,16 @@ pub struct ScoredTrace {
 }
 
 impl ScoredTrace {
+    /// Construct a `ScoredTrace` from its invocation, score, and case id.
+    #[must_use]
+    pub fn new(invocation: Invocation, score: f64, case_id: impl Into<String>) -> Self {
+        Self {
+            invocation,
+            score,
+            case_id: case_id.into(),
+        }
+    }
+
     /// Construct a `ScoredTrace` from an [`EvalCaseResult`].
     ///
     /// `score` is the mean of all metric scores (0.0 when there are none).
@@ -185,8 +219,17 @@ pub trait TrainingExporter: Send + Sync {
 /// `{id, type, function: {name, arguments}}` objects, matching the OpenAI
 /// tool-call schema so downstream fine-tuning pipelines can parse them
 /// without additional transformation.
+#[non_exhaustive]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ChatMlExporter;
+
+impl ChatMlExporter {
+    /// Create a new `ChatMlExporter`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 impl TrainingExporter for ChatMlExporter {
     fn export(&self, traces: &[ScoredTrace], opts: &ExportOptions) -> Result<Vec<u8>, ExportError> {
@@ -364,8 +407,17 @@ fn extract_assistant_text(msg: &swink_agent::AssistantMessage) -> String {
 /// ```json
 /// {"case_id": "...", "chosen": {...chatml record...}, "rejected": {...chatml record...}}
 /// ```
+#[non_exhaustive]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct DpoExporter;
+
+impl DpoExporter {
+    /// Create a new `DpoExporter`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 /// A single DPO pair (one JSONL record).
 #[derive(Serialize)]
@@ -442,8 +494,17 @@ impl TrainingExporter for DpoExporter {
 ///   {"from": "gpt",    "value": "..."}
 /// ]}
 /// ```
+#[non_exhaustive]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ShareGptExporter;
+
+impl ShareGptExporter {
+    /// Create a new `ShareGptExporter`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 #[derive(Serialize)]
 struct ShareGptRecord {

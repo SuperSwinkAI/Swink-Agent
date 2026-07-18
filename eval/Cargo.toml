@@ -20,8 +20,8 @@ path = "src/bin/swink_eval.rs"
 required-features = ["cli"]
 
 [dependencies]
-swink-agent = { path = "..", version = "0.11.0", default-features = false }
-swink-agent-policies = { path = "../policies", version = "0.11.0", default-features = false, features = ["budget", "max-turns"] }
+swink-agent = { path = "..", version = "0.12.0", default-features = false }
+swink-agent-policies = { path = "../policies", version = "0.12.0", default-features = false, features = ["budget", "max-turns"] }
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "time"] }
@@ -37,7 +37,12 @@ backon = { workspace = true, optional = true }
 strsim = { workspace = true, optional = true }
 jsonschema = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
-url = "2.5.8"
+# Supplies the `ring` crypto provider, installed as the process default
+# before any reqwest client is built (workspace reqwest is
+# `rustls-no-provider`; see the root Cargo.toml). `dep:rustls` rides along
+# with every feature that enables `dep:reqwest`.
+rustls = { workspace = true, optional = true }
+url.workspace = true
 tempfile.workspace = true
 opentelemetry = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true }
@@ -45,11 +50,11 @@ opentelemetry-otlp = { workspace = true, optional = true }
 askama = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
 libc = { workspace = true, optional = true }
-serde_yaml = { workspace = true, optional = true }
+serde_yaml_ng = { workspace = true, optional = true }
 
 [features]
 default = []
-yaml = ["serde_yaml"]
+yaml = ["dep:serde_yaml_ng"]
 judge-core = ["dep:minijinja", "dep:backon"]
 evaluator-quality = ["judge-core"]
 evaluator-safety = ["judge-core"]
@@ -59,7 +64,7 @@ evaluator-structured = ["judge-core", "dep:jsonschema"]
 evaluator-simple = ["judge-core", "dep:strsim"]
 evaluator-code = ["judge-core"]
 evaluator-sandbox = ["evaluator-code", "dep:libc"]
-multimodal = ["judge-core", "dep:reqwest"]
+multimodal = ["judge-core", "dep:reqwest", "dep:rustls"]
 all-evaluators = [
     "evaluator-quality",
     "evaluator-safety",
@@ -74,13 +79,13 @@ all-evaluators = [
 simulation = ["judge-core", "dep:jsonschema"]
 generation = ["judge-core"]
 trace-ingest = ["dep:opentelemetry", "dep:opentelemetry_sdk", "opentelemetry_sdk/testing"]
-trace-otlp = ["trace-ingest", "dep:opentelemetry-otlp", "dep:reqwest"]
-trace-langfuse = ["trace-ingest", "dep:reqwest"]
-trace-opensearch = ["trace-ingest", "dep:reqwest"]
+trace-otlp = ["trace-ingest", "dep:opentelemetry-otlp", "dep:reqwest", "dep:rustls"]
+trace-langfuse = ["trace-ingest", "dep:reqwest", "dep:rustls"]
+trace-opensearch = ["trace-ingest", "dep:reqwest", "dep:rustls"]
 trace-cloudwatch = ["trace-ingest"]
 telemetry = ["dep:opentelemetry", "dep:opentelemetry_sdk"]
 html-report = ["dep:askama"]
-langsmith = ["dep:reqwest"]
+langsmith = ["dep:reqwest", "dep:rustls"]
 cli = ["dep:clap"]
 training-export = []
 
@@ -90,7 +95,7 @@ tokio = { workspace = true, features = ["full", "test-util"] }
 pretty_assertions.workspace = true
 wiremock.workspace = true
 jsonschema.workspace = true
-serde_yaml.workspace = true
+serde_yaml_ng.workspace = true
 
 # FR-049 carve-out: the `evaluators::code::sandbox::posix` submodule needs
 # `#![allow(unsafe_code)]` for POSIX rlimit FFI. `forbid` cannot be relaxed
@@ -98,6 +103,12 @@ serde_yaml.workspace = true
 # `unsafe_code` from `forbid` to `deny` — still a hard compile error for any
 # stray `unsafe` outside the single authorised submodule. Every other crate
 # in the workspace continues to inherit `forbid` via `lints.workspace = true`.
+#
+# IMPORTANT: because Cargo does not allow combining `[lints] workspace = true`
+# with per-crate overrides, this table is a full hand-rolled copy of the root
+# `[workspace.lints.*]` tables. Any lint added to or removed from the root
+# Cargo.toml MUST be mirrored here — the only intentional difference is
+# `unsafe_code = "deny"` (workspace uses `forbid`).
 [lints.rust]
 unsafe_code = "deny"
 
@@ -105,6 +116,8 @@ unsafe_code = "deny"
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
+exhaustive_structs = "warn"
+exhaustive_enums = "warn"
 module_name_repetitions = "allow"
 must_use_candidate = "allow"
 missing_errors_doc = "allow"

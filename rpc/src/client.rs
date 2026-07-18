@@ -2,11 +2,17 @@
 
 use std::path::Path;
 
-use swink_agent::{AgentEvent, ToolApproval, ToolApprovalRequest};
+use swink_agent::{
+    AgentEvent, ApprovalMode, ModelSpec, ThinkingLevel, ToolApproval, ToolApprovalRequest,
+};
 use tracing::warn;
 
-use crate::dto::{PromptParams, PromptResult, ToolApprovalDto, method};
-use crate::jsonrpc::{IncomingMessage, JsonRpcPeer, RpcError};
+use crate::dto::{
+    Ack, ApprovalGetResult, ApprovalSetParams, ModelListResult, ModelSetParams, PromptParams,
+    PromptResult, SessionSnapshot, SystemPromptSetParams, ThinkingSetParams, ToolApprovalDto,
+    method,
+};
+use crate::jsonrpc::{IncomingMessage, JsonRpcPeer, PeerSender, RpcError};
 
 /// A client that drives a remote `AgentServer` over a Unix socket.
 ///
@@ -97,6 +103,9 @@ impl AgentClient {
 
     /// Send a prompt and collect all events, returning when the turn ends.
     ///
+    /// For live delivery — a UI rendering events as the agent produces them —
+    /// use [`prompt_text_with`](Self::prompt_text_with) instead.
+    ///
     /// # Errors
     ///
     /// Returns an error if the connection is lost or the server returns an error.
@@ -104,11 +113,35 @@ impl AgentClient {
         &mut self,
         text: impl Into<String>,
     ) -> Result<Vec<AgentEvent>, RpcError> {
-        let events = self.run_turn(text.into()).await?;
+        let mut events = Vec::new();
+        self.run_turn(text.into(), &mut |event| events.push(event))
+            .await?;
         Ok(events)
     }
 
-    async fn run_turn(&mut self, text: String) -> Result<Vec<AgentEvent>, RpcError> {
+    /// Send a prompt, invoking `on_event` for each [`AgentEvent`] as it
+    /// arrives, and return when the turn ends.
+    ///
+    /// Unlike [`prompt_text`](Self::prompt_text), events are delivered while
+    /// the turn is still running, so a caller can stream them into a UI or a
+    /// channel instead of waiting for the batch at turn end.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection is lost or the server returns an error.
+    pub async fn prompt_text_with(
+        &mut self,
+        text: impl Into<String>,
+        mut on_event: impl FnMut(AgentEvent) + Send,
+    ) -> Result<(), RpcError> {
+        self.run_turn(text.into(), &mut on_event).await
+    }
+
+    async fn run_turn(
+        &mut self,
+        text: String,
+        on_event: &mut (dyn FnMut(AgentEvent) + Send),
+    ) -> Result<(), RpcError> {
         let params = PromptParams {
             text,
             session_id: None,
@@ -120,45 +153,46 @@ impl AgentClient {
         let prompt_fut = sender.request::<_, PromptResult>(method::PROMPT, &params);
         let mut prompt_fut = std::pin::pin!(prompt_fut);
 
-        let mut events = Vec::new();
-
         loop {
             tokio::select! {
                 result = &mut prompt_fut => {
                     result?;
-                    self.drain_ready_incoming(&mut events)?;
+                    self.drain_ready_incoming(on_event).await?;
                     break;
                 }
                 incoming = self.peer.recv_incoming() => {
                     match incoming {
                         None => return Err(RpcError::disconnected()),
-                        Some(incoming) => self.handle_incoming(incoming, &mut events)?,
+                        Some(incoming) => self.handle_incoming(incoming, on_event).await?,
                     }
                 }
             }
         }
 
-        Ok(events)
+        Ok(())
     }
 
-    fn drain_ready_incoming(&mut self, events: &mut Vec<AgentEvent>) -> Result<(), RpcError> {
+    async fn drain_ready_incoming(
+        &mut self,
+        on_event: &mut (dyn FnMut(AgentEvent) + Send),
+    ) -> Result<(), RpcError> {
         while let Some(incoming) = self.peer.try_recv_incoming() {
-            self.handle_incoming(incoming, events)?;
+            self.handle_incoming(incoming, on_event).await?;
         }
         Ok(())
     }
 
-    fn handle_incoming(
+    async fn handle_incoming(
         &self,
         incoming: IncomingMessage,
-        events: &mut Vec<AgentEvent>,
+        on_event: &mut (dyn FnMut(AgentEvent) + Send),
     ) -> Result<(), RpcError> {
         match incoming {
             IncomingMessage::Notification { method: m, params } if m == method::AGENT_EVENT => {
                 if let Some(event) =
                     params.and_then(|v| serde_json::from_value::<AgentEvent>(v).ok())
                 {
-                    events.push(event);
+                    on_event(event);
                 }
             }
             IncomingMessage::Request {
@@ -168,12 +202,13 @@ impl AgentClient {
             } if m == method::TOOL_APPROVE => {
                 let approval = self.handle_approval(params);
                 let dto = ToolApprovalDto::from(&approval);
-                self.peer.sender().respond_ok(id, dto)?;
+                self.peer.sender().respond_ok(id, dto).await?;
             }
             IncomingMessage::Request { id, method: m, .. } => {
                 self.peer
                     .sender()
-                    .respond_err(id, RpcError::method_not_found(&m))?;
+                    .respond_err(id, RpcError::method_not_found(&m))
+                    .await?;
             }
             IncomingMessage::Notification { .. } => {}
         }
@@ -190,14 +225,183 @@ impl AgentClient {
             warn!("could not parse tool.approve params; rejecting");
             return ToolApproval::Rejected;
         };
-        let req = ToolApprovalRequest {
-            tool_call_id: dto.id,
-            tool_name: dto.name,
-            arguments: dto.arguments,
-            requires_approval: dto.requires_approval,
-            context: dto.context,
+        let req = ToolApprovalRequest::new(dto.id, dto.name, dto.arguments, dto.requires_approval);
+        let req = match dto.context {
+            Some(context) => req.with_context(context),
+            None => req,
         };
         handler(req)
+    }
+
+    // ─── Control plane ────────────────────────────────────────────────────
+
+    /// Return a cloneable [`PeerSender`] for this connection, for issuing
+    /// requests and notifications from another task while a
+    /// [`prompt_text_with`](Self::prompt_text_with) turn is in flight.
+    ///
+    /// Note that the server rejects control-plane requests (`model.*`,
+    /// `approval.*`, `plan.*`, `session.*`, `thinking.set`,
+    /// `system_prompt.set`, `agent.reset`) with [`RpcError::BUSY`]
+    /// while a turn is running; the
+    /// `cancel` notification (see [`cancel`](Self::cancel)) is the only
+    /// mid-turn-safe control operation.
+    #[must_use]
+    pub fn sender(&self) -> PeerSender {
+        self.peer.sender()
+    }
+
+    /// Send a control-plane request whose result is an empty [`Ack`].
+    async fn ack_request<P: serde::Serialize + Sync>(
+        &self,
+        method: &str,
+        params: &P,
+    ) -> Result<(), RpcError> {
+        let _ack: Ack = self.peer.sender().request(method, params).await?;
+        Ok(())
+    }
+
+    /// List the models available on the server and the current model.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection is lost, a turn is in progress
+    /// ([`RpcError::BUSY`]), or the server returns an error.
+    pub async fn list_models(&self) -> Result<ModelListResult, RpcError> {
+        self.peer
+            .sender()
+            .request(method::MODEL_LIST, &serde_json::json!({}))
+            .await
+    }
+
+    /// Switch the remote agent to `model`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection is lost, a turn is in progress
+    /// ([`RpcError::BUSY`]), or the server returns an error.
+    pub async fn set_model(&self, model: ModelSpec) -> Result<(), RpcError> {
+        self.ack_request(method::MODEL_SET, &ModelSetParams::new(model))
+            .await
+    }
+
+    /// Set the thinking level on the remote agent's current model.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection is lost, a turn is in progress
+    /// ([`RpcError::BUSY`]), or the server returns an error.
+    pub async fn set_thinking_level(&self, level: ThinkingLevel) -> Result<(), RpcError> {
+        self.ack_request(method::THINKING_SET, &ThinkingSetParams::new(level))
+            .await
+    }
+
+    /// Get the remote agent's current tool-approval mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection is lost, a turn is in progress
+    /// ([`RpcError::BUSY`]), or the server returns an error.
+    pub async fn approval_mode(&self) -> Result<ApprovalMode, RpcError> {
+        let result: ApprovalGetResult = self
+            .peer
+            .sender()
+            .request(method::APPROVAL_GET, &serde_json::json!({}))
+            .await?;
+        Ok(result.mode)
+    }
+
+    /// Set the remote agent's tool-approval mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection is lost, a turn is in progress
+    /// ([`RpcError::BUSY`]), or the server returns an error.
+    pub async fn set_approval_mode(&self, mode: ApprovalMode) -> Result<(), RpcError> {
+        self.ack_request(method::APPROVAL_SET, &ApprovalSetParams::new(mode))
+            .await
+    }
+
+    /// Replace the remote agent's system prompt.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection is lost, a turn is in progress
+    /// ([`RpcError::BUSY`]), or the server returns an error.
+    pub async fn set_system_prompt(&self, prompt: impl Into<String>) -> Result<(), RpcError> {
+        self.ack_request(
+            method::SYSTEM_PROMPT_SET,
+            &SystemPromptSetParams::new(prompt),
+        )
+        .await
+    }
+
+    /// Reset the remote agent, clearing its transcript, queues, and error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection is lost, a turn is in progress
+    /// ([`RpcError::BUSY`]), or the server returns an error.
+    pub async fn reset(&self) -> Result<(), RpcError> {
+        self.ack_request(method::AGENT_RESET, &serde_json::json!({}))
+            .await
+    }
+
+    /// Put the remote agent into plan mode (read-only tools, plan-mode
+    /// system prompt addendum). The server holds the saved tools and prompt
+    /// until [`exit_plan_mode`](Self::exit_plan_mode).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the agent is already in plan mode
+    /// ([`RpcError::INVALID_REQUEST`]), the connection is lost, or a turn is
+    /// in progress ([`RpcError::BUSY`]).
+    pub async fn enter_plan_mode(&self) -> Result<(), RpcError> {
+        self.ack_request(method::PLAN_ENTER, &serde_json::json!({}))
+            .await
+    }
+
+    /// Take the remote agent out of plan mode, restoring the tools and
+    /// system prompt saved by [`enter_plan_mode`](Self::enter_plan_mode).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the agent is not in plan mode
+    /// ([`RpcError::INVALID_REQUEST`]), the connection is lost, or a turn is
+    /// in progress ([`RpcError::BUSY`]).
+    pub async fn exit_plan_mode(&self) -> Result<(), RpcError> {
+        self.ack_request(method::PLAN_EXIT, &serde_json::json!({}))
+            .await
+    }
+
+    /// Fetch a snapshot of the remote agent's transcript and session state.
+    ///
+    /// The returned [`SessionSnapshot`] uses the same per-message
+    /// representation `swink-agent-memory` writes to JSONL, so it can be fed
+    /// to a `SessionStore` (and later passed back to
+    /// [`session_restore`](Self::session_restore)).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection is lost, a turn is in progress
+    /// ([`RpcError::BUSY`]), or the server returns an error.
+    pub async fn session_snapshot(&self) -> Result<SessionSnapshot, RpcError> {
+        self.peer
+            .sender()
+            .request(method::SESSION_SNAPSHOT, &serde_json::json!({}))
+            .await
+    }
+
+    /// Replace the remote agent's transcript and session state with
+    /// `snapshot` (as produced by [`session_snapshot`](Self::session_snapshot)
+    /// or loaded from a session store).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a message in the snapshot cannot be decoded
+    /// ([`RpcError::INVALID_REQUEST`]), the connection is lost, or a turn is
+    /// in progress ([`RpcError::BUSY`]).
+    pub async fn session_restore(&self, snapshot: SessionSnapshot) -> Result<(), RpcError> {
+        self.ack_request(method::SESSION_RESTORE, &snapshot).await
     }
 
     /// Send a cancel notification to abort the current turn.
@@ -276,6 +480,7 @@ mod tests {
                         turn_id: "1".into(),
                     },
                 )
+                .await
                 .unwrap();
             let _ = client_done_rx.await;
         });
@@ -286,6 +491,52 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert!(matches!(events[0], AgentEvent::AgentStart));
         assert!(matches!(events[1], AgentEvent::TurnStart));
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn prompt_text_with_streams_events_through_the_callback() {
+        let (mut client, mut server) = make_client_pair();
+        let server_sender = server.sender();
+        let (client_done_tx, client_done_rx) = oneshot::channel();
+
+        let server_task = tokio::spawn(async move {
+            let incoming = server.recv_incoming().await.unwrap();
+            let IncomingMessage::Request { id, method, .. } = incoming else {
+                panic!("expected prompt request");
+            };
+            assert_eq!(method, method::PROMPT);
+
+            server_sender
+                .notify(method::AGENT_EVENT, &AgentEvent::AgentStart)
+                .await
+                .unwrap();
+            server_sender
+                .notify(method::AGENT_EVENT, &AgentEvent::TurnStart)
+                .await
+                .unwrap();
+            server_sender
+                .respond_ok(
+                    id,
+                    PromptResult {
+                        turn_id: "6".into(),
+                    },
+                )
+                .await
+                .unwrap();
+            let _ = client_done_rx.await;
+        });
+
+        let mut seen = Vec::new();
+        client
+            .prompt_text_with("hello streaming", |event| seen.push(event))
+            .await
+            .unwrap();
+        let _ = client_done_tx.send(());
+
+        assert_eq!(seen.len(), 2);
+        assert!(matches!(seen[0], AgentEvent::AgentStart));
+        assert!(matches!(seen[1], AgentEvent::TurnStart));
         server_task.await.unwrap();
     }
 
@@ -329,6 +580,7 @@ mod tests {
                         turn_id: "2".into(),
                     },
                 )
+                .await
                 .unwrap();
             let _ = client_done_rx.await;
         });
@@ -375,6 +627,7 @@ mod tests {
                         turn_id: "3".into(),
                     },
                 )
+                .await
                 .unwrap();
             let _ = client_done_rx.await;
         });
@@ -415,6 +668,7 @@ mod tests {
                         turn_id: "4".into(),
                     },
                 )
+                .await
                 .unwrap();
             let _ = client_done_rx.await;
         });
@@ -453,6 +707,7 @@ mod tests {
                         turn_id: "5".into(),
                     },
                 )
+                .await
                 .unwrap();
             let _ = client_done_rx.await;
         });
@@ -493,6 +748,161 @@ mod tests {
             panic!("expected shutdown notification");
         };
         assert_eq!(method, method::SHUTDOWN);
+    }
+
+    #[tokio::test]
+    // One scripted server conversation exercising every control helper in
+    // order; splitting it would duplicate the fake-server dispatch loop.
+    #[allow(clippy::too_many_lines)]
+    async fn control_helpers_round_trip_typed_requests() {
+        let (client, mut server) = make_client_pair();
+        let server_sender = server.sender();
+
+        let server_task = tokio::spawn(async move {
+            let mut seen = Vec::new();
+            while let Some(incoming) = server.recv_incoming().await {
+                let IncomingMessage::Request {
+                    id,
+                    method: m,
+                    params,
+                } = incoming
+                else {
+                    panic!("expected only requests, got {incoming:?}");
+                };
+                seen.push(m.clone());
+                match m.as_str() {
+                    method::MODEL_LIST => {
+                        server_sender
+                            .respond_ok(
+                                id,
+                                ModelListResult::new(
+                                    vec![ModelSpec::new("test", "alt-model")],
+                                    ModelSpec::new("test", "test-model"),
+                                ),
+                            )
+                            .await
+                            .unwrap();
+                    }
+                    method::MODEL_SET => {
+                        let p: ModelSetParams = serde_json::from_value(params.unwrap()).unwrap();
+                        assert_eq!(p.model.model_id, "alt-model");
+                        server_sender.respond_ok(id, Ack::new()).await.unwrap();
+                    }
+                    method::THINKING_SET => {
+                        let p: ThinkingSetParams = serde_json::from_value(params.unwrap()).unwrap();
+                        assert_eq!(p.level, ThinkingLevel::High);
+                        server_sender.respond_ok(id, Ack::new()).await.unwrap();
+                    }
+                    method::APPROVAL_GET => {
+                        server_sender
+                            .respond_ok(id, ApprovalGetResult::new(ApprovalMode::Bypassed))
+                            .await
+                            .unwrap();
+                    }
+                    method::APPROVAL_SET => {
+                        let p: ApprovalSetParams = serde_json::from_value(params.unwrap()).unwrap();
+                        assert_eq!(p.mode, ApprovalMode::Enabled);
+                        server_sender.respond_ok(id, Ack::new()).await.unwrap();
+                    }
+                    method::SYSTEM_PROMPT_SET => {
+                        let p: SystemPromptSetParams =
+                            serde_json::from_value(params.unwrap()).unwrap();
+                        assert_eq!(p.prompt, "fresh prompt");
+                        server_sender.respond_ok(id, Ack::new()).await.unwrap();
+                    }
+                    method::AGENT_RESET | method::PLAN_ENTER | method::PLAN_EXIT => {
+                        server_sender.respond_ok(id, Ack::new()).await.unwrap();
+                    }
+                    method::SESSION_SNAPSHOT => {
+                        server_sender
+                            .respond_ok(
+                                id,
+                                SessionSnapshot::new(
+                                    vec![serde_json::json!({"role": "user"})],
+                                    Some(serde_json::json!({"data": {}})),
+                                ),
+                            )
+                            .await
+                            .unwrap();
+                    }
+                    method::SESSION_RESTORE => {
+                        let p: SessionSnapshot = serde_json::from_value(params.unwrap()).unwrap();
+                        assert_eq!(p.messages.len(), 1);
+                        server_sender.respond_ok(id, Ack::new()).await.unwrap();
+                    }
+                    other => panic!("unexpected control method: {other}"),
+                }
+            }
+            seen
+        });
+
+        let listed = client.list_models().await.unwrap();
+        assert_eq!(listed.available.len(), 1);
+        assert_eq!(listed.current.model_id, "test-model");
+
+        client
+            .set_model(ModelSpec::new("test", "alt-model"))
+            .await
+            .unwrap();
+        client
+            .set_thinking_level(ThinkingLevel::High)
+            .await
+            .unwrap();
+        assert_eq!(
+            client.approval_mode().await.unwrap(),
+            ApprovalMode::Bypassed
+        );
+        client
+            .set_approval_mode(ApprovalMode::Enabled)
+            .await
+            .unwrap();
+        client.set_system_prompt("fresh prompt").await.unwrap();
+        client.reset().await.unwrap();
+        client.enter_plan_mode().await.unwrap();
+        client.exit_plan_mode().await.unwrap();
+
+        let snapshot = client.session_snapshot().await.unwrap();
+        assert_eq!(snapshot.messages.len(), 1);
+        assert!(snapshot.state.is_some());
+        client.session_restore(snapshot).await.unwrap();
+
+        drop(client);
+        let seen = server_task.await.unwrap();
+        assert_eq!(
+            seen,
+            vec![
+                method::MODEL_LIST,
+                method::MODEL_SET,
+                method::THINKING_SET,
+                method::APPROVAL_GET,
+                method::APPROVAL_SET,
+                method::SYSTEM_PROMPT_SET,
+                method::AGENT_RESET,
+                method::PLAN_ENTER,
+                method::PLAN_EXIT,
+                method::SESSION_SNAPSHOT,
+                method::SESSION_RESTORE,
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn sender_exposes_peer_sender_for_out_of_band_control() {
+        let (client, mut server) = make_client_pair();
+
+        // A cloned sender can issue notifications (e.g. `cancel`) from
+        // another task while the client itself is busy driving a turn.
+        let sender = client.sender();
+        sender
+            .notify(method::CANCEL, &serde_json::Value::Null)
+            .await
+            .unwrap();
+
+        let Some(IncomingMessage::Notification { method: m, .. }) = server.recv_incoming().await
+        else {
+            panic!("expected cancel notification");
+        };
+        assert_eq!(m, method::CANCEL);
     }
 
     #[cfg(not(unix))]

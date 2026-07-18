@@ -30,8 +30,6 @@ impl Agent {
         self.state.pending_tool_calls.clear();
         self.state.error = None;
         self.abort_controller = None;
-        self.in_flight_llm_messages = None;
-        self.in_flight_messages = None;
         self.pending_message_snapshot.clear();
         self.loop_context_snapshot.clear();
     }

@@ -211,23 +211,18 @@ mod tests {
 
     #[test]
     fn finalize_tool_calls_backfills_missing_starts_from_assistant_message() {
-        let assistant_message = AssistantMessage {
-            content: vec![ContentBlock::ToolCall {
+        let assistant_message = AssistantMessage::new(
+            vec![ContentBlock::ToolCall {
                 id: "call_1".to_string(),
                 name: "write_file".to_string(),
                 arguments: serde_json::json!({"path": "notes.txt"}),
                 partial_json: None,
             }],
-            provider: "test".to_string(),
-            model_id: "test-model".to_string(),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::ToolUse,
-            error_message: None,
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        };
+            "test".to_string(),
+            "test-model".to_string(),
+        )
+        .with_stop_reason(StopReason::ToolUse)
+        .with_timestamp(0);
 
         let tool_calls = finalize_tool_calls(Vec::new(), &assistant_message);
 
@@ -242,23 +237,18 @@ mod tests {
 
     #[test]
     fn finalize_tool_calls_prefers_execution_start_arguments_when_present() {
-        let assistant_message = AssistantMessage {
-            content: vec![ContentBlock::ToolCall {
+        let assistant_message = AssistantMessage::new(
+            vec![ContentBlock::ToolCall {
                 id: "call_1".to_string(),
                 name: "write_file".to_string(),
                 arguments: serde_json::json!({"path": "original.txt"}),
                 partial_json: None,
             }],
-            provider: "test".to_string(),
-            model_id: "test-model".to_string(),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::ToolUse,
-            error_message: None,
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        };
+            "test".to_string(),
+            "test-model".to_string(),
+        )
+        .with_stop_reason(StopReason::ToolUse)
+        .with_timestamp(0);
         let observed_tool_calls = vec![RecordedToolCall {
             id: "call_1".to_string(),
             name: "write_file".to_string(),

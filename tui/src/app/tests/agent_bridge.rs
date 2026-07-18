@@ -3,8 +3,8 @@ use std::sync::Arc;
 use swink_agent::testing::ScriptedStreamFn;
 use swink_agent::testing::text_events;
 use swink_agent::{
-    AgentEvent, AgentToolResult, AssistantMessage, AssistantMessageEvent, ContentBlock, Cost,
-    LlmMessage, ModelSpec, StopReason, StreamFn, ToolResultMessage, TurnSnapshot, Usage,
+    AgentEvent, AgentToolResult, AssistantMessage, AssistantMessageEvent, ContentBlock, LlmMessage,
+    ModelSpec, StopReason, StreamFn, ToolResultMessage, TurnSnapshot, Usage,
 };
 
 use crate::config::TuiConfig;
@@ -24,40 +24,45 @@ async fn multi_turn_send_and_receive() {
     app.set_agent(agent);
 
     app.send_to_agent("hello".to_string());
-    assert_eq!(app.status, AgentStatus::Running);
+    assert_eq!(app.agent_io.status, AgentStatus::Running);
 
     drain_agent_events_until_idle(&mut app).await;
 
     assert_eq!(
-        app.status,
+        app.agent_io.status,
         AgentStatus::Idle,
         "app should be idle after first turn"
     );
     assert!(
-        app.messages
+        app.view
+            .messages
             .iter()
             .any(|m| m.role == MessageRole::Assistant && m.content == "first response"),
         "first response should appear in display messages"
     );
 
     app.send_to_agent("follow up".to_string());
-    assert_eq!(app.status, AgentStatus::Running);
+    assert_eq!(app.agent_io.status, AgentStatus::Running);
 
     drain_agent_events_until_idle(&mut app).await;
 
     assert_eq!(
-        app.status,
+        app.agent_io.status,
         AgentStatus::Idle,
         "app should be idle after second turn"
     );
     assert!(
-        app.messages
+        app.view
+            .messages
             .iter()
             .any(|m| m.role == MessageRole::Assistant && m.content == "second response"),
         "second response should appear in display messages"
     );
     assert!(
-        !app.messages.iter().any(|m| m.role == MessageRole::Error),
+        !app.view
+            .messages
+            .iter()
+            .any(|m| m.role == MessageRole::Error),
         "no error messages should appear during multi-turn"
     );
 }
@@ -70,17 +75,17 @@ async fn agent_state_transitions_through_events() {
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
 
-    assert_eq!(app.status, AgentStatus::Idle);
+    assert_eq!(app.agent_io.status, AgentStatus::Idle);
 
     app.handle_agent_event(AgentEvent::AgentStart);
-    assert_eq!(app.status, AgentStatus::Running);
+    assert_eq!(app.agent_io.status, AgentStatus::Running);
 
     app.handle_agent_event(AgentEvent::AgentEnd {
         messages: Arc::new(Vec::new()),
     });
-    assert_eq!(app.status, AgentStatus::Idle);
+    assert_eq!(app.agent_io.status, AgentStatus::Idle);
 
-    let agent_ref = app.agent.as_ref().unwrap();
+    let agent_ref = app.agent_io.agent.as_ref().unwrap();
     assert!(
         !agent_ref.state().is_running,
         "agent internal is_running should be false after AgentEnd"
@@ -104,7 +109,7 @@ async fn three_turn_conversation() {
         drain_agent_events_until_idle(&mut app).await;
 
         assert_eq!(
-            app.status,
+            app.agent_io.status,
             AgentStatus::Idle,
             "should be idle after turn {}",
             i + 1
@@ -112,6 +117,7 @@ async fn three_turn_conversation() {
     }
 
     let assistant_msgs: Vec<&str> = app
+        .view
         .messages
         .iter()
         .filter(|m| m.role == MessageRole::Assistant)
@@ -122,7 +128,10 @@ async fn three_turn_conversation() {
         vec!["response one", "response two", "response three"]
     );
     assert!(
-        !app.messages.iter().any(|m| m.role == MessageRole::Error),
+        !app.view
+            .messages
+            .iter()
+            .any(|m| m.role == MessageRole::Error),
         "no errors across three turns"
     );
 }
@@ -135,31 +144,21 @@ async fn message_end_updates_context_tokens_used() {
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
 
-    assert_eq!(app.context_budget, 100_000);
-    assert_eq!(app.context_tokens_used, 0);
+    assert_eq!(app.usage.context_budget, 100_000);
+    assert_eq!(app.usage.context_tokens_used, 0);
 
-    let message = AssistantMessage {
-        content: vec![],
-        provider: String::new(),
-        model_id: "mock-model".to_string(),
-        usage: Usage {
-            input: 50_000,
-            output: 200,
-            cache_read: 0,
-            cache_write: 0,
-            total: 50_200,
-            ..Default::default()
-        },
-        cost: Cost::default(),
-        stop_reason: StopReason::Stop,
-        error_message: None,
-        error_kind: None,
-        timestamp: 0,
-        cache_hint: None,
-    };
+    let message = AssistantMessage::new(vec![], String::new(), "mock-model")
+        .with_usage(
+            Usage::default()
+                .with_input(50_000)
+                .with_output(200)
+                .with_total(50_200),
+        )
+        .with_stop_reason(StopReason::Stop)
+        .with_timestamp(0);
 
     app.handle_agent_event(AgentEvent::MessageEnd { message });
-    assert_eq!(app.context_tokens_used, 50_000);
+    assert_eq!(app.usage.context_tokens_used, 50_000);
 }
 
 #[tokio::test]
@@ -169,13 +168,13 @@ async fn reset_clears_context_tokens() {
 
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
-    app.context_tokens_used = 75_000;
+    app.usage.context_tokens_used = 75_000;
 
-    if let Some(agent) = &mut app.agent {
+    if let Some(agent) = &mut app.agent_io.agent {
         agent.reset();
     }
-    app.context_tokens_used = 0;
-    assert_eq!(app.context_tokens_used, 0);
+    app.usage.context_tokens_used = 0;
+    assert_eq!(app.usage.context_tokens_used, 0);
 }
 
 #[tokio::test]
@@ -202,12 +201,13 @@ async fn error_response_allows_retry() {
     drain_agent_events_until_idle(&mut app).await;
 
     assert_eq!(
-        app.status,
+        app.agent_io.status,
         AgentStatus::Idle,
         "should return to idle even after an error response"
     );
     assert!(
-        app.messages
+        app.view
+            .messages
             .iter()
             .any(|m| m.content.contains("something broke")),
         "error response should be visible in the conversation"
@@ -216,9 +216,10 @@ async fn error_response_allows_retry() {
     app.send_to_agent("try again".to_string());
     drain_agent_events_until_idle(&mut app).await;
 
-    assert_eq!(app.status, AgentStatus::Idle);
+    assert_eq!(app.agent_io.status, AgentStatus::Idle);
     assert!(
-        app.messages
+        app.view
+            .messages
             .iter()
             .any(|m| m.role == MessageRole::Assistant && m.content == "recovered"),
         "recovery response should appear"
@@ -245,35 +246,37 @@ async fn cycle_model_applies_and_restores_provider_binding_on_send() {
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
 
-    assert_eq!(app.model_name, primary_model.model_id);
+    assert_eq!(app.mode.model_name, primary_model.model_id);
 
     app.cycle_model();
-    assert_eq!(app.model_name, extra_model.model_id);
-    assert_eq!(app.pending_model, Some(extra_model.clone()));
+    assert_eq!(app.mode.model_name, extra_model.model_id);
+    assert_eq!(app.mode.pending_model, Some(extra_model.clone()));
 
     app.send_to_agent("hello extra".to_string());
     drain_agent_events_until_idle(&mut app).await;
 
     assert!(
-        app.messages
+        app.view
+            .messages
             .iter()
             .any(|m| m.role == MessageRole::Assistant && m.content == "from extra")
     );
-    assert_eq!(app.model_name, extra_model.model_id);
+    assert_eq!(app.mode.model_name, extra_model.model_id);
 
     app.cycle_model();
-    assert_eq!(app.model_name, primary_model.model_id);
-    assert_eq!(app.pending_model, Some(primary_model.clone()));
+    assert_eq!(app.mode.model_name, primary_model.model_id);
+    assert_eq!(app.mode.pending_model, Some(primary_model.clone()));
 
     app.send_to_agent("hello primary".to_string());
     drain_agent_events_until_idle(&mut app).await;
 
     assert!(
-        app.messages
+        app.view
+            .messages
             .iter()
             .any(|m| m.role == MessageRole::Assistant && m.content == "from primary after restore")
     );
-    assert_eq!(app.model_name, primary_model.model_id);
+    assert_eq!(app.mode.model_name, primary_model.model_id);
 }
 
 #[tokio::test]
@@ -281,9 +284,11 @@ async fn turn_end_renders_tool_results_with_diff_data_and_trims_old_turns() {
     let mut app = App::new(TuiConfig::default());
 
     for turn in 1..=21 {
-        app.messages
+        app.view
+            .messages
             .push(make_user_message(&format!("user {turn}")));
-        app.messages
+        app.view
+            .messages
             .push(make_assistant_message(&format!("assistant {turn}")));
     }
 
@@ -291,60 +296,50 @@ async fn turn_end_renders_tool_results_with_diff_data_and_trims_old_turns() {
     let tool_content = format!("{long_first_line}\nsecond line");
 
     app.handle_agent_event(AgentEvent::TurnEnd {
-        assistant_message: AssistantMessage {
-            content: vec![ContentBlock::Text {
+        assistant_message: AssistantMessage::new(
+            vec![ContentBlock::Text {
                 text: "done".to_string(),
             }],
-            provider: "test".to_string(),
-            model_id: "mock-model".to_string(),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::Stop,
-            error_message: None,
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        },
-        tool_results: vec![ToolResultMessage {
-            tool_call_id: "call_1".to_string(),
-            content: vec![ContentBlock::Text {
-                text: tool_content.clone(),
-            }],
-            is_error: false,
-            timestamp: 0,
-            details: serde_json::json!({
+            "test",
+            "mock-model",
+        )
+        .with_stop_reason(StopReason::Stop)
+        .with_timestamp(0),
+        tool_results: vec![
+            ToolResultMessage::new(
+                "call_1",
+                vec![ContentBlock::Text {
+                    text: tool_content.clone(),
+                }],
+            )
+            .with_timestamp(0)
+            .with_details(serde_json::json!({
                 "path": "src/lib.rs",
                 "is_new_file": false,
                 "old_content": "before\nvalue",
                 "new_content": "after\nvalue",
-            }),
-            cache_hint: None,
-        }],
+            })),
+        ],
         reason: swink_agent::TurnEndReason::ToolsExecuted,
-        snapshot: TurnSnapshot {
-            turn_index: 20,
-            messages: Arc::new(vec![LlmMessage::Assistant(AssistantMessage {
-                content: vec![ContentBlock::Text {
-                    text: "done".to_string(),
-                }],
-                provider: "test".to_string(),
-                model_id: "mock-model".to_string(),
-                usage: Usage::default(),
-                cost: Cost::default(),
-                stop_reason: StopReason::Stop,
-                error_message: None,
-                error_kind: None,
-                timestamp: 0,
-                cache_hint: None,
-            })]),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::Stop,
-            state_delta: None,
-        },
+        snapshot: TurnSnapshot::new(
+            20,
+            Arc::new(vec![Arc::new(LlmMessage::Assistant(
+                AssistantMessage::new(
+                    vec![ContentBlock::Text {
+                        text: "done".to_string(),
+                    }],
+                    "test",
+                    "mock-model",
+                )
+                .with_stop_reason(StopReason::Stop)
+                .with_timestamp(0),
+            ))]),
+            StopReason::Stop,
+        ),
     });
 
     let visible_users: Vec<_> = app
+        .view
         .messages
         .iter()
         .filter(|message| message.role == MessageRole::User)
@@ -355,6 +350,7 @@ async fn turn_end_renders_tool_results_with_diff_data_and_trims_old_turns() {
     assert_eq!(visible_users.last(), Some(&"user 21"));
 
     let tool_result = app
+        .view
         .messages
         .iter()
         .find(|message| message.role == MessageRole::ToolResult)
@@ -398,9 +394,9 @@ fn tool_execution_update_surfaces_live_tool_output() {
         partial: AgentToolResult::text("Finished test profile"),
     });
 
-    assert_eq!(app.tool_panel.active.len(), 1);
+    assert_eq!(app.view.tool_panel.active.len(), 1);
     assert_eq!(
-        app.tool_panel.active[0].streamed_output,
+        app.view.tool_panel.active[0].streamed_output,
         "Compiling swink-agent-tui\nFinished test profile"
     );
 }

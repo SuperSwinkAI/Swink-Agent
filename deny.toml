@@ -25,6 +25,18 @@ allow = [
 
 [bans]
 multiple-versions = "warn"
+# Known duplicate-major chains behind the "warn" above. All four are pulled
+# in by upstream pins we cannot override; each is re-checked when the parent
+# crate releases (Dependabot alerts on the first two were dismissed as
+# tolerable_risk):
+#   rand 0.8.x  — via ratatui-termwiz. Workspace is on rand 0.10.
+#   lru  0.12.x — via tantivy (memory's optional `search` feature).
+#   rand 0.9.x  — via opentelemetry_sdk 0.32 and proptest 1.11 (dev-dep).
+#                 Both are the latest releases as of 2026-07 and both pin
+#                 rand ^0.9; closes only when they track rand 0.10.
+#   lru  0.18.x — via ratatui-core 0.1.2 (latest as of 2026-07). Coexists
+#                 with tantivy's lru 0.12 pin above; closes only when tantivy
+#                 catches up to lru 0.18.
 wildcards = "deny"
 # Internal workspace dev-deps use `path = ".."` without a `version` field
 # because adding `version` forces cargo publish dry-run to resolve them via

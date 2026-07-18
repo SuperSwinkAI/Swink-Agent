@@ -131,6 +131,11 @@ impl ProxyStreamFn {
     /// Returns a stream of raw byte chunks from the provider's SSE response.
     /// Useful for gateway deployments where the consumer handles its own
     /// event parsing.
+    ///
+    /// **Stability note:** This method is a shared implementation detail for
+    /// built-in adapters. External `StreamFn` implementors should depend
+    /// only on `swink_agent` (core) types. Breaking changes to this method's
+    /// signature may occur without a major version bump.
     pub async fn stream_raw(
         &self,
         model: &ModelSpec,
@@ -221,12 +226,27 @@ async fn send_request(
 ) -> Result<reqwest::Response, AssistantMessageEvent> {
     let url = format!("{}/v1/stream", proxy.base_url);
 
+    // The proxy wire protocol has no channel for `ServingOptions::extra`
+    // (its options schema is fixed: temperature / max_tokens / session_id),
+    // so honoring the pass-through contract is structurally impossible here.
+    // Reject loudly instead of silently: warn once per stream call, naming
+    // the dropped keys.
+    if !options.serving.extra.is_empty() {
+        let dropped_keys: Vec<&str> = options.serving.extra.keys().map(String::as_str).collect();
+        tracing::warn!(
+            ?dropped_keys,
+            "proxy protocol does not support ServingOptions::extra; dropping keys"
+        );
+    }
+
     let llm_messages: Vec<&LlmMessage> = context
         .messages
         .iter()
         .filter_map(|msg| match msg {
             swink_agent::AgentMessage::Llm(llm) => Some(llm),
-            swink_agent::AgentMessage::Custom(_) => None,
+            // Custom messages, and any future AgentMessage variant, have no
+            // representation in the proxy wire protocol — drop them.
+            _ => None,
         })
         .collect();
 
@@ -345,8 +365,9 @@ fn prepare_stream_event(
         AssistantMessageEvent::Done { .. } | AssistantMessageEvent::Error { .. }
     ) && !started
     {
-        let [start, terminal] = crate::base::pre_stream_error(event);
-        return (vec![start, terminal], true, true);
+        let mut started = started;
+        let events = crate::base::prefix_start_if_unstarted(event, &mut started);
+        return (events, started, true);
     }
 
     let started = started || matches!(event, AssistantMessageEvent::Start);
@@ -939,11 +960,7 @@ mod tests {
     async fn proxy_stream_raw_returns_error_for_unreachable_server() {
         let proxy = ProxyStreamFn::new("http://127.0.0.1:1", "token");
         let model = ModelSpec::new("test-provider", "test-model");
-        let context = AgentContext {
-            system_prompt: "test".to_string(),
-            messages: vec![],
-            tools: vec![],
-        };
+        let context = AgentContext::new("test".to_string(), vec![], vec![]);
         let options = StreamOptions::default();
         let result = proxy.stream_raw(&model, &context, &options).await;
         assert!(result.is_err());
@@ -957,11 +974,7 @@ mod tests {
 
         let proxy = ProxyStreamFn::new("http://127.0.0.1:1", "token");
         let model = ModelSpec::new("test-provider", "test-model");
-        let context = AgentContext {
-            system_prompt: "test".to_string(),
-            messages: vec![],
-            tools: vec![],
-        };
+        let context = AgentContext::new("test".to_string(), vec![], vec![]);
         let options = StreamOptions::default();
         let token = CancellationToken::new();
         token.cancel();

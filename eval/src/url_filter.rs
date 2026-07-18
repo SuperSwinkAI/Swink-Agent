@@ -15,8 +15,17 @@ pub trait UrlFilter: Send + Sync {
 /// This filter blocks loopback, RFC1918/private, link-local, unspecified, and
 /// known cloud metadata endpoints. Public hostnames remain allowed here; later
 /// attachment materialization layers can additionally require HTTPS.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DefaultUrlFilter;
+
+impl DefaultUrlFilter {
+    /// Create a new `DefaultUrlFilter`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 impl UrlFilter for DefaultUrlFilter {
     fn allows(&self, url: &Url) -> bool {

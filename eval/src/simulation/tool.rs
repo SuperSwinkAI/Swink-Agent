@@ -12,6 +12,7 @@ use crate::judge::{JudgeClient, JudgeError};
 pub const DEFAULT_HISTORY_CAP: usize = 32;
 
 /// Schema record for the simulator's tool catalogue.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolSchema {
     pub name: String,
@@ -30,12 +31,31 @@ impl ToolSchema {
 }
 
 /// One recorded tool invocation within a bucket.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct ToolCallRecord {
     pub tool: String,
     pub args: serde_json::Value,
     pub result: serde_json::Value,
     pub timestamp: SystemTime,
+}
+
+impl ToolCallRecord {
+    /// Construct a recorded tool invocation.
+    #[must_use]
+    pub fn new(
+        tool: impl Into<String>,
+        args: serde_json::Value,
+        result: serde_json::Value,
+        timestamp: SystemTime,
+    ) -> Self {
+        Self {
+            tool: tool.into(),
+            args,
+            result,
+            timestamp,
+        }
+    }
 }
 
 /// Mutable state shared across tool calls with the same `state_key`.
@@ -257,6 +277,7 @@ fn validate_against_schema(
 }
 
 /// Errors surfaced by [`ToolSimulator::invoke`].
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum ToolSimulationError {
     #[error("tool `{0}` not registered with simulator")]

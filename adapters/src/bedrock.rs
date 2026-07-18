@@ -47,6 +47,11 @@ struct BedrockRequest {
     inference_config: Option<BedrockInferenceConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_config: Option<BedrockToolConfig>,
+    /// Model-native parameters the Converse API passes to the model verbatim
+    /// (`swink_agent::ServingOptions::extra`, e.g. `top_k` for Anthropic
+    /// models). `None` when `extra` is empty so default bodies are unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    additional_model_request_fields: Option<serde_json::Map<String, Value>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -257,16 +262,6 @@ impl StreamFinalize for BedrockStreamState {
     }
 }
 
-fn cancelled_event(message: &'static str) -> AssistantMessageEvent {
-    AssistantMessageEvent::Error {
-        stop_reason: StopReason::Aborted,
-        error_message: message.to_string(),
-        usage: None,
-        error_kind: None,
-        retry_after: None,
-    }
-}
-
 fn unexpected_eof_events(state: &mut BedrockStreamState) -> Vec<AssistantMessageEvent> {
     let mut events = finalize::finalize_blocks(state);
     events.push(AssistantMessageEvent::error_network(
@@ -283,12 +278,11 @@ fn prefix_pre_start_terminal_error(
         return events;
     }
 
-    *started = true;
     let event = events
         .into_iter()
         .next()
         .expect("matched single terminal error");
-    Vec::from(crate::base::pre_stream_error(event))
+    crate::base::prefix_start_if_unstarted(event, started)
 }
 
 pub struct BedrockStreamFn {
@@ -458,7 +452,7 @@ impl BedrockStreamFn {
                             return Some((
                                 vec![
                                     AssistantMessageEvent::Start,
-                                    cancelled_event("Bedrock request cancelled"),
+                                    crate::base::cancelled_error("Bedrock request cancelled"),
                                 ],
                                 StreamUnfoldState::Done,
                             ));
@@ -558,7 +552,9 @@ impl BedrockStreamFn {
                                 biased;
                                 () = cancellation_token.cancelled() => {
                                     let mut events = finalize::finalize_blocks(state.as_mut());
-                                    events.push(cancelled_event("Bedrock stream cancelled"));
+                                    events.push(crate::base::cancelled_error(
+                                        "Bedrock stream cancelled",
+                                    ));
                                     let events =
                                         prefix_pre_start_terminal_error(events, &mut state.started);
                                     return Some((events, StreamUnfoldState::Done));
@@ -740,16 +736,14 @@ fn parse_metadata_frame(
 ) -> Result<Vec<AssistantMessageEvent>, String> {
     let event: MetadataEvent = serde_json::from_slice(payload)
         .map_err(|e| format!("Bedrock metadata parse error: {e}"))?;
-    let usage = Usage {
-        input: event.usage.input_tokens,
-        output: event.usage.output_tokens,
-        total: if event.usage.total_tokens == 0 {
+    let usage = Usage::default()
+        .with_input(event.usage.input_tokens)
+        .with_output(event.usage.output_tokens)
+        .with_total(if event.usage.total_tokens == 0 {
             event.usage.input_tokens + event.usage.output_tokens
         } else {
             event.usage.total_tokens
-        },
-        ..Usage::default()
-    };
+        });
     let stop_reason = map_stop_reason(state.stop_reason.as_deref());
     let mut events = finalize::finalize_blocks(state);
     match stop_reason {
@@ -898,11 +892,25 @@ fn build_request(context: &AgentContext, options: &StreamOptions) -> BedrockRequ
         });
     }
 
+    // `ServingOptions::extra` maps onto `additionalModelRequestFields` — the
+    // Converse API's own verbatim pass-through for model-native parameters
+    // beyond the base `inferenceConfig` set. The base parameters that already
+    // have typed fields (`temperature`, `maxTokens`) are filtered so typed
+    // fields win; Converse rejects base parameters in this namespace anyway.
+    let mut additional = serde_json::Map::new();
+    crate::base::merge_extra(
+        &mut additional,
+        &options.serving.extra,
+        &["temperature", "maxTokens"],
+    );
+    let additional_model_request_fields = (!additional.is_empty()).then_some(additional);
+
     BedrockRequest {
         messages,
         system,
         inference_config,
         tool_config,
+        additional_model_request_fields,
     }
 }
 
@@ -991,6 +999,10 @@ fn convert_messages(messages: &[AgentMessage]) -> Vec<BedrockMessage> {
                     }],
                 });
             }
+            // Unknown future LlmMessage variant: nothing sensible to send to
+            // Bedrock, so drop it — same as messages skipped elsewhere in
+            // this loop (e.g. non-LLM AgentMessage variants).
+            &_ => {}
         }
     }
     result
@@ -1313,19 +1325,16 @@ mod tests {
 
     #[test]
     fn build_request_uses_system_field() {
-        let context = AgentContext {
-            system_prompt: "You are a helpful assistant.".to_string(),
-            messages: vec![AgentMessage::Llm(LlmMessage::User(
-                swink_agent::UserMessage {
-                    content: vec![ContentBlock::Text {
-                        text: "Hello".to_string(),
-                    }],
-                    timestamp: 0,
-                    cache_hint: None,
-                },
+        let context = AgentContext::new(
+            "You are a helpful assistant.".to_string(),
+            vec![AgentMessage::Llm(LlmMessage::User(
+                swink_agent::UserMessage::new(vec![ContentBlock::Text {
+                    text: "Hello".to_string(),
+                }])
+                .with_timestamp(0),
             ))],
-            tools: vec![],
-        };
+            vec![],
+        );
         let options = StreamOptions::default();
         let request = build_request(&context, &options);
         assert!(request.system.is_some());
@@ -2168,23 +2177,18 @@ mod tests {
     fn convert_messages_sanitized_tool_use_becomes_empty_object_input() {
         use swink_agent::AssistantMessage as HarnessAssistantMessage;
 
-        let mut assistant = HarnessAssistantMessage {
-            content: vec![ContentBlock::ToolCall {
+        let mut assistant = HarnessAssistantMessage::new(
+            vec![ContentBlock::ToolCall {
                 id: "tooluse_abc".into(),
                 name: "read_file".into(),
                 arguments: serde_json::Value::Null,
                 partial_json: Some(r#"{"path": "/tm"#.into()),
             }],
-            provider: "bedrock".into(),
-            model_id: "anthropic.claude-3-sonnet".into(),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::Length,
-            error_message: None,
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        };
+            "bedrock",
+            "anthropic.claude-3-sonnet",
+        )
+        .with_stop_reason(StopReason::Length)
+        .with_timestamp(0);
 
         swink_agent::sanitize_incomplete_tool_calls(&mut assistant);
 

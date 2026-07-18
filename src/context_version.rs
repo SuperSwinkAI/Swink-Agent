@@ -22,6 +22,7 @@ use crate::types::{AgentMessage, LlmMessage};
 ///
 /// Only `LlmMessage` variants are stored; `CustomMessage` values are filtered
 /// out since they are not cloneable.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct ContextVersion {
     /// Monotonically increasing version number (starts at 1).
@@ -36,7 +37,29 @@ pub struct ContextVersion {
     pub summary: Option<String>,
 }
 
+impl ContextVersion {
+    /// Create a new context version snapshot with no summary.
+    #[must_use]
+    pub const fn new(version: u64, turn: u64, timestamp: u64, messages: Vec<LlmMessage>) -> Self {
+        Self {
+            version,
+            turn,
+            timestamp,
+            messages,
+            summary: None,
+        }
+    }
+
+    /// Attach a pre-computed summary of the dropped messages.
+    #[must_use]
+    pub fn with_summary(mut self, summary: impl Into<String>) -> Self {
+        self.summary = Some(summary.into());
+        self
+    }
+}
+
 /// Metadata for a stored context version (returned by `list_versions`).
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct ContextVersionMeta {
     /// Version number.
@@ -49,6 +72,26 @@ pub struct ContextVersionMeta {
     pub message_count: usize,
     /// Whether a summary is available.
     pub has_summary: bool,
+}
+
+impl ContextVersionMeta {
+    /// Create a new context version metadata record.
+    #[must_use]
+    pub const fn new(
+        version: u64,
+        turn: u64,
+        timestamp: u64,
+        message_count: usize,
+        has_summary: bool,
+    ) -> Self {
+        Self {
+            version,
+            turn,
+            timestamp,
+            message_count,
+            has_summary,
+        }
+    }
 }
 
 // ─── ContextVersionStore ─────────────────────────────────────────────────────

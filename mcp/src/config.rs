@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use swink_agent::CredentialType;
 
 /// Resolver-backed bearer auth for SSE MCP transports.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SseBearerAuth {
     /// Credential store key resolved before establishing the connection.
@@ -16,7 +17,19 @@ pub struct SseBearerAuth {
     pub credential_type: CredentialType,
 }
 
+impl SseBearerAuth {
+    /// Create bearer auth for a resolver-backed credential.
+    #[must_use]
+    pub fn new(credential_key: impl Into<String>, credential_type: CredentialType) -> Self {
+        Self {
+            credential_key: credential_key.into(),
+            credential_type,
+        }
+    }
+}
+
 /// Transport type for MCP server communication.
+#[non_exhaustive]
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum McpTransport {
@@ -27,8 +40,8 @@ pub enum McpTransport {
         #[serde(default)]
         env: HashMap<String, String>,
     },
-    /// HTTP Server-Sent Events.
-    Sse {
+    /// MCP Streamable HTTP transport.
+    StreamableHttp {
         url: String,
         bearer_token: Option<String>,
         #[serde(default)]
@@ -47,13 +60,13 @@ impl fmt::Debug for McpTransport {
                 .field("args", args)
                 .field("env", &RedactedStringMap(env))
                 .finish(),
-            Self::Sse {
+            Self::StreamableHttp {
                 url,
                 bearer_token,
                 bearer_auth,
                 headers,
             } => f
-                .debug_struct("McpTransport::Sse")
+                .debug_struct("McpTransport::StreamableHttp")
                 .field("url", url)
                 .field("bearer_token", &bearer_token.as_ref().map(|_| "[REDACTED]"))
                 .field("bearer_auth", bearer_auth)
@@ -89,6 +102,7 @@ fn is_sensitive_debug_key(key: &str) -> bool {
 }
 
 /// Controls which tools from a server are exposed.
+#[non_exhaustive]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ToolFilter {
     /// If set, only tools with names in this list are included.
@@ -98,6 +112,26 @@ pub struct ToolFilter {
 }
 
 impl ToolFilter {
+    /// Create an empty filter that allows all tools.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Restrict to only tools whose names are in `allow`.
+    #[must_use]
+    pub fn with_allow(mut self, allow: Vec<String>) -> Self {
+        self.allow = Some(allow);
+        self
+    }
+
+    /// Exclude tools whose names are in `deny`.
+    #[must_use]
+    pub fn with_deny(mut self, deny: Vec<String>) -> Self {
+        self.deny = Some(deny);
+        self
+    }
+
     /// Apply the filter to a list of tool names.
     ///
     /// If `allow` is set, keep only matching names. Then if `deny` is set,
@@ -118,6 +152,7 @@ impl ToolFilter {
 }
 
 /// Configuration for connecting to a single MCP server.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerConfig {
     /// Unique identifier for the server.
@@ -144,6 +179,59 @@ const fn default_requires_approval() -> bool {
 }
 
 impl McpServerConfig {
+    /// Create a server config with the given name and transport.
+    ///
+    /// Optional fields default to: no tool prefix, no tool filter, approval
+    /// required, and no connect/discovery timeouts. Use the `with_*` methods
+    /// to override them.
+    #[must_use]
+    pub fn new(name: impl Into<String>, transport: McpTransport) -> Self {
+        Self {
+            name: name.into(),
+            transport,
+            tool_prefix: None,
+            tool_filter: None,
+            requires_approval: default_requires_approval(),
+            connect_timeout_ms: None,
+            discovery_timeout_ms: None,
+        }
+    }
+
+    /// Prefix all tool names discovered from this server with `{prefix}_`.
+    #[must_use]
+    pub fn with_tool_prefix(mut self, tool_prefix: impl Into<String>) -> Self {
+        self.tool_prefix = Some(tool_prefix.into());
+        self
+    }
+
+    /// Restrict which discovered tools are exposed.
+    #[must_use]
+    pub fn with_tool_filter(mut self, tool_filter: ToolFilter) -> Self {
+        self.tool_filter = Some(tool_filter);
+        self
+    }
+
+    /// Whether tools from this server require user approval before execution.
+    #[must_use]
+    pub const fn with_requires_approval(mut self, requires_approval: bool) -> Self {
+        self.requires_approval = requires_approval;
+        self
+    }
+
+    /// Timeout in milliseconds for the initial transport handshake.
+    #[must_use]
+    pub const fn with_connect_timeout_ms(mut self, connect_timeout_ms: u64) -> Self {
+        self.connect_timeout_ms = Some(connect_timeout_ms);
+        self
+    }
+
+    /// Timeout in milliseconds for the initial tool discovery request.
+    #[must_use]
+    pub const fn with_discovery_timeout_ms(mut self, discovery_timeout_ms: u64) -> Self {
+        self.discovery_timeout_ms = Some(discovery_timeout_ms);
+        self
+    }
+
     pub(crate) fn connect_timeout(&self) -> Option<Duration> {
         self.connect_timeout_ms.map(Duration::from_millis)
     }
@@ -159,7 +247,7 @@ mod tests {
 
     #[test]
     fn sse_transport_debug_redacts_bearer_and_sensitive_headers() {
-        let transport = McpTransport::Sse {
+        let transport = McpTransport::StreamableHttp {
             url: "https://mcp.example/sse".to_string(),
             bearer_token: Some("bearer-secret-token".to_string()),
             bearer_auth: None,

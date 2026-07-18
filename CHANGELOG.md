@@ -7,13 +7,149 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.11.1] - 2026-07-14
+## [0.12.0] - 2026-07-18
 
-### Fixed — `BudgetPolicy.max_cost` was inert (#1100, #1103)
+### Added
+- `rpc`: control-plane methods (protocol 1.1) — `model.list`/`model.set`, `thinking.set`, `approval.get`/`approval.set`, `system_prompt.set`, `agent.reset`, `plan.enter`/`plan.exit` (the server holds the non-serializable saved tool set), `session.snapshot`/`session.restore` — with typed `AgentClient` helpers, `AgentClient::sender()` for out-of-band traffic, and a new `RpcError::BUSY` (-32094) answered to control requests while a turn is in flight (#1161)
+- `tui`: `TuiTransport::control` seam — `ControlRequest`/`ControlResponse` plus `TransportError::Unsupported` (default impl, so existing transports keep compiling); with an external transport installed, the App now routes abort, model cycling (lazy `ListModels`), thinking level, approval mode set/query, system prompt, reset, plan mode, and session save/load through the transport instead of silently no-opping; the in-process path is behavior-unchanged (#1162)
+- `tui-remote`: `RemoteTransport` implements the control plane over JSON-RPC — prompts and control requests share one ordered bridge queue (deferred `model.set` lands before the next prompt), abort rides an out-of-band `cancel` notification, and session snapshot/restore uses the memory-JSONL wire representation; a pre-1.1 server degrades to turn-I/O-only via `Unsupported` (#1163)
+- `patterns`: first integration test suite (17 tests: pipeline sequential/parallel/loop execution, merge strategies, exit conditions, event ordering, failure propagation) (#1137)
+- `eval`: `RawSession::otel_spans` constructor for OTel-backed raw sessions (#1144)
+- `rpc`: `PeerSender` requests now carry a 10-minute default timeout (`DEFAULT_REQUEST_TIMEOUT`, error code `TIMEOUT = -32095`) so a dead peer can no longer hang a caller (#1141)
+- `tui-remote`: new `swink-agent-tui-remote` crate bridges the TUI to a remote agent served by `swink-agentd` — `RemoteTransport` implements `TuiTransport` over `rpc::AgentClient` with live event streaming, and the `swink-tui-remote` binary attaches the stock terminal UI to an agentd Unix socket; turn I/O only, control-plane operations still require the in-process agent (#1157)
+- `rpc`: `AgentClient::prompt_text_with(text, on_event)` streams `AgentEvent`s through a callback as they arrive, instead of returning them in a batch at turn end (#1157)
+- `macros`: crate is now explicitly scoped to external SDK consumers, with a compile-checked `derived_tool` example exercising `#[tool]` and `#[derive(ToolSchema)]` end-to-end against the real `AgentTool` trait — in-tree builtins intentionally hand-roll the trait (#1149)
 
-- **`BudgetPolicy.max_cost` could never fire against any real provider**, including the $10 default bundled into `RecommendedPolicies`. Every built-in remote adapter reports `Usage` but emits `cost: Cost::default()`; only the proxy adapter passed real billed cost through. The loop accumulated that zero verbatim, so `PolicyCtx.accumulated_cost` stayed at `0` and the limit never tripped.
-- The loop now prices assistant messages from the compiled model catalog at a single seam in `run_single_turn`, rather than in each adapter — so third-party `StreamFn` implementations are covered too, and the priced cost reaches accumulation, policies, turn metrics, the context history, and the `TurnEnd` event alike. Adapters that price their own response keep precedence.
-- Note: event consumers reading `cost` from `AgentEvent::MessageEnd` still observe zero in this release; `MessageEnd` is emitted before this seam. That is addressed separately by #1084.
+### Changed
+- `local-llm`: hf-hub 0.5 → 1.0 (`HFClient` + `ProgressHandler`; the removed `api::tokio` API is gone) — drops the workspace's second reqwest stack (single reqwest 0.13 in the lockfile); cached model loads now revalidate via If-None-Match when online and fall back to the local cache when offline (#1159)
+- release pipeline: `swink-agent-rpc` and `swink-agent-tui-remote` added to the crates.io publish order and dry-run gate — first publish of both crates (#1164)
+- **tui**: `App` state is now grouped into cohesive sub-structs — `view`, `editor`, `agent_io`, `mode`, `session`, `usage` — replacing ~50 flat fields; embedders must update field paths (e.g. `app.total_cost` → `app.usage.total_cost`), names and visibilities are unchanged (#1151)
+- **tui**: `App` consumes agent events through the `TuiTransport` seam — `App::with_transport` routes turn I/O through a host-supplied transport, `App::pump_transport_events` drives an `App` without a terminal; the default in-process path is behavior-unchanged (#1151)
+- **mcp**: public API no longer exposes `rmcp` types — `McpConnection::discovered_tools` is now `Vec<McpToolInfo>` (new owned type), `call_tool` returns `AgentToolResult`, `McpTool::new` takes `&McpToolInfo`, the `convert` module is private, and `from_service` takes an opaque `McpServiceHandle` (`McpServiceHandle::from_rmcp` is the single documented rmcp seam); rmcp major bumps no longer force a semver-major on `swink-agent-mcp` (#1150)
+- **agent loop performance**: `TurnSnapshot.messages` is now `Arc<Vec<Arc<LlmMessage>>>`; per-turn history deep-clones replaced by shared snapshots, and per-turn LLM-message conversion is amortized through a lazily-extended mirror (`ContextMessages`) (#1140)
+- `build_loop_config` destructures `AgentOptions` exhaustively — adding an option field without wiring it into the loop config is now a compile error (#1140)
+- **memory performance**: long-lived `IndexWriter` with incremental per-append indexing (full reindex only on first search or corruption), checkpoint retention bounded at `DEFAULT_MAX_CHECKPOINTS = 20` with `unbounded()` opt-out, atomic-write lock map now evicts dead entries (#1138)
+- **tui performance**: per-message render cache keyed by fingerprint + width + theme; selection capture skipped while selection mode is inactive (#1139)
+- `rpc`: `respond_ok`/`respond_err` are now async with real backpressure; `RequestId` is zero-clone on the hot path; agentd session factory returns `Result<AgentOptions, String>` and surfaces construction failures as JSON-RPC errors; SIGTERM handler installs before session spawn (#1141)
+- `mcp`: `McpError` reworked into a five-variant taxonomy with typed sources and `ProtocolError { context }`; blanket `From<io::Error>` removed; `McpTransport::Sse` renamed to `StreamableHttp` (serde tag `"streamable_http"`); bearer-token/header conflicts now warn (#1141)
+- `adapters`: ollama adapter migrated to the shared `sse_adapter_stream`; bedrock/proxy share `base::prefix_start_if_unstarted`; `OaiParserOptions.error_finish_reason_is_error` surfaces error finish reasons as stream errors instead of silent truncation (#1141)
+- `policies`, `auth`: constructor coverage (`MemoryNudge`, `FilterRule`, `PiiPattern`, `AuditRecord`), `with_*` naming consistency, keychain `with_service`, oauth2 doc-contract sweep (#1136)
+- `patterns`: crate now inherits `[lints] workspace = true`; remaining exported types swept with `#[non_exhaustive]` + constructors (#1137)
+- `eval`: crate lint table re-synced with the workspace set (it had drifted, silently exempting the crate); ~50 exported types incl. 17 unit marker structs protected with `#[non_exhaustive]` + `const fn new()`; `CanonicalJsonValue` documented frozen-by-design (#1144)
+- workspace: `serde_yaml` (unmaintained) replaced by `serde_yaml_ng` 0.10; `tracing-subscriber`, `url`, `clap` centralized in `[workspace.dependencies]`; `macros` no longer declares the unused `attributes(tool)`; plugin-web dead feature + re-exports removed (#1145)
+- CI: every workflow job now carries a timeout; clippy runs `--all-features --all-targets` (excluding `swink-agent-local-llm`); composite rust-setup action adopted across jobs; deny.toml documents the four tolerated ghost dependency chains (#1145)
+- test layout: integration tests consolidated into per-crate suites — root 61→2, eval 64→1, adapters 20→2 test binaries; former per-file `#![cfg(...)]` gates now live on `mod` lines in `tests/suite/main.rs`; the two `no_default_features.rs` sentinels stay standalone (#1147)
+
+### Fixed
+- `rpc`: the server now mirrors streamed events into agent state via `handle_stream_event`, so remote sessions keep assistant context across turns and `session.snapshot` reads the live transcript instead of a stale one (#1161)
+- `eval`: `JudgeVerdict::new` no longer clamps at construction — clamping and `ScoreClamped` detail recording (FR-021) stay in `dispatch_judge`; the constructor clamp introduced by the sweep hid out-of-range judge scores from that instrumentation (#1146)
+- coverage workflow: tarpaulin config key is `out`, not `generate` — first green coverage run on integration (#1134)
+- `eval`: lost-wakeup hang — `Notified` future `.enable()`d before the condition re-check, with a 30s timeout backstop (#1144)
+- `adapters`: `prefix_start_if_unstarted` feature-gated to its bedrock/proxy callers; single-feature builds (e.g. `--features anthropic`) no longer fail `-D dead-code` (#1142)
+- API seams from the non_exhaustive sweep closed: missing constructors/re-exports, `ScriptToolDef`/`OtelInitConfig` (feature-gated escapees), latent all-features test lints (#1135)
+
+
+### Changed — public API hardened with #[non_exhaustive] (gap 1)
+
+Architecture-review gap 1: `constructible_struct_adds_field` semver breaks had
+already burned three PRs this cycle (#1097, #1108, #1121). Every externally-
+constructible `pub` struct with all-`pub` fields, and every `pub` enum, across
+the published crates (`swink-agent`, `swink-agent-adapters`, `-artifacts`,
+`-auth`, `-eval`, `-local-llm`, `-macros`, `-mcp`, `-memory`, `-patterns`,
+`-plugin-web`, `-policies`, `-rpc`, `-tui`) now carries `#[non_exhaustive]`
+unless deliberately exempted. This is a breaking change in itself, so it had
+to land inside this window, before the 0.12.0 tag freezes the surface.
+
+- **184 public types protected**: 82 enums + 96 structs marked
+  `#[non_exhaustive]`; 6 types left deliberately exhaustive (3 enums, 3
+  structs) as frozen-by-design data carriers:
+  - `swink-agent-rpc`: `RequestId`, `MessageKind<'a>`, `IncomingMessage`
+    (enums) and `RpcError`, `RawMessage` (structs) — all fixed shapes defined
+    by the JSON-RPC 2.0 spec.
+  - `swink-agent-plugin-web`: `Viewport` (struct) — a width × height pair,
+    frozen by design.
+  Each carries `#[allow(clippy::exhaustive_structs)]` / `exhaustive_enums`
+  plus a one-line comment stating why it is frozen.
+- Every protected struct that users construct directly (not only via
+  `Default`) keeps a documented `new()`/builder seam — `#[non_exhaustive]`
+  blocks external struct-literal and functional-update (`..Default::default()`)
+  syntax, so construction now goes through `new()` plus `with_*()` chains.
+  New or extended constructors/builders were added where none existed,
+  including `UserMessage::new`, `AssistantMessage::new` (+ `impl Default`),
+  `ToolResultMessage::new`, `Usage`/`Cost` per-field `with_*`, `AgentResult::new`,
+  `AgentContext::new`, `TurnSnapshot::new`, `PolicyContext::new`,
+  `ToolDispatchContext::new`, `TurnPolicyContext::new`, `ArtifactData`/
+  `ArtifactVersion`/`ArtifactMeta::new`, `DeviceCodePrompt::new`,
+  `AuthConfig::new`, `ToolApprovalRequest::new`, `AgentToolResult::new`,
+  `ModelRates` per-field `with_*`, `ProviderCatalog`/`PresetCatalog`/
+  `CatalogPreset::new`, and equivalents in `swink-agent-mcp`, `-memory`,
+  `-policies`, `-rpc`, and `-tui` for their own load-bearing types
+  (`McpServerConfig`, `SessionMeta`, `DisplayMessage`, `TurnUsage`,
+  `HunkReview`, `PathCandidate`, `UserInput`, `ToolApprovalRequestDto`, etc).
+- All internal fallout fixed across the workspace: every cross-crate
+  struct-literal, functional-update, and non-exhaustive `match` without a
+  wildcard arm (adapters' provider implementations and live-integration
+  tests, the TUI's own event/persistence/display code, policies' own
+  policy-context construction, memory's JSONL codec, artifacts' three
+  storage backends, rpc's DTO conversions, patterns' pipeline executors, and
+  the core crate's own `tests/` integration suite) was migrated to the new
+  constructor/builder seams or given an explicit, behavior-preserving
+  wildcard arm.
+- New workspace-wide lints in `[workspace.lints.clippy]`: `exhaustive_structs
+  = "warn"` and `exhaustive_enums = "warn"` — restriction lints that flag any
+  future exported struct/enum missing `#[non_exhaustive]` (or an explicit
+  frozen-by-design allow), so this class of semver break can't recur
+  silently.
+
+Bundles the full 0.11.x development line off `integration`. **Supersedes the
+unreleased 0.11.1** — that version was never tagged or published, so its entries
+are folded in here rather than kept as a phantom release.
+
+### Fixed — dropping an un-drained prompt stream no longer empties history
+
+- **`swink-agent`**: `start_loop` moved the entire conversation history into the spawned loop task via `mem::take`, leaving `state.messages` empty until `AgentEnd` wrote it back. A host that dropped the stream returned by `prompt_stream`/`continue_stream` before draining it silently lost the whole conversation — `LoopGuardStream::drop` restored `loop_active` but never the history.
+- The agent now keeps an equivalent snapshot of the full pre-run context in `state.messages` when the loop starts, and completed turns are written back on `TurnEnd` in both drain paths. History is never removed from observable state, so an early drop loses at most the in-flight turn, and `Drop` needs no restore (no host/loop-task race window). Every completion path still replaces `state.messages` wholesale on `AgentEnd`, so nothing duplicates.
+
+### Fixed — `ServingOptions.extra` honored (or loudly rejected) by every provider (#1130)
+
+- **`swink-agent-adapters`**: `ServingOptions::extra` — documented as "passed through verbatim" — was a silent no-op on Anthropic, Google, Bedrock, Mistral, and Proxy. Now: Anthropic and Mistral merge it into the request-body top level, Google into `generationConfig`, and Bedrock into the Converse API's `additionalModelRequestFields`; the Proxy wire protocol has no pass-through channel, so non-empty `extra` emits one `tracing::warn!` per stream call naming the dropped keys instead of vanishing.
+- The "typed fields win on collision" merge rule is now implemented once (`base::merge_extra`) and shared by every adapter, replacing the two divergent copies in the OAI transport (blocklist filter) and Ollama (build-order overwrite). OAI-compatible and Ollama request bytes are unchanged — the pinned byte-identity tests still pass.
+- **`swink-agent`**: the `ServingOptions` rustdoc support matrix now covers every built-in provider, including each provider's `extra` merge target.
+
+### Added — manual context compaction (#1102)
+
+- **`swink-agent`**: `Agent::compact_context()` — an on-demand counterpart to the automatic in-loop compaction, for host `/compact` commands (unblocks SuperSwink-Coding's TUI `/compact`). Runs the configured context transformer(s) against the stored history with `overflow = true` (a host asking to compact wants maximal pruning), persists the pruned history, and returns the resulting `CompactionReport` synchronously.
+- Mirrors the loop pipeline exactly: async transformer first, sync second, one `AgentEvent::ContextCompacted` per transformer that compacts — dispatched through the normal subscriber/forwarder path, so existing host event rendering picks it up unchanged. Returns `Ok(None)` when no transformer is configured or the history is already under budget (no event emitted), and `Err(AgentError::AlreadyRunning)` while a loop is active, since compacting mid-turn would race the loop's view of the history.
+- Spec 006 amended additively (new FR-020 plus a Session 2026-07-15 clarification): manual invocation means `overflow = true` no longer implies a provider overflow error occurred.
+
+### Added — TUI skills discovery (#1092)
+
+- **`swink-agent-tui`**: three new `TuiExtensions` seams for pluggable skill discovery with progressive disclosure — `with_skill_completions` (`SkillCandidate` list as a leading `/name` is typed), `with_skill_details` (SKILL.md body on highlight, cached per popup so arrow-key travel never re-invokes the callback), and `with_skill_resolver` (expansion at submit only, via the new `SkillInvocation`/`parse_skill_invocation`). Plus `App::skill_completion`/`SkillCompletion`, `InputEditor::slash_query`, and a preview block in the completion popup.
+- Submit precedence is secrets → host commands → skills → built-ins: a known skill submits as a prompt (raw `/deploy` stays in the transcript; the model receives the expansion) instead of hitting the Unknown-command fallback. `@path` mentions expand on the raw text first, so a skill body is never mention-scanned.
+- New off-by-default **`skills` cargo feature**: `TuiExtensions::with_skill_dirs` eagerly indexes `<dir>/<name>/SKILL.md` (YAML frontmatter `name`/`description`, directory-name fallback) under explicitly passed directories only — no implicit default paths — and wires all three seams over that index.
+
+### Added — checkpoint hardening: session-scoped IDs, retention, RollingCheckpointPolicy (#1070)
+
+- Default-on crash-safety checkpointing was considered and **rejected** (FR-019 stands: no policy is enabled by default); the opt-in path was hardened instead. `CheckpointPolicy::with_session_id` scopes IDs to `"{session}-turn-{n}"` — without it, the per-run turn index means a second `prompt()` run silently overwrites the first run's checkpoints, and "restore the highest turn" can resurrect stale history. The unscoped format remains the default for backward compatibility.
+- **`swink-agent-memory`**: `FileCheckpointStore::with_max_checkpoints(n)` prunes the oldest checkpoints (by `created_at`) after each save; the default stays unlimited, and pruning never deletes files that don't parse as checkpoints.
+- **`swink-agent-policies`**: new `RollingCheckpointPolicy` (same `checkpoint` feature) overwrites one stable checkpoint — optionally `"{session}-rolling"` — via the store's atomic save path. Recommended for long-session crash-safety: `CheckpointPolicy` writes the full history under a new ID every turn (O(N²) bytes for N turns); rolling keeps disk at O(context) and loses at most one turn on crash, giving up time-travel. Documented in a new "Crash Safety" section of the policies README and on `AgentOptions::checkpoint_store`.
+
+### Fixed — `swink-agentd` honors `LLM_SYSTEM_PROMPT` / `LLM_MODEL` (#931)
+
+- The daemon loads `.env` via dotenvy but its clap args used baked-in `default_value`s, so `LLM_SYSTEM_PROMPT` and `LLM_MODEL` from the environment were silently ignored — set in `.env`, the TUI honored them and `swink-agentd` didn't. Both args are now `Option<String>` resolved as CLI flag > env var > shared default, mirroring the TUI's tested `resolve_system_prompt` chain.
+- The duplicated default literals are promoted to shared core constants `swink_agent::{DEFAULT_SYSTEM_PROMPT, DEFAULT_MODEL}` (additive), and the TUI's proxy-mode model fallback now uses the documented `claude-sonnet-4-6` alias instead of the dated `claude-sonnet-4-20250514` snapshot.
+
+### Added — TUI cost/usage display with pluggable pricing (#1084, #1108)
+
+- **`swink-agent`**: new `pricing` module (`CostCalculator`, `ModelRates`, `PricingTable`), `AgentOptions::with_cost_calculator`/`with_pricing_table`, `AgentLoopConfig::cost_calculator`, and `price_assistant_message_with` — operators can declare per-tier rates that outrank the compiled catalog.
+- **`swink-agent-tui`**: `TuiExtensions` (a consuming builder threaded via `App::with_extensions`/`launch_with_extensions`) for host-supplied code, `CustomCommandOutcome`/`CustomCommandFn` for host slash commands, `App::turn_usage`/`TurnUsage`, `TuiConfig::pricing`/`apply_pricing`, and `handle_agent_event` widened to `pub`. `launch()` delegates to `launch_with_extensions()`, so there is one code path.
+- **Completes #1100's fix for event consumers.** #1103 priced at the turn seam, but the TUI reads cost from `AgentEvent::MessageEnd`, emitted earlier in `finalize_stream_message` — so the loop accumulated real cost while every event consumer still displayed `$0.0000`. Pricing now happens before `MessageEnd` is emitted; the turn-level call remains as an idempotent safety net for paths that bypass streaming (overflow recovery, aborts).
+
+### Added — `@path` file mentions in the TUI (#1093, #1112)
+
+- `@path` completion and lazy injection via the `TuiExtensions` seam #1108 established: `PathCandidate`, `PathCompletionFn`, `MentionResolverFn`, `TuiExtensions::with_path_completions`/`with_mention_resolver`, and `mentions::{PathMention, parse_mentions}`.
+- Two seams rather than one, split by *when* they run: completion supplies candidates as the user types; the resolver injects file content at send time, so a mention costs nothing until the turn is actually dispatched.
+- No new `launch_*` overload and no `TuiConfig` churn. `TuiExtensions` keeps private fields behind consuming `with_*` builders, so hosts opt in explicitly and later extension points stay additive rather than breaking struct-literal construction.
 
 ### Added — OAuth2 device-code grant, RFC 8628 (#1071, #1106)
 
@@ -34,9 +170,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Placed at the approval prompt rather than the post-write diff view: conversation diffs render from tool results, by which point the write has already happened, so rejection there would mean reverting bytes on disk. The post-write diff remains display-only.
 - Fails closed at every branch — undecided hunks count as rejected, and arguments that can't be safely rewritten resolve to `Rejected` rather than silently applying the original content.
 
-### Notes
+### Changed — BREAKING
 
-- All public API changes in this release are additive; `cargo semver-checks` reports no breaking change against 0.11.0.
+- **`AgentLoopConfig` gains a `cost_calculator` field.** It is an externally-constructible struct with public fields, so exhaustive struct-literal construction breaks — add `cost_calculator: None` or use `..Default::default()`. This is the 0.12.0 version driver (`cargo semver-checks`: `constructible_struct_adds_field`), the same class of break that drove 0.11.0.
+- **`AgentEvent::MessageEnd` now carries a non-zero `cost`** for catalog-known models. Code asserting `cost == 0` there will now observe real values. This is the intended fix, but it is a behavior change.
+
+### Changed — TLS backend: ring replaces aws-lc-rs (#1110)
+
+- **Consumers no longer need a C/C++ toolchain to build.** rustls's crypto provider is now the pure-Rust `ring` instead of the default `aws-lc-rs`, whose `aws-lc-sys` build required `cc` + CMake (+ NASM on Windows) in every downstream project. `cargo tree -i aws-lc-sys` is empty for a default-features consumer; `aws-lc-rs`, `aws-lc-sys`, `cmake`, and `quinn` (the subject of RUSTSEC-2026-0185, above) all leave the dependency tree.
+- Workspace `reqwest` drops default features for an explicit list: `charset`, `form`, `http2`, `json`, `rustls-no-provider`, `stream`, `system-proxy` — functionally identical to before minus the aws-lc provider. Root trust is unchanged: `rustls-platform-verifier` (OS-native root store), which reqwest 0.13 uses for all rustls configurations.
+- Every reqwest-consuming crate takes a direct `rustls` dependency with the `ring` feature and installs ring as the process-default `CryptoProvider` immediately before constructing a client — under `rustls-no-provider`, reqwest panics at `Client` construction until a default is installed. The install is idempotent and loses ties deliberately: a provider already installed by the host application (e.g. aws-lc-rs for FIPS) wins. New public API: `swink_agent_adapters::ensure_default_crypto_provider()`, for hosts that build their own `reqwest::Client` against the workspace's feature unification.
+- `jsonschema` also drops default features: its defaults pulled `resolve-http` (a second reqwest + rustls + aws-lc edge) and `resolve-file` for external `$ref` resolution, which nothing in this workspace uses — schemas are compiled inline only. External `$ref`s now fail at validator build instead of silently fetching.
+- Behavior note: ring offers no post-quantum key exchange (rustls's `prefer-post-quantum` requires aws-lc), so TLS handshakes negotiate classical X25519 instead of X25519MLKEM768 where servers supported it.
+
+### Fixed — `BudgetPolicy.max_cost` was inert (#1100, #1103)
+
+- **`BudgetPolicy.max_cost` could never fire against any real provider**, including the $10 default bundled into `RecommendedPolicies`. Every built-in remote adapter reports `Usage` but emits `cost: Cost::default()`; only the proxy adapter passed real billed cost through. The loop accumulated that zero verbatim, so `PolicyCtx.accumulated_cost` stayed at `0` and the limit never tripped.
+- The loop now prices assistant messages from the compiled model catalog at a single seam in `run_single_turn`, rather than in each adapter — so third-party `StreamFn` implementations are covered too, and the priced cost reaches accumulation, policies, turn metrics, the context history, and the `TurnEnd` event alike. Adapters that price their own response keep precedence.
+- Event consumers reading `cost` from `AgentEvent::MessageEnd` were still observing zero after #1103, because `MessageEnd` is emitted before this seam. That is fixed by #1108 in this same release (see above); the two land together, so no published version ever carries the half-fix.
+
+### Fixed — feature-conditional dead code (#919, #1116)
+
+- Gated dead code so `-D warnings` passes under every feature combination — `cargo hack --each-feature` is now clean (127/127). Previously invisible because `release.yml` only ever builds `--all-features`, while `ci.yml` is what runs `--no-default-features` and `--each-feature`.
+- Found along the way: the `openai-compat` gate named an internal umbrella feature implying no adapter, so `--features openai-compat` compiled the whole OpenAI plumbing with zero consumers, and `mod openai` was fully dead under `xai`. Also fixed three tests in `swink-agent-adapters` whose items were `ollama`-gated but whose tests were not — that crate did not compile standalone.
+
+### Fixed — TUI tests reached the real OS keychain (#1111, #1113)
+
+- `swink-agent-tui`'s tests called the **real** OS keychain, raising macOS password prompts and **hanging `cargo test --workspace` indefinitely** on `SecKeychainFindGenericPassword`.
+- `tui/src/credentials.rs` now routes all access through a `KeychainBackend`, and the real `SystemKeychain` is `#[cfg(not(test))]` — a unit test cannot reach a real keyring even by wiring the backend back in, which is how the bug arose. Caller signatures unchanged; production behavior identical.
+
+### Fixed — flaky theme test (#1107, #1118)
+
+- `swink-agent-tui`'s theme tests raced on a process-global `COLOR_MODE` atomic: a concurrent test reset it mid-assertion, so `mono_white_returns_white` observed `Cyan` (the `Custom`-mode assistant color) instead of `White`. Reproduced at **5 failures in 20 runs** before the fix. The global is gone; each test owns its own theme state.
+
+### Internal — CI hardening (#919, #1109)
+
+- `ci.yml` gains a `cargo audit` job, `RUSTFLAGS: -D warnings` at workflow level (parity with `release.yml`, which was the only workflow enforcing it), pinned toolchain action SHAs, `--locked` on every cargo invocation that accepts it, and a Windows `cargo check` smoke gate on PRs.
+- The audit job justified itself on its first run: it caught **RUSTSEC-2026-0185** — `quinn-proto` ≤ 0.11.14, remote memory exhaustion, CVSS 7.5 high — reaching the tree through `reqwest` → `quinn`. Bumped to 0.11.16 per the advisory rather than added to the ignore list.
+- `cargo hack --each-feature --no-dev-deps` deliberately omits `--locked`: `--no-dev-deps` rewrites `Cargo.toml` as it runs and `--locked` then refuses to update `Cargo.lock`. The two flags are mutually exclusive; every other step keeps `--locked`.
 
 ## [0.11.0] - 2026-07-13
 
@@ -402,7 +573,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Major additions: Gemma 4 local inference, `BlockAccumulator` for streaming event assembly, `schemars`-based proc-macro engine, multi-agent patterns and artifact service, MCP integration, plugin system, policy slots, credential management, TUI session management, and web browse plugin. 42 specs implemented across the 0.6 lifecycle.
 
-[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.8...HEAD
+[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.11.0...v0.12.0
 [0.7.8]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.7...v0.7.8
 [0.7.7]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.5...v0.7.6

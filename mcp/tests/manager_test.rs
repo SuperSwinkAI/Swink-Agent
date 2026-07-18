@@ -8,13 +8,13 @@ use std::time::{Duration, Instant};
 
 use axum::Router;
 use rmcp::ServerHandler;
-use rmcp::model::{ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool};
+use rmcp::model::{ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo};
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
 use serde_json::json;
-use swink_agent_mcp::{McpManager, McpServerConfig, McpTransport};
+use swink_agent_mcp::{McpManager, McpServerConfig, McpToolInfo, McpTransport};
 
 /// T019: Connect to two mock servers with prefixes, verify tools are prefixed
 /// correctly (`prefix_toolname`).
@@ -51,19 +51,16 @@ async fn two_servers_with_prefixes_produce_prefixed_tools() {
 async fn partial_failure_still_discovers_tools_from_healthy_servers() {
     let configs = vec![
         // This server will fail — nonexistent command.
-        McpServerConfig {
-            name: "broken-server".into(),
-            transport: McpTransport::Stdio {
+        McpServerConfig::new(
+            "broken-server",
+            McpTransport::Stdio {
                 command: "/tmp/definitely-not-a-real-mcp-server-xyz-12345".into(),
                 args: vec![],
                 env: HashMap::default(),
             },
-            tool_prefix: Some("broken".into()),
-            tool_filter: None,
-            requires_approval: false,
-            connect_timeout_ms: None,
-            discovery_timeout_ms: None,
-        },
+        )
+        .with_tool_prefix("broken")
+        .with_requires_approval(false),
     ];
 
     let mut manager = McpManager::new(configs);
@@ -139,30 +136,25 @@ fn sanitized_tool_name_collision_is_detected() {
 }
 
 fn mock_config(server_name: &str) -> McpServerConfig {
-    McpServerConfig {
-        name: server_name.to_string(),
-        transport: McpTransport::Stdio {
+    McpServerConfig::new(
+        server_name.to_string(),
+        McpTransport::Stdio {
             command: "mock".into(),
             args: vec![],
             env: HashMap::default(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    }
+    )
+    .with_requires_approval(false)
 }
 
-fn mock_tool(name: &str) -> Tool {
-    let schema = json!({
-        "type": "object",
-        "properties": {},
-    });
-    Tool::new(
-        name.to_owned(),
+fn mock_tool(name: &str) -> McpToolInfo {
+    McpToolInfo::new(
+        name,
         format!("Mock tool: {name}"),
-        schema.as_object().expect("object schema").clone(),
+        json!({
+            "type": "object",
+            "properties": {},
+        }),
     )
 }
 
@@ -229,34 +221,26 @@ async fn connect_all_collision_rolls_back_open_sessions() {
     let (shutdown_b, server_b, url_b) = spawn_mock_sse_server(Arc::clone(&session_manager_b)).await;
 
     let mut manager = McpManager::new(vec![
-        McpServerConfig {
-            name: "collision-a".into(),
-            transport: McpTransport::Sse {
+        McpServerConfig::new(
+            "collision-a",
+            McpTransport::StreamableHttp {
                 url: url_a,
                 bearer_token: None,
                 bearer_auth: None,
                 headers: HashMap::default(),
             },
-            tool_prefix: None,
-            tool_filter: None,
-            requires_approval: false,
-            connect_timeout_ms: None,
-            discovery_timeout_ms: None,
-        },
-        McpServerConfig {
-            name: "collision-b".into(),
-            transport: McpTransport::Sse {
+        )
+        .with_requires_approval(false),
+        McpServerConfig::new(
+            "collision-b",
+            McpTransport::StreamableHttp {
                 url: url_b,
                 bearer_token: None,
                 bearer_auth: None,
                 headers: HashMap::default(),
             },
-            tool_prefix: None,
-            tool_filter: None,
-            requires_approval: false,
-            connect_timeout_ms: None,
-            discovery_timeout_ms: None,
-        },
+        )
+        .with_requires_approval(false),
     ]);
 
     let result = manager.connect_all().await;
@@ -345,34 +329,30 @@ async fn discovery_timeout_skips_hung_server_and_keeps_healthy_tools() {
         spawn_mock_sse_server(Arc::clone(&healthy_session_manager)).await;
 
     let mut manager = McpManager::new(vec![
-        McpServerConfig {
-            name: "hung-discovery".into(),
-            transport: McpTransport::Sse {
+        McpServerConfig::new(
+            "hung-discovery",
+            McpTransport::StreamableHttp {
                 url: hanging_url,
                 bearer_token: None,
                 bearer_auth: None,
                 headers: HashMap::default(),
             },
-            tool_prefix: Some("hung".into()),
-            tool_filter: None,
-            requires_approval: false,
-            connect_timeout_ms: None,
-            discovery_timeout_ms: Some(50),
-        },
-        McpServerConfig {
-            name: "healthy".into(),
-            transport: McpTransport::Sse {
+        )
+        .with_tool_prefix("hung")
+        .with_requires_approval(false)
+        .with_discovery_timeout_ms(50),
+        McpServerConfig::new(
+            "healthy",
+            McpTransport::StreamableHttp {
                 url: healthy_url,
                 bearer_token: None,
                 bearer_auth: None,
                 headers: HashMap::default(),
             },
-            tool_prefix: Some("healthy".into()),
-            tool_filter: None,
-            requires_approval: false,
-            connect_timeout_ms: None,
-            discovery_timeout_ms: Some(500),
-        },
+        )
+        .with_tool_prefix("healthy")
+        .with_requires_approval(false)
+        .with_discovery_timeout_ms(500),
     ]);
 
     let start = Instant::now();

@@ -25,18 +25,18 @@ fn make_app() -> App {
 }
 
 fn write_file_request(old: &str, new: &str, is_new_file: bool) -> ToolApprovalRequest {
-    ToolApprovalRequest {
-        tool_call_id: "call_1".into(),
-        tool_name: "write_file".into(),
-        arguments: serde_json::json!({"path": "/tmp/test.rs", "content": new}),
-        requires_approval: true,
-        context: Some(serde_json::json!({
-            "path": "/tmp/test.rs",
-            "is_new_file": is_new_file,
-            "old_content": old,
-            "new_content": new,
-        })),
-    }
+    ToolApprovalRequest::new(
+        "call_1",
+        "write_file",
+        serde_json::json!({"path": "/tmp/test.rs", "content": new}),
+        true,
+    )
+    .with_context(serde_json::json!({
+        "path": "/tmp/test.rs",
+        "is_new_file": is_new_file,
+        "old_content": old,
+        "new_content": new,
+    }))
 }
 
 /// Park a pending write_file approval on the app and return its response channel.
@@ -61,7 +61,11 @@ async fn h_opens_hunk_review_for_write_file_diff() {
 
     press(&mut app, KeyCode::Char('h'));
 
-    let review = app.hunk_review.as_ref().expect("review should be open");
+    let review = app
+        .agent_io
+        .hunk_review
+        .as_ref()
+        .expect("review should be open");
     assert_eq!(review.hunks.len(), 2);
     assert_eq!(review.cursor, 0);
     assert!(
@@ -69,7 +73,7 @@ async fn h_opens_hunk_review_for_write_file_diff() {
         "no hunk should be decided yet"
     );
     // The approval stays pending until every hunk has a decision.
-    assert!(app.pending_approval.is_some());
+    assert!(app.agent_io.pending_approval.is_some());
 }
 
 #[tokio::test]
@@ -77,21 +81,18 @@ async fn h_is_ignored_without_diff_context() {
     let mut app = make_app();
     let (tx, _rx) = tokio::sync::oneshot::channel();
     app.handle_approval_request(
-        ToolApprovalRequest {
-            tool_call_id: "call_1".into(),
-            tool_name: "bash".into(),
-            arguments: serde_json::json!({"command": "ls"}),
-            requires_approval: true,
-            context: None,
-        },
+        ToolApprovalRequest::new("call_1", "bash", serde_json::json!({"command": "ls"}), true),
         tx,
     );
 
     press(&mut app, KeyCode::Char('h'));
 
-    assert!(app.hunk_review.is_none(), "no diff means no review");
     assert!(
-        app.pending_approval.is_some(),
+        app.agent_io.hunk_review.is_none(),
+        "no diff means no review"
+    );
+    assert!(
+        app.agent_io.pending_approval.is_some(),
         "the plain approval prompt must remain"
     );
 }
@@ -104,8 +105,8 @@ async fn h_is_ignored_for_new_files() {
 
     press(&mut app, KeyCode::Char('h'));
 
-    assert!(app.hunk_review.is_none());
-    assert!(app.pending_approval.is_some());
+    assert!(app.agent_io.hunk_review.is_none());
+    assert!(app.agent_io.pending_approval.is_some());
 }
 
 #[tokio::test]
@@ -130,13 +131,7 @@ async fn reviewable_diff_is_advertised_only_when_a_review_is_available() {
     let mut app = make_app();
     let (tx, _rx) = tokio::sync::oneshot::channel();
     app.handle_approval_request(
-        ToolApprovalRequest {
-            tool_call_id: "call_1".into(),
-            tool_name: "bash".into(),
-            arguments: serde_json::json!({"command": "ls"}),
-            requires_approval: true,
-            context: None,
-        },
+        ToolApprovalRequest::new("call_1", "bash", serde_json::json!({"command": "ls"}), true),
         tx,
     );
     assert!(!app.pending_approval_has_reviewable_diff());
@@ -151,8 +146,11 @@ async fn approving_every_hunk_sends_plain_approved() {
     press(&mut app, KeyCode::Char('y'));
     press(&mut app, KeyCode::Char('y'));
 
-    assert!(app.hunk_review.is_none(), "review should have finalized");
-    assert!(app.pending_approval.is_none());
+    assert!(
+        app.agent_io.hunk_review.is_none(),
+        "review should have finalized"
+    );
+    assert!(app.agent_io.pending_approval.is_none());
     assert_eq!(rx.await.unwrap(), ToolApproval::Approved);
 }
 
@@ -165,7 +163,7 @@ async fn rejecting_every_hunk_sends_rejected() {
     press(&mut app, KeyCode::Char('n'));
     press(&mut app, KeyCode::Char('n'));
 
-    assert!(app.hunk_review.is_none());
+    assert!(app.agent_io.hunk_review.is_none());
     assert_eq!(rx.await.unwrap(), ToolApproval::Rejected);
 }
 
@@ -235,9 +233,12 @@ async fn esc_cancels_review_and_leaves_approval_pending() {
     press(&mut app, KeyCode::Char('y'));
     press(&mut app, KeyCode::Esc);
 
-    assert!(app.hunk_review.is_none(), "review should be discarded");
     assert!(
-        app.pending_approval.is_some(),
+        app.agent_io.hunk_review.is_none(),
+        "review should be discarded"
+    );
+    assert!(
+        app.agent_io.pending_approval.is_some(),
         "the user must still answer the approval prompt"
     );
 }
@@ -252,7 +253,11 @@ async fn cancelled_review_can_be_reopened_from_scratch() {
     press(&mut app, KeyCode::Esc);
     press(&mut app, KeyCode::Char('h'));
 
-    let review = app.hunk_review.as_ref().expect("review should reopen");
+    let review = app
+        .agent_io
+        .hunk_review
+        .as_ref()
+        .expect("review should reopen");
     assert_eq!(review.cursor, 0, "cursor should reset");
     assert!(
         review.decisions.iter().all(Option::is_none),
@@ -265,7 +270,7 @@ async fn rejected_hunks_are_reported_to_the_agent() {
     let mut app = make_app();
     // Approval always arrives mid-turn, so the follow-up is steered in at the
     // next turn boundary rather than starting a fresh prompt.
-    app.status = AgentStatus::Running;
+    app.agent_io.status = AgentStatus::Running;
     let _rx = pending_write(&mut app, OLD, NEW);
 
     press(&mut app, KeyCode::Char('h'));
@@ -274,6 +279,7 @@ async fn rejected_hunks_are_reported_to_the_agent() {
 
     // Locally the user sees which hunks were reverted...
     let notice = app
+        .view
         .messages
         .iter()
         .find(|message| message.role == MessageRole::System)
@@ -286,19 +292,20 @@ async fn rejected_hunks_are_reported_to_the_agent() {
 
     // ...and the agent is told, so it does not assume its write landed intact.
     assert!(
-        app.pending_steered
+        app.agent_io
+            .pending_steered
             .iter()
             .any(|steered| steered.contains("rejected hunk(s) 2")
                 && steered.contains("/tmp/test.rs")),
         "agent should receive a follow-up describing the reverted hunks: {:?}",
-        app.pending_steered
+        app.agent_io.pending_steered
     );
 }
 
 #[tokio::test]
 async fn fully_approved_review_does_not_message_the_agent() {
     let mut app = make_app();
-    app.status = AgentStatus::Running;
+    app.agent_io.status = AgentStatus::Running;
     let _rx = pending_write(&mut app, OLD, NEW);
 
     press(&mut app, KeyCode::Char('h'));
@@ -306,16 +313,16 @@ async fn fully_approved_review_does_not_message_the_agent() {
     press(&mut app, KeyCode::Char('y'));
 
     assert!(
-        app.pending_steered.is_empty(),
+        app.agent_io.pending_steered.is_empty(),
         "nothing was reverted, so there is nothing to report: {:?}",
-        app.pending_steered
+        app.agent_io.pending_steered
     );
 }
 
 #[tokio::test]
 async fn full_rejection_is_reported_to_the_agent() {
     let mut app = make_app();
-    app.status = AgentStatus::Running;
+    app.agent_io.status = AgentStatus::Running;
     let _rx = pending_write(&mut app, OLD, NEW);
 
     press(&mut app, KeyCode::Char('h'));
@@ -323,7 +330,8 @@ async fn full_rejection_is_reported_to_the_agent() {
     press(&mut app, KeyCode::Char('n'));
 
     assert!(
-        app.messages
+        app.view
+            .messages
             .iter()
             .any(|message| message.role == MessageRole::System
                 && message.content.contains("left unchanged")),
@@ -358,7 +366,7 @@ async fn hunk_review_keys_do_not_leak_to_the_approval_prompt() {
     press(&mut app, KeyCode::Char('a'));
 
     assert!(
-        !app.session_trusted_tools.contains("write_file"),
+        !app.agent_io.session_trusted_tools.contains("write_file"),
         "per-hunk 'a' must not add the tool to the session trust set"
     );
 }

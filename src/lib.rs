@@ -48,6 +48,7 @@ pub mod pause_state;
 #[cfg(feature = "plugins")]
 pub(crate) mod plugin;
 pub(crate) mod policy;
+pub mod pricing;
 mod registry;
 mod retry;
 mod schema;
@@ -77,8 +78,8 @@ pub mod prelude;
 
 // Re-exports
 pub use agent::{
-    Agent, AgentOptions, AgentState, DEFAULT_PLAN_MODE_ADDENDUM, FollowUpMode, SteeringMode,
-    SubscriptionId, default_convert,
+    Agent, AgentOptions, AgentState, DEFAULT_MODEL, DEFAULT_PLAN_MODE_ADDENDUM,
+    DEFAULT_SYSTEM_PROMPT, FollowUpMode, SteeringMode, SubscriptionId, default_convert,
 };
 pub use agent_id::AgentId;
 pub use async_context_transformer::{AsyncContextTransformer, AsyncTransformFuture};
@@ -126,7 +127,7 @@ pub use model_catalog::{
     ApiVersion, AuthMode, CatalogPreset, DEFAULT_PRICING_STALENESS_DAYS, ModelCatalog,
     PRICING_STALENESS_ENV_VAR, PresetCapability, PresetCatalog, PresetStatus, PricingStaleness,
     ProviderCatalog, ProviderKind, calculate_cost, model_catalog, price_assistant_message,
-    pricing_staleness,
+    price_assistant_message_with, pricing_staleness,
 };
 pub use model_presets::{ModelConnection, ModelConnections, ModelConnectionsBuilder};
 pub use noop_tool::NoopTool;
@@ -136,14 +137,15 @@ pub use orchestrator::{
 };
 #[cfg(feature = "otel")]
 pub use otel::{OtelInitConfig, OtelInitError, init_otel_layer};
+pub use pricing::{CostCalculator, ModelRates, PricingTable};
 pub use registry::{AgentRef, AgentRegistry};
 pub use retry::{DefaultRetryStrategy, RetryStrategy};
 pub use schema::schema_for;
 pub use schemars::JsonSchema;
 pub use state::{SessionState, StateDelta};
 pub use stream::{
-    AssistantMessageDelta, AssistantMessageEvent, CacheStrategy, OnRawPayload, ServingOptions,
-    StreamErrorKind, StreamFn, StreamOptions, StreamTransport, accumulate_message,
+    AssistantMessageDelta, AssistantMessageEvent, CacheStrategy, OnRawPayload, ResponseFormat,
+    ServingOptions, StreamErrorKind, StreamFn, StreamOptions, StreamTransport, accumulate_message,
     sanitize_incomplete_tool_calls,
 };
 pub use stream_middleware::StreamMiddleware;

@@ -125,8 +125,9 @@ loop {
         Some(event) = terminal_events.next() => {
             handle_terminal_event(event, &mut app);
         }
-        // 2. Agent events (streamed via mpsc forwarder task)
-        Some(agent_event) = agent_rx.recv() => {
+        // 2. Agent events (consumed from the TuiTransport; the default
+        //    InProcessTransport wraps the mpsc forwarder task)
+        Some(agent_event) = transport.recv() => {
             handle_agent_event(agent_event, &mut app);
         }
         // 3. Tick timer (spinners, elapsed time, tool fade)
@@ -135,9 +136,9 @@ loop {
         }
     }
     // Re-render only if state changed
-    if app.dirty {
+    if app.view.dirty {
         terminal.draw(|frame| ui::render(frame, &app))?;
-        app.dirty = false;
+        app.view.dirty = false;
     }
 }
 ```
@@ -273,6 +274,151 @@ The TUI loads configuration from `~/.config/swink-agent/tui.toml` via `TuiConfig
 | `color_mode` | `String` | Color mode: `"custom"` (default), `"mono-white"`, or `"mono-black"`. Can be cycled at runtime with F3 |
 | `editor_command` | `Option<String>` | Override for external editor (defaults to `$EDITOR` / `$VISUAL` / `vi`) |
 | `system_prompt` | `Option<String>` | Override the system prompt passed to the agent. If `None`, the agent uses its built-in default. |
+| `pricing` | `PricingTable` | Operator-declared per-model rates. Empty by default. See [Cost and usage display](#cost-and-usage-display). |
+
+---
+
+## Cost and usage display
+
+The status bar renders `↓{input} ↑{output}` and `${cost}`; `/usage` prints a
+per-turn breakdown with per-model subtotals. Both read `App::total_input_tokens`
+/ `total_output_tokens` / `total_cost` / `turn_usage`, which are accumulated in
+`App::handle_agent_event` from `AgentEvent::MessageEnd`.
+
+**The TUI does not price anything.** The agent loop fills in each assistant
+message's `Cost` before emitting `MessageEnd` — see
+[Cost tracking](../streaming/README.md#cost-tracking) for the precedence rules.
+The TUI only totals what it is given, so a model with no pricing honestly shows
+`$0.0000` (and `/usage` says which models those are).
+
+Because the compiled model catalog only knows about models shipped with the
+crate, operators can declare their own rates for local endpoints, private
+deployments, or negotiated per-tier pricing:
+
+```toml
+[pricing."my-local-llama"]
+input_per_million = 0.10
+output_per_million = 0.40
+
+[pricing."claude-sonnet-4-6"]
+input_per_million = 1.50   # negotiated below the catalog's $3.00
+output_per_million = 7.50
+```
+
+Declared rates take precedence over the catalog for any model listed.
+`launch` / `launch_with_extensions` / `launch_with_session` apply them via
+`TuiConfig::apply_pricing`; a host that builds its own `Agent` calls that (or
+`AgentOptions::with_cost_calculator`) directly.
+
+---
+
+## Host extension points
+
+`TuiConfig` is deserialized from TOML and so can only hold data. Anything a host
+supplies *in code* goes on `TuiExtensions`, passed via `App::with_extensions` or
+`launch_with_extensions`:
+
+```rust,ignore
+let extensions = TuiExtensions::new().with_command("spend", |app, _args| {
+    CustomCommandOutcome::Feedback(format!("${:.4}", app.usage.total_cost))
+});
+launch_with_extensions(config, &mut terminal, options, extensions).await?;
+```
+
+Host commands are matched by bare name (no sigil, so `/spend` and `#spend` both
+route) **before** the built-in command table, so a host can shadow a built-in;
+returning `CustomCommandOutcome::NotHandled` falls through to it instead. Secret
+classification (`#key`) runs before dispatch, so host handlers never see
+credentials.
+
+`TuiExtensions` is a consuming builder with a `Default` impl — further seams are
+added as additional `with_*` methods without breaking existing callers.
+
+### `@path` file mentions
+
+Two seams, deliberately split by *when* they run:
+
+```rust,ignore
+let extensions = TuiExtensions::new()
+    // 1. Discovery — runs per keystroke inside an `@` mention.
+    .with_path_completions(|query| my_index.matching(query).map(PathCandidate::new).collect())
+    // 2. Expansion — runs once per submitted prompt that contains a mention.
+    .with_mention_resolver(|text, mentions| {
+        let mut out = text.to_string();
+        for mention in mentions.iter().rev() {   // back-to-front keeps spans valid
+            let body = std::fs::read_to_string(&mention.path).ok()?;
+            out.replace_range(mention.start..mention.end, &body);
+        }
+        Some(out)
+    });
+```
+
+The TUI never touches the filesystem. It parses mentions (`parse_mentions`),
+renders the popup, and hands the host `PathMention`s with byte spans; the host
+owns path discovery, working-directory semantics, ignore rules, and file reads.
+
+**Resolution is lazy by construction.** The resolver is called from
+`send_to_agent`, not from the input handler, so:
+
+- typing `@src/lib.rs` reads nothing — only the completion provider runs;
+- the resolver runs once, at submit, and only when the text holds a mention;
+- the conversation view keeps showing the raw `@src/lib.rs`, while the agent
+  receives the expansion. `mentions_resolve_at_submit_and_never_while_typing`
+  pins this.
+
+A mention is an `@` that starts the text or follows whitespace, plus the
+following non-whitespace run, minus trailing sentence punctuation — so
+`user@example.com` is not a mention and `see @src/lib.rs.` mentions
+`src/lib.rs`. While the popup is open it takes Up/Down (navigate), Tab/Enter
+(accept), and Esc (dismiss); each falls through to its normal binding when the
+popup is closed.
+
+### Skills
+
+Three seams, one per tier of progressive disclosure:
+
+```rust,ignore
+let extensions = TuiExtensions::new()
+    // Tier 1 — candidates, per keystroke inside a leading `/name`.
+    .with_skill_completions(|query| {
+        my_index.matching(query)
+            .map(|s| SkillCandidate::new(&s.name).with_description(&s.summary))
+            .collect()
+    })
+    // Tier 2 — SKILL.md body, on highlight (cached per popup).
+    .with_skill_details(|name| my_index.body_of(name))
+    // Tier 3 — expansion, once per submitted prompt that starts with `/name`.
+    .with_skill_resolver(|text, invocation| {
+        let body = my_index.body_of(&invocation.name)?;
+        let mut out = text.to_string();
+        out.replace_range(invocation.start..invocation.end, &body);
+        Some(out)
+    });
+```
+
+Unlike a mention, an invocation is **leading-only**: the `/` must be the first
+non-whitespace character of the prompt (`parse_skill_invocation`), matching the
+command table's single-leading-sigil model — `either/or` and `/usr/bin`
+mid-sentence never trigger anything. The popup itself mirrors the `@path` one
+(same keys, at most one of the two popups open at a time), with the highlighted
+skill's tier-2 documentation rendered as a clamped preview below the list.
+
+Submit-time dispatch precedence is secrets → host commands → skills →
+built-ins, first match wins: a known skill (exact name match against the
+completion provider) is submitted as a prompt instead of falling to the
+Unknown-command feedback, and a host `with_command` of the same name shadows
+it. As with mentions, resolution is lazy and the transcript keeps showing the
+raw `/deploy` while the agent receives the expansion. Mentions are expanded
+*before* the skill invocation, on the raw text, so a skill body is never
+mention-scanned — a SKILL.md containing `@/etc/passwd` cannot induce a host
+file read. `skill_body_is_read_at_submit_and_never_while_typing` and
+`a_skill_body_is_never_mention_scanned` pin this.
+
+For hosts without their own index, the off-by-default `skills` cargo feature
+adds `TuiExtensions::with_skill_dirs`, which eagerly indexes
+`<dir>/<name>/SKILL.md` (YAML frontmatter: `name`, `description`) under
+*explicitly passed* directories only — there are no implicit default paths —
+and wires all three seams over that index.
 
 ---
 

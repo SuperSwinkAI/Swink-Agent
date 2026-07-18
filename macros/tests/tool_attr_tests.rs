@@ -3,6 +3,7 @@
 //! Verifies that schema generation delegates to schemars (no bespoke type
 //! mapper) and that the tool can be constructed and introspected.
 
+#![allow(clippy::exhaustive_structs)] // #[tool] param structs in this test crate are not public API.
 #![allow(dead_code)]
 
 use std::sync::{Arc, RwLock};

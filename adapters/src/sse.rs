@@ -34,6 +34,7 @@ use swink_agent::{AssistantMessageEvent, StopReason};
 use crate::finalize::StreamFinalize;
 
 /// Parsed SSE line.
+#[non_exhaustive]
 #[derive(Debug, PartialEq, Eq)]
 pub enum SseLine {
     /// An event type label (e.g., `event: message_start`).
@@ -382,12 +383,22 @@ pub fn sse_data_lines_with_callback(
 /// Providers like Anthropic emit `event: <type>\ndata: <json>\n\n` sequences.
 /// This type captures the pairing so adapters receive structured events instead
 /// of interleaved raw lines.
+#[non_exhaustive]
 #[derive(Debug, PartialEq, Eq)]
 pub struct SseEvent {
     /// The event type (e.g., `message_start`, `content_block_delta`).
     pub event_type: String,
     /// The JSON data payload associated with this event.
     pub data: String,
+}
+
+impl SseEvent {
+    /// Create a new paired SSE event from an event type label and its data
+    /// payload.
+    #[must_use]
+    pub fn new(event_type: String, data: String) -> Self {
+        Self { event_type, data }
+    }
 }
 
 /// Pair `event:` and `data:` lines from an SSE byte stream.
@@ -425,19 +436,13 @@ pub fn sse_paired_events_with_callback(
                     }
                     Some(SseLine::TransportError(message)) => {
                         return Some((
-                            SseEvent {
-                                event_type: SSE_TRANSPORT_ERROR_EVENT.to_string(),
-                                data: message,
-                            },
+                            SseEvent::new(SSE_TRANSPORT_ERROR_EVENT.to_string(), message),
                             (stream, current_event, callback),
                         ));
                     }
                     Some(SseLine::ProtocolError(message)) => {
                         return Some((
-                            SseEvent {
-                                event_type: SSE_PROTOCOL_ERROR_EVENT.to_string(),
-                                data: message,
-                            },
+                            SseEvent::new(SSE_PROTOCOL_ERROR_EVENT.to_string(), message),
                             (stream, current_event, callback),
                         ));
                     }
@@ -455,7 +460,7 @@ pub fn sse_paired_events_with_callback(
                                 .take()
                                 .unwrap_or_else(|| "unknown".to_string());
                             return Some((
-                                SseEvent { event_type, data },
+                                SseEvent::new(event_type, data),
                                 (stream, current_event, callback),
                             ));
                         }
@@ -470,6 +475,7 @@ pub fn sse_paired_events_with_callback(
 // ─── Shared stream scaffolding ─────────────────────────────────────────────
 
 /// Outcome of processing one SSE line (or stream end) in an adapter.
+#[non_exhaustive]
 pub enum SseAction {
     /// Emit events and continue streaming.
     Continue(Vec<AssistantMessageEvent>),
@@ -1201,6 +1207,7 @@ mod tests {
             }
         });
 
+        crate::base::ensure_default_crypto_provider();
         let client = reqwest::Client::new();
         let resp = client
             .get(format!("http://{addr}/"))

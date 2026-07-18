@@ -18,13 +18,16 @@
 mod commands;
 mod editor;
 mod format;
+mod mentions;
 mod session;
+mod skills;
 mod theme;
 mod ui;
 
 mod app;
 mod config;
 mod error;
+mod extensions;
 pub mod transport;
 
 #[cfg(feature = "cli")]
@@ -53,15 +56,26 @@ use tracing::warn;
 use swink_agent::{Agent, ToolApproval, ToolApprovalRequest};
 
 pub use app::{
-    AgentStatus, App, DisplayMessage, HunkReview, MessageRole, OperatingMode, TrustFollowUp,
+    AgentIo, AgentStatus, App, DisplayMessage, EditorState, HunkReview, MessageRole, ModeState,
+    OperatingMode, PathCompletion, SessionPersistence, SkillCompletion, TrustFollowUp, TurnUsage,
+    UsageTotals, ViewState,
 };
 pub use config::TuiConfig;
 pub use error::TuiError;
+pub use extensions::{
+    CustomCommandFn, CustomCommandOutcome, MentionResolverFn, PathCandidate, PathCompletionFn,
+    SkillCandidate, SkillCompletionFn, SkillDetailsFn, SkillResolverFn, TuiExtensions,
+};
+pub use mentions::{PathMention, parse_mentions};
 pub use session::JsonlSessionStore;
-pub use swink_agent::ApprovalMode;
-pub use transport::{InProcessTransport, TransportError, TuiTransport, UserInput};
+pub use skills::{SkillInvocation, parse_skill_invocation};
+pub use swink_agent::{ApprovalMode, ModelRates, PricingTable};
+pub use transport::{
+    ControlRequest, ControlResponse, InProcessTransport, TransportError, TuiTransport, UserInput,
+};
 pub use ui::conversation::ConversationView;
-pub use ui::input::InputEditor;
+pub use ui::diff::{DiffData, Hunk};
+pub use ui::input::{InputEditor, MentionQuery};
 pub use ui::markdown::markdown_to_lines;
 pub use ui::syntax::highlight_code;
 
@@ -75,8 +89,10 @@ type ApprovalCallbackFn = Box<
         + Sync,
 >;
 
-/// Default system prompt used when no explicit prompt, env var, or config is provided.
-const DEFAULT_SYSTEM_PROMPT: &str = "You are a helpful assistant.";
+// Default system prompt used when no explicit prompt, env var, or config is
+// provided. Shared with `swink-agentd` via the core crate so the binaries
+// cannot drift.
+use swink_agent::DEFAULT_SYSTEM_PROMPT;
 
 /// Initialize the terminal for TUI rendering.
 ///
@@ -142,13 +158,51 @@ pub fn tui_approval_callback(approval_tx: &ApprovalSender) -> ApprovalCallbackFn
 /// launch(config, &mut terminal, options).await?;
 /// ```
 /// [`App::approval_mode`] reads the mode from the agent, so both sides stay in sync.
+/// Any `[pricing]` rates declared in `config` are applied to `options`, so the
+/// status line and `/usage` show real money for operator-priced models.
 pub async fn launch(
     config: TuiConfig,
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     options: swink_agent::AgentOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    launch_with_extensions(config, terminal, options, TuiExtensions::new()).await
+}
+
+/// Like [`launch`], but with host-supplied [`TuiExtensions`].
+///
+/// This is the seam for embedding: anything a host wants to contribute *in
+/// code* — today, custom slash commands — is registered on `TuiExtensions`
+/// rather than on [`TuiConfig`], which is deserialized from `tui.toml` and so
+/// can only hold data.
+///
+/// # Example
+/// ```no_run
+/// # use swink_agent::{AgentOptions, ModelSpec, testing::SimpleMockStreamFn};
+/// # use swink_agent_tui::{CustomCommandOutcome, TuiConfig, TuiExtensions, launch_with_extensions, setup_terminal};
+/// # use std::sync::Arc;
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// # let options = AgentOptions::new_simple("system", ModelSpec::new("mock", "test"), Arc::new(SimpleMockStreamFn::from_text("hi")));
+/// let extensions = TuiExtensions::new().with_command("spend", |app, _args| {
+///     CustomCommandOutcome::Feedback(format!(
+///         "{} turn(s), ${:.4}",
+///         app.usage.turn_usage.len(),
+///         app.usage.total_cost
+///     ))
+/// });
+///
+/// let mut terminal = setup_terminal()?;
+/// launch_with_extensions(TuiConfig::load(), &mut terminal, options, extensions).await
+/// # }
+/// ```
+pub async fn launch_with_extensions(
+    config: TuiConfig,
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    options: swink_agent::AgentOptions,
+    extensions: TuiExtensions,
+) -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
-    let mut app = App::new(config);
+    let options = config.apply_pricing(options);
+    let mut app = App::new(config).with_extensions(extensions);
     let approval_tx = app.approval_sender();
     let options = options.with_approve_tool(tui_approval_callback(&approval_tx));
     app.set_agent(Agent::new(options));
@@ -166,6 +220,10 @@ pub async fn launch(
 /// - `session_id` — ID for the new session (e.g. `tui_chat_<uuid-v7>`).
 /// - `resume_id` — if `Some(id)`, load that prior session before starting the event loop.
 ///   Returns [`io::Error`] if the session is not found.
+///
+/// As with [`launch`], any `[pricing]` rates declared in `config` are applied to
+/// `options`. To also register [`TuiExtensions`], build the [`App`] directly
+/// with [`App::with_session_store`] and [`App::with_extensions`].
 pub async fn launch_with_session(
     config: TuiConfig,
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
@@ -175,6 +233,7 @@ pub async fn launch_with_session(
     resume_id: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
+    let options = config.apply_pricing(options);
     let mut app = App::new(config).with_session_store(store, session_id);
     let approval_tx = app.approval_sender();
     let options = options.with_approve_tool(tui_approval_callback(&approval_tx));
@@ -191,23 +250,21 @@ mod tests {
     use tokio::sync::mpsc;
 
     fn approval_request() -> ToolApprovalRequest {
-        ToolApprovalRequest {
-            tool_call_id: "call_1".into(),
-            tool_name: "write_file".into(),
-            arguments: serde_json::json!({"path": "secret.txt"}),
-            requires_approval: true,
-            context: None,
-        }
+        ToolApprovalRequest::new(
+            "call_1",
+            "write_file",
+            serde_json::json!({"path": "secret.txt"}),
+            true,
+        )
     }
 
     fn read_only_approval_request() -> ToolApprovalRequest {
-        ToolApprovalRequest {
-            tool_call_id: "call_read".into(),
-            tool_name: "read_file".into(),
-            arguments: serde_json::json!({"path": "notes.md"}),
-            requires_approval: false,
-            context: None,
-        }
+        ToolApprovalRequest::new(
+            "call_read",
+            "read_file",
+            serde_json::json!({"path": "notes.md"}),
+            false,
+        )
     }
 
     #[test]

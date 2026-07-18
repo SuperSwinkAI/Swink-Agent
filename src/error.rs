@@ -7,12 +7,24 @@
 
 /// Error returned when downcasting an [`AgentMessage`](crate::types::AgentMessage) to a concrete
 /// custom message type fails.
+#[non_exhaustive]
 #[derive(Debug)]
 pub struct DowncastError {
     /// The expected (target) type name.
     pub expected: &'static str,
     /// The actual type description found.
     pub actual: String,
+}
+
+impl DowncastError {
+    /// Create a new downcast error.
+    #[must_use]
+    pub fn new(expected: &'static str, actual: impl Into<String>) -> Self {
+        Self {
+            expected,
+            actual: actual.into(),
+        }
+    }
 }
 
 impl std::fmt::Display for DowncastError {

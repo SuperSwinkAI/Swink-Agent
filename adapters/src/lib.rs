@@ -45,6 +45,7 @@
     allow(dead_code)
 )]
 mod base;
+pub use base::ensure_default_crypto_provider;
 #[cfg_attr(
     not(any(
         feature = "anthropic",
@@ -77,13 +78,29 @@ pub mod convert;
     allow(dead_code)
 )]
 mod finalize;
+// These two carry the adapters' shared OAI protocol plumbing, so they are dead
+// unless an adapter that speaks that protocol is enabled. The consumers are
+// `openai`, `xai`, `azure` and `mistral` — *not* `openai-compat`, which is an
+// internal umbrella that `openai`/`xai` imply and that enables no adapter on
+// its own. Naming the umbrella here left the modules warning under
+// `--features openai-compat`.
 #[cfg_attr(
-    not(any(feature = "openai-compat", feature = "azure", feature = "mistral",)),
+    not(any(
+        feature = "openai",
+        feature = "xai",
+        feature = "azure",
+        feature = "mistral",
+    )),
     allow(dead_code)
 )]
 mod oai_transport;
 #[cfg_attr(
-    not(any(feature = "openai-compat", feature = "azure", feature = "mistral",)),
+    not(any(
+        feature = "openai",
+        feature = "xai",
+        feature = "azure",
+        feature = "mistral",
+    )),
     allow(dead_code)
 )]
 mod openai_compat;
@@ -108,7 +125,11 @@ mod anthropic;
 #[cfg(feature = "anthropic")]
 pub use anthropic::AnthropicStreamFn;
 
-#[cfg(feature = "openai-compat")]
+// Gated on `openai`, not `openai-compat`: the only consumer of this module is
+// the `openai`-gated re-export below. `xai` also enables `openai-compat`, but
+// builds on `oai_transport` directly and never touches this module — so gating
+// on `openai-compat` left the whole module dead under `xai`/`openai-compat`.
+#[cfg(feature = "openai")]
 #[allow(clippy::doc_markdown)]
 mod openai;
 #[cfg(feature = "openai")]

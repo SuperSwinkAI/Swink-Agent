@@ -105,18 +105,15 @@ impl PipelineExecutor {
         input: String,
         cancellation_token: CancellationToken,
     ) -> Result<PipelineOutput, PipelineError> {
-        let pipeline = match self.registry.get(pipeline_id) {
-            Some(pipeline) => pipeline,
-            None => {
-                let err = PipelineError::PipelineNotFound {
-                    id: pipeline_id.clone(),
-                };
-                self.emit(PipelineEvent::Failed {
-                    pipeline_id: pipeline_id.clone(),
-                    error_message: err.to_string(),
-                });
-                return Err(err);
-            }
+        let Some(pipeline) = self.registry.get(pipeline_id) else {
+            let err = PipelineError::PipelineNotFound {
+                id: pipeline_id.clone(),
+            };
+            self.emit(PipelineEvent::Failed {
+                pipeline_id: pipeline_id.clone(),
+                error_message: err.to_string(),
+            });
+            return Err(err);
         };
 
         let result = match pipeline {
@@ -137,7 +134,7 @@ impl PipelineExecutor {
             } => {
                 super::parallel::run_parallel(
                     &self.factory,
-                    &self.event_handler,
+                    self.event_handler.as_ref(),
                     id,
                     name,
                     branches,
@@ -156,7 +153,7 @@ impl PipelineExecutor {
             } => {
                 super::loop_exec::run_loop(
                     &self.factory,
-                    &self.event_handler,
+                    self.event_handler.as_ref(),
                     id,
                     name,
                     body,
@@ -197,7 +194,7 @@ impl PipelineExecutor {
 
         self.emit(PipelineEvent::Started {
             pipeline_id: id.clone(),
-            pipeline_name: name.clone(),
+            pipeline_name: name,
         });
 
         for (index, agent_name) in steps.iter().enumerate() {
@@ -259,13 +256,12 @@ impl PipelineExecutor {
             // In pass_context mode, accumulate the user message and assistant response.
             if pass_context {
                 // Push the user message as an LlmMessage
-                context_messages.push(LlmMessage::User(swink_agent::UserMessage {
-                    content: vec![ContentBlock::Text {
+                context_messages.push(LlmMessage::User(
+                    swink_agent::UserMessage::new(vec![ContentBlock::Text {
                         text: current_input.clone(),
-                    }],
-                    timestamp: 0,
-                    cache_hint: None,
-                }));
+                    }])
+                    .with_timestamp(0),
+                ));
                 // Add the assistant messages from the result.
                 for msg in &result.messages {
                     if let AgentMessage::Llm(llm @ LlmMessage::Assistant(_)) = msg {
@@ -301,13 +297,12 @@ impl PipelineExecutor {
 
 /// Build a user message from text (local helper to avoid testkit dependency).
 fn user_msg(text: &str) -> AgentMessage {
-    AgentMessage::Llm(LlmMessage::User(swink_agent::UserMessage {
-        content: vec![ContentBlock::Text {
+    AgentMessage::Llm(LlmMessage::User(
+        swink_agent::UserMessage::new(vec![ContentBlock::Text {
             text: text.to_string(),
-        }],
-        timestamp: 0,
-        cache_hint: None,
-    }))
+        }])
+        .with_timestamp(0),
+    ))
 }
 
 /// Extract concatenated text content from an agent result's last assistant message.
@@ -327,8 +322,7 @@ fn extract_text_response(result: &AgentResult) -> String {
                     ContentBlock::Text { text } => Some(text.as_str()),
                     _ => None,
                 })
-                .collect::<Vec<_>>()
-                .join("")
+                .collect::<String>()
         })
         .unwrap_or_default()
 }

@@ -218,6 +218,7 @@ pub async fn refresh_token(
 /// authorization handler configured but no matching `AuthorizationConfig`
 /// behaves as if no handler were configured (FR-011: `NotFound`).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AuthorizationConfig {
     /// The provider's authorization endpoint (where the user is sent to
     /// grant access), e.g. `https://accounts.google.com/o/oauth2/v2/auth`.
@@ -234,6 +235,46 @@ pub struct AuthorizationConfig {
     pub redirect_uri: String,
     /// Requested scopes.
     pub scopes: Vec<String>,
+}
+
+impl AuthorizationConfig {
+    /// Create a config from the required fields: authorization endpoint,
+    /// token endpoint, client identifier, and redirect URI.
+    ///
+    /// The client secret defaults to `None` (public client) and the scope
+    /// list to empty; set them with
+    /// [`with_client_secret`](Self::with_client_secret) and
+    /// [`with_scopes`](Self::with_scopes).
+    #[must_use]
+    pub fn new(
+        authorization_endpoint: impl Into<String>,
+        token_url: impl Into<String>,
+        client_id: impl Into<String>,
+        redirect_uri: impl Into<String>,
+    ) -> Self {
+        Self {
+            authorization_endpoint: authorization_endpoint.into(),
+            token_url: token_url.into(),
+            client_id: client_id.into(),
+            client_secret: None,
+            redirect_uri: redirect_uri.into(),
+            scopes: Vec::new(),
+        }
+    }
+
+    /// Set the `OAuth2` client secret (confidential clients).
+    #[must_use]
+    pub fn with_client_secret(mut self, client_secret: impl Into<String>) -> Self {
+        self.client_secret = Some(client_secret.into());
+        self
+    }
+
+    /// Replace the requested scopes.
+    #[must_use]
+    pub fn with_scopes(mut self, scopes: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.scopes = scopes.into_iter().map(Into::into).collect();
+        self
+    }
 }
 
 /// Build the authorization URL for the given config and CSRF `state` token.
@@ -367,6 +408,7 @@ const DEVICE_CODE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:device_co
 /// `DeviceAuthorizationConfig` behaves as if no handler were configured
 /// (FR-011: `NotFound`).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct DeviceAuthorizationConfig {
     /// The provider's device authorization endpoint, e.g.
     /// `https://oauth2.googleapis.com/device/code`.
@@ -380,6 +422,44 @@ pub struct DeviceAuthorizationConfig {
     pub client_secret: Option<String>,
     /// Requested scopes.
     pub scopes: Vec<String>,
+}
+
+impl DeviceAuthorizationConfig {
+    /// Create a config from the required fields: device authorization
+    /// endpoint, token endpoint, and client identifier.
+    ///
+    /// The client secret defaults to `None` (device-flow clients are usually
+    /// public) and the scope list to empty; set them with
+    /// [`with_client_secret`](Self::with_client_secret) and
+    /// [`with_scopes`](Self::with_scopes).
+    #[must_use]
+    pub fn new(
+        device_authorization_endpoint: impl Into<String>,
+        token_url: impl Into<String>,
+        client_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            device_authorization_endpoint: device_authorization_endpoint.into(),
+            token_url: token_url.into(),
+            client_id: client_id.into(),
+            client_secret: None,
+            scopes: Vec::new(),
+        }
+    }
+
+    /// Set the `OAuth2` client secret (confidential clients).
+    #[must_use]
+    pub fn with_client_secret(mut self, client_secret: impl Into<String>) -> Self {
+        self.client_secret = Some(client_secret.into());
+        self
+    }
+
+    /// Replace the requested scopes.
+    #[must_use]
+    pub fn with_scopes(mut self, scopes: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.scopes = scopes.into_iter().map(Into::into).collect();
+        self
+    }
 }
 
 /// A successful device authorization response (RFC 8628 §3.2).
@@ -671,6 +751,14 @@ mod tests {
 
     const LEAK_SENTINEL: &str = "LEAK_SENTINEL_ABC123";
 
+    /// Build a plain client after installing the ring crypto provider —
+    /// under `rustls-no-provider` (#1110) a bare `reqwest::Client::new()`
+    /// panics until a process default provider exists.
+    fn test_client() -> reqwest::Client {
+        crate::ensure_default_crypto_provider();
+        reqwest::Client::new()
+    }
+
     #[derive(Clone, Default)]
     struct SharedLogBuffer(Arc<Mutex<Vec<u8>>>);
 
@@ -878,7 +966,7 @@ mod tests {
         let _guard = capture_debug_logs(&logs);
 
         let err = refresh_token(
-            &reqwest::Client::new(),
+            &test_client(),
             &token_url,
             "refresh-token",
             "client-id",
@@ -918,6 +1006,7 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_token_transport_failure_reason_is_sanitized() {
+        crate::ensure_default_crypto_provider();
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_millis(200))
             .build()
@@ -968,7 +1057,7 @@ mod tests {
 
         let token_url = format!("{}/token", mock_server.uri());
         let response = exchange_code(
-            &reqwest::Client::new(),
+            &test_client(),
             &token_url,
             "auth-code",
             "client-id",
@@ -997,7 +1086,7 @@ mod tests {
 
         let token_url = format!("{}/token", mock_server.uri());
         let err = exchange_code(
-            &reqwest::Client::new(),
+            &test_client(),
             &token_url,
             "auth-code",
             "client-id",
@@ -1023,6 +1112,7 @@ mod tests {
 
     #[tokio::test]
     async fn exchange_code_transport_failure_reason_is_sanitized() {
+        crate::ensure_default_crypto_provider();
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_millis(200))
             .build()
@@ -1049,14 +1139,14 @@ mod tests {
     // formed authorization URL.
     #[test]
     fn build_authorization_url_includes_expected_query_params() {
-        let config = AuthorizationConfig {
-            authorization_endpoint: "https://auth.example.com/o/authorize".to_string(),
-            token_url: "https://auth.example.com/token".to_string(),
-            client_id: "client with spaces".to_string(),
-            client_secret: Some("shh".to_string()),
-            redirect_uri: "http://localhost:8080/callback".to_string(),
-            scopes: vec!["read".to_string(), "write".to_string()],
-        };
+        let config = AuthorizationConfig::new(
+            "https://auth.example.com/o/authorize",
+            "https://auth.example.com/token",
+            "client with spaces",
+            "http://localhost:8080/callback",
+        )
+        .with_client_secret("shh")
+        .with_scopes(["read", "write"]);
 
         let url = build_authorization_url(&config, "csrf-state-123").unwrap();
         let parsed = reqwest::Url::parse(&url).unwrap();
@@ -1084,14 +1174,12 @@ mod tests {
 
     #[test]
     fn build_authorization_url_omits_scope_when_empty() {
-        let config = AuthorizationConfig {
-            authorization_endpoint: "https://auth.example.com/o/authorize".to_string(),
-            token_url: "https://auth.example.com/token".to_string(),
-            client_id: "client-1".to_string(),
-            client_secret: None,
-            redirect_uri: "http://localhost:8080/callback".to_string(),
-            scopes: vec![],
-        };
+        let config = AuthorizationConfig::new(
+            "https://auth.example.com/o/authorize",
+            "https://auth.example.com/token",
+            "client-1",
+            "http://localhost:8080/callback",
+        );
 
         let url = build_authorization_url(&config, "state").unwrap();
         assert!(!url.contains("scope="));
@@ -1099,14 +1187,12 @@ mod tests {
 
     #[test]
     fn build_authorization_url_rejects_invalid_endpoint() {
-        let config = AuthorizationConfig {
-            authorization_endpoint: "not a url".to_string(),
-            token_url: "https://auth.example.com/token".to_string(),
-            client_id: "client-1".to_string(),
-            client_secret: None,
-            redirect_uri: "http://localhost:8080/callback".to_string(),
-            scopes: vec![],
-        };
+        let config = AuthorizationConfig::new(
+            "not a url",
+            "https://auth.example.com/token",
+            "client-1",
+            "http://localhost:8080/callback",
+        );
 
         let err = build_authorization_url(&config, "state").unwrap_err();
         assert!(matches!(err, CredentialError::AuthorizationFailed { .. }));
@@ -1142,13 +1228,13 @@ mod tests {
     }
 
     fn device_config(base_url: &str) -> DeviceAuthorizationConfig {
-        DeviceAuthorizationConfig {
-            device_authorization_endpoint: format!("{base_url}/device/code"),
-            token_url: format!("{base_url}/token"),
-            client_id: "client-id".to_string(),
-            client_secret: Some("client-secret".to_string()),
-            scopes: vec!["read".to_string()],
-        }
+        DeviceAuthorizationConfig::new(
+            format!("{base_url}/device/code"),
+            format!("{base_url}/token"),
+            "client-id",
+        )
+        .with_client_secret("client-secret")
+        .with_scopes(["read"])
     }
 
     fn device_response(interval: Option<i64>) -> DeviceAuthorizationResponse {
@@ -1320,9 +1406,7 @@ mod tests {
             .await;
 
         let config = device_config(&mock_server.uri());
-        let response = request_device_code(&reqwest::Client::new(), &config)
-            .await
-            .unwrap();
+        let response = request_device_code(&test_client(), &config).await.unwrap();
 
         assert_eq!(response.device_code, "dev-123");
         assert_eq!(response.user_code, "WDJB-MJHT");
@@ -1347,7 +1431,7 @@ mod tests {
             .await;
 
         let config = device_config(&mock_server.uri());
-        let err = request_device_code(&reqwest::Client::new(), &config)
+        let err = request_device_code(&test_client(), &config)
             .await
             .unwrap_err();
 
@@ -1365,6 +1449,7 @@ mod tests {
 
     #[tokio::test]
     async fn request_device_code_transport_failure_reason_is_sanitized() {
+        crate::ensure_default_crypto_provider();
         let client = reqwest::Client::builder()
             .timeout(Duration::from_millis(200))
             .build()
@@ -1404,10 +1489,9 @@ mod tests {
         let device = device_response(Some(3));
         let (recorded, sleeper) = recording_sleeper();
 
-        let token =
-            poll_device_token_with_sleep(&reqwest::Client::new(), &config, &device, sleeper)
-                .await
-                .unwrap();
+        let token = poll_device_token_with_sleep(&test_client(), &config, &device, sleeper)
+            .await
+            .unwrap();
 
         assert_eq!(token.access_token, "device-access");
         assert_eq!(token.refresh_token.as_deref(), Some("device-refresh"));
@@ -1439,10 +1523,9 @@ mod tests {
         let device = device_response(Some(5));
         let (recorded, sleeper) = recording_sleeper();
 
-        let token =
-            poll_device_token_with_sleep(&reqwest::Client::new(), &config, &device, sleeper)
-                .await
-                .unwrap();
+        let token = poll_device_token_with_sleep(&test_client(), &config, &device, sleeper)
+            .await
+            .unwrap();
 
         assert_eq!(token.access_token, "device-access");
         // Each slow_down adds 5s (RFC 8628 §3.5) and the increase persists
@@ -1478,7 +1561,7 @@ mod tests {
         let device = device_response(Some(2));
         let (recorded, sleeper) = recording_sleeper();
 
-        poll_device_token_with_sleep(&reqwest::Client::new(), &config, &device, sleeper)
+        poll_device_token_with_sleep(&test_client(), &config, &device, sleeper)
             .await
             .unwrap();
 
@@ -1503,7 +1586,7 @@ mod tests {
         let device = device_response(Some(1));
         let (_recorded, sleeper) = recording_sleeper();
 
-        let err = poll_device_token_with_sleep(&reqwest::Client::new(), &config, &device, sleeper)
+        let err = poll_device_token_with_sleep(&test_client(), &config, &device, sleeper)
             .await
             .unwrap_err();
 
@@ -1532,7 +1615,7 @@ mod tests {
         let device = device_response(Some(1));
         let (_recorded, sleeper) = recording_sleeper();
 
-        let err = poll_device_token_with_sleep(&reqwest::Client::new(), &config, &device, sleeper)
+        let err = poll_device_token_with_sleep(&test_client(), &config, &device, sleeper)
             .await
             .unwrap_err();
 
@@ -1564,7 +1647,7 @@ mod tests {
         device.expires_in = Some(0);
         let (_recorded, sleeper) = recording_sleeper();
 
-        let err = poll_device_token_with_sleep(&reqwest::Client::new(), &config, &device, sleeper)
+        let err = poll_device_token_with_sleep(&test_client(), &config, &device, sleeper)
             .await
             .unwrap_err();
 
@@ -1595,7 +1678,7 @@ mod tests {
         let device = device_response(Some(1));
         let (_recorded, sleeper) = recording_sleeper();
 
-        let err = poll_device_token_with_sleep(&reqwest::Client::new(), &config, &device, sleeper)
+        let err = poll_device_token_with_sleep(&test_client(), &config, &device, sleeper)
             .await
             .unwrap_err();
         let log_output = logs.contents();
@@ -1616,6 +1699,7 @@ mod tests {
 
     #[tokio::test]
     async fn poll_device_token_transport_failure_reason_is_sanitized() {
+        crate::ensure_default_crypto_provider();
         let client = reqwest::Client::builder()
             .timeout(Duration::from_millis(200))
             .build()

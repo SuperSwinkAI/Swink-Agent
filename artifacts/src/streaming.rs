@@ -116,13 +116,8 @@ impl StreamingArtifactStore for FileArtifactStore {
                 content_type: content_type.clone(),
                 metadata: metadata.clone(),
             };
-            let version = ArtifactVersion {
-                name: name.to_string(),
-                version: next_version,
-                created_at: now,
-                size,
-                content_type,
-            };
+            let version =
+                ArtifactVersion::new(name.to_string(), next_version, now, size, content_type);
             meta.versions.push(record);
             if let Err(error) = self.write_meta(session_id, name, &meta).await {
                 Self::rollback_version_file(&content_path).await;

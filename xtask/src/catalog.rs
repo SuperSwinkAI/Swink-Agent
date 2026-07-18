@@ -114,18 +114,9 @@ mod tests {
     use swink_agent::{AuthMode, ProviderCatalog, ProviderKind};
 
     fn provider(key: &str) -> ProviderCatalog {
-        ProviderCatalog {
-            key: key.to_owned(),
-            display_name: key.to_owned(),
-            kind: ProviderKind::Remote,
-            auth_mode: Some(AuthMode::Bearer),
-            credential_env_var: None,
-            base_url_env_var: None,
-            default_base_url: Some(format!("https://api.{key}.example")),
-            requires_base_url: false,
-            region_env_var: None,
-            presets: Vec::new(),
-        }
+        ProviderCatalog::new(key, key, ProviderKind::Remote)
+            .with_auth_mode(AuthMode::Bearer)
+            .with_default_base_url(format!("https://api.{key}.example"))
     }
 
     #[test]

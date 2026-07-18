@@ -3,7 +3,6 @@
 //! Implements [`StreamFn`] for the Ollama `/api/chat` endpoint.
 //! Ollama streams newline-delimited JSON (NDJSON), not SSE.
 
-use std::collections::HashMap;
 use std::pin::Pin;
 
 use futures::stream::{self, Stream, StreamExt as _};
@@ -16,11 +15,12 @@ use tracing::{debug, error, warn};
 use swink_agent::ContentBlock;
 use swink_agent::{
     AgentContext, AssistantMessage as HarnessAssistantMessage, AssistantMessageEvent, Cost,
-    ModelSpec, StopReason, StreamFn, StreamOptions, ThinkingLevel, ToolResultMessage, Usage,
-    UserMessage,
+    ModelSpec, ResponseFormat, StopReason, StreamFn, StreamOptions, ThinkingLevel,
+    ToolResultMessage, Usage, UserMessage,
 };
 
 use crate::convert::{self, MessageConverter, extract_tool_schemas};
+use crate::sse::{SseAction, sse_adapter_stream};
 
 // ─── Request types ──────────────────────────────────────────────────────────
 
@@ -71,29 +71,57 @@ struct OllamaChatRequest {
     options: Option<serde_json::Map<String, Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     keep_alive: Option<String>,
+    /// Structured-output constraint. Top-level like `keep_alive`, *not* an
+    /// `options.*` entry — Ollama ignores `options.format`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<Value>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<OllamaTool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     think: Option<bool>,
 }
 
+/// Map [`ResponseFormat`] onto Ollama's top-level `format` field.
+///
+/// `Json` becomes the literal string `"json"`; `Schema` passes the JSON Schema
+/// through verbatim, which is exactly what Ollama expects.
+fn response_format(options: &StreamOptions) -> Option<Value> {
+    options
+        .serving
+        .format
+        .as_ref()
+        .and_then(|format| match format {
+            ResponseFormat::Json => Some(Value::from("json")),
+            ResponseFormat::Schema(schema) => Some(schema.clone()),
+            // Unknown future variant: we don't know how to represent it on the
+            // wire, so omit `format` entirely rather than sending something wrong.
+            _ => None,
+        })
+}
+
 /// Build Ollama's `options` object from the stream/serving options.
 ///
-/// `ServingOptions::extra` keys go in first so typed fields win on collision;
-/// `None` when nothing is set, so default requests carry no `options` key.
+/// `ServingOptions::extra` merges in via [`crate::base::merge_extra`] so typed
+/// fields win on collision. Only the typed keys that are actually *set* are
+/// protected: an unset typed knob never reaches the wire, so a same-named
+/// `extra` entry passes through instead of colliding. Returns `None` when
+/// nothing is set, so default requests carry no `options` key.
 fn generation_options(options: &StreamOptions) -> Option<serde_json::Map<String, Value>> {
     let serving = &options.serving;
-    let mut map: serde_json::Map<String, Value> = serving
-        .extra
-        .iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
     let typed = [
         ("temperature", options.temperature.map(Value::from)),
         ("num_predict", options.max_tokens.map(Value::from)),
         ("top_p", serving.top_p.map(Value::from)),
         ("num_ctx", serving.context_length.map(Value::from)),
     ];
+    let set_keys: Vec<&str> = typed
+        .iter()
+        .filter(|(_, value)| value.is_some())
+        .map(|(key, _)| *key)
+        .collect();
+
+    let mut map = serde_json::Map::new();
+    crate::base::merge_extra(&mut map, &serving.extra, &set_keys);
     for (key, value) in typed {
         if let Some(value) = value {
             map.insert(key.to_string(), value);
@@ -278,6 +306,7 @@ async fn send_request(
         stream: true,
         options: generation_options(options),
         keep_alive: options.serving.keep_alive.clone(),
+        format: response_format(options),
         tools,
         think: if model.thinking_level == ThinkingLevel::Off {
             None
@@ -400,159 +429,117 @@ fn emit_tool_calls(
 fn parse_ndjson_stream(
     response: reqwest::Response,
     cancellation_token: CancellationToken,
-) -> impl Stream<Item = AssistantMessageEvent> + Send {
+) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send>> {
     let byte_stream = response.bytes_stream();
     let line_stream = ndjson_lines(byte_stream);
 
-    stream::unfold(
-        (Box::pin(line_stream), cancellation_token, StreamState {
+    sse_adapter_stream(
+        line_stream,
+        cancellation_token,
+        StreamState {
             blocks: crate::block_accumulator::BlockAccumulator::new(),
-        }, false, true),
-        |(mut lines, token, mut state, mut done, first)| async move {
-            if done {
-                return None;
-            }
-
-            // Emit Start on first call
-            if first {
-                return Some((
-                    vec![AssistantMessageEvent::Start],
-                    (lines, token, state, done, false),
+        },
+        "Ollama request cancelled",
+        |item, state| match item {
+            None => {
+                // Stream ended without done=true
+                let mut events = crate::finalize::finalize_blocks(state);
+                events.push(AssistantMessageEvent::error_network(
+                    "Ollama stream ended unexpectedly",
                 ));
+                SseAction::Done(events)
             }
-
-            tokio::select! {
-                biased;
-                () = token.cancelled() => {
-                    let mut events = crate::finalize::finalize_blocks(&mut state);
-                    events.push(AssistantMessageEvent::Error {
-                        stop_reason: StopReason::Aborted,
-                        error_message: "operation cancelled".to_string(),
-                        usage: None,
-                        error_kind: None,
-                        retry_after: None,
-                    });
-                    done = true;
-                    Some((events, (lines, token, state, done, false)))
-                }
-                item = lines.next() => {
-                    match item {
-                        None => {
-                            // Stream ended without done=true
-                            done = true;
-                            let mut events = crate::finalize::finalize_blocks(&mut state);
-                            events.push(AssistantMessageEvent::error_network(
-                                "Ollama stream ended unexpectedly",
-                            ));
-                            Some((events, (lines, token, state, done, false)))
-                        }
-                        Some(Err(err)) => {
-                            // Transport-level failure — surface as network error
-                            // instead of silently treating as EOF.
-                            error!(error = %err, "Ollama transport error");
-                            done = true;
-                            let mut events = crate::finalize::finalize_blocks(&mut state);
-                            events.push(AssistantMessageEvent::error_network(format!(
-                                "Ollama {err}"
-                            )));
-                            Some((events, (lines, token, state, done, false)))
-                        }
-                        Some(Ok(line)) => {
-                            let chunk: OllamaChatChunk = match serde_json::from_str(&line) {
-                                Ok(c) => c,
-                                Err(e) => {
-                                    error!(error = %e, "Ollama JSON parse error");
-                                    done = true;
-                                    let mut events = crate::finalize::finalize_blocks(&mut state);
-                                    events.push(AssistantMessageEvent::error(format!("Ollama JSON parse error: {e}")));
-                                    return Some((events, (lines, token, state, done, false)));
-                                }
-                            };
-
-                            let mut events = Vec::new();
-
-                            // Handle thinking content
-                            if let Some(thinking) = &chunk.message.thinking
-                                && !thinking.is_empty()
-                            {
-                                if let Some(ev) = state.blocks.ensure_thinking_open() {
-                                    events.push(ev);
-                                }
-                                if let Some(ev) = state.blocks.thinking_delta(thinking.clone()) {
-                                    events.push(ev);
-                                }
-                            }
-
-                            // Handle text content
-                            if !chunk.message.content.is_empty() {
-                                // Close thinking block first if open (returns None when not open)
-                                if let Some(ev) = state.blocks.close_thinking(None) {
-                                    events.push(ev);
-                                }
-                                if let Some(ev) = state.blocks.ensure_text_open() {
-                                    events.push(ev);
-                                }
-                                if let Some(ev) =
-                                    state.blocks.text_delta(chunk.message.content.clone())
-                                {
-                                    events.push(ev);
-                                }
-                            }
-
-                            // Handle tool calls
-                            if let Some(tool_calls) = &chunk.message.tool_calls {
-                                events.extend(emit_tool_calls(&mut state, tool_calls));
-                            }
-
-                            // Handle done
-                            if chunk.done {
-                                done = true;
-                                events.extend(crate::finalize::finalize_blocks(&mut state));
-
-                                let stop_reason = match chunk.done_reason.as_deref() {
-                                    Some("tool_calls") => StopReason::ToolUse,
-                                    Some("length") => StopReason::Length,
-                                    _ => StopReason::Stop,
-                                };
-
-                                let input_tokens = chunk.prompt_eval_count.unwrap_or(0);
-                                let output_tokens = chunk.eval_count.unwrap_or(0);
-
-                                events.push(AssistantMessageEvent::Done {
-                                    stop_reason,
-                                    usage: Usage {
-                                        input: input_tokens,
-                                        output: output_tokens,
-                                        cache_read: 0,
-                                        cache_write: 0,
-                                        total: input_tokens + output_tokens,
-                                        extra: HashMap::new(),
-                                    },
-                                    // Ollama is free / local — no cost
-                                    cost: Cost {
-                                        input: 0.0,
-                                        output: 0.0,
-                                        cache_read: 0.0,
-                                        cache_write: 0.0,
-                                        total: 0.0,
-                                        extra: HashMap::new(),
-                                    },
-                                });
-                            }
-
-                            if events.is_empty() {
-                                // Skip empty chunks
-                                Some((vec![], (lines, token, state, done, false)))
-                            } else {
-                                Some((events, (lines, token, state, done, false)))
-                            }
-                        }
+            Some(Err(err)) => {
+                // Transport-level failure — surface as network error
+                // instead of silently treating as EOF.
+                error!(error = %err, "Ollama transport error");
+                let mut events = crate::finalize::finalize_blocks(state);
+                events.push(AssistantMessageEvent::error_network(format!(
+                    "Ollama {err}"
+                )));
+                SseAction::Done(events)
+            }
+            Some(Ok(line)) => {
+                let chunk: OllamaChatChunk = match serde_json::from_str(&line) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        error!(error = %e, "Ollama JSON parse error");
+                        let mut events = crate::finalize::finalize_blocks(state);
+                        events.push(AssistantMessageEvent::error(format!(
+                            "Ollama JSON parse error: {e}"
+                        )));
+                        return SseAction::Done(events);
                     }
+                };
+
+                let mut events = Vec::new();
+
+                // Handle thinking content
+                if let Some(thinking) = &chunk.message.thinking
+                    && !thinking.is_empty()
+                {
+                    if let Some(ev) = state.blocks.ensure_thinking_open() {
+                        events.push(ev);
+                    }
+                    if let Some(ev) = state.blocks.thinking_delta(thinking.clone()) {
+                        events.push(ev);
+                    }
+                }
+
+                // Handle text content
+                if !chunk.message.content.is_empty() {
+                    // Close thinking block first if open (returns None when not open)
+                    if let Some(ev) = state.blocks.close_thinking(None) {
+                        events.push(ev);
+                    }
+                    if let Some(ev) = state.blocks.ensure_text_open() {
+                        events.push(ev);
+                    }
+                    if let Some(ev) = state.blocks.text_delta(chunk.message.content.clone()) {
+                        events.push(ev);
+                    }
+                }
+
+                // Handle tool calls
+                if let Some(tool_calls) = &chunk.message.tool_calls {
+                    events.extend(emit_tool_calls(state, tool_calls));
+                }
+
+                // Handle done
+                if chunk.done {
+                    events.extend(crate::finalize::finalize_blocks(state));
+
+                    let stop_reason = match chunk.done_reason.as_deref() {
+                        Some("tool_calls") => StopReason::ToolUse,
+                        Some("length") => StopReason::Length,
+                        _ => StopReason::Stop,
+                    };
+
+                    let input_tokens = chunk.prompt_eval_count.unwrap_or(0);
+                    let output_tokens = chunk.eval_count.unwrap_or(0);
+
+                    events.push(AssistantMessageEvent::Done {
+                        stop_reason,
+                        usage: Usage::default()
+                            .with_input(input_tokens)
+                            .with_output(output_tokens)
+                            .with_total(input_tokens + output_tokens),
+                        // Ollama is free / local — no cost
+                        cost: Cost::default(),
+                    });
+
+                    return SseAction::Done(events);
+                }
+
+                if events.is_empty() {
+                    // Skip empty chunks
+                    SseAction::Skip
+                } else {
+                    SseAction::Continue(events)
                 }
             }
         },
     )
-    .flat_map(stream::iter)
 }
 
 impl crate::finalize::StreamFinalize for StreamState {
@@ -687,8 +674,8 @@ mod tests {
     use futures::StreamExt;
     use futures::stream;
     use swink_agent::{
-        AgentMessage, AssistantMessage as HarnessAssistantMessage, ContentBlock, Cost, LlmMessage,
-        StopReason, ToolResultMessage, Usage, UserMessage,
+        AgentMessage, AssistantMessage as HarnessAssistantMessage, ContentBlock, LlmMessage,
+        StopReason, ToolResultMessage, UserMessage,
     };
 
     // ─── trailing slash normalization ────────────────────────────────────
@@ -709,13 +696,12 @@ mod tests {
 
     #[test]
     fn convert_user_and_system_messages() {
-        let messages = vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
+        let messages = vec![AgentMessage::Llm(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text {
                 text: "hello".to_string(),
-            }],
-            timestamp: 0,
-            cache_hint: None,
-        }))];
+            }])
+            .with_timestamp(0),
+        ))];
 
         let result = convert_messages::<OllamaConverter>(&messages, "test sys");
 
@@ -839,6 +825,7 @@ mod tests {
             }
         });
 
+        crate::base::ensure_default_crypto_provider();
         let client = reqwest::Client::new();
         let resp = client
             .get(format!("http://{addr}/"))
@@ -912,23 +899,18 @@ mod tests {
     #[test]
     fn convert_assistant_with_tool_calls() {
         let messages = vec![AgentMessage::Llm(LlmMessage::Assistant(
-            HarnessAssistantMessage {
-                content: vec![ContentBlock::ToolCall {
+            HarnessAssistantMessage::new(
+                vec![ContentBlock::ToolCall {
                     id: "tc_1".to_string(),
                     name: "my_tool".to_string(),
                     arguments: serde_json::json!({"key": "val"}),
                     partial_json: None,
                 }],
-                provider: "ollama".to_string(),
-                model_id: "test".to_string(),
-                usage: Usage::default(),
-                cost: Cost::default(),
-                stop_reason: StopReason::ToolUse,
-                error_message: None,
-                error_kind: None,
-                timestamp: 0,
-                cache_hint: None,
-            },
+                "ollama",
+                "test",
+            )
+            .with_stop_reason(StopReason::ToolUse)
+            .with_timestamp(0),
         ))];
 
         let result = convert_messages::<OllamaConverter>(&messages, "");
@@ -952,16 +934,13 @@ mod tests {
     #[test]
     fn convert_tool_result_message() {
         let messages = vec![AgentMessage::Llm(LlmMessage::ToolResult(
-            ToolResultMessage {
-                tool_call_id: "tc_1".to_string(),
-                content: vec![ContentBlock::Text {
+            ToolResultMessage::new(
+                "tc_1",
+                vec![ContentBlock::Text {
                     text: "result text".to_string(),
                 }],
-                is_error: false,
-                timestamp: 0,
-                details: serde_json::Value::Null,
-                cache_hint: None,
-            },
+            )
+            .with_timestamp(0),
         ))];
 
         let result = convert_messages::<OllamaConverter>(&messages, "");
@@ -985,13 +964,12 @@ mod tests {
 
         let messages = vec![
             AgentMessage::Custom(Box::new(TestCustom)),
-            AgentMessage::Llm(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+            AgentMessage::Llm(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: "after custom".to_string(),
-                }],
-                timestamp: 0,
-                cache_hint: None,
-            })),
+                }])
+                .with_timestamp(0),
+            )),
         ];
 
         let result = convert_messages::<OllamaConverter>(&messages, "");
@@ -1070,11 +1048,7 @@ mod tests {
     async fn pre_cancelled_stream_aborts_before_request_send() {
         let ollama = OllamaStreamFn::new("http://127.0.0.1:1");
         let model = ModelSpec::new("ollama", "llama3.2");
-        let context = AgentContext {
-            system_prompt: String::new(),
-            messages: vec![],
-            tools: vec![],
-        };
+        let context = AgentContext::new(String::new(), vec![], vec![]);
         let options = StreamOptions::default();
         let token = CancellationToken::new();
         token.cancel();

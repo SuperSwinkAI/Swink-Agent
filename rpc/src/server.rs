@@ -12,7 +12,7 @@ use swink_agent::AgentOptions;
 /// `session in use` error.
 pub struct AgentServer {
     path: PathBuf,
-    factory: Arc<dyn Fn() -> AgentOptions + Send + Sync>,
+    factory: Arc<dyn Fn() -> Result<AgentOptions, String> + Send + Sync>,
 }
 
 impl AgentServer {
@@ -26,7 +26,7 @@ impl AgentServer {
     /// Returns `Err` if the path already exists or binding fails.
     pub fn bind(
         path: impl AsRef<Path>,
-        factory: impl Fn() -> AgentOptions + Send + Sync + 'static,
+        factory: impl Fn() -> Result<AgentOptions, String> + Send + Sync + 'static,
     ) -> std::io::Result<Self> {
         let path = path.as_ref().to_owned();
         if path.exists() {
@@ -51,7 +51,7 @@ impl AgentServer {
     /// Returns `Err` if binding fails.
     pub fn bind_force(
         path: impl AsRef<Path>,
-        factory: impl Fn() -> AgentOptions + Send + Sync + 'static,
+        factory: impl Fn() -> Result<AgentOptions, String> + Send + Sync + 'static,
     ) -> Self {
         let path = path.as_ref().to_owned();
         let _ = std::fs::remove_file(&path);
@@ -85,11 +85,13 @@ impl AgentServer {
         let shutdown = Arc::new(Notify::new());
         let shutdown2 = Arc::clone(&shutdown);
 
-        tokio::spawn(async move {
-            use tokio::signal::unix::{SignalKind, signal};
+        // Install the SIGTERM handler here, before spawning, so a failure to
+        // install it propagates as an error from `serve()` immediately rather
+        // than silently failing inside a detached task.
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut sigterm = signal(SignalKind::terminate())?;
 
-            let mut sigterm =
-                signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+        tokio::spawn(async move {
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {}
                 _ = sigterm.recv() => {}
@@ -153,7 +155,7 @@ impl Drop for SocketCleanup {
 async fn handle_connection(
     stream: tokio::net::UnixStream,
     session_active: Arc<std::sync::atomic::AtomicBool>,
-    factory: Arc<dyn Fn() -> AgentOptions + Send + Sync>,
+    factory: Arc<dyn Fn() -> Result<AgentOptions, String> + Send + Sync>,
 ) {
     use std::sync::atomic::Ordering;
 
@@ -202,9 +204,12 @@ async fn handle_connection(
 // ─── Session ──────────────────────────────────────────────────────────────────
 
 #[cfg(any(unix, test))]
+// One linear protocol flow (handshake → agent construction → dispatch loop);
+// splitting it would scatter the session's state across helpers.
+#[allow(clippy::too_many_lines)]
 async fn run_session(
     peer: &mut crate::jsonrpc::JsonRpcPeer,
-    factory: &(dyn Fn() -> AgentOptions + Send + Sync),
+    factory: &(dyn Fn() -> Result<AgentOptions, String> + Send + Sync),
 ) -> Result<(), crate::jsonrpc::RpcError> {
     use crate::dto::{
         InitializedParams, PROTOCOL_VERSION, ServerInfo, ToolApprovalDto, ToolApprovalRequestDto,
@@ -242,7 +247,18 @@ async fn run_session(
 
     // Wire up tool-approval callback before building the Agent.
     let approval_sender = peer.sender();
-    let options = factory().with_approve_tool_async(move |req| {
+    let options = match factory() {
+        Ok(options) => options,
+        Err(reason) => {
+            warn!("failed to build agent options: {reason}");
+            let _ = peer
+                .sender()
+                .notify("error", &RpcError::internal(reason.clone()))
+                .await;
+            return Err(RpcError::internal(reason));
+        }
+    };
+    let options = options.with_approve_tool_async(move |req| {
         let sender = approval_sender.clone();
         async move {
             let dto = ToolApprovalRequestDto::from(&req);
@@ -259,6 +275,12 @@ async fn run_session(
         }
     });
     let mut agent = Agent::new(options);
+
+    // Saved (tools, system prompt) while the agent is in plan mode. The
+    // values returned by `Agent::enter_plan_mode` are not serializable, so
+    // the server holds them here for the lifetime of the session and feeds
+    // them back to `Agent::exit_plan_mode` on `plan.exit`.
+    let mut plan_state: PlanModeState = None;
 
     // Main dispatch loop.
     loop {
@@ -278,19 +300,31 @@ async fn run_session(
             }) if m == method::PROMPT => match run_prompt(peer, &mut agent, params).await {
                 Ok(turn_id) => {
                     peer.sender()
-                        .respond_ok(id, crate::dto::PromptResult { turn_id })?;
+                        .respond_ok(id, crate::dto::PromptResult { turn_id })
+                        .await?;
                 }
                 Err(e) => {
                     let end_session = e.code == RpcError::DISCONNECTED;
-                    peer.sender().respond_err(id, e)?;
+                    peer.sender().respond_err(id, e).await?;
                     if end_session {
                         break;
                     }
                 }
             },
+            Some(IncomingMessage::Request {
+                id,
+                method: m,
+                params,
+            }) if method::is_control(&m) => {
+                match dispatch_control(&mut agent, &mut plan_state, &m, params) {
+                    Ok(result) => peer.sender().respond_ok(id, result).await?,
+                    Err(e) => peer.sender().respond_err(id, e).await?,
+                }
+            }
             Some(IncomingMessage::Request { id, method: m, .. }) => {
                 peer.sender()
-                    .respond_err(id, RpcError::method_not_found(&m))?;
+                    .respond_err(id, RpcError::method_not_found(&m))
+                    .await?;
             }
             Some(IncomingMessage::Notification { method: m, .. }) => {
                 debug!("ignoring unknown notification: {m}");
@@ -321,11 +355,10 @@ async fn run_prompt(
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         .to_string();
 
-    let user_msg = AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text { text: params.text }],
-        timestamp: now_timestamp(),
-        cache_hint: None,
-    }));
+    let user_msg = AgentMessage::Llm(LlmMessage::User(
+        UserMessage::new(vec![ContentBlock::Text { text: params.text }])
+            .with_timestamp(now_timestamp()),
+    ));
 
     let stream = agent
         .prompt_stream(vec![user_msg])
@@ -337,7 +370,14 @@ async fn run_prompt(
         tokio::select! {
             event = stream.next() => {
                 match event {
-                    Some(ev) => sender.notify(method::AGENT_EVENT, &ev).await?,
+                    Some(ev) => {
+                        // Mirror the event into agent state (the same contract
+                        // the TUI follows): without this, `state().messages`
+                        // never absorbs the turn, so later turns lose context
+                        // and `session.snapshot` reads a stale transcript.
+                        agent.handle_stream_event(&ev);
+                        sender.notify(method::AGENT_EVENT, &ev).await?;
+                    }
                     None => break,
                 }
             }
@@ -355,8 +395,19 @@ async fn run_prompt(
                         agent.abort();
                         return Err(RpcError::disconnected());
                     }
+                    // Control-plane requests are rejected (not dropped, and
+                    // not method_not_found) while a turn is in flight — the
+                    // `cancel` notification above is the mid-turn-safe way
+                    // to regain control.
+                    Some(IncomingMessage::Request { id, method: m, .. })
+                        if method::is_control(&m) =>
+                    {
+                        peer.sender().respond_err(id, RpcError::busy()).await?;
+                    }
                     Some(IncomingMessage::Request { id, method: m, .. }) => {
-                        peer.sender().respond_err(id, RpcError::method_not_found(&m))?;
+                        peer.sender()
+                            .respond_err(id, RpcError::method_not_found(&m))
+                            .await?;
                     }
                     Some(_) => {}
                 }
@@ -365,6 +416,237 @@ async fn run_prompt(
     }
 
     Ok(turn_id)
+}
+
+// ─── Control plane ────────────────────────────────────────────────────────────
+
+/// Saved (tools, system prompt) held by the session while plan mode is active.
+///
+/// `Some` means the agent is currently in plan mode.
+#[cfg(any(unix, test))]
+type PlanModeState = Option<(Vec<Arc<dyn swink_agent::AgentTool>>, String)>;
+
+/// Handle one control-plane request (protocol 1.1) between turns.
+///
+/// Returns the JSON result to send back, or the [`RpcError`](crate::jsonrpc::RpcError)
+/// to respond with. Only called from the main dispatch loop in `run_session`;
+/// while a turn is in flight `run_prompt` answers control requests with
+/// [`RpcError::busy`](crate::jsonrpc::RpcError::busy) instead.
+#[cfg(any(unix, test))]
+fn dispatch_control(
+    agent: &mut swink_agent::Agent,
+    plan_state: &mut PlanModeState,
+    method_name: &str,
+    params: Option<serde_json::Value>,
+) -> Result<serde_json::Value, crate::jsonrpc::RpcError> {
+    use crate::dto::{
+        Ack, ApprovalGetResult, ApprovalSetParams, ModelListResult, ModelSetParams,
+        SystemPromptSetParams, ThinkingSetParams, method,
+    };
+    use crate::jsonrpc::RpcError;
+
+    fn encode<T: serde::Serialize>(value: T) -> Result<serde_json::Value, RpcError> {
+        serde_json::to_value(value).map_err(|e| RpcError::internal(e.to_string()))
+    }
+
+    match method_name {
+        method::MODEL_LIST => {
+            let state = agent.state();
+            encode(ModelListResult::new(
+                state.available_models.clone(),
+                state.model.clone(),
+            ))
+        }
+        method::MODEL_SET => {
+            let p: ModelSetParams = parse_control_params(params, method::MODEL_SET)?;
+            agent.set_model(p.model);
+            encode(Ack::new())
+        }
+        method::THINKING_SET => {
+            let p: ThinkingSetParams = parse_control_params(params, method::THINKING_SET)?;
+            agent.set_thinking_level(p.level);
+            encode(Ack::new())
+        }
+        method::APPROVAL_GET => encode(ApprovalGetResult::new(agent.approval_mode())),
+        method::APPROVAL_SET => {
+            let p: ApprovalSetParams = parse_control_params(params, method::APPROVAL_SET)?;
+            agent.set_approval_mode(p.mode);
+            encode(Ack::new())
+        }
+        method::SYSTEM_PROMPT_SET => {
+            let p: SystemPromptSetParams = parse_control_params(params, method::SYSTEM_PROMPT_SET)?;
+            agent.set_system_prompt(p.prompt);
+            encode(Ack::new())
+        }
+        method::AGENT_RESET => {
+            agent.reset();
+            encode(Ack::new())
+        }
+        method::PLAN_ENTER => {
+            if plan_state.is_some() {
+                return Err(RpcError::invalid_request("already in plan mode"));
+            }
+            *plan_state = Some(agent.enter_plan_mode());
+            encode(Ack::new())
+        }
+        method::PLAN_EXIT => {
+            let (saved_tools, saved_prompt) = plan_state
+                .take()
+                .ok_or_else(|| RpcError::invalid_request("not in plan mode"))?;
+            agent.exit_plan_mode(saved_tools, saved_prompt);
+            encode(Ack::new())
+        }
+        method::SESSION_SNAPSHOT => encode(session_snapshot(agent)?),
+        method::SESSION_RESTORE => {
+            session_restore(
+                agent,
+                parse_control_params(params, method::SESSION_RESTORE)?,
+            )?;
+            encode(Ack::new())
+        }
+        // Unreachable while callers gate on `method::is_control`, but a new
+        // method added to `is_control` without a dispatch arm must fail
+        // loudly rather than fall through to a success path.
+        other => Err(RpcError::method_not_found(other)),
+    }
+}
+
+/// Build the `session.snapshot` result from the agent's transcript and
+/// session state.
+#[cfg(any(unix, test))]
+fn session_snapshot(
+    agent: &swink_agent::Agent,
+) -> Result<crate::dto::SessionSnapshot, crate::jsonrpc::RpcError> {
+    use crate::jsonrpc::RpcError;
+
+    let messages = agent
+        .state()
+        .messages
+        .iter()
+        .filter_map(snapshot_message)
+        .collect();
+    let state = {
+        let guard = agent
+            .session_state()
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        serde_json::to_value(&*guard).map_err(|e| RpcError::internal(e.to_string()))?
+    };
+    Ok(crate::dto::SessionSnapshot::new(messages, Some(state)))
+}
+
+/// Apply a `session.restore` snapshot: replace the agent's transcript and
+/// session state, mirroring the TUI's session-load write-back.
+#[cfg(any(unix, test))]
+fn session_restore(
+    agent: &mut swink_agent::Agent,
+    snapshot: crate::dto::SessionSnapshot,
+) -> Result<(), crate::jsonrpc::RpcError> {
+    use crate::jsonrpc::RpcError;
+
+    let state = snapshot
+        .state
+        .map(serde_json::from_value::<swink_agent::SessionState>)
+        .transpose()
+        .map_err(|e| RpcError::invalid_request(format!("invalid session.restore state: {e}")))?
+        .unwrap_or_default();
+    let mut restored = Vec::with_capacity(snapshot.messages.len());
+    let registry = agent.custom_message_registry();
+    for value in snapshot.messages {
+        if let Some(message) = restore_message(value, registry)? {
+            restored.push(message);
+        }
+    }
+    agent.set_messages(restored);
+    *agent
+        .session_state()
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = state;
+    Ok(())
+}
+
+/// Parse control-plane request params, mirroring the handshake parsers'
+/// error shape (`invalid request` with the failing method named).
+#[cfg(any(unix, test))]
+fn parse_control_params<T>(
+    params: Option<serde_json::Value>,
+    method_name: &str,
+) -> Result<T, crate::jsonrpc::RpcError>
+where
+    T: serde::de::DeserializeOwned,
+{
+    use crate::jsonrpc::RpcError;
+
+    let Some(params) = params else {
+        return Err(RpcError::invalid_request(format!(
+            "missing {method_name} params"
+        )));
+    };
+    serde_json::from_value(params)
+        .map_err(|e| RpcError::invalid_request(format!("invalid {method_name} params: {e}")))
+}
+
+/// Encode one [`AgentMessage`](swink_agent::AgentMessage) for `session.snapshot`.
+///
+/// Mirrors the JSONL representation used by `swink-agent-memory`: LLM
+/// messages as raw `LlmMessage` JSON, custom messages as their
+/// `serialize_custom_message` envelope with a `"_custom": true` marker.
+/// Non-serializable custom messages (and unknown future variants) are
+/// skipped with a warning, matching the store's behavior.
+#[cfg(any(unix, test))]
+fn snapshot_message(msg: &swink_agent::AgentMessage) -> Option<serde_json::Value> {
+    use swink_agent::{AgentMessage, serialize_custom_message};
+
+    match msg {
+        AgentMessage::Llm(llm) => serde_json::to_value(llm).ok(),
+        AgentMessage::Custom(custom) => {
+            let Some(mut envelope) = serialize_custom_message(custom.as_ref()) else {
+                tracing::warn!(
+                    type_name = custom.type_name().unwrap_or("<unknown>"),
+                    "session.snapshot: skipping non-serializable CustomMessage"
+                );
+                return None;
+            };
+            envelope
+                .as_object_mut()
+                .expect("custom message envelope must be an object")
+                .insert("_custom".to_string(), serde_json::Value::Bool(true));
+            Some(envelope)
+        }
+        // `AgentMessage` is `#[non_exhaustive]`: skip variants this build
+        // does not know how to encode, as the memory codec does.
+        _ => {
+            tracing::warn!("session.snapshot: skipping unrecognized AgentMessage variant");
+            None
+        }
+    }
+}
+
+/// Decode one `session.restore` message value back into an
+/// [`AgentMessage`](swink_agent::AgentMessage), mirroring the memory crate's
+/// JSONL decoding: values marked `"_custom": true` go through the agent's
+/// [`CustomMessageRegistry`](swink_agent::CustomMessageRegistry) (and are
+/// skipped when the agent has none), everything else must parse as a raw
+/// `LlmMessage`.
+#[cfg(any(unix, test))]
+fn restore_message(
+    value: serde_json::Value,
+    registry: Option<&swink_agent::CustomMessageRegistry>,
+) -> Result<Option<swink_agent::AgentMessage>, crate::jsonrpc::RpcError> {
+    use crate::jsonrpc::RpcError;
+    use swink_agent::{AgentMessage, LlmMessage, restore_single_custom};
+
+    if value.get("_custom").and_then(serde_json::Value::as_bool) == Some(true) {
+        return restore_single_custom(registry, &value)
+            .map(|opt| opt.map(AgentMessage::Custom))
+            .map_err(|e| {
+                RpcError::invalid_request(format!("invalid custom message in session.restore: {e}"))
+            });
+    }
+
+    serde_json::from_value::<LlmMessage>(value)
+        .map(|m| Some(AgentMessage::Llm(m)))
+        .map_err(|e| RpcError::invalid_request(format!("invalid message in session.restore: {e}")))
 }
 
 // ─── Peer credential helpers (unix-only) ─────────────────────────────────────
@@ -402,13 +684,17 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use swink_agent::{AgentEvent, AgentOptions, AgentTool, StreamFn};
+    use swink_agent::{
+        AgentEvent, AgentOptions, AgentTool, ApprovalMode, LlmMessage, ModelSpec, StreamFn,
+        ThinkingLevel,
+    };
     use tokio::io::duplex;
 
     use super::*;
     use crate::dto::{
-        ClientInfo, InitializeParams, PROTOCOL_VERSION, PromptParams, PromptResult,
-        ToolApprovalDto, ToolApprovalRequestDto, method,
+        Ack, ApprovalGetResult, ApprovalSetParams, ClientInfo, InitializeParams, ModelListResult,
+        ModelSetParams, PROTOCOL_VERSION, PromptParams, PromptResult, SessionSnapshot,
+        SystemPromptSetParams, ThinkingSetParams, ToolApprovalDto, ToolApprovalRequestDto, method,
     };
     use crate::jsonrpc::{IncomingMessage, JsonRpcPeer};
 
@@ -456,7 +742,7 @@ mod tests {
         let path = temp.path().join("swink.sock");
         std::fs::write(&path, b"stale socket placeholder").unwrap();
 
-        let err = match AgentServer::bind(&path, || test_agent_options("unused")) {
+        let err = match AgentServer::bind(&path, || Ok(test_agent_options("unused"))) {
             Ok(_) => panic!("bind should reject existing socket path"),
             Err(err) => err,
         };
@@ -478,7 +764,7 @@ mod tests {
         let path = temp.path().join("swink.sock");
         std::fs::write(&path, b"stale socket placeholder").unwrap();
 
-        let _server = AgentServer::bind_force(&path, || test_agent_options("unused"));
+        let _server = AgentServer::bind_force(&path, || Ok(test_agent_options("unused")));
 
         assert!(
             !path.exists(),
@@ -513,9 +799,11 @@ mod tests {
         let (mut client, mut server) = make_peer_pair();
 
         let server_task = tokio::spawn(async move {
-            run_session(&mut server, &|| test_agent_options("hello from rpc server"))
-                .await
-                .unwrap();
+            run_session(&mut server, &|| {
+                Ok(test_agent_options("hello from rpc server"))
+            })
+            .await
+            .unwrap();
         });
 
         initialize(&mut client).await;
@@ -574,7 +862,7 @@ mod tests {
         let (mut client, mut server) = make_peer_pair();
 
         let server_task = tokio::spawn(async move {
-            run_session(&mut server, &|| test_agent_options("valid follow-up"))
+            run_session(&mut server, &|| Ok(test_agent_options("valid follow-up")))
                 .await
                 .unwrap();
         });
@@ -647,7 +935,7 @@ mod tests {
         let (mut client, mut server) = make_peer_pair();
 
         let server_task = tokio::spawn(async move {
-            run_session(&mut server, &|| test_agent_options("unused"))
+            run_session(&mut server, &|| Ok(test_agent_options("unused")))
                 .await
                 .unwrap();
         });
@@ -675,7 +963,7 @@ mod tests {
         let (mut client, mut server) = make_peer_pair();
 
         let server_task = tokio::spawn(async move {
-            run_session(&mut server, &|| test_agent_options("after idle cancel"))
+            run_session(&mut server, &|| Ok(test_agent_options("after idle cancel")))
                 .await
                 .unwrap();
         });
@@ -735,7 +1023,7 @@ mod tests {
         let (mut client, mut server) = make_peer_pair();
 
         let server_task = tokio::spawn(async move {
-            run_session(&mut server, &|| approval_blocking_agent_options())
+            run_session(&mut server, &|| Ok(approval_blocking_agent_options()))
                 .await
                 .unwrap();
         });
@@ -802,13 +1090,13 @@ mod tests {
 
         let server_task = tokio::spawn(async move {
             let factory = || {
-                AgentOptions::new(
+                Ok(AgentOptions::new(
                     "test system",
                     swink_agent::testing::default_model(),
                     Arc::clone(&stream_fn),
                     swink_agent::testing::default_convert,
                 )
-                .with_tools(vec![Arc::clone(&tool) as Arc<dyn AgentTool>])
+                .with_tools(vec![Arc::clone(&tool) as Arc<dyn AgentTool>]))
             };
 
             run_session(&mut server, &factory).await.unwrap();
@@ -830,13 +1118,14 @@ mod tests {
                 result = &mut prompt => {
                     let result = result.unwrap();
                     while let Some(incoming) = client.try_recv_incoming() {
-                        handle_prompt_incoming(incoming, &sender, &mut events, &mut approvals);
+                        handle_prompt_incoming(incoming, &sender, &mut events, &mut approvals)
+                            .await;
                     }
                     break result;
                 }
                 incoming = client.recv_incoming() => {
                     let incoming = incoming.expect("server should stay connected while prompt runs");
-                    handle_prompt_incoming(incoming, &sender, &mut events, &mut approvals);
+                    handle_prompt_incoming(incoming, &sender, &mut events, &mut approvals).await;
                 }
             }
         };
@@ -865,7 +1154,7 @@ mod tests {
         let (mut client, mut server) = make_peer_pair();
 
         let server_task = tokio::spawn(async move {
-            run_session(&mut server, &|| test_agent_options("unused"))
+            run_session(&mut server, &|| Ok(test_agent_options("unused")))
                 .await
                 .unwrap_err()
         });
@@ -887,6 +1176,350 @@ mod tests {
         assert!(client.try_recv_incoming().is_none());
     }
 
+    #[tokio::test]
+    async fn run_session_serves_model_and_thinking_control_requests_between_turns() {
+        let (mut client, mut server) = make_peer_pair();
+
+        let server_task = tokio::spawn(async move {
+            run_session(&mut server, &|| Ok(test_agent_options("unused")))
+                .await
+                .unwrap();
+        });
+
+        initialize(&mut client).await;
+        let sender = client.sender();
+
+        let listed: ModelListResult = sender
+            .request(method::MODEL_LIST, &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(listed.current, swink_agent::testing::default_model());
+        assert_eq!(
+            listed.available,
+            vec![swink_agent::testing::default_model()],
+            "the primary model is always listed, even with no extra models registered"
+        );
+
+        let next = ModelSpec::new("test", "next-model");
+        let _: Ack = sender
+            .request(method::MODEL_SET, &ModelSetParams::new(next))
+            .await
+            .unwrap();
+        let _: Ack = sender
+            .request(
+                method::THINKING_SET,
+                &ThinkingSetParams::new(ThinkingLevel::High),
+            )
+            .await
+            .unwrap();
+
+        let listed: ModelListResult = sender
+            .request(method::MODEL_LIST, &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(listed.current.model_id, "next-model");
+        assert_eq!(listed.current.thinking_level, ThinkingLevel::High);
+
+        sender
+            .notify(method::SHUTDOWN, &serde_json::Value::Null)
+            .await
+            .unwrap();
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_session_round_trips_approval_mode_and_acks_system_prompt() {
+        let (mut client, mut server) = make_peer_pair();
+
+        let server_task = tokio::spawn(async move {
+            run_session(&mut server, &|| Ok(test_agent_options("unused")))
+                .await
+                .unwrap();
+        });
+
+        initialize(&mut client).await;
+        let sender = client.sender();
+
+        let current: ApprovalGetResult = sender
+            .request(method::APPROVAL_GET, &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(current.mode, ApprovalMode::Smart, "Smart is the default");
+
+        let _: Ack = sender
+            .request(
+                method::APPROVAL_SET,
+                &ApprovalSetParams::new(ApprovalMode::Bypassed),
+            )
+            .await
+            .unwrap();
+
+        let current: ApprovalGetResult = sender
+            .request(method::APPROVAL_GET, &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(current.mode, ApprovalMode::Bypassed);
+
+        let _: Ack = sender
+            .request(
+                method::SYSTEM_PROMPT_SET,
+                &SystemPromptSetParams::new("you are a replaced prompt"),
+            )
+            .await
+            .unwrap();
+
+        sender
+            .notify(method::SHUTDOWN, &serde_json::Value::Null)
+            .await
+            .unwrap();
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_session_rejects_double_plan_enter_and_unpaired_plan_exit() {
+        let (mut client, mut server) = make_peer_pair();
+
+        let server_task = tokio::spawn(async move {
+            run_session(&mut server, &|| Ok(test_agent_options("unused")))
+                .await
+                .unwrap();
+        });
+
+        initialize(&mut client).await;
+        let sender = client.sender();
+
+        let _: Ack = sender
+            .request(method::PLAN_ENTER, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        let err = sender
+            .request::<_, Ack>(method::PLAN_ENTER, &serde_json::json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, crate::jsonrpc::RpcError::INVALID_REQUEST);
+        assert!(
+            err.message.contains("already in plan mode"),
+            "unexpected plan.enter error: {}",
+            err.message
+        );
+
+        let _: Ack = sender
+            .request(method::PLAN_EXIT, &serde_json::json!({}))
+            .await
+            .unwrap();
+
+        let err = sender
+            .request::<_, Ack>(method::PLAN_EXIT, &serde_json::json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, crate::jsonrpc::RpcError::INVALID_REQUEST);
+        assert!(
+            err.message.contains("not in plan mode"),
+            "unexpected plan.exit error: {}",
+            err.message
+        );
+
+        sender
+            .notify(method::SHUTDOWN, &serde_json::Value::Null)
+            .await
+            .unwrap();
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_session_snapshot_reset_restore_round_trips_messages_and_state() {
+        let (mut client, mut server) = make_peer_pair();
+
+        let server_task = tokio::spawn(async move {
+            run_session(&mut server, &|| Ok(test_agent_options("snapshot me")))
+                .await
+                .unwrap();
+        });
+
+        initialize(&mut client).await;
+        let sender = client.sender();
+
+        // Run one turn so the transcript is non-empty.
+        let params = PromptParams {
+            text: "hello snapshot".into(),
+            session_id: None,
+        };
+        let result: PromptResult = sender.request(method::PROMPT, &params).await.unwrap();
+        assert!(!result.turn_id.is_empty());
+        // Drain the buffered agent.event notifications from the turn.
+        while client.try_recv_incoming().is_some() {}
+
+        let snapshot: SessionSnapshot = sender
+            .request(method::SESSION_SNAPSHOT, &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(
+            snapshot.messages.len(),
+            2,
+            "one user + one assistant message expected"
+        );
+        // Messages use the memory-JSONL representation: raw LlmMessage JSON.
+        let first: LlmMessage = serde_json::from_value(snapshot.messages[0].clone()).unwrap();
+        assert!(matches!(first, LlmMessage::User(_)));
+        assert!(snapshot.state.is_some());
+
+        let _: Ack = sender
+            .request(method::AGENT_RESET, &serde_json::json!({}))
+            .await
+            .unwrap();
+        let cleared: SessionSnapshot = sender
+            .request(method::SESSION_SNAPSHOT, &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(
+            cleared.messages.is_empty(),
+            "agent.reset should clear the transcript"
+        );
+
+        // Restore the original snapshot, but with explicit session state.
+        let restore = SessionSnapshot::new(
+            snapshot.messages.clone(),
+            Some(serde_json::json!({"data": {"favorite": 42}})),
+        );
+        let _: Ack = sender
+            .request(method::SESSION_RESTORE, &restore)
+            .await
+            .unwrap();
+
+        let restored: SessionSnapshot = sender
+            .request(method::SESSION_SNAPSHOT, &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(restored.messages, snapshot.messages);
+        assert_eq!(
+            restored.state,
+            Some(serde_json::json!({"data": {"favorite": 42}}))
+        );
+
+        sender
+            .notify(method::SHUTDOWN, &serde_json::Value::Null)
+            .await
+            .unwrap();
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_session_rejects_malformed_session_restore_messages() {
+        let (mut client, mut server) = make_peer_pair();
+
+        let server_task = tokio::spawn(async move {
+            run_session(&mut server, &|| Ok(test_agent_options("unused")))
+                .await
+                .unwrap();
+        });
+
+        initialize(&mut client).await;
+        let sender = client.sender();
+
+        let err = sender
+            .request::<_, Ack>(
+                method::SESSION_RESTORE,
+                &SessionSnapshot::new(vec![serde_json::json!({"not": "a message"})], None),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, crate::jsonrpc::RpcError::INVALID_REQUEST);
+        assert!(
+            err.message.contains("session.restore"),
+            "unexpected restore error: {}",
+            err.message
+        );
+
+        sender
+            .notify(method::SHUTDOWN, &serde_json::Value::Null)
+            .await
+            .unwrap();
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_prompt_answers_control_requests_with_busy_while_turn_in_flight() {
+        let (mut client, mut server) = make_peer_pair();
+
+        let server_task = tokio::spawn(async move {
+            run_session(&mut server, &|| Ok(approval_blocking_agent_options()))
+                .await
+                .unwrap();
+        });
+
+        initialize(&mut client).await;
+        let sender = client.sender();
+
+        let params = PromptParams {
+            text: "start a long prompt".into(),
+            session_id: None,
+        };
+        let prompt_sender = sender.clone();
+        let prompt_task = tokio::spawn(async move {
+            prompt_sender
+                .request::<_, PromptResult>(method::PROMPT, &params)
+                .await
+        });
+
+        // Wait for the server's tool.approve request — the turn is now
+        // provably in flight, blocked on our approval decision.
+        let approval_id = loop {
+            match client
+                .recv_incoming()
+                .await
+                .expect("server should stay connected while prompt runs")
+            {
+                IncomingMessage::Request { id, method: m, .. } if m == method::TOOL_APPROVE => {
+                    break id;
+                }
+                IncomingMessage::Notification { method: m, .. } if m == method::AGENT_EVENT => {}
+                other => panic!("unexpected message while awaiting tool approval: {other:?}"),
+            }
+        };
+
+        // Control requests are rejected with BUSY, not dropped and not
+        // method_not_found.
+        let err = sender
+            .request::<_, ModelListResult>(method::MODEL_LIST, &serde_json::json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, crate::jsonrpc::RpcError::BUSY);
+        assert!(
+            err.message.contains("turn in progress"),
+            "unexpected busy error: {}",
+            err.message
+        );
+
+        // Cancel still works mid-turn; reject the pending approval so the
+        // blocked turn unwinds deterministically.
+        sender
+            .notify(method::CANCEL, &serde_json::Value::Null)
+            .await
+            .unwrap();
+        sender
+            .respond_ok(approval_id, ToolApprovalDto::Rejected)
+            .await
+            .unwrap();
+
+        let result = prompt_task.await.unwrap().unwrap();
+        assert!(!result.turn_id.is_empty());
+        while client.try_recv_incoming().is_some() {}
+
+        // Between turns the same control request succeeds again.
+        let listed: ModelListResult = sender
+            .request(method::MODEL_LIST, &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(listed.current, swink_agent::testing::default_model());
+
+        sender
+            .notify(method::SHUTDOWN, &serde_json::Value::Null)
+            .await
+            .unwrap();
+        server_task.await.unwrap();
+    }
+
     fn collect_agent_event(incoming: IncomingMessage, events: &mut Vec<AgentEvent>) {
         let IncomingMessage::Notification { method: m, params } = incoming else {
             panic!("unexpected request while collecting prompt events");
@@ -897,7 +1530,7 @@ mod tests {
         events.push(event);
     }
 
-    fn handle_prompt_incoming(
+    async fn handle_prompt_incoming(
         incoming: IncomingMessage,
         sender: &crate::jsonrpc::PeerSender,
         events: &mut Vec<AgentEvent>,
@@ -926,7 +1559,10 @@ mod tests {
                 assert!(request.requires_approval);
 
                 *approvals += 1;
-                sender.respond_ok(id, ToolApprovalDto::Approved).unwrap();
+                sender
+                    .respond_ok(id, ToolApprovalDto::Approved)
+                    .await
+                    .unwrap();
             }
         }
     }
@@ -934,7 +1570,7 @@ mod tests {
     #[cfg(not(unix))]
     #[tokio::test]
     async fn serve_reports_unix_transport_unavailable_on_non_unix_hosts() {
-        let server = AgentServer::bind_force("unused.sock", || test_agent_options("unused"));
+        let server = AgentServer::bind_force("unused.sock", || Ok(test_agent_options("unused")));
 
         let err = server.serve().await.unwrap_err();
 

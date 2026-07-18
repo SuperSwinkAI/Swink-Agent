@@ -35,9 +35,26 @@ pub(crate) type ApproveToolArc = Arc<ApproveToolFn>;
 /// Fallback addendum appended in plan mode when no custom addendum is set.
 pub const DEFAULT_PLAN_MODE_ADDENDUM: &str = "\n\nYou are in planning mode. Analyze the request and produce a step-by-step plan. Do not make any modifications or execute any write operations.";
 
+// ─── Shared binary defaults ───────────────────────────────────────────────────
+
+/// Default system prompt shared by the swink-agent binaries (TUI and daemon).
+///
+/// Used when neither a CLI flag, the `LLM_SYSTEM_PROMPT` environment variable,
+/// nor a config file provides a system prompt. Kept here (rather than
+/// duplicated per binary) so the binaries cannot drift apart.
+pub const DEFAULT_SYSTEM_PROMPT: &str = "You are a helpful assistant.";
+
+/// Default model identifier shared by the swink-agent binaries.
+///
+/// Used when neither a CLI flag nor the `LLM_MODEL` environment variable
+/// provides a model. This is the documented model alias (see `.env.example`),
+/// not a dated snapshot id, so it tracks the provider's current release.
+pub const DEFAULT_MODEL: &str = "claude-sonnet-4-6";
+
 // ─── AgentOptions ─────────────────────────────────────────────────────────────
 
 /// Configuration options for constructing an [`Agent`](crate::Agent).
+#[non_exhaustive]
 pub struct AgentOptions {
     /// System prompt (used as-is when no static/dynamic split is configured).
     pub system_prompt: String,
@@ -92,6 +109,28 @@ pub struct AgentOptions {
     /// Optional async context transformer (runs before the sync transformer).
     pub async_transform_context: Option<AsyncTransformContextArc>,
     /// Optional checkpoint store for persisting agent state.
+    ///
+    /// `None` by default — the framework never persists conversation history
+    /// on its own. For crash safety, opt in with two lines: a durable store
+    /// (e.g. `swink-agent-memory`'s `FileCheckpointStore`, whose
+    /// `default_dir()` gives the conventional location) plus a post-turn
+    /// checkpoint policy from `swink-agent-policies`:
+    ///
+    /// ```rust,ignore
+    /// let dir = FileCheckpointStore::default_dir().expect("config dir");
+    /// let store: Arc<dyn CheckpointStore> = Arc::new(FileCheckpointStore::new(dir)?);
+    /// let options = options
+    ///     .with_post_turn_policy(RollingCheckpointPolicy::new(store).with_session_id(&session));
+    /// ```
+    ///
+    /// Set `checkpoint_store` itself (via
+    /// [`with_checkpoint_store`](Self::with_checkpoint_store)) to enable the
+    /// agent's own `checkpoint()` / `load_and_restore_checkpoint` restore
+    /// paths against the same directory.
+    ///
+    /// `RollingCheckpointPolicy` overwrites one checkpoint per turn (crash
+    /// recovery loses at most one turn); `CheckpointPolicy` keeps one
+    /// checkpoint per turn (time-travel, at O(N²) disk cost for N turns).
     pub checkpoint_store: Option<CheckpointStoreArc>,
     /// Optional registry used to deserialize persisted [`CustomMessage`](crate::types::CustomMessage)
     /// values when restoring from a [`Checkpoint`](crate::checkpoint::Checkpoint) or
@@ -165,6 +204,12 @@ pub struct AgentOptions {
     ///
     /// When set, the loop starts with this chain instead of an empty one.
     pub transfer_chain: Option<crate::transfer::TransferChain>,
+    /// Optional operator-declared cost calculator consulted before the compiled
+    /// model catalog when pricing assistant messages.
+    ///
+    /// See [`with_cost_calculator`](Self::with_cost_calculator) and the
+    /// [`pricing`](crate::pricing) module for the precedence rules.
+    pub cost_calculator: Option<Arc<dyn crate::pricing::CostCalculator>>,
 }
 
 impl AgentOptions {
@@ -218,6 +263,7 @@ impl AgentOptions {
             plugins: Vec::new(),
             agent_name: None,
             transfer_chain: None,
+            cost_calculator: None,
         }
     }
 
@@ -683,6 +729,65 @@ impl AgentOptions {
     pub fn with_transfer_chain(mut self, chain: crate::transfer::TransferChain) -> Self {
         self.transfer_chain = Some(chain);
         self
+    }
+
+    /// Supply operator-declared pricing, consulted before the compiled model
+    /// catalog when an adapter reports no cost of its own.
+    ///
+    /// Most adapters report token usage but leave [`Cost`](crate::Cost) at zero;
+    /// the loop fills that in from the catalog. The catalog only knows about
+    /// models shipped with the crate, so local endpoints, private deployments,
+    /// and negotiated per-tier rates price at zero without an override. This is
+    /// that override.
+    ///
+    /// Accepts anything implementing [`CostCalculator`](crate::CostCalculator) —
+    /// including a plain `Fn(&str, &Usage) -> Option<Cost>` closure for tiered
+    /// or per-tenant logic. For a declarative rate table (e.g. deserialized from
+    /// a `[pricing]` config section) use
+    /// [`with_pricing_table`](Self::with_pricing_table).
+    ///
+    /// Precedence is documented on the [`pricing`](crate::pricing) module: an
+    /// adapter's own non-zero cost always wins, then this calculator, then the
+    /// catalog.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let options = AgentOptions::new_simple("system", ModelSpec::new("local", "my-llama"), stream_fn)
+    ///     .with_cost_calculator(|model_id: &str, usage: &Usage| {
+    ///         (model_id == "my-llama").then(|| Cost {
+    ///             total: 0.001,
+    ///             ..Cost::default()
+    ///         })
+    ///     });
+    /// ```
+    #[must_use]
+    pub fn with_cost_calculator(
+        mut self,
+        calculator: impl crate::pricing::CostCalculator + 'static,
+    ) -> Self {
+        self.cost_calculator = Some(Arc::new(calculator));
+        self
+    }
+
+    /// Supply an operator-declared [`PricingTable`](crate::PricingTable).
+    ///
+    /// Convenience wrapper over [`with_cost_calculator`](Self::with_cost_calculator)
+    /// for the common case: a static, per-model rate table read from config.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let table = PricingTable::new().with_model(
+    ///     "my-llama",
+    ///     ModelRates::default()
+    ///         .with_input_per_million(0.10)
+    ///         .with_output_per_million(0.40),
+    /// );
+    /// let options = AgentOptions::new_simple("system", ModelSpec::new("local", "my-llama"), stream_fn)
+    ///     .with_pricing_table(table);
+    /// ```
+    #[must_use]
+    pub fn with_pricing_table(self, table: crate::pricing::PricingTable) -> Self {
+        self.with_cost_calculator(table)
     }
 
     /// Return the effective system prompt (static portion only).

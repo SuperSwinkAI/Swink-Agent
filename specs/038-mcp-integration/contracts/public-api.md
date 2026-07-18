@@ -19,9 +19,33 @@ pub use error::McpError;
 // Tool type (for introspection; consumers rarely need this directly)
 pub use tool::McpTool;
 
-// Connection type (for introspection; consumers rarely need this directly)
-pub use connection::{McpConnection, McpConnectionStatus};
+// Owned tool metadata (decoupled from rmcp wire types)
+pub use tool_info::McpToolInfo;
+
+// Connection types (for introspection; consumers rarely need these directly)
+pub use connection::{McpConnection, McpConnectionStatus, McpServiceHandle};
 ```
+
+## rmcp Insulation
+
+No `rmcp` type appears in the crate's public signatures, so an `rmcp` major
+version bump cannot force a semver-major bump on `swink-agent-mcp`:
+
+- `McpConnection::discovered_tools` is `Vec<McpToolInfo>` (owned fields:
+  name, description, input schema as `serde_json::Value`).
+- `McpConnection::call_tool` returns `swink_agent::AgentToolResult` — the raw
+  MCP result is converted internally before it leaves the crate.
+- `McpTool::new` takes `&McpToolInfo`.
+- Conversions between `rmcp` and owned types are `pub(crate)`
+  (`McpToolInfo::from_rmcp`, the internal `convert` module).
+
+The single deliberate exception is `McpServiceHandle::from_rmcp(RunningService<RoleClient, ClientInfo>)`,
+which wraps an externally managed `rmcp` service for
+`McpConnection::from_service` (in-process test servers and externally managed
+transports are `rmcp` services by construction — there is no owned
+representation to convert from). That one constructor is documented as exempt:
+it may change with `rmcp` major version bumps without a `swink-agent-mcp`
+major bump.
 
 ## Configuration API
 
@@ -51,8 +75,8 @@ pub enum McpTransport {
         args: Vec<String>,
         env: HashMap<String, String>,
     },
-    /// HTTP Server-Sent Events.
-    Sse {
+    /// MCP Streamable HTTP transport.
+    StreamableHttp {
         url: String,
         bearer_token: Option<String>,
         bearer_auth: Option<SseBearerAuth>,
@@ -145,17 +169,31 @@ let agent = Agent::new(/* stream_fn, options with tools */);
 
 ```rust
 /// Errors from MCP operations.
+#[non_exhaustive]
 pub enum McpError {
     /// Failed to spawn subprocess for stdio transport.
     SpawnFailed { server: String, source: std::io::Error },
     /// Failed to connect to MCP server.
-    ConnectionFailed { server: String, reason: String },
+    ConnectionFailed {
+        server: String,
+        reason: String,
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    },
     /// Tool name collision detected across servers.
     ToolNameCollision { name: String, server_a: String, server_b: String },
     /// MCP server returned an error during tool call.
-    ToolCallFailed { server: String, tool: String, reason: String },
+    ToolCallFailed {
+        server: String,
+        tool: String,
+        reason: String,
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    },
     /// MCP protocol error (JSON-RPC level).
-    ProtocolError { server: String, source: Box<dyn std::error::Error + Send + Sync> },
+    ProtocolError {
+        server: String,
+        context: &'static str,
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 }
 ```
 

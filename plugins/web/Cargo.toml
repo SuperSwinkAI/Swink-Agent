@@ -15,11 +15,14 @@ duckduckgo = []
 brave = []
 tavily = []
 all = ["duckduckgo", "brave", "tavily"]
-integration = []
 
 [dependencies]
-swink-agent = { path = "../..", version = "0.11.0", default-features = false, features = ["plugins"] }
+swink-agent = { path = "../..", version = "0.12.0", default-features = false, features = ["plugins"] }
 reqwest.workspace = true
+# Supplies the `ring` crypto provider, installed as the process default
+# before any reqwest client is built (workspace reqwest is
+# `rustls-no-provider`; see the root Cargo.toml).
+rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "sync", "time"] }
@@ -27,7 +30,7 @@ tokio-util.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 regex.workspace = true
-url = "2.5.8"
+url.workspace = true
 base64 = "0.22.1"
 scraper = "0.27.0"
 
@@ -36,7 +39,7 @@ wiremock.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
 pretty_assertions.workspace = true
 tempfile.workspace = true
-tracing-subscriber = { version = "0.3.23", features = ["fmt"] }
+tracing-subscriber = { workspace = true, features = ["fmt"] }
 
 [lints]
 workspace = true

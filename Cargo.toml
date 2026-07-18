@@ -1,9 +1,9 @@
 [workspace]
-members = [".", "adapters", "artifacts", "auth", "eval", "eval-judges", "evolve", "local-llm", "macros", "mcp", "memory", "patterns", "plugins/web", "policies", "rpc", "tui", "xtask"]
+members = [".", "adapters", "artifacts", "auth", "eval", "eval-judges", "evolve", "local-llm", "macros", "mcp", "memory", "patterns", "plugins/web", "policies", "rpc", "tui", "tui-remote", "xtask"]
 resolver = "2"
 
 [workspace.package]
-version = "0.11.0"
+version = "0.12.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
@@ -17,8 +17,28 @@ tokio-util = "0.7.18"
 tokio-stream = "0.1.18"
 futures = "0.3.32"
 tracing = "0.1.44"
+# Base pin only — no feature opinions here. Each crate opts into the features
+# it needs (fmt, env-filter, registry) at its own dependency entry.
+tracing-subscriber = "0.3.23"
+url = "2.5.8"
 uuid = { version = "1.23.3", features = ["v4"] }
-reqwest = { version = "0.13.4", features = ["json", "stream", "form"] }
+# TLS is rustls with the pure-Rust `ring` provider — NOT the default
+# aws-lc-rs, whose aws-lc-sys build requires cc/cmake (+ NASM on Windows)
+# in every downstream consumer. `rustls-no-provider` compiles rustls
+# without a crypto provider; reqwest then panics at `Client` construction
+# until a process default provider is installed, so every crate that
+# builds a client calls its `ensure_default_crypto_provider()` helper
+# first (installing ring; a provider already installed by the host — e.g.
+# aws-lc-rs for FIPS — wins). The non-TLS features mirror what reqwest's
+# defaults gave us (charset, http2, system-proxy) plus the json/stream/form
+# we already enabled. Root trust stays with rustls-platform-verifier
+# (OS-native roots), same as reqwest's default.
+reqwest = { version = "0.13.4", default-features = false, features = ["charset", "form", "http2", "json", "rustls-no-provider", "stream", "system-proxy"] }
+# The crypto provider for rustls (see the reqwest entry above). Every crate
+# with a `reqwest` dependency also lists `rustls` and installs
+# `rustls::crypto::ring::default_provider()` as the process default before
+# constructing a client.
+rustls = { version = "0.23.37", default-features = false, features = ["logging", "ring", "std", "tls12"] }
 thiserror = "2.0.18"
 rand = "0.10.1"
 schemars = "1.2.1"
@@ -28,11 +48,18 @@ criterion = { version = "0.8.2", features = ["html_reports"] }
 tempfile = "3.27.0"
 trybuild = "1.0.116"
 wiremock = "0.6.5"
-serde_yaml = "0.9.34"
+# serde_yaml is unmaintained (archived by its author); serde_yaml_ng is the
+# maintained fork with the same from_str/Value/Error API surface.
+serde_yaml_ng = "0.10.0"
 minijinja = "2.20.0"
 backon = "1.6.0"
 strsim = "0.11.1"
-jsonschema = "0.46.5"
+# Default features off: the defaults pull `resolve-http` (reqwest + a TLS
+# stack, defaulting to aws-lc-rs) and `resolve-file` for external `$ref`
+# resolution, which this workspace never does — every schema we compile is
+# inline. External `$ref`s now fail at validator build instead of touching
+# the network or filesystem.
+jsonschema = { version = "0.48.0", default-features = false }
 opentelemetry = "0.32.0"
 opentelemetry_sdk = "0.32.1"
 opentelemetry-otlp = "0.32.0"
@@ -53,7 +80,7 @@ bytes = "1.11.1"
 dirs = "6.0.0"
 regex = "1.12.4"
 keyring = "4.1.1"
-aws-smithy-eventstream = "0.60.20"
+aws-smithy-eventstream = "0.61.1"
 aws-smithy-types = "1.4.9"
 aws-credential-types = "1.2.14"
 aws-sigv4 = { version = "1.4.5", default-features = false, features = ["sign-http", "http1"] }
@@ -66,6 +93,14 @@ unsafe_code = "forbid"
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
+
+# Restriction lints (not part of any group): every exported struct with
+# all-pub fields and every exported enum must be #[non_exhaustive] unless
+# it is deliberately frozen by design (those carry an explicit
+# `#[allow(clippy::exhaustive_structs)]`/`exhaustive_enums` with a comment).
+# Guards against `constructible_struct_adds_field` semver breaks.
+exhaustive_structs = "warn"
+exhaustive_enums = "warn"
 
 # Pedantic/nursery overrides — noisy, stylistic, or churn on toolchain bumps.
 # Keep this list tight; every allow is a signal lost.
@@ -151,7 +186,7 @@ tracing-opentelemetry = { version = "0.33.0", optional = true }
 opentelemetry = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, features = ["rt-tokio"], optional = true }
 opentelemetry-otlp = { workspace = true, features = ["grpc-tonic"], optional = true }
-tracing-subscriber = { version = "0.3.23", features = ["registry"], optional = true }
+tracing-subscriber = { workspace = true, features = ["registry"], optional = true }
 
 [[bench]]
 name = "context"
@@ -169,7 +204,7 @@ insta.workspace = true
 opentelemetry.workspace = true
 opentelemetry_sdk = { workspace = true, features = ["testing", "rt-tokio"] }
 tracing-opentelemetry = "0.33.0"
-tracing-subscriber = { version = "0.3.23", features = ["registry"] }
+tracing-subscriber = { workspace = true, features = ["registry"] }
 
 [lints]
 workspace = true

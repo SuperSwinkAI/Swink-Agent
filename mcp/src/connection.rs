@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use futures::stream::BoxStream;
 use reqwest::header::{HeaderName, HeaderValue};
-use rmcp::model::{CallToolRequestParams, CallToolResult, ClientInfo, Implementation};
+use rmcp::model::{CallToolRequestParams, ClientInfo, Implementation};
 use rmcp::service::{Peer, QuitReason, RoleClient, RunningService, ServiceExt};
 use rmcp::transport::TokioChildProcess;
 use rmcp::transport::streamable_http_client::{
@@ -21,16 +21,55 @@ use rmcp::transport::streamable_http_client::{
 use serde_json::Value;
 use sse_stream::{Error as SseError, Sse};
 use swink_agent::{
-    AgentEvent, CredentialError, CredentialResolver, CredentialType, ResolvedCredential,
+    AgentEvent, AgentToolResult, CredentialError, CredentialResolver, CredentialType,
+    ResolvedCredential,
 };
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
 use crate::config::{McpServerConfig, McpTransport, SseBearerAuth};
+use crate::convert;
 use crate::error::McpError;
+use crate::tool_info::McpToolInfo;
+
+/// Opaque handle around a pre-established MCP client service.
+///
+/// Wraps an `rmcp` `RunningService` so [`McpConnection::from_service`] and the
+/// rest of the crate's public API stay free of `rmcp` types.
+pub struct McpServiceHandle {
+    inner: RunningService<RoleClient, ClientInfo>,
+}
+
+impl McpServiceHandle {
+    /// Wrap a pre-established `rmcp` client service.
+    ///
+    /// **Stability note:** this constructor is the crate's single deliberate
+    /// `rmcp` seam. It must accept `rmcp::service::RunningService` because
+    /// externally managed transports and in-process test servers are `rmcp`
+    /// services by construction — there is no owned representation to convert
+    /// from. This one signature may change with `rmcp` major version bumps
+    /// without a swink-agent-mcp major bump; every other public signature in
+    /// this crate uses owned types and is insulated.
+    #[must_use]
+    pub fn from_rmcp(service: RunningService<RoleClient, ClientInfo>) -> Self {
+        Self { inner: service }
+    }
+
+    /// Unwrap back into the underlying `rmcp` service.
+    pub(crate) fn into_inner(self) -> RunningService<RoleClient, ClientInfo> {
+        self.inner
+    }
+}
+
+impl std::fmt::Debug for McpServiceHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McpServiceHandle").finish_non_exhaustive()
+    }
+}
 
 /// Status of an MCP server connection.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum McpConnectionStatus {
     /// Connected and ready to serve tool calls.
@@ -57,6 +96,8 @@ enum SseBearerResolutionError {
         expected: CredentialType,
         actual: CredentialType,
     },
+    #[error("unsupported credential type resolved for {key}")]
+    UnsupportedCredential { key: String },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -76,6 +117,7 @@ struct ResolverBackedSseHttpClient {
 
 impl ResolverBackedSseHttpClient {
     fn new(bearer_auth: SseBearerAuth, credential_resolver: Arc<dyn CredentialResolver>) -> Self {
+        crate::ensure_default_crypto_provider();
         Self {
             inner: reqwest::Client::default(),
             bearer_auth,
@@ -175,8 +217,9 @@ impl StreamableHttpClient for ResolverBackedSseHttpClient {
 pub struct McpConnection {
     /// The server configuration used to establish this connection.
     pub config: McpServerConfig,
-    /// Discovered tools from the server (raw rmcp tool definitions).
-    pub discovered_tools: Vec<rmcp::model::Tool>,
+    /// Discovered tools from the server, as owned metadata captured at
+    /// discovery time (before namespacing/filtering).
+    pub discovered_tools: Vec<McpToolInfo>,
     /// Shared connection state used by callers, shutdown, and the monitor task.
     state: Arc<Mutex<McpConnectionState>>,
     /// Optional event channel for emitting MCP lifecycle events such as
@@ -231,16 +274,18 @@ impl McpConnection {
         self.event_tx.as_ref()
     }
 
-    /// Create a connection from a pre-established rmcp service.
+    /// Create a connection from a pre-established service.
     ///
     /// Performs tool discovery on the already-connected service and spawns the
     /// background lifecycle monitor. Useful for testing with in-process mock
-    /// servers or when the transport is managed externally.
+    /// servers or when the transport is managed externally — wrap the `rmcp`
+    /// service in an [`McpServiceHandle`] via [`McpServiceHandle::from_rmcp`].
     pub async fn from_service(
         config: McpServerConfig,
-        service: RunningService<RoleClient, ClientInfo>,
+        service: McpServiceHandle,
         event_tx: Option<UnboundedSender<AgentEvent>>,
     ) -> Result<Self, McpError> {
+        let service = service.into_inner();
         let peer = service.peer().clone();
 
         // Handshake already completed before we were given the service.
@@ -248,13 +293,17 @@ impl McpConnection {
             crate::event::server_connected(&config.name)
         });
 
-        let discovered_tools =
-            peer.list_all_tools()
-                .await
-                .map_err(|e| McpError::ConnectionFailed {
-                    server: config.name.clone(),
-                    reason: format!("tool discovery failed: {e}"),
-                })?;
+        let discovered_tools: Vec<McpToolInfo> = peer
+            .list_all_tools()
+            .await
+            .map_err(|source| McpError::ProtocolError {
+                server: config.name.clone(),
+                context: "tool discovery",
+                source: Box::new(source),
+            })?
+            .iter()
+            .map(McpToolInfo::from_rmcp)
+            .collect();
 
         info!(
             server = %config.name,
@@ -323,6 +372,7 @@ impl McpConnection {
                     "connection handshake timed out after {} ms",
                     timeout.as_millis()
                 ),
+                source: None,
             })??,
             None => Self::connect_transport(&config, credential_resolver.clone()).await?,
         };
@@ -341,19 +391,26 @@ impl McpConnection {
                 .map_err(|_| McpError::ConnectionFailed {
                     server: config.name.clone(),
                     reason: format!("tool discovery timed out after {} ms", timeout.as_millis()),
+                    source: None,
                 })?
-                .map_err(|e| McpError::ConnectionFailed {
+                .map_err(|source| McpError::ProtocolError {
                     server: config.name.clone(),
-                    reason: format!("tool discovery failed: {e}"),
+                    context: "tool discovery",
+                    source: Box::new(source),
                 })?,
             None => peer
                 .list_all_tools()
                 .await
-                .map_err(|e| McpError::ConnectionFailed {
+                .map_err(|source| McpError::ProtocolError {
                     server: config.name.clone(),
-                    reason: format!("tool discovery failed: {e}"),
+                    context: "tool discovery",
+                    source: Box::new(source),
                 })?,
         };
+        let discovered_tools: Vec<McpToolInfo> = discovered_tools
+            .iter()
+            .map(McpToolInfo::from_rmcp)
+            .collect();
 
         info!(
             server = %config.name,
@@ -406,9 +463,10 @@ impl McpConnection {
             client_info
                 .serve(transport)
                 .await
-                .map_err(|e| McpError::ConnectionFailed {
+                .map_err(|source| McpError::ProtocolError {
                     server: server_name.to_string(),
-                    reason: format!("connection handshake failed: {e}"),
+                    context: "connection handshake",
+                    source: Box::new(source),
                 })?;
 
         Ok(service)
@@ -421,6 +479,7 @@ impl McpConnection {
         headers: &HashMap<String, String>,
         server_name: &str,
     ) -> Result<RunningService<RoleClient, ClientInfo>, McpError> {
+        crate::ensure_default_crypto_provider();
         let mut config = StreamableHttpClientTransportConfig::with_uri(url);
         if let Some(token) = bearer_token {
             config = config.auth_header(token.to_owned());
@@ -434,9 +493,10 @@ impl McpConnection {
         client_info()
             .serve(transport)
             .await
-            .map_err(|e| McpError::ConnectionFailed {
+            .map_err(|source| McpError::ProtocolError {
                 server: server_name.to_string(),
-                reason: format!("HTTP streaming handshake failed: {e}"),
+                context: "HTTP streaming handshake",
+                source: Box::new(source),
             })
     }
 
@@ -448,34 +508,44 @@ impl McpConnection {
             McpTransport::Stdio { command, args, env } => {
                 Self::connect_stdio(command, args, env, &config.name).await
             }
-            McpTransport::Sse {
+            McpTransport::StreamableHttp {
                 url,
                 bearer_token,
                 bearer_auth,
                 headers,
-            } => match bearer_auth.as_ref() {
-                Some(bearer_auth) => {
-                    let credential_resolver =
-                        credential_resolver.ok_or_else(|| McpError::ConnectionFailed {
-                            server: config.name.clone(),
-                            reason: format!(
-                                "SSE bearer auth for credential `{}` requires a credential resolver",
-                                bearer_auth.credential_key
-                            ),
-                        })?;
-                    Self::connect_sse_with_resolver(
-                        url,
-                        bearer_auth,
-                        credential_resolver,
-                        headers,
-                        &config.name,
-                    )
-                    .await
+            } => {
+                if bearer_auth.is_some() && bearer_token.is_some() {
+                    warn!(
+                        server = %config.name,
+                        "both bearer_token and bearer_auth are configured; bearer_auth takes precedence"
+                    );
                 }
-                None => {
-                    Self::connect_sse(url, bearer_token.as_deref(), headers, &config.name).await
+                match bearer_auth.as_ref() {
+                    Some(bearer_auth) => {
+                        let credential_resolver =
+                            credential_resolver.ok_or_else(|| McpError::ConnectionFailed {
+                                server: config.name.clone(),
+                                reason: format!(
+                                    "SSE bearer auth for credential `{}` requires a credential \
+                                     resolver",
+                                    bearer_auth.credential_key
+                                ),
+                                source: None,
+                            })?;
+                        Self::connect_sse_with_resolver(
+                            url,
+                            bearer_auth,
+                            credential_resolver,
+                            headers,
+                            &config.name,
+                        )
+                        .await
+                    }
+                    None => {
+                        Self::connect_sse(url, bearer_token.as_deref(), headers, &config.name).await
+                    }
                 }
-            },
+            }
         }
     }
 
@@ -506,20 +576,24 @@ impl McpConnection {
         client_info()
             .serve(transport)
             .await
-            .map_err(|e| McpError::ConnectionFailed {
+            .map_err(|source| McpError::ProtocolError {
                 server: server_name.to_string(),
-                reason: format!("HTTP streaming handshake failed: {e}"),
+                context: "HTTP streaming handshake",
+                source: Box::new(source),
             })
     }
 
     /// Call a tool on the connected MCP server.
+    ///
+    /// The raw MCP result is converted into an owned [`AgentToolResult`];
+    /// unsupported content types degrade to descriptive text blocks.
     ///
     /// Returns an error if the connection is disconnected.
     pub async fn call_tool(
         &self,
         tool_name: &str,
         arguments: Value,
-    ) -> Result<CallToolResult, McpError> {
+    ) -> Result<AgentToolResult, McpError> {
         let peer = {
             let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             if state.status == McpConnectionStatus::Disconnected {
@@ -527,6 +601,7 @@ impl McpConnection {
                     server: self.config.name.clone(),
                     tool: tool_name.to_string(),
                     reason: "server is disconnected".to_string(),
+                    source: None,
                 });
             }
 
@@ -534,6 +609,7 @@ impl McpConnection {
                 server: self.config.name.clone(),
                 tool: tool_name.to_string(),
                 reason: "no active session".to_string(),
+                source: None,
             })?
         };
 
@@ -557,10 +633,12 @@ impl McpConnection {
 
         peer.call_tool(params)
             .await
-            .map_err(|e| McpError::ToolCallFailed {
+            .map(|result| convert::call_result_to_agent_result(&result))
+            .map_err(|source| McpError::ToolCallFailed {
                 server: self.config.name.clone(),
                 tool: tool_name.to_string(),
-                reason: e.to_string(),
+                reason: source.to_string(),
+                source: Some(Box::new(source)),
             })
     }
 
@@ -620,7 +698,7 @@ async fn resolve_sse_bearer_secret(
             key: bearer_auth.credential_key.clone(),
         })??;
 
-    let actual_type = resolved_credential_type(&credential);
+    let actual_type = resolved_credential_type(&credential, &bearer_auth.credential_key)?;
     if actual_type != bearer_auth.credential_type {
         return Err(SseBearerResolutionError::TypeMismatch {
             key: bearer_auth.credential_key.clone(),
@@ -629,11 +707,11 @@ async fn resolve_sse_bearer_secret(
         });
     }
 
-    Ok(resolved_credential_secret(&credential).to_string())
+    Ok(resolved_credential_secret(&credential, &bearer_auth.credential_key)?.to_string())
 }
 
 fn sse_bearer_resolution_error(error: SseBearerResolutionError, server_name: &str) -> McpError {
-    let reason = match error {
+    let reason = match &error {
         SseBearerResolutionError::Timeout { key } => {
             format!("timed out resolving SSE credential `{key}`")
         }
@@ -649,11 +727,15 @@ fn sse_bearer_resolution_error(error: SseBearerResolutionError, server_name: &st
                 "SSE credential type mismatch for `{key}`: expected {expected:?}, got {actual:?}"
             )
         }
+        SseBearerResolutionError::UnsupportedCredential { key } => {
+            format!("unsupported credential type resolved for `{key}`")
+        }
     };
 
     McpError::ConnectionFailed {
         server: server_name.to_string(),
         reason,
+        source: Some(Box::new(error)),
     }
 }
 
@@ -696,19 +778,31 @@ fn map_reqwest_streamable_http_error(
     }
 }
 
-const fn resolved_credential_type(credential: &ResolvedCredential) -> CredentialType {
+fn resolved_credential_type(
+    credential: &ResolvedCredential,
+    key: &str,
+) -> Result<CredentialType, SseBearerResolutionError> {
     match credential {
-        ResolvedCredential::ApiKey(_) => CredentialType::ApiKey,
-        ResolvedCredential::Bearer(_) => CredentialType::Bearer,
-        ResolvedCredential::OAuth2AccessToken(_) => CredentialType::OAuth2,
+        ResolvedCredential::ApiKey(_) => Ok(CredentialType::ApiKey),
+        ResolvedCredential::Bearer(_) => Ok(CredentialType::Bearer),
+        ResolvedCredential::OAuth2AccessToken(_) => Ok(CredentialType::OAuth2),
+        &_ => Err(SseBearerResolutionError::UnsupportedCredential {
+            key: key.to_string(),
+        }),
     }
 }
 
-fn resolved_credential_secret(credential: &ResolvedCredential) -> &str {
+fn resolved_credential_secret<'a>(
+    credential: &'a ResolvedCredential,
+    key: &str,
+) -> Result<&'a str, SseBearerResolutionError> {
     match credential {
         ResolvedCredential::ApiKey(secret)
         | ResolvedCredential::Bearer(secret)
-        | ResolvedCredential::OAuth2AccessToken(secret) => secret,
+        | ResolvedCredential::OAuth2AccessToken(secret) => Ok(secret),
+        &_ => Err(SseBearerResolutionError::UnsupportedCredential {
+            key: key.to_string(),
+        }),
     }
 }
 
@@ -723,12 +817,14 @@ fn parse_custom_headers(
                 McpError::ConnectionFailed {
                     server: server_name.to_string(),
                     reason: format!("invalid SSE header name `{name}`: {error}"),
+                    source: Some(Box::new(error)),
                 }
             })?;
             let header_value =
                 HeaderValue::from_str(value).map_err(|error| McpError::ConnectionFailed {
                     server: server_name.to_string(),
                     reason: format!("invalid SSE header value for `{name}`: {error}"),
+                    source: Some(Box::new(error)),
                 })?;
             Ok((header_name, header_value))
         })

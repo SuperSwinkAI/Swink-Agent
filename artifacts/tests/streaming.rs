@@ -16,11 +16,7 @@ fn pattern_bytes(size: usize) -> Vec<u8> {
 }
 
 fn text_data(content: &str) -> ArtifactData {
-    ArtifactData {
-        content: content.as_bytes().to_vec(),
-        content_type: "text/plain".to_string(),
-        metadata: HashMap::new(),
-    }
+    ArtifactData::new(content.as_bytes().to_vec(), "text/plain".to_string())
 }
 
 /// Collect a streaming load result into a `Vec<u8>`.
@@ -206,11 +202,7 @@ async fn non_streaming_api_still_works() {
     let store = FileArtifactStore::new(tmpdir.path());
 
     let content = b"saved via regular API";
-    let data = ArtifactData {
-        content: content.to_vec(),
-        content_type: "text/plain".to_string(),
-        metadata: HashMap::new(),
-    };
+    let data = ArtifactData::new(content.to_vec(), "text/plain".to_string());
 
     let version = store
         .save("sess3", "compat-test", data)
@@ -334,11 +326,7 @@ async fn streaming_load_returns_invalid_data_for_orphaned_explicit_version_file(
         .save(
             "sess-orphan",
             "report.md",
-            ArtifactData {
-                content: b"v1".to_vec(),
-                content_type: "text/plain".to_string(),
-                metadata: HashMap::new(),
-            },
+            ArtifactData::new(b"v1".to_vec(), "text/plain".to_string()),
         )
         .await
         .expect("save should succeed");

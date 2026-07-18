@@ -38,7 +38,11 @@ impl fmt::Display for OtelInitError {
 impl Error for OtelInitError {}
 
 /// Configuration for the convenience `OTel` initialization helper.
+///
+/// Construct with [`OtelInitConfig::new`] or [`OtelInitConfig::default`],
+/// then chain `with_*` builders.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct OtelInitConfig {
     /// Service name reported to the `OTel` backend.
     pub service_name: String,
@@ -46,12 +50,27 @@ pub struct OtelInitConfig {
     pub endpoint: Option<String>,
 }
 
-impl Default for OtelInitConfig {
-    fn default() -> Self {
+impl OtelInitConfig {
+    /// Create a config with the given service name and the default endpoint.
+    #[must_use]
+    pub fn new(service_name: impl Into<String>) -> Self {
         Self {
-            service_name: "swink-agent".to_string(),
+            service_name: service_name.into(),
             endpoint: None,
         }
+    }
+
+    /// Set the OTLP gRPC endpoint.
+    #[must_use]
+    pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> Self {
+        self.endpoint = Some(endpoint.into());
+        self
+    }
+}
+
+impl Default for OtelInitConfig {
+    fn default() -> Self {
+        Self::new("swink-agent")
     }
 }
 

@@ -1,0 +1,62 @@
+name: Coverage
+
+# Informational only — not a required check and not a gate (#927). Runs on
+# integration/main pushes and weekly, not per-PR: a full-workspace tarpaulin
+# pass is far too slow for the PR loop, and the numbers only need to move
+# when the tree does.
+on:
+  push:
+    branches: [integration, main]
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: ./.github/actions/rust-setup
+        with:
+          cache-key: coverage
+
+      - uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
+
+      - run: cargo binstall --no-confirm --force cargo-tarpaulin
+
+      # Config lives in tarpaulin.toml (workspace, Llvm engine, Html/Lcov/Json
+      # into target/tarpaulin). local-llm is excluded here for the same reason
+      # ci.yml's feature jobs exclude it: its backends want GPU toolchains.
+      - name: Run tarpaulin
+        run: cargo tarpaulin --exclude swink-agent-local-llm
+
+      # Never hard-fail on a missing report: this workflow is informational,
+      # and tarpaulin already printed the percentage to the step log above.
+      - name: Coverage summary
+        run: |
+          report=$(find . -name 'tarpaulin-report.json' -not -path './.git/*' | head -1)
+          if [ -z "$report" ]; then
+            echo "## Coverage: report JSON not found (see tarpaulin step log for the percentage)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          python3 - "$report" <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, sys
+          with open(sys.argv[1]) as f:
+              data = json.load(f)
+          files = data.get("files", [])
+          covered = sum(len([t for t in f["traces"] if t["stats"]["Line"] > 0]) for f in files)
+          total = sum(len(f["traces"]) for f in files)
+          pct = 100 * covered / total if total else 0.0
+          print(f"## Coverage: {pct:.1f}% ({covered}/{total} lines)")
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-report
+          path: target/tarpaulin/
+          retention-days: 30

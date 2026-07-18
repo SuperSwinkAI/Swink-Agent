@@ -20,10 +20,10 @@ path = "src/main.rs"
 required-features = ["cli"]
 
 [dependencies]
-swink-agent = { path = "..", version = "0.11.0", default-features = false, features = ["builtin-tools", "transfer"] }
-swink-agent-adapters = { path = "../adapters", version = "0.11.0", default-features = false, features = ["anthropic", "openai", "ollama", "proxy"], optional = true }
-swink-agent-memory = { path = "../memory", version = "0.11.0" }
-swink-agent-local-llm = { path = "../local-llm", version = "0.11.0", optional = true }
+swink-agent = { path = "..", version = "0.12.0", default-features = false, features = ["builtin-tools", "transfer"] }
+swink-agent-adapters = { path = "../adapters", version = "0.12.0", default-features = false, features = ["anthropic", "openai", "ollama", "proxy"], optional = true }
+swink-agent-memory = { path = "../memory", version = "0.12.0" }
+swink-agent-local-llm = { path = "../local-llm", version = "0.12.0", optional = true }
 ratatui = "0.30.1"
 crossterm = { version = "0.29.0", features = ["event-stream"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
@@ -36,11 +36,12 @@ serde.workspace = true
 serde_json.workspace = true
 keyring.workspace = true
 tracing.workspace = true
-tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 tracing-appender = "0.2.5"
 dotenvy.workspace = true
 thiserror.workspace = true
 tempfile.workspace = true
+serde_yaml_ng = { workspace = true, optional = true }
 
 [features]
 default = ["cli"]
@@ -48,6 +49,8 @@ cli = ["adapters"]
 adapters = ["dep:swink-agent-adapters"]
 full = ["local", "cli"]
 local = ["dep:swink-agent-local-llm"]
+# Filesystem-backed skills discovery (`TuiExtensions::with_skill_dirs`).
+skills = ["dep:serde_yaml_ng"]
 
 [[example]]
 name = "custom_agent"

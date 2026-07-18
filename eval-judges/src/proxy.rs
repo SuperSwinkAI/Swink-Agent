@@ -66,6 +66,7 @@ impl ProxyJudgeClient {
     /// client-side — the proxy chooses the backend model.
     #[must_use]
     pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
+        swink_agent_adapters::ensure_default_crypto_provider();
         let http = Client::builder()
             .timeout(DEFAULT_TIMEOUT)
             .build()

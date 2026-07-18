@@ -23,26 +23,20 @@ async fn load_session_restores_error_messages_with_role_and_content() {
 
     let session_id = "error-session";
     let now = swink_agent_memory::now_utc();
-    let meta = SessionMeta {
-        id: session_id.to_string(),
-        title: "mock-model".to_string(),
-        created_at: now,
-        updated_at: now,
-        version: 1,
-        sequence: 0,
-    };
+    let meta = SessionMeta::new(session_id, "mock-model", now, now);
     store.save(session_id, &meta, &messages).unwrap();
 
     let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent(stream_fn);
     let mut app = App::new(TuiConfig::default());
-    app.session_store = Some(store);
+    app.session.session_store = Some(store);
     app.set_agent(agent);
 
     app.load_session(session_id).unwrap();
 
     // Should have: user message, error message, system "Loaded session" message
     let error_msgs: Vec<_> = app
+        .view
         .messages
         .iter()
         .filter(|m| m.role == MessageRole::Error)
@@ -52,7 +46,8 @@ async fn load_session_restores_error_messages_with_role_and_content() {
 
     // The user message should also be present
     assert_eq!(
-        app.messages
+        app.view
+            .messages
             .iter()
             .filter(|m| m.role == MessageRole::User)
             .count(),
@@ -68,45 +63,35 @@ async fn load_session_error_with_text_content_uses_text() {
     let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
 
     let error_msg = swink_agent::AgentMessage::Llm(swink_agent::LlmMessage::Assistant(
-        swink_agent::AssistantMessage {
-            content: vec![swink_agent::ContentBlock::Text {
+        swink_agent::AssistantMessage::new(
+            vec![swink_agent::ContentBlock::Text {
                 text: "partial response before error".to_string(),
             }],
-            provider: "test".to_string(),
-            model_id: "mock-model".to_string(),
-            usage: swink_agent::Usage::default(),
-            cost: swink_agent::Cost::default(),
-            stop_reason: swink_agent::StopReason::Error,
-            error_message: Some("connection reset".to_string()),
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        },
+            "test",
+            "mock-model",
+        )
+        .with_stop_reason(swink_agent::StopReason::Error)
+        .with_error_message("connection reset")
+        .with_timestamp(0),
     ));
 
     let messages = vec![make_user_agent_message("hello"), error_msg];
 
     let session_id = "error-with-text";
     let now = swink_agent_memory::now_utc();
-    let meta = SessionMeta {
-        id: session_id.to_string(),
-        title: "mock-model".to_string(),
-        created_at: now,
-        updated_at: now,
-        version: 1,
-        sequence: 0,
-    };
+    let meta = SessionMeta::new(session_id, "mock-model", now, now);
     store.save(session_id, &meta, &messages).unwrap();
 
     let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent(stream_fn);
     let mut app = App::new(TuiConfig::default());
-    app.session_store = Some(store);
+    app.session.session_store = Some(store);
     app.set_agent(agent);
 
     app.load_session(session_id).unwrap();
 
     let error_msgs: Vec<_> = app
+        .view
         .messages
         .iter()
         .filter(|m| m.role == MessageRole::Error)
@@ -122,8 +107,8 @@ async fn load_session_restores_assistant_thinking_blocks() {
     let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
 
     let thinking_msg = swink_agent::AgentMessage::Llm(swink_agent::LlmMessage::Assistant(
-        swink_agent::AssistantMessage {
-            content: vec![
+        swink_agent::AssistantMessage::new(
+            vec![
                 swink_agent::ContentBlock::Thinking {
                     thinking: "step one\nstep two".to_string(),
                     signature: None,
@@ -132,41 +117,30 @@ async fn load_session_restores_assistant_thinking_blocks() {
                     text: "final answer".to_string(),
                 },
             ],
-            provider: "test".to_string(),
-            model_id: "mock-model".to_string(),
-            usage: swink_agent::Usage::default(),
-            cost: swink_agent::Cost::default(),
-            stop_reason: swink_agent::StopReason::Stop,
-            error_message: None,
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        },
+            "test",
+            "mock-model",
+        )
+        .with_stop_reason(swink_agent::StopReason::Stop)
+        .with_timestamp(0),
     ));
 
     let messages = vec![make_user_agent_message("hello"), thinking_msg];
 
     let session_id = "thinking-session";
     let now = swink_agent_memory::now_utc();
-    let meta = SessionMeta {
-        id: session_id.to_string(),
-        title: "mock-model".to_string(),
-        created_at: now,
-        updated_at: now,
-        version: 1,
-        sequence: 0,
-    };
+    let meta = SessionMeta::new(session_id, "mock-model", now, now);
     store.save(session_id, &meta, &messages).unwrap();
 
     let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent(stream_fn);
     let mut app = App::new(TuiConfig::default());
-    app.session_store = Some(store);
+    app.session.session_store = Some(store);
     app.set_agent(agent);
 
     app.load_session(session_id).unwrap();
 
     let assistant_msg = app
+        .view
         .messages
         .iter()
         .find(|m| m.role == MessageRole::Assistant && m.content == "final answer")
@@ -183,41 +157,33 @@ async fn load_session_restores_tool_result_error_role() {
     let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
 
     let tool_error = swink_agent::AgentMessage::Llm(swink_agent::LlmMessage::ToolResult(
-        swink_agent::ToolResultMessage {
-            tool_call_id: "call_1".to_string(),
-            content: vec![swink_agent::ContentBlock::Text {
+        swink_agent::ToolResultMessage::new(
+            "call_1",
+            vec![swink_agent::ContentBlock::Text {
                 text: "permission denied".to_string(),
             }],
-            is_error: true,
-            timestamp: 0,
-            details: serde_json::Value::Null,
-            cache_hint: None,
-        },
+        )
+        .with_is_error(true)
+        .with_timestamp(0),
     ));
 
     let messages = vec![make_user_agent_message("hello"), tool_error];
 
     let session_id = "tool-error-session";
     let now = swink_agent_memory::now_utc();
-    let meta = SessionMeta {
-        id: session_id.to_string(),
-        title: "mock-model".to_string(),
-        created_at: now,
-        updated_at: now,
-        version: 1,
-        sequence: 0,
-    };
+    let meta = SessionMeta::new(session_id, "mock-model", now, now);
     store.save(session_id, &meta, &messages).unwrap();
 
     let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent(stream_fn);
     let mut app = App::new(TuiConfig::default());
-    app.session_store = Some(store);
+    app.session.session_store = Some(store);
     app.set_agent(agent);
 
     app.load_session(session_id).unwrap();
 
     let restored = app
+        .view
         .messages
         .iter()
         .find(|message| message.content == "permission denied")
@@ -238,7 +204,7 @@ async fn auto_save_persists_session_state_snapshot() {
     let mut app = App::new(TuiConfig::default()).with_session_store(store, session_id.to_string());
     app.set_agent(agent);
 
-    if let Some(agent) = &mut app.agent {
+    if let Some(agent) = &mut app.agent_io.agent {
         agent.set_messages(vec![make_user_agent_message("hello")]);
         agent
             .session_state()
@@ -272,14 +238,7 @@ async fn load_session_restores_agent_session_state() {
     let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
     let session_id = "state-load-session";
     let now = swink_agent_memory::now_utc();
-    let meta = SessionMeta {
-        id: session_id.to_string(),
-        title: "mock-model".to_string(),
-        created_at: now,
-        updated_at: now,
-        version: 1,
-        sequence: 0,
-    };
+    let meta = SessionMeta::new(session_id, "mock-model", now, now);
 
     store
         .save(session_id, &meta, &[make_user_agent_message("hello")])
@@ -291,12 +250,12 @@ async fn load_session_restores_agent_session_state() {
     let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent(stream_fn);
     let mut app = App::new(TuiConfig::default());
-    app.session_store = Some(store);
+    app.session.session_store = Some(store);
     app.set_agent(agent);
 
     app.load_session(session_id).unwrap();
 
-    let agent = app.agent.as_ref().unwrap();
+    let agent = app.agent_io.agent.as_ref().unwrap();
     let (draft, turn) = {
         let state = agent.session_state().read().unwrap();
         (state.get::<String>("draft"), state.get::<i64>("turn"))
@@ -311,14 +270,7 @@ async fn load_session_without_saved_state_clears_existing_agent_session_state() 
     let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
     let session_id = "state-clear-session";
     let now = swink_agent_memory::now_utc();
-    let meta = SessionMeta {
-        id: session_id.to_string(),
-        title: "mock-model".to_string(),
-        created_at: now,
-        updated_at: now,
-        version: 1,
-        sequence: 0,
-    };
+    let meta = SessionMeta::new(session_id, "mock-model", now, now);
 
     store
         .save(session_id, &meta, &[make_user_agent_message("hello")])
@@ -334,12 +286,12 @@ async fn load_session_without_saved_state_clears_existing_agent_session_state() 
         .unwrap();
 
     let mut app = App::new(TuiConfig::default());
-    app.session_store = Some(store);
+    app.session.session_store = Some(store);
     app.set_agent(agent);
 
     app.load_session(session_id).unwrap();
 
-    let agent = app.agent.as_ref().unwrap();
+    let agent = app.agent_io.agent.as_ref().unwrap();
     let is_empty = {
         let state = agent.session_state().read().unwrap();
         state.is_empty()
@@ -353,14 +305,7 @@ async fn load_session_with_corrupted_saved_state_keeps_in_memory_state_and_repor
     let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
     let session_id = "state-corrupt-session";
     let now = swink_agent_memory::now_utc();
-    let meta = SessionMeta {
-        id: session_id.to_string(),
-        title: "mock-model".to_string(),
-        created_at: now,
-        updated_at: now,
-        version: 1,
-        sequence: 0,
-    };
+    let meta = SessionMeta::new(session_id, "mock-model", now, now);
 
     store
         .save(session_id, &meta, &[make_user_agent_message("hello")])
@@ -381,22 +326,72 @@ async fn load_session_with_corrupted_saved_state_keeps_in_memory_state_and_repor
         .unwrap();
 
     let mut app = App::new(TuiConfig::default());
-    app.session_store = Some(store);
+    app.session.session_store = Some(store);
     app.set_agent(agent);
 
     let err = app.load_session(session_id).unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
 
-    let agent = app.agent.as_ref().unwrap();
+    let agent = app.agent_io.agent.as_ref().unwrap();
     let draft = {
         let state = agent.session_state().read().unwrap();
         state.get::<String>("draft")
     };
     assert_eq!(draft, Some("keep me".to_string()));
     assert!(
-        app.messages
+        app.view
+            .messages
             .iter()
             .any(|message| message.content.contains("Failed to load session")),
         "load failures should surface a user-visible system message"
+    );
+}
+
+/// Regression for #1111: the `#key <provider> <api-key>` path must not reach
+/// the real OS keychain.
+///
+/// `App::store_key` calls `credentials::store_credential` directly — there is
+/// no `fn`-pointer seam here like the wizard has — so before #1111 this test
+/// (and every other App test that submitted a `#key` line) blocked forever
+/// inside `SecKeychainFindGenericPassword` waiting on macOS's SecurityAgent.
+/// It now resolves against the in-memory fake. Reaching the assertions at all
+/// is the substance of this test; see `credentials::tests` for the proof that
+/// the backend really is the fake.
+#[tokio::test]
+async fn hash_key_command_stores_through_the_fake_keychain() {
+    let mut app = App::new(TuiConfig::default());
+
+    app.store_key("openai", "sk-app-path-sentinel-1111");
+
+    assert!(
+        app.view
+            .messages
+            .iter()
+            .any(|message| message.content.contains("API key stored for: openai")),
+        "store_key should report success via the fake backend, not fail or hang"
+    );
+    assert!(
+        !app.view
+            .messages
+            .iter()
+            .any(|message| message.content.contains("Failed to store key")),
+        "the fake backend must not report a storage failure"
+    );
+}
+
+/// Regression for #1111: `#keys` (list) reads every provider's credential.
+/// That was one live keychain read per provider before the backend seam.
+#[tokio::test]
+async fn hash_keys_command_reads_through_the_fake_keychain() {
+    let mut app = App::new(TuiConfig::default());
+
+    app.list_keys();
+
+    assert!(
+        app.view
+            .messages
+            .iter()
+            .any(|message| message.content.contains("Provider credentials:")),
+        "list_keys should render the provider table without touching the keychain"
     );
 }

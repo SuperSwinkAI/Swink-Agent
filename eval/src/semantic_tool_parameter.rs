@@ -326,18 +326,12 @@ mod tests {
         Invocation {
             turns: vec![TurnRecord {
                 turn_index: 0,
-                assistant_message: AssistantMessage {
-                    content: vec![ContentBlock::Text { text: "ok".into() }],
-                    provider: "p".into(),
-                    model_id: "m".into(),
-                    usage: Usage::default(),
-                    cost: Cost::default(),
-                    stop_reason: StopReason::Stop,
-                    error_message: None,
-                    error_kind: None,
-                    timestamp: 0,
-                    cache_hint: None,
-                },
+                assistant_message: AssistantMessage::new(
+                    vec![ContentBlock::Text { text: "ok".into() }],
+                    "p",
+                    "m",
+                )
+                .with_timestamp(0),
                 tool_calls,
                 tool_results: vec![],
                 duration: StdDuration::from_millis(1),

@@ -186,14 +186,6 @@ impl KeychainCredentialStore {
         Self::with_backend(SystemKeychain::new())
     }
 
-    /// Create a store against the real OS keychain under a custom service
-    /// name. Use this to namespace an embedding application's credentials
-    /// away from other `swink-agent` processes on the same machine.
-    #[must_use]
-    pub fn with_service(service: impl Into<String>) -> Self {
-        Self::with_backend(SystemKeychain::new()).service(service)
-    }
-
     /// Create a store against a custom [`KeychainBackend`].
     #[must_use]
     pub fn with_backend(backend: impl KeychainBackend) -> Self {
@@ -203,9 +195,12 @@ impl KeychainCredentialStore {
         }
     }
 
-    /// Builder method overriding the keychain service name.
+    /// Builder method overriding the keychain service name (default:
+    /// [`DEFAULT_SERVICE`]). Use this to namespace an embedding application's
+    /// credentials away from other `swink-agent` processes on the same
+    /// machine.
     #[must_use]
-    pub fn service(mut self, service: impl Into<String>) -> Self {
+    pub fn with_service(mut self, service: impl Into<String>) -> Self {
         self.service = service.into();
         self
     }

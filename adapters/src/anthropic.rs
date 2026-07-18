@@ -359,19 +359,45 @@ async fn send_request(
         .as_deref()
         .unwrap_or(&anthropic.base.api_key);
 
-    anthropic
+    let request = anthropic
         .base
         .client
         .post(&url)
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| {
-            AssistantMessageEvent::error_network(format!("Anthropic connection error: {e}"))
-        })
+        .header("content-type", "application/json");
+
+    // `ServingOptions::extra` merges into the top level of the `/v1/messages`
+    // body — that is where Anthropic's provider-native knobs live (`top_k`,
+    // `stop_sequences`, `metadata`, `service_tier`, …). Typed fields win on
+    // collision; a key the API doesn't know is rejected loudly with HTTP 400
+    // rather than silently dropped. The empty-`extra` fast path serializes the
+    // typed struct directly, keeping default request bytes untouched.
+    let request = if options.serving.extra.is_empty() {
+        request.json(&body)
+    } else {
+        const TYPED_KEYS: &[&str] = &[
+            "model",
+            "max_tokens",
+            "stream",
+            "system",
+            "messages",
+            "tools",
+            "temperature",
+            "thinking",
+        ];
+        let mut value = serde_json::to_value(&body).map_err(|e| {
+            AssistantMessageEvent::error_network(format!("Anthropic JSON error: {e}"))
+        })?;
+        if let Value::Object(map) = &mut value {
+            crate::base::merge_extra(map, &options.serving.extra, TYPED_KEYS);
+        }
+        request.json(&value)
+    };
+
+    request.send().await.map_err(|e| {
+        AssistantMessageEvent::error_network(format!("Anthropic connection error: {e}"))
+    })
 }
 
 /// Resolve thinking configuration from the model spec.
@@ -388,10 +414,13 @@ fn resolve_thinking(model: &ModelSpec, max_tokens: u64) -> Option<AnthropicThink
         .unwrap_or_else(|| match model.thinking_level {
             ThinkingLevel::Minimal => 1024,
             ThinkingLevel::Low => 2048,
-            ThinkingLevel::Medium => 5000,
             ThinkingLevel::High => 10_000,
             ThinkingLevel::ExtraHigh => 20_000,
             ThinkingLevel::Off => unreachable!(),
+            // Covers ThinkingLevel::Medium and, since ThinkingLevel is
+            // #[non_exhaustive], any future variant not yet known to this
+            // adapter — both fall back to the Medium-tier budget.
+            _ => 5000,
         });
 
     // Anthropic requires `budget_tokens` to be strictly less than `max_tokens`.
@@ -501,6 +530,10 @@ fn convert_messages(
                     content: vec![block],
                 });
             }
+            // Unknown future LlmMessage variant: nothing sensible to send to
+            // Anthropic, so drop it — same as messages skipped elsewhere in
+            // this loop (e.g. non-LLM AgentMessage variants).
+            &_ => {}
         }
     }
 
@@ -1651,24 +1684,19 @@ mod tests {
     fn convert_messages_sanitized_tool_use_becomes_empty_object_input() {
         use swink_agent::AssistantMessage;
 
-        let mut assistant = AssistantMessage {
-            content: vec![ContentBlock::ToolCall {
+        let mut assistant = AssistantMessage::new(
+            vec![ContentBlock::ToolCall {
                 id: "toolu_01".into(),
                 name: "read_file".into(),
                 // Simulate an incomplete-tool-use block surviving Done(Length):
                 arguments: Value::Null,
                 partial_json: Some(r#"{"path": "/tm"#.into()),
             }],
-            provider: "anthropic".into(),
-            model_id: "claude-sonnet-4-6".into(),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::Length,
-            error_message: None,
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        };
+            "anthropic",
+            "claude-sonnet-4-6",
+        )
+        .with_stop_reason(StopReason::Length)
+        .with_timestamp(0);
 
         // Loop-level scrub runs before the adapter sees the history.
         swink_agent::sanitize_incomplete_tool_calls(&mut assistant);

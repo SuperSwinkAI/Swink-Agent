@@ -1,0 +1,1302 @@
+//! Wiremock-based tests for `AnthropicStreamFn`.
+
+use futures::StreamExt;
+use std::sync::{Arc, Mutex};
+use tokio_util::sync::CancellationToken;
+use wiremock::matchers::{header, method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+use swink_agent::{
+    AssistantMessageEvent, ModelSpec, StopReason, StreamErrorKind, StreamFn, StreamOptions,
+};
+use swink_agent_adapters::AnthropicStreamFn;
+
+use crate::common::{
+    event_name, extract_stop_reason, find_error_kind, find_error_message, find_retry_after,
+    notify_on_request, sse_response, test_context,
+};
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+fn test_model() -> ModelSpec {
+    ModelSpec::new("anthropic", "claude-sonnet-4-20250514")
+}
+
+async fn collect_events(stream_fn: &AnthropicStreamFn) -> Vec<AssistantMessageEvent> {
+    collect_events_with_options(stream_fn, StreamOptions::default()).await
+}
+
+async fn collect_events_with_options(
+    stream_fn: &AnthropicStreamFn,
+    options: StreamOptions,
+) -> Vec<AssistantMessageEvent> {
+    let model = test_model();
+    let context = test_context();
+    let token = CancellationToken::new();
+    let stream = stream_fn.stream(&model, &context, &options, token);
+    stream.collect::<Vec<_>>().await
+}
+
+fn basic_text_sse() -> String {
+    [
+        "event: message_start",
+        r#"data: {"type":"message_start","message":{"usage":{"input_tokens":25}}}"#,
+        "",
+        "event: content_block_start",
+        r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+        "",
+        "event: content_block_delta",
+        r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}"#,
+        "",
+        "event: content_block_stop",
+        r#"data: {"type":"content_block_stop","index":0}"#,
+        "",
+        "event: message_delta",
+        r#"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":10}}"#,
+        "",
+        "event: message_stop",
+        r#"data: {"type":"message_stop"}"#,
+        "",
+        "",
+    ]
+    .join("\n")
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn anthropic_text_stream() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&basic_text_sse()))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    let types: Vec<&str> = events.iter().map(|e| event_name(e)).collect();
+    assert!(types.contains(&"Start"), "missing Start: {types:?}");
+    assert!(types.contains(&"TextStart"), "missing TextStart: {types:?}");
+    assert!(types.contains(&"TextDelta"), "missing TextDelta: {types:?}");
+    assert!(types.contains(&"TextEnd"), "missing TextEnd: {types:?}");
+    assert!(types.contains(&"Done"), "missing Done: {types:?}");
+
+    let delta_text: String = events
+        .iter()
+        .filter_map(|e| match e {
+            AssistantMessageEvent::TextDelta { delta, .. } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(delta_text, "Hello");
+}
+
+#[tokio::test]
+async fn anthropic_tool_use_stream() {
+    let body = [
+        "event: message_start",
+        r#"data: {"type":"message_start","message":{"usage":{"input_tokens":25}}}"#,
+        "",
+        "event: content_block_start",
+        r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tu_1","name":"bash"}}"#,
+        "",
+        "event: content_block_delta",
+        r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"command\":"}}"#,
+        "",
+        "event: content_block_delta",
+        r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"ls\"}"}}"#,
+        "",
+        "event: content_block_stop",
+        r#"data: {"type":"content_block_stop","index":0}"#,
+        "",
+        "event: message_delta",
+        r#"data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":20}}"#,
+        "",
+        "event: message_stop",
+        r#"data: {"type":"message_stop"}"#,
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    let types: Vec<&str> = events.iter().map(|e| event_name(e)).collect();
+    assert!(
+        types.contains(&"ToolCallStart"),
+        "missing ToolCallStart: {types:?}"
+    );
+    assert!(
+        types.contains(&"ToolCallDelta"),
+        "missing ToolCallDelta: {types:?}"
+    );
+    assert!(
+        types.contains(&"ToolCallEnd"),
+        "missing ToolCallEnd: {types:?}"
+    );
+
+    // Verify start details
+    let start = events.iter().find_map(|e| match e {
+        AssistantMessageEvent::ToolCallStart { id, name, .. } => Some((id.clone(), name.clone())),
+        _ => None,
+    });
+    assert_eq!(start, Some(("tu_1".to_string(), "bash".to_string())));
+
+    // Verify stop reason
+    let done = events.iter().find_map(|e| match e {
+        AssistantMessageEvent::Done { stop_reason, .. } => Some(*stop_reason),
+        _ => None,
+    });
+    assert_eq!(done, Some(StopReason::ToolUse));
+}
+
+#[tokio::test]
+async fn anthropic_thinking_stream() {
+    let body = [
+        "event: message_start",
+        r#"data: {"type":"message_start","message":{"usage":{"input_tokens":25}}}"#,
+        "",
+        "event: content_block_start",
+        r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"#,
+        "",
+        "event: content_block_delta",
+        r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me think..."}}"#,
+        "",
+        "event: content_block_delta",
+        r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig_abc123"}}"#,
+        "",
+        "event: content_block_stop",
+        r#"data: {"type":"content_block_stop","index":0}"#,
+        "",
+        "event: content_block_start",
+        r#"data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#,
+        "",
+        "event: content_block_delta",
+        r#"data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"The answer is 42."}}"#,
+        "",
+        "event: content_block_stop",
+        r#"data: {"type":"content_block_stop","index":1}"#,
+        "",
+        "event: message_delta",
+        r#"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":15}}"#,
+        "",
+        "event: message_stop",
+        r#"data: {"type":"message_stop"}"#,
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    let types: Vec<&str> = events.iter().map(|e| event_name(e)).collect();
+    assert!(
+        types.contains(&"ThinkingStart"),
+        "missing ThinkingStart: {types:?}"
+    );
+    assert!(
+        types.contains(&"ThinkingDelta"),
+        "missing ThinkingDelta: {types:?}"
+    );
+    assert!(
+        types.contains(&"ThinkingEnd"),
+        "missing ThinkingEnd: {types:?}"
+    );
+    assert!(types.contains(&"TextStart"), "missing TextStart: {types:?}");
+    assert!(types.contains(&"TextDelta"), "missing TextDelta: {types:?}");
+    assert!(types.contains(&"TextEnd"), "missing TextEnd: {types:?}");
+    assert!(types.contains(&"Done"), "missing Done: {types:?}");
+
+    // Thinking should come before text
+    let thinking_end_pos = types.iter().position(|&t| t == "ThinkingEnd").unwrap();
+    let text_start_pos = types.iter().position(|&t| t == "TextStart").unwrap();
+    assert!(
+        thinking_end_pos < text_start_pos,
+        "ThinkingEnd should precede TextStart"
+    );
+
+    let thinking_signature = events.iter().find_map(|event| match event {
+        AssistantMessageEvent::ThinkingEnd { signature, .. } => signature.as_deref(),
+        _ => None,
+    });
+    assert_eq!(thinking_signature, Some("sig_abc123"));
+}
+
+#[tokio::test]
+async fn anthropic_usage_tracked() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&basic_text_sse()))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    let usage = events.iter().find_map(|e| match e {
+        AssistantMessageEvent::Done { usage, .. } => Some(usage.clone()),
+        _ => None,
+    });
+    let usage = usage.expect("missing Done event");
+    assert_eq!(usage.input, 25, "input_tokens mismatch");
+    assert_eq!(usage.output, 10, "output_tokens mismatch");
+}
+
+#[tokio::test]
+async fn anthropic_cache_tokens() {
+    let body = [
+        "event: message_start",
+        r#"data: {"type":"message_start","message":{"usage":{"input_tokens":25,"cache_read_input_tokens":100,"cache_creation_input_tokens":50}}}"#,
+        "",
+        "event: content_block_start",
+        r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+        "",
+        "event: content_block_delta",
+        r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"cached"}}"#,
+        "",
+        "event: content_block_stop",
+        r#"data: {"type":"content_block_stop","index":0}"#,
+        "",
+        "event: message_delta",
+        r#"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}"#,
+        "",
+        "event: message_stop",
+        r#"data: {"type":"message_stop"}"#,
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    let usage = events.iter().find_map(|e| match e {
+        AssistantMessageEvent::Done { usage, .. } => Some(usage.clone()),
+        _ => None,
+    });
+    let usage = usage.expect("missing Done event");
+    assert_eq!(usage.cache_read, 100, "cache_read mismatch");
+    assert_eq!(usage.cache_write, 50, "cache_write mismatch");
+}
+
+#[tokio::test]
+async fn anthropic_http_401() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(401).set_body_string("Unauthorized"))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    assert!(
+        matches!(events.first(), Some(AssistantMessageEvent::Start)),
+        "pre-stream HTTP failures must start with Start: {events:?}"
+    );
+
+    let err = find_error_message(&events).expect("expected error event");
+    assert!(
+        err.contains("auth error"),
+        "expected 'auth error', got: {err}"
+    );
+    assert!(err.contains("401"), "expected '401' mention, got: {err}");
+}
+
+#[tokio::test]
+async fn anthropic_http_429() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(429).set_body_string("Rate limited"))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    let err = find_error_message(&events).expect("expected error event");
+    assert!(
+        err.contains("rate limit"),
+        "expected 'rate limit', got: {err}"
+    );
+    assert_eq!(
+        find_retry_after(&events),
+        None,
+        "no Retry-After header was sent, so the hint should be absent"
+    );
+}
+
+#[tokio::test]
+async fn anthropic_http_429_with_retry_after_header() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("Retry-After", "42")
+                .set_body_string("Rate limited"),
+        )
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    let err = find_error_message(&events).expect("expected error event");
+    assert!(
+        err.contains("rate limit"),
+        "expected 'rate limit', got: {err}"
+    );
+    assert_eq!(
+        find_retry_after(&events),
+        Some(std::time::Duration::from_secs(42)),
+        "Retry-After header should be propagated onto the error event"
+    );
+}
+
+#[tokio::test]
+async fn anthropic_http_529() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(529).set_body_string("Overloaded"))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    let err = find_error_message(&events).expect("expected error event");
+    // 529 is mapped to a network/server error via the Anthropic-specific override
+    assert!(err.contains("529"), "expected '529' mention, got: {err}");
+    assert!(
+        err.contains("Overloaded"),
+        "expected body content, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn anthropic_http_400_prompt_too_long_sets_context_overflow_kind() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(
+            r#"{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 210510 tokens > 200000 maximum"}}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    assert_eq!(
+        find_error_kind(&events),
+        Some(Some(StreamErrorKind::ContextWindowExceeded)),
+        "expected structured ContextWindowExceeded, got: {events:?}"
+    );
+    let err = find_error_message(&events).expect("expected error event");
+    assert!(
+        err.contains("prompt is too long"),
+        "expected provider message preserved, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn anthropic_http_400_other_invalid_request_has_no_kind() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(
+            r#"{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: must be greater than 0"}}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    assert_eq!(
+        find_error_kind(&events),
+        Some(None),
+        "non-overflow invalid_request must stay unclassified, got: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn anthropic_http_401_sets_auth_kind() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(401).set_body_string(
+            r#"{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    assert_eq!(find_error_kind(&events), Some(Some(StreamErrorKind::Auth)));
+}
+
+#[tokio::test]
+async fn anthropic_stream_error_prompt_too_long_sets_context_overflow_kind() {
+    let body = [
+        "event: message_start",
+        r#"data: {"type":"message_start","message":{"usage":{"input_tokens":25}}}"#,
+        "",
+        "event: error",
+        r#"data: {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 210510 tokens > 200000 maximum"}}"#,
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    assert_eq!(
+        find_error_kind(&events),
+        Some(Some(StreamErrorKind::ContextWindowExceeded)),
+        "expected structured ContextWindowExceeded, got: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn anthropic_stream_error_invalid_request_is_not_network() {
+    let body = [
+        "event: message_start",
+        r#"data: {"type":"message_start","message":{"usage":{"input_tokens":25}}}"#,
+        "",
+        "event: error",
+        r#"data: {"type":"error","error":{"type":"invalid_request_error","message":"messages: at least one message is required"}}"#,
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    // Deterministic client errors must not be classified as retryable Network.
+    assert_eq!(
+        find_error_kind(&events),
+        Some(None),
+        "invalid_request_error must stay unclassified, got: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn anthropic_stream_error_rate_limit_sets_throttled_kind() {
+    let body = [
+        "event: message_start",
+        r#"data: {"type":"message_start","message":{"usage":{"input_tokens":25}}}"#,
+        "",
+        "event: error",
+        r#"data: {"type":"error","error":{"type":"rate_limit_error","message":"Number of requests has exceeded your rate limit"}}"#,
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    assert_eq!(
+        find_error_kind(&events),
+        Some(Some(StreamErrorKind::Throttled))
+    );
+}
+
+#[tokio::test]
+async fn anthropic_stream_error_event() {
+    let body = [
+        "event: message_start",
+        r#"data: {"type":"message_start","message":{"usage":{"input_tokens":25}}}"#,
+        "",
+        "event: error",
+        r#"data: {"type":"error","error":{"type":"server_error","message":"Internal server error"}}"#,
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    let err = find_error_message(&events).expect("expected error event");
+    assert!(
+        err.contains("Internal server error"),
+        "expected error message from stream, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn anthropic_unknown_stream_error_is_non_retryable() {
+    let body = [
+        "event: error",
+        r#"data: {"type":"error","error":{"type":"invalid_request_error","message":"bad request"}}"#,
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    let error_kind = events
+        .iter()
+        .find_map(|event| match event {
+            AssistantMessageEvent::Error { error_kind, .. } => Some(*error_kind),
+            _ => None,
+        })
+        .expect("expected error event");
+    assert_eq!(error_kind, None);
+}
+
+#[tokio::test]
+async fn anthropic_cancellation() {
+    let body = [
+        "event: message_start",
+        r#"data: {"type":"message_start","message":{"usage":{"input_tokens":25}}}"#,
+        "",
+    ]
+    .join("\n");
+
+    let (slow_response, request_seen) =
+        notify_on_request(sse_response(&body).set_delay(std::time::Duration::from_secs(30)));
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(slow_response)
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let model = test_model();
+    let context = test_context();
+    let options = StreamOptions::default();
+    let token = CancellationToken::new();
+
+    let cancel_token = token.clone();
+    let events_handle = tokio::spawn(async move {
+        sf.stream(&model, &context, &options, token)
+            .collect::<Vec<_>>()
+            .await
+    });
+
+    request_seen.notified().await;
+    cancel_token.cancel();
+    let events = events_handle.await.expect("stream task should complete");
+
+    let has_aborted = events.iter().any(|e| {
+        matches!(
+            e,
+            AssistantMessageEvent::Error {
+                stop_reason: StopReason::Aborted,
+                ..
+            }
+        )
+    });
+    assert!(has_aborted, "expected Aborted event, got: {events:?}");
+}
+
+#[tokio::test]
+async fn anthropic_pre_send_cancellation_skips_http_request() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(""))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let model = test_model();
+    let context = test_context();
+    let options = StreamOptions::default();
+    let token = CancellationToken::new();
+    token.cancel();
+
+    let events: Vec<_> = sf.stream(&model, &context, &options, token).collect().await;
+
+    assert!(matches!(events.first(), Some(AssistantMessageEvent::Start)));
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            AssistantMessageEvent::Error {
+                stop_reason: StopReason::Aborted,
+                error_message,
+                ..
+            } if error_message.contains("cancelled")
+        )
+    }));
+
+    let received = server.received_requests().await.expect("request log");
+    assert!(
+        received.is_empty(),
+        "expected no HTTP request, got {received:?}"
+    );
+}
+
+#[tokio::test]
+async fn anthropic_api_key_header() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(header("x-api-key", "test-key"))
+        .respond_with(sse_response(&basic_text_sse()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    let has_start = events
+        .iter()
+        .any(|e| matches!(e, AssistantMessageEvent::Start));
+    assert!(has_start, "expected Start from authenticated request");
+}
+
+#[tokio::test]
+async fn anthropic_stream_options_api_key_overrides_default() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(header("x-api-key", "override-key"))
+        .respond_with(sse_response(&basic_text_sse()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "default-key");
+    let model = test_model();
+    let context = test_context();
+    let options = StreamOptions::default().with_api_key("override-key".to_string());
+    let token = CancellationToken::new();
+    let events: Vec<_> = sf.stream(&model, &context, &options, token).collect().await;
+
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::Start))
+    );
+}
+
+#[tokio::test]
+async fn anthropic_debug_redacts_key() {
+    let sf = AnthropicStreamFn::new("https://api.anthropic.com", "sk-ant-secret-12345");
+    let debug = format!("{sf:?}");
+    assert!(
+        debug.contains("[REDACTED]"),
+        "Debug output should contain [REDACTED], got: {debug}"
+    );
+    assert!(
+        !debug.contains("sk-ant-secret-12345"),
+        "Debug output should NOT contain the actual key, got: {debug}"
+    );
+}
+
+#[tokio::test]
+async fn anthropic_stop_reason_mapping() {
+    // Test "tool_use" -> ToolUse
+    let tool_use_body = make_stop_reason_body("tool_use");
+    let max_tokens_body = make_stop_reason_body("max_tokens");
+    let end_turn_body = make_stop_reason_body("end_turn");
+
+    // tool_use
+    {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(sse_response(&tool_use_body))
+            .mount(&server)
+            .await;
+
+        let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+        let events = collect_events(&sf).await;
+        let reason = extract_stop_reason(&events).expect("missing Done");
+        assert_eq!(
+            reason,
+            StopReason::ToolUse,
+            "tool_use should map to ToolUse"
+        );
+    }
+
+    // max_tokens
+    {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(sse_response(&max_tokens_body))
+            .mount(&server)
+            .await;
+
+        let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+        let events = collect_events(&sf).await;
+        let reason = extract_stop_reason(&events).expect("missing Done");
+        assert_eq!(
+            reason,
+            StopReason::Length,
+            "max_tokens should map to Length"
+        );
+    }
+
+    // end_turn
+    {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(sse_response(&end_turn_body))
+            .mount(&server)
+            .await;
+
+        let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+        let events = collect_events(&sf).await;
+        let reason = extract_stop_reason(&events).expect("missing Done");
+        assert_eq!(reason, StopReason::Stop, "end_turn should map to Stop");
+    }
+}
+
+// ── Utility functions ────────────────────────────────────────────────────────
+
+fn make_stop_reason_body(stop_reason: &str) -> String {
+    [
+        "event: message_start",
+        r#"data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}"#,
+        "",
+        "event: content_block_start",
+        r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+        "",
+        "event: content_block_delta",
+        r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}"#,
+        "",
+        "event: content_block_stop",
+        r#"data: {"type":"content_block_stop","index":0}"#,
+        "",
+        &format!(r#"event: message_delta
+data: {{"type":"message_delta","delta":{{"stop_reason":"{stop_reason}"}},"usage":{{"output_tokens":5}}}}"#),
+        "",
+        "event: message_stop",
+        r#"data: {"type":"message_stop"}"#,
+        "",
+        "",
+    ]
+    .join("\n")
+}
+
+// ── Edge case tests ─────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn anthropic_empty_text_delta_skipped() {
+    let body = [
+        "event: message_start",
+        r#"data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}"#,
+        "",
+        "event: content_block_start",
+        r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+        "",
+        "event: content_block_delta",
+        r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":""}}"#,
+        "",
+        "event: content_block_delta",
+        r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"real text"}}"#,
+        "",
+        "event: content_block_stop",
+        r#"data: {"type":"content_block_stop","index":0}"#,
+        "",
+        "event: message_delta",
+        r#"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}"#,
+        "",
+        "event: message_stop",
+        r#"data: {"type":"message_stop"}"#,
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    // The adapter emits TextDelta for every text_delta event including empty ones.
+    // Verify we get two TextDelta events (one empty, one with content).
+    let deltas: Vec<&str> = events
+        .iter()
+        .filter_map(|e| match e {
+            AssistantMessageEvent::TextDelta { delta, .. } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(deltas.len(), 2, "expected 2 TextDelta events: {deltas:?}");
+    assert_eq!(deltas[0], "", "first delta should be empty");
+    assert_eq!(deltas[1], "real text", "second delta should be 'real text'");
+}
+
+#[tokio::test]
+async fn anthropic_multiple_text_blocks() {
+    let body = [
+        "event: message_start",
+        r#"data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}"#,
+        "",
+        "event: content_block_start",
+        r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+        "",
+        "event: content_block_delta",
+        r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"First block"}}"#,
+        "",
+        "event: content_block_stop",
+        r#"data: {"type":"content_block_stop","index":0}"#,
+        "",
+        "event: content_block_start",
+        r#"data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#,
+        "",
+        "event: content_block_delta",
+        r#"data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Second block"}}"#,
+        "",
+        "event: content_block_stop",
+        r#"data: {"type":"content_block_stop","index":1}"#,
+        "",
+        "event: message_delta",
+        r#"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":10}}"#,
+        "",
+        "event: message_stop",
+        r#"data: {"type":"message_stop"}"#,
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    let types: Vec<&str> = events.iter().map(|e| event_name(e)).collect();
+
+    // Both blocks should produce TextStart/TextDelta/TextEnd
+    let text_starts: Vec<usize> = events
+        .iter()
+        .filter_map(|e| match e {
+            AssistantMessageEvent::TextStart { content_index } => Some(*content_index),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        text_starts,
+        vec![0, 1],
+        "expected two TextStart at indices 0 and 1"
+    );
+
+    let text_ends: Vec<usize> = events
+        .iter()
+        .filter_map(|e| match e {
+            AssistantMessageEvent::TextEnd { content_index } => Some(*content_index),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        text_ends,
+        vec![0, 1],
+        "expected two TextEnd at indices 0 and 1"
+    );
+
+    // Verify ordering: first block ends before second block starts
+    let first_end = types.iter().position(|&t| t == "TextEnd").unwrap();
+    let second_start_pos = types.iter().skip(first_end).position(|&t| t == "TextStart");
+    assert!(
+        second_start_pos.is_some(),
+        "second TextStart should follow first TextEnd"
+    );
+
+    // Verify delta content
+    let deltas: Vec<&str> = events
+        .iter()
+        .filter_map(|e| match e {
+            AssistantMessageEvent::TextDelta { delta, .. } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(deltas, vec!["First block", "Second block"]);
+}
+
+#[tokio::test]
+async fn anthropic_text_then_tool_call() {
+    let body = [
+        "event: message_start",
+        r#"data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}"#,
+        "",
+        "event: content_block_start",
+        r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+        "",
+        "event: content_block_delta",
+        r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Let me run that."}}"#,
+        "",
+        "event: content_block_stop",
+        r#"data: {"type":"content_block_stop","index":0}"#,
+        "",
+        "event: content_block_start",
+        r#"data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tu_abc","name":"bash"}}"#,
+        "",
+        "event: content_block_delta",
+        r#"data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"cmd\":\"ls\"}"}}"#,
+        "",
+        "event: content_block_stop",
+        r#"data: {"type":"content_block_stop","index":1}"#,
+        "",
+        "event: message_delta",
+        r#"data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":15}}"#,
+        "",
+        "event: message_stop",
+        r#"data: {"type":"message_stop"}"#,
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    let types: Vec<&str> = events.iter().map(|e| event_name(e)).collect();
+
+    // Text block at content_index 0, tool call at content_index 1
+    let text_start = events.iter().find_map(|e| match e {
+        AssistantMessageEvent::TextStart { content_index } => Some(*content_index),
+        _ => None,
+    });
+    assert_eq!(
+        text_start,
+        Some(0),
+        "text block should be at content_index 0"
+    );
+
+    let tool_start = events.iter().find_map(|e| match e {
+        AssistantMessageEvent::ToolCallStart {
+            content_index,
+            id,
+            name,
+        } => Some((*content_index, id.clone(), name.clone())),
+        _ => None,
+    });
+    assert_eq!(
+        tool_start,
+        Some((1, "tu_abc".to_string(), "bash".to_string())),
+        "tool call should be at content_index 1"
+    );
+
+    // TextEnd must precede ToolCallStart
+    let text_end_pos = types.iter().position(|&t| t == "TextEnd").unwrap();
+    let tool_start_pos = types.iter().position(|&t| t == "ToolCallStart").unwrap();
+    assert!(
+        text_end_pos < tool_start_pos,
+        "TextEnd ({text_end_pos}) should precede ToolCallStart ({tool_start_pos})"
+    );
+
+    // Stop reason should be ToolUse
+    let reason = extract_stop_reason(&events).expect("missing Done");
+    assert_eq!(reason, StopReason::ToolUse);
+}
+
+#[tokio::test]
+async fn anthropic_missing_message_stop() {
+    // Stream ends after message_delta without message_stop
+    let body = [
+        "event: message_start",
+        r#"data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}"#,
+        "",
+        "event: content_block_start",
+        r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+        "",
+        "event: content_block_delta",
+        r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}"#,
+        "",
+        "event: message_delta",
+        r#"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}"#,
+        "",
+        // No content_block_stop, no message_stop — connection closes
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    // Should get an error about unexpected stream end
+    let err = find_error_message(&events).expect("expected error event");
+    assert!(
+        err.contains("stream ended unexpectedly"),
+        "expected 'stream ended unexpectedly', got: {err}"
+    );
+
+    // Open text block should be finalized (TextEnd emitted)
+    let types: Vec<&str> = events.iter().map(|e| event_name(e)).collect();
+    assert!(
+        types.contains(&"TextEnd"),
+        "open text block should be finalized: {types:?}"
+    );
+}
+
+#[tokio::test]
+async fn anthropic_http_500_server_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    let err = find_error_message(&events).expect("expected error event");
+    assert!(
+        err.contains("server error"),
+        "expected 'server error', got: {err}"
+    );
+    assert!(
+        err.contains("500"),
+        "expected HTTP status code in message, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn anthropic_empty_response_body() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(""))
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    // An empty SSE body means the stream ends immediately without message_stop.
+    // The adapter should emit Start then an error about unexpected stream end.
+    let types: Vec<&str> = events.iter().map(|e| event_name(e)).collect();
+    assert!(
+        types.contains(&"Start"),
+        "should still emit Start: {types:?}"
+    );
+
+    let err = find_error_message(&events).expect("expected error event");
+    assert!(
+        err.contains("stream ended unexpectedly"),
+        "expected 'stream ended unexpectedly', got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn anthropic_on_raw_payload_observes_runtime_sse_lines() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&basic_text_sse()))
+        .mount(&server)
+        .await;
+
+    let observed = Arc::new(Mutex::new(Vec::<String>::new()));
+    let callback_lines = Arc::clone(&observed);
+    let options = StreamOptions::default().with_on_raw_payload(Arc::new(move |line| {
+        callback_lines
+            .lock()
+            .expect("callback buffer poisoned")
+            .push(line.to_owned());
+    }));
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events_with_options(&sf, options).await;
+    let observed = observed.lock().expect("callback buffer poisoned").clone();
+
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
+        "expected runtime stream to complete successfully"
+    );
+    assert_eq!(
+        observed,
+        vec![
+            r#"{"type":"message_start","message":{"usage":{"input_tokens":25}}}"#.to_string(),
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#
+                .to_string(),
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}"#
+                .to_string(),
+            r#"{"type":"content_block_stop","index":0}"#.to_string(),
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":10}}"#
+                .to_string(),
+            r#"{"type":"message_stop"}"#.to_string(),
+        ]
+    );
+}
+
+/// `ServingOptions::extra` merges into the top level of the `/v1/messages`
+/// body — where Anthropic keeps its provider-native knobs (`top_k`,
+/// `stop_sequences`, …). Keys colliding with typed fields are dropped:
+/// typed fields win.
+#[tokio::test]
+async fn anthropic_extra_merges_into_top_level_body() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&basic_text_sse()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let options = StreamOptions::default().with_temperature(0.7).with_serving(
+        swink_agent::ServingOptions::default().with_extra(
+            [
+                ("top_k".to_string(), serde_json::json!(40)),
+                ("stop_sequences".to_string(), serde_json::json!(["END"])),
+                // Colliding keys: the typed fields must win.
+                ("temperature".to_string(), serde_json::json!(0.1)),
+                ("stream".to_string(), serde_json::json!(false)),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+    );
+    let events = collect_events_with_options(&sf, options).await;
+    assert!(matches!(events[0], AssistantMessageEvent::Start));
+
+    let requests = server.received_requests().await.expect("request log");
+    let body: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("JSON body");
+    assert_eq!(body["top_k"], serde_json::json!(40), "body: {body}");
+    assert_eq!(
+        body["stop_sequences"],
+        serde_json::json!(["END"]),
+        "body: {body}"
+    );
+    assert_eq!(
+        body["temperature"],
+        serde_json::json!(0.7),
+        "typed `temperature` must win over the colliding extra entry: {body}"
+    );
+    assert_eq!(
+        body["stream"],
+        serde_json::json!(true),
+        "typed `stream` must win over the colliding extra entry: {body}"
+    );
+}
+
+/// With `extra` empty the request body carries exactly the typed fields —
+/// the merge path must not run and must not inject anything.
+#[tokio::test]
+async fn anthropic_empty_extra_leaves_body_unchanged() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&basic_text_sse()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let _events = collect_events(&sf).await;
+
+    let requests = server.received_requests().await.expect("request log");
+    let body: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("JSON body");
+    let keys: Vec<&str> = body
+        .as_object()
+        .expect("object body")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        vec!["max_tokens", "messages", "model", "stream", "system"],
+        "default body must carry exactly the typed fields (keys sorted on parse)"
+    );
+}

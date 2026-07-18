@@ -43,6 +43,25 @@ pub enum RawSession {
 }
 
 impl RawSession {
+    /// Build an OTel-span payload for `session_id`.
+    ///
+    /// This is the construction seam for third-party [`TraceProvider`]
+    /// implementations: the enum is `#[non_exhaustive]`, so external crates
+    /// must go through this constructor rather than a variant literal —
+    /// which also keeps them source-compatible if the variant grows fields.
+    ///
+    /// Spans may be in arbitrary order; mappers reconstruct parent/child
+    /// relationships from `parent_span_id`. Providers SHOULD NOT return an
+    /// empty `spans` list — surface
+    /// [`TraceProviderError::SessionNotFound`] instead.
+    #[must_use]
+    pub fn otel_spans(session_id: impl Into<String>, spans: Vec<SpanData>) -> Self {
+        Self::OtelSpans {
+            session_id: session_id.into(),
+            spans,
+        }
+    }
+
     /// Session identifier this raw payload corresponds to.
     #[must_use]
     pub fn session_id(&self) -> &str {
@@ -277,6 +296,20 @@ mod tests {
             spans: vec![],
         };
         assert_eq!(s.session_id(), "abc");
+    }
+
+    #[test]
+    fn otel_spans_constructor_builds_the_otel_variant() {
+        let span = make_span("root", vec![KeyValue::new("session.id", "S9")], true);
+        let s = RawSession::otel_spans("S9", vec![span]);
+        assert_eq!(s.session_id(), "S9");
+        match s {
+            RawSession::OtelSpans { session_id, spans } => {
+                assert_eq!(session_id, "S9");
+                assert_eq!(spans.len(), 1);
+                assert_eq!(spans[0].name, "root");
+            }
+        }
     }
 
     #[test]

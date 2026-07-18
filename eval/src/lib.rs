@@ -22,6 +22,24 @@
 //! println!("Passed: {}/{}", result.summary.passed, result.summary.total_cases);
 //! ```
 
+/// Ensure a process-wide default rustls crypto provider is installed.
+///
+/// The workspace builds reqwest with `rustls-no-provider` (#1110), so a
+/// `reqwest::Client` cannot be constructed until a process default
+/// [`rustls::crypto::CryptoProvider`] exists. Installs ring; idempotent —
+/// an already-installed provider (e.g. a host's aws-lc-rs for FIPS) wins.
+/// Gated on exactly the features that enable `dep:reqwest`/`dep:rustls`.
+#[cfg(any(
+    feature = "multimodal",
+    feature = "trace-otlp",
+    feature = "trace-langfuse",
+    feature = "trace-opensearch",
+    feature = "langsmith",
+))]
+pub(crate) fn ensure_default_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 pub mod aggregator;
 mod audit;
 mod budget;

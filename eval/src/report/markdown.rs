@@ -21,6 +21,7 @@ use super::{Reporter, ReporterError, ReporterOutput};
 /// Produces a self-contained Markdown document safe to paste into a PR
 /// comment. The rendering is deterministic: identical `EvalSetResult`
 /// inputs always produce byte-identical output.
+#[non_exhaustive]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MarkdownReporter;
 

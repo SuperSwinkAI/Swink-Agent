@@ -16,6 +16,7 @@ TOML-backed user configuration. Loaded from `dirs::config_dir()/swink-agent/tui.
 | `system_prompt` | `Option<String>` | `None` | System prompt override (below env var priority) |
 | `editor_command` | `Option<String>` | `None` | External editor override (over `$EDITOR`/`$VISUAL`) |
 | `color_mode` | `String` | `"custom"` | Color mode: `custom`, `mono-white`, `mono-black` |
+| `pricing` | `PricingTable` | empty | Operator-declared per-model rates (USD per million tokens), consulted before the compiled model catalog. Added for FR-TUI-4 / issue #1084. |
 
 **Behavior**: `#[serde(default)]` — missing fields use defaults. Unknown keys silently ignored. Invalid TOML falls back to full defaults.
 

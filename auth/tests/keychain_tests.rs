@@ -281,8 +281,8 @@ async fn entries_are_written_under_the_default_service() {
 #[tokio::test]
 async fn custom_service_isolates_credentials() {
     let backend = FakeKeychain::new();
-    let alpha = KeychainCredentialStore::with_backend(backend.clone()).service("alpha");
-    let beta = KeychainCredentialStore::with_backend(backend.clone()).service("beta");
+    let alpha = KeychainCredentialStore::with_backend(backend.clone()).with_service("alpha");
+    let beta = KeychainCredentialStore::with_backend(backend.clone()).with_service("beta");
 
     alpha
         .set("shared", Credential::ApiKey { key: "a".into() })
@@ -338,7 +338,7 @@ async fn panicking_backend_becomes_store_error_not_a_task_abort() {
 #[tokio::test]
 async fn debug_impl_does_not_leak_secrets() {
     let backend = FakeKeychain::new();
-    let store = KeychainCredentialStore::with_backend(backend.clone()).service("svc");
+    let store = KeychainCredentialStore::with_backend(backend.clone()).with_service("svc");
     store
         .set(
             "k",

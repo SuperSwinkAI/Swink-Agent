@@ -3,10 +3,82 @@
 //! All color access goes through functions that respect the current [`ColorMode`].
 //! In monochrome modes every color resolves to a single value (`White` or `Black`),
 //! preserving only modifiers (bold, dim, underline) for semantic differentiation.
-
-use std::sync::atomic::{AtomicU8, Ordering};
+//!
+//! # Test isolation
+//!
+//! The active mode lives in the [`storage`] module, which is `cfg`-selected: a
+//! process-wide `AtomicU8` in production, a thread-local `Cell` under
+//! `cfg(test)`. The atomic does not exist in test builds, so parallel tests
+//! *cannot* observe each other's color mode even by calling [`set_color_mode`]
+//! directly — the isolation is enforced by the compiler rather than by
+//! convention, mirroring the `KeychainBackend` seam in [`crate::credentials`].
+//!
+//! This closes issue #1107, where `mono_white_returns_white` failed ~4 of 6
+//! parallel runs. The racers were never only the theme tests: `App::new`
+//! applies `config.color_mode` on every construction, so each of the ~100
+//! `App::new` call sites across the crate's test tree stomped the global
+//! mid-assertion. Serializing the theme tests would not have fixed that; a
+//! `COLOR_TEST_LOCK` in `app/tests/input_ui.rs` tried and failed, because a
+//! mutex only one participant takes guards nothing.
+//!
+//! ## Scope of the guarantee
+//!
+//! `cfg(test)` is set only while compiling *this crate's own* unit tests, which
+//! is where every test that touches the color mode lives. It is **not** set for
+//! the `tui/tests/*` integration tests or `src/main.rs`'s test module: those
+//! link the library compiled normally and share the one atomic. None touch the
+//! color mode today. Anything added there that sets it must not assume
+//! isolation; prefer keeping such tests in this crate's unit-test tree, where
+//! the seam applies automatically.
+//!
+//! Production is unchanged: reads and writes still go through one process-wide
+//! atomic. The thread-local substitution is sound for tests because the mode is
+//! written and read on the same thread (`App::new` and rendering both run on
+//! the TUI thread); a test that set the mode and then rendered on a *spawned*
+//! thread would read the default instead. None do.
 
 use ratatui::style::{Color, Modifier, Style};
+
+/// Backing store for the active [`ColorMode`], as a raw `u8` discriminant.
+///
+/// Production uses one process-wide atomic. Test builds get a thread-local so
+/// that parallel tests are isolated by construction. See the module docs.
+#[cfg(not(test))]
+mod storage {
+    use std::sync::atomic::{AtomicU8, Ordering};
+
+    static COLOR_MODE: AtomicU8 = AtomicU8::new(0);
+
+    pub(super) fn store(mode: u8) {
+        COLOR_MODE.store(mode, Ordering::Relaxed);
+    }
+
+    pub(super) fn load() -> u8 {
+        COLOR_MODE.load(Ordering::Relaxed)
+    }
+}
+
+/// Thread-local backing store used under `cfg(test)`.
+///
+/// Deliberately *not* an atomic: `cargo test` runs each test on its own thread,
+/// so a thread-local gives every test a private color mode and makes the #1107
+/// race structurally impossible.
+#[cfg(test)]
+mod storage {
+    use std::cell::Cell;
+
+    thread_local! {
+        static COLOR_MODE: Cell<u8> = const { Cell::new(0) };
+    }
+
+    pub(super) fn store(mode: u8) {
+        COLOR_MODE.with(|m| m.set(mode));
+    }
+
+    pub(super) fn load() -> u8 {
+        COLOR_MODE.with(Cell::get)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Color mode
@@ -24,16 +96,16 @@ pub enum ColorMode {
     MonoBlack = 2,
 }
 
-static COLOR_MODE: AtomicU8 = AtomicU8::new(0);
-
 /// Set the active color mode (e.g. from config on startup).
+///
+/// In test builds this is scoped to the calling thread; see the module docs.
 pub fn set_color_mode(mode: ColorMode) {
-    COLOR_MODE.store(mode as u8, Ordering::Relaxed);
+    storage::store(mode as u8);
 }
 
 /// Read the current color mode.
 pub fn color_mode() -> ColorMode {
-    match COLOR_MODE.load(Ordering::Relaxed) {
+    match storage::load() {
         1 => ColorMode::MonoWhite,
         2 => ColorMode::MonoBlack,
         _ => ColorMode::Custom,
@@ -327,6 +399,37 @@ mod tests {
         assert_eq!(cycle_color_mode(), ColorMode::MonoWhite);
         assert_eq!(cycle_color_mode(), ColorMode::MonoBlack);
         assert_eq!(cycle_color_mode(), ColorMode::Custom);
+        reset();
+    }
+
+    /// Regression test for #1107.
+    ///
+    /// Asserts the property that *discriminates* the two backing stores rather
+    /// than merely passing: a thread-local mode set here must be invisible from
+    /// another thread, whereas a process-wide atomic would leak into it. Rewire
+    /// `storage` back to a global and this test fails — which is the point. A
+    /// test that only asserted `mono_white_returns_white` passes would prove
+    /// nothing, since that test passed ~2 of 6 runs while broken.
+    #[test]
+    fn color_mode_does_not_leak_across_threads_in_test_builds() {
+        set_color_mode(ColorMode::MonoWhite);
+
+        let seen_on_other_thread = std::thread::spawn(color_mode)
+            .join()
+            .expect("color mode probe thread should not panic");
+
+        assert_eq!(
+            seen_on_other_thread,
+            ColorMode::Custom,
+            "another thread must not observe this thread's color mode; a shared \
+             global would leak it and reintroduce the #1107 race"
+        );
+        assert_eq!(
+            color_mode(),
+            ColorMode::MonoWhite,
+            "this thread's own color mode must survive the other thread's read"
+        );
+
         reset();
     }
 }

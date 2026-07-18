@@ -396,11 +396,11 @@ fn apply_candidate_to_target(
         TargetComponent::ToolDescription { tool_name } => {
             let existing = target.tool_schemas().iter().find(|t| &t.name == tool_name);
             if let Some(schema) = existing {
-                let new_schema = ToolSchema {
-                    name: schema.name.clone(),
-                    description: candidate.mutated_value.clone(),
-                    parameters: schema.parameters.clone(),
-                };
+                let new_schema = ToolSchema::new(
+                    schema.name.clone(),
+                    candidate.mutated_value.clone(),
+                    schema.parameters.clone(),
+                );
                 target.with_replaced_tool(tool_name, new_schema)
             } else {
                 target.clone()

@@ -65,6 +65,7 @@ impl OllamaJudgeClient {
     /// `base_url` is typically `http://localhost:11434`. No API key is needed.
     #[must_use]
     pub fn new(base_url: impl Into<String>, model: impl Into<String>) -> Self {
+        swink_agent_adapters::ensure_default_crypto_provider();
         let http = Client::builder()
             .timeout(DEFAULT_TIMEOUT)
             .build()

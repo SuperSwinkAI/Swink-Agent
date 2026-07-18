@@ -221,15 +221,14 @@ impl Agent {
         // immediately after pending messages are drained into loop-local
         // context_messages, closing the window where a concurrent pause() would
         // miss those messages (they've left the shared pending queue but haven't
-        // yet been delivered back via a TurnEnd event that updates
-        // in_flight_messages).
+        // yet been delivered back via a TurnEnd event that writes them into
+        // `state.messages`). Otherwise fall back to `state.messages`, which
+        // holds the pre-run context plus any turns already written back.
         let loop_ctx = self.loop_context_snapshot.snapshot();
         let checkpoint_messages: &[crate::types::AgentMessage] = if let Some(ref ctx) = loop_ctx {
             ctx.as_slice()
         } else {
-            self.in_flight_messages
-                .as_deref()
-                .unwrap_or(&self.state.messages)
+            &self.state.messages
         };
 
         let mut checkpoint = crate::checkpoint::LoopCheckpoint::new(
@@ -435,8 +434,6 @@ mod tests {
             .insert("tool-call-1".to_string());
         agent.state.error = Some("stale error".to_string());
         agent.abort_controller = Some(CancellationToken::new());
-        agent.in_flight_llm_messages = Some(vec![user_msg("in-flight-llm")]);
-        agent.in_flight_messages = Some(vec![user_msg("in-flight-checkpoint")]);
     }
 
     #[derive(Default)]
@@ -997,8 +994,6 @@ mod tests {
         assert!(agent.state.pending_tool_calls.is_empty());
         assert!(agent.state.error.is_none());
         assert!(agent.abort_controller.is_none());
-        assert!(agent.in_flight_llm_messages.is_none());
-        assert!(agent.in_flight_messages.is_none());
     }
 
     #[tokio::test]
@@ -1075,8 +1070,6 @@ mod tests {
         assert!(agent.state.pending_tool_calls.is_empty());
         assert!(agent.state.error.is_none());
         assert!(agent.abort_controller.is_none());
-        assert!(agent.in_flight_llm_messages.is_none());
-        assert!(agent.in_flight_messages.is_none());
     }
 
     #[tokio::test]
@@ -1381,16 +1374,16 @@ mod tests {
     /// `pending_message_snapshot`. A concurrent `pause()` in that window would
     /// previously miss those messages. The fix syncs `context_messages` to
     /// `loop_context_snapshot` immediately after the drain, and `pause()` now
-    /// prefers that snapshot over `in_flight_messages`.
+    /// prefers that snapshot over the `state.messages` fallback.
     #[tokio::test]
     async fn pause_captures_messages_drained_from_pending_into_loop_context() {
         let mut agent = make_agent(None);
-        // Simulate the agent being mid-turn: in_flight_messages holds the
+        // Simulate the agent being mid-turn: state.messages holds the
         // original messages (before any pending drain), and loop_context_snapshot
         // holds the expanded context after the drain.
 
-        // in_flight_messages = original message only (set at loop start).
-        agent.in_flight_messages = Some(vec![user_msg("original")]);
+        // state.messages = original message only (set at loop start).
+        agent.state.messages = vec![user_msg("original")];
         // pending_message_snapshot is cleared (run_single_turn has already drained it).
         agent.pending_message_snapshot.clear();
         // loop_context_snapshot = original + consumed pending (synced just after drain).
@@ -1410,7 +1403,7 @@ mod tests {
             restored.len(),
             2,
             "pause snapshot must include messages already consumed from the pending queue \
-             into loop context, not just in_flight_messages"
+             into loop context, not just state.messages"
         );
         match &restored[0] {
             AgentMessage::Llm(LlmMessage::User(u)) => match &u.content[0] {
@@ -1433,13 +1426,14 @@ mod tests {
     }
 
     /// When `loop_context_snapshot` is not set (loop has not yet started its
-    /// first turn), `pause()` must fall back to `in_flight_messages` as before.
+    /// first turn), `pause()` must fall back to `state.messages`, which holds
+    /// the pre-run context snapshot left behind by `start_loop`.
     #[tokio::test]
-    async fn pause_falls_back_to_in_flight_messages_when_context_snapshot_absent() {
+    async fn pause_falls_back_to_state_messages_when_context_snapshot_absent() {
         let mut agent = make_agent(None);
 
-        // in_flight_messages = message set at loop start.
-        agent.in_flight_messages = Some(vec![user_msg("in-flight")]);
+        // state.messages = pre-run context snapshot left by start_loop.
+        agent.state.messages = vec![user_msg("in-flight")];
         // loop_context_snapshot is empty (not yet set — pre-first-turn).
         // (default state after Agent::new)
 
@@ -1453,7 +1447,7 @@ mod tests {
         assert_eq!(
             restored.len(),
             1,
-            "pause must fall back to in_flight_messages when loop_context_snapshot is absent"
+            "pause must fall back to state.messages when loop_context_snapshot is absent"
         );
         match &restored[0] {
             AgentMessage::Llm(LlmMessage::User(u)) => match &u.content[0] {

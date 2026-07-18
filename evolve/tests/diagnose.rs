@@ -1,22 +1,12 @@
 //! US2: diagnose weak points tests.
 
-use std::time::Duration;
-
-use swink_agent::{Cost, ModelSpec, StopReason, Usage};
+use swink_agent::{Cost, ModelSpec, StopReason};
 use swink_agent_eval::{EvalCaseResult, EvalMetricResult, Invocation, Score, Verdict};
 
 use swink_agent_evolve::{BaselineSnapshot, Diagnoser, OptimizationTarget, TargetComponent};
 
 fn make_invocation() -> Invocation {
-    Invocation {
-        turns: vec![],
-        total_usage: Usage::default(),
-        total_cost: Cost::default(),
-        total_duration: Duration::ZERO,
-        final_response: None,
-        stop_reason: StopReason::Stop,
-        model: ModelSpec::new("test", "test-model"),
-    }
+    Invocation::new(StopReason::Stop, ModelSpec::new("test", "test-model"))
 }
 
 fn failing_metric(
@@ -25,28 +15,17 @@ fn failing_metric(
     threshold: f64,
     details: Option<String>,
 ) -> EvalMetricResult {
-    EvalMetricResult {
-        evaluator_name: evaluator_name.to_string(),
-        score: Score { value, threshold },
-        details,
-    }
+    let mut metric = EvalMetricResult::new(evaluator_name, Score::new(value, threshold));
+    metric.details = details;
+    metric
 }
 
 fn passing_metric(evaluator_name: &str, value: f64, threshold: f64) -> EvalMetricResult {
-    EvalMetricResult {
-        evaluator_name: evaluator_name.to_string(),
-        score: Score { value, threshold },
-        details: None,
-    }
+    EvalMetricResult::new(evaluator_name, Score::new(value, threshold))
 }
 
 fn build_case_result(case_id: &str, metrics: Vec<EvalMetricResult>) -> EvalCaseResult {
-    EvalCaseResult {
-        case_id: case_id.to_string(),
-        invocation: make_invocation(),
-        metric_results: metrics,
-        verdict: Verdict::Fail,
-    }
+    EvalCaseResult::new(case_id, make_invocation(), Verdict::Fail).with_metric_results(metrics)
 }
 
 fn build_baseline(results: Vec<EvalCaseResult>) -> BaselineSnapshot {

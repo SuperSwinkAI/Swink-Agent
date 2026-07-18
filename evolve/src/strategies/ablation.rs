@@ -105,10 +105,7 @@ mod tests {
                 affected_cases: vec![CaseFailure {
                     case_id: "c1".to_string(),
                     evaluator_name: "response".to_string(),
-                    score: Score {
-                        value: 0.2,
-                        threshold: 0.5,
-                    },
+                    score: Score::new(0.2, 0.5),
                     details: None,
                 }],
                 mean_score_gap: 0.3,

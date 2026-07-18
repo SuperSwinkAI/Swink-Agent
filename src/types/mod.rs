@@ -100,6 +100,7 @@ pub enum ImageSource {
 // ─── Messages ───────────────────────────────────────────────────────────────
 
 /// A message from the user.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserMessage {
     pub content: Vec<ContentBlock>,
@@ -109,7 +110,34 @@ pub struct UserMessage {
     pub cache_hint: Option<crate::context_cache::CacheHint>,
 }
 
+impl UserMessage {
+    /// Create a new user message with the given content.
+    ///
+    /// `timestamp` defaults to now and `cache_hint` defaults to `None`.
+    #[must_use]
+    pub fn new(content: Vec<ContentBlock>) -> Self {
+        Self {
+            content,
+            timestamp: crate::util::now_timestamp(),
+            cache_hint: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_timestamp(mut self, timestamp: u64) -> Self {
+        self.timestamp = timestamp;
+        self
+    }
+
+    #[must_use]
+    pub fn with_cache_hint(mut self, cache_hint: crate::context_cache::CacheHint) -> Self {
+        self.cache_hint = Some(cache_hint);
+        self
+    }
+}
+
 /// A message from the assistant (LLM response).
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssistantMessage {
     pub content: Vec<ContentBlock>,
@@ -131,7 +159,92 @@ pub struct AssistantMessage {
     pub cache_hint: Option<crate::context_cache::CacheHint>,
 }
 
+impl AssistantMessage {
+    /// Create a new assistant message with the given content, provider, and model ID.
+    ///
+    /// `usage`/`cost` default to zero, `stop_reason` defaults to
+    /// [`StopReason::Stop`], `error_message`/`error_kind` default to `None`,
+    /// `timestamp` defaults to now, and `cache_hint` defaults to `None`.
+    #[must_use]
+    pub fn new(
+        content: Vec<ContentBlock>,
+        provider: impl Into<String>,
+        model_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            content,
+            provider: provider.into(),
+            model_id: model_id.into(),
+            usage: Usage::default(),
+            cost: Cost::default(),
+            stop_reason: StopReason::Stop,
+            error_message: None,
+            error_kind: None,
+            timestamp: crate::util::now_timestamp(),
+            cache_hint: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_usage(mut self, usage: Usage) -> Self {
+        self.usage = usage;
+        self
+    }
+
+    #[must_use]
+    pub fn with_cost(mut self, cost: Cost) -> Self {
+        self.cost = cost;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_stop_reason(mut self, stop_reason: StopReason) -> Self {
+        self.stop_reason = stop_reason;
+        self
+    }
+
+    #[must_use]
+    pub fn with_error_message(mut self, error_message: impl Into<String>) -> Self {
+        self.error_message = Some(error_message.into());
+        self
+    }
+
+    #[must_use]
+    pub const fn with_error_kind(
+        mut self,
+        error_kind: crate::stream_error_kind::StreamErrorKind,
+    ) -> Self {
+        self.error_kind = Some(error_kind);
+        self
+    }
+
+    #[must_use]
+    pub const fn with_timestamp(mut self, timestamp: u64) -> Self {
+        self.timestamp = timestamp;
+        self
+    }
+
+    #[must_use]
+    pub fn with_cache_hint(mut self, cache_hint: crate::context_cache::CacheHint) -> Self {
+        self.cache_hint = Some(cache_hint);
+        self
+    }
+}
+
+/// Returns a message whose `provider` and `model_id` are **empty strings**.
+///
+/// This is convenient as a builder base in tests, but it is not a valid
+/// provider response on its own — pricing and telemetry keyed on those
+/// identifiers will not resolve. Construct real messages with
+/// [`AssistantMessage::new`], which requires both identifiers.
+impl Default for AssistantMessage {
+    fn default() -> Self {
+        Self::new(Vec::new(), String::new(), String::new())
+    }
+}
+
 /// The result of a tool execution, sent back to the LLM.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolResultMessage {
     pub tool_call_id: String,
@@ -146,7 +259,50 @@ pub struct ToolResultMessage {
     pub cache_hint: Option<crate::context_cache::CacheHint>,
 }
 
+impl ToolResultMessage {
+    /// Create a new tool result message.
+    ///
+    /// `is_error` defaults to `false`, `timestamp` defaults to now,
+    /// `details` defaults to `Value::Null`, and `cache_hint` defaults to `None`.
+    #[must_use]
+    pub fn new(tool_call_id: impl Into<String>, content: Vec<ContentBlock>) -> Self {
+        Self {
+            tool_call_id: tool_call_id.into(),
+            content,
+            is_error: false,
+            timestamp: crate::util::now_timestamp(),
+            details: serde_json::Value::Null,
+            cache_hint: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_is_error(mut self, is_error: bool) -> Self {
+        self.is_error = is_error;
+        self
+    }
+
+    #[must_use]
+    pub fn with_details(mut self, details: serde_json::Value) -> Self {
+        self.details = details;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_timestamp(mut self, timestamp: u64) -> Self {
+        self.timestamp = timestamp;
+        self
+    }
+
+    #[must_use]
+    pub fn with_cache_hint(mut self, cache_hint: crate::context_cache::CacheHint) -> Self {
+        self.cache_hint = Some(cache_hint);
+        self
+    }
+}
+
 /// A discriminated union of the three LLM message roles.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "role", rename_all = "snake_case")]
 pub enum LlmMessage {
@@ -158,6 +314,7 @@ pub enum LlmMessage {
 // ─── Usage & Cost ───────────────────────────────────────────────────────────
 
 /// Token usage counters for an LLM response.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Usage {
     pub input: u64,
@@ -174,6 +331,42 @@ impl Usage {
     /// Merge another `Usage` into this one by summing all fields.
     pub fn merge(&mut self, other: &Self) {
         *self += other.clone();
+    }
+
+    #[must_use]
+    pub const fn with_input(mut self, input: u64) -> Self {
+        self.input = input;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_output(mut self, output: u64) -> Self {
+        self.output = output;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_cache_read(mut self, cache_read: u64) -> Self {
+        self.cache_read = cache_read;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_cache_write(mut self, cache_write: u64) -> Self {
+        self.cache_write = cache_write;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_total(mut self, total: u64) -> Self {
+        self.total = total;
+        self
+    }
+
+    #[must_use]
+    pub fn with_extra(mut self, extra: HashMap<String, u64>) -> Self {
+        self.extra = extra;
+        self
     }
 }
 
@@ -200,6 +393,7 @@ impl AddAssign for Usage {
 }
 
 /// Per-category and total cost breakdown (floating-point currency values).
+#[non_exhaustive]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Cost {
     pub input: f64,
@@ -226,6 +420,42 @@ impl Cost {
             && self.cache_write == 0.0
             && self.total == 0.0
             && self.extra.values().all(|v| *v == 0.0)
+    }
+
+    #[must_use]
+    pub const fn with_input(mut self, input: f64) -> Self {
+        self.input = input;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_output(mut self, output: f64) -> Self {
+        self.output = output;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_cache_read(mut self, cache_read: f64) -> Self {
+        self.cache_read = cache_read;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_cache_write(mut self, cache_write: f64) -> Self {
+        self.cache_write = cache_write;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_total(mut self, total: f64) -> Self {
+        self.total = total;
+        self
+    }
+
+    #[must_use]
+    pub fn with_extra(mut self, extra: HashMap<String, f64>) -> Self {
+        self.extra = extra;
+        self
     }
 }
 
@@ -275,6 +505,7 @@ pub enum StopReason {
 // ─── Agent Result ───────────────────────────────────────────────────────────
 
 /// The value returned by non-streaming invocations.
+#[non_exhaustive]
 pub struct AgentResult {
     /// All new messages produced during the run.
     pub messages: Vec<AgentMessage>,
@@ -291,6 +522,49 @@ pub struct AgentResult {
 }
 
 impl AgentResult {
+    /// Create a new agent result from the produced messages and final stop reason.
+    ///
+    /// `usage`/`cost` default to zero, and `error`/`transfer_signal` default
+    /// to `None`.
+    #[must_use]
+    pub fn new(messages: Vec<AgentMessage>, stop_reason: StopReason) -> Self {
+        Self {
+            messages,
+            stop_reason,
+            usage: Usage::default(),
+            cost: Cost::default(),
+            error: None,
+            transfer_signal: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_usage(mut self, usage: Usage) -> Self {
+        self.usage = usage;
+        self
+    }
+
+    #[must_use]
+    pub fn with_cost(mut self, cost: Cost) -> Self {
+        self.cost = cost;
+        self
+    }
+
+    #[must_use]
+    pub fn with_error(mut self, error: impl Into<String>) -> Self {
+        self.error = Some(error.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_transfer_signal(
+        mut self,
+        transfer_signal: crate::transfer::TransferSignal,
+    ) -> Self {
+        self.transfer_signal = Some(transfer_signal);
+        self
+    }
+
     /// Extract the text content from the last assistant message, if any.
     ///
     /// Iterates messages in reverse order, finds the first `Assistant` message,
@@ -329,11 +603,29 @@ impl fmt::Debug for AgentResult {
 /// Contains the system prompt, current message history, and the list of
 /// available tools. The loop never mutates a context in place — each turn
 /// produces a new snapshot.
+#[non_exhaustive]
 pub struct AgentContext {
     pub system_prompt: String,
     pub messages: Vec<AgentMessage>,
     /// The tools available during this turn.
     pub tools: Vec<Arc<dyn crate::tool::AgentTool>>,
+}
+
+impl AgentContext {
+    /// Create a new agent context from the system prompt, message history,
+    /// and available tools.
+    #[must_use]
+    pub fn new(
+        system_prompt: impl Into<String>,
+        messages: Vec<AgentMessage>,
+        tools: Vec<Arc<dyn crate::tool::AgentTool>>,
+    ) -> Self {
+        Self {
+            system_prompt: system_prompt.into(),
+            messages,
+            tools,
+        }
+    }
 }
 
 impl fmt::Debug for AgentContext {
@@ -371,19 +663,24 @@ where
 ///
 /// Emitted as part of `TurnEnd` events to support external replay, auditing,
 /// and debugging. Contains the full context at the moment the turn completed.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TurnSnapshot {
     /// Zero-based index of this turn within the current agent loop run.
     pub turn_index: usize,
     /// The LLM messages present in the context at the turn boundary.
     ///
-    /// Wrapped in `Arc` to avoid cloning the full message list when the
-    /// snapshot is forwarded to multiple subscribers.
+    /// Each message is wrapped in an `Arc` shared with the loop's internal
+    /// history and with neighbouring turn snapshots, so building a snapshot
+    /// costs pointer bumps for the unchanged history prefix instead of a
+    /// deep copy of every message on every turn. The outer `Arc` keeps
+    /// forwarding the snapshot to multiple subscribers cheap. Serialization
+    /// is transparent: the JSON shape is a plain array of messages.
     #[serde(
         serialize_with = "serialize_arc_vec",
         deserialize_with = "deserialize_arc_vec"
     )]
-    pub messages: Arc<Vec<LlmMessage>>,
+    pub messages: Arc<Vec<Arc<LlmMessage>>>,
     /// Accumulated token usage up to and including this turn.
     pub usage: Usage,
     /// Accumulated cost up to and including this turn.
@@ -393,6 +690,46 @@ pub struct TurnSnapshot {
     /// Session state changes during this turn, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_delta: Option<crate::StateDelta>,
+}
+
+impl TurnSnapshot {
+    /// Create a new turn snapshot from the turn index, message history, and
+    /// stop reason.
+    ///
+    /// `usage`/`cost` default to zero and `state_delta` defaults to `None`.
+    #[must_use]
+    pub fn new(
+        turn_index: usize,
+        messages: Arc<Vec<Arc<LlmMessage>>>,
+        stop_reason: StopReason,
+    ) -> Self {
+        Self {
+            turn_index,
+            messages,
+            usage: Usage::default(),
+            cost: Cost::default(),
+            stop_reason,
+            state_delta: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_usage(mut self, usage: Usage) -> Self {
+        self.usage = usage;
+        self
+    }
+
+    #[must_use]
+    pub fn with_cost(mut self, cost: Cost) -> Self {
+        self.cost = cost;
+        self
+    }
+
+    #[must_use]
+    pub fn with_state_delta(mut self, state_delta: crate::StateDelta) -> Self {
+        self.state_delta = Some(state_delta);
+        self
+    }
 }
 
 // ─── Compile-time Send + Sync assertions ────────────────────────────────────

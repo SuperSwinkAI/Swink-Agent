@@ -63,6 +63,7 @@ impl DefaultCredentialResolver {
     /// Create a resolver backed by the given credential store.
     #[must_use]
     pub fn new(store: Arc<dyn CredentialStore>) -> Self {
+        crate::ensure_default_crypto_provider();
         Self {
             store,
             client: reqwest::Client::new(),
@@ -269,6 +270,14 @@ impl DefaultCredentialResolver {
                 if refresh_token.is_none() {
                     return Err(CredentialError::Expired { key });
                 }
+            }
+            // `Credential` is `#[non_exhaustive]`: a credential shape this
+            // build doesn't recognise can't be fast-pathed or refreshed, so
+            // treat it the same as "nothing usable in the store" and let the
+            // caller fall through to interactive (re-)authorization, which
+            // will overwrite it with a credential type we understand.
+            Some(_) => {
+                return Err(CredentialError::NotFound { key });
             }
         }
 
@@ -513,12 +522,14 @@ async fn perform_device_authorization(
 
     // `device.device_code` is deliberately withheld from the handler: it is
     // the polling secret, and the handler only needs the user-facing fields.
-    let prompt = DeviceCodePrompt {
-        user_code: device.user_code.clone(),
-        verification_uri: device.verification_uri.clone(),
-        verification_uri_complete: device.verification_uri_complete.clone(),
-        expires_in: device.expires_in,
-    };
+    let mut prompt =
+        DeviceCodePrompt::new(device.user_code.clone(), device.verification_uri.clone());
+    if let Some(verification_uri_complete) = device.verification_uri_complete.clone() {
+        prompt = prompt.with_verification_uri_complete(verification_uri_complete);
+    }
+    if let Some(expires_in) = device.expires_in {
+        prompt = prompt.with_expires_in(expires_in);
+    }
     handler.present(&prompt).await?;
 
     let mut response = oauth2::poll_device_token(client, config, &device)
@@ -656,6 +667,17 @@ impl InnerResolver {
             }
 
             None => Err(CredentialError::NotFound {
+                key: key.to_string(),
+            }),
+
+            // `Credential` is `#[non_exhaustive]`: an unrecognised variant
+            // reaching this refresh path can't be resolved or refreshed by
+            // this build. Reporting `NotFound` (rather than `Expired`)
+            // matters here — `resolve_stored`'s caller only retries via
+            // interactive authorization on `NotFound`, so this is what lets
+            // the resolver recover by obtaining a credential type it does
+            // understand, instead of surfacing a dead-end error.
+            Some(_) => Err(CredentialError::NotFound {
                 key: key.to_string(),
             }),
         }

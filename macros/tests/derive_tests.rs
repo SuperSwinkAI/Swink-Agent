@@ -81,8 +81,10 @@ fn derive_tool_schema_doc_comments() {
     );
 }
 
-// Field descriptions can be overridden with #[schemars(description = "...")] —
-// the old #[tool(description = "...")] attribute is no longer processed.
+// Field descriptions can be overridden with #[schemars(description = "...")].
+// The old #[tool(description = "...")] field attribute is no longer even
+// registered as a derive helper, so using it fails to compile instead of
+// being silently ignored.
 #[derive(ToolSchema, JsonSchema)]
 struct AttrOverrideParams {
     /// Doc comment description

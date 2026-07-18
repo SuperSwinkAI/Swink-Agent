@@ -25,10 +25,10 @@ prompt-guard = ["regex"]
 pii = ["regex"]
 content-filter = ["regex"]
 audit = ["chrono", "serde", "serde_json", "unicode-truncate"]
-memory-nudge = ["serde_json"]
+memory-nudge = ["serde", "serde_json"]
 
 [dependencies]
-swink-agent = { path = "..", version = "0.11.0", default-features = false }
+swink-agent = { path = "..", version = "0.12.0", default-features = false }
 regex = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
@@ -39,6 +39,7 @@ unicode-truncate = { version = "2.0.1", optional = true }
 
 [dev-dependencies]
 swink-agent = { path = "..", default-features = false, features = ["testkit"] }
+swink-agent-memory = { path = "../memory" }
 futures = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

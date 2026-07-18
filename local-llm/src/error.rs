@@ -5,6 +5,7 @@
 //! inference errors.
 
 /// Errors that can occur during local model operations.
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum LocalModelError {
     /// Failed to download model weights from `HuggingFace`.

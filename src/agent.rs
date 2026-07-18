@@ -10,6 +10,8 @@
 
 #[path = "agent/checkpointing.rs"]
 mod checkpointing;
+#[path = "agent/compaction.rs"]
+mod compaction;
 #[path = "agent/control.rs"]
 mod control;
 #[path = "agent/events.rs"]
@@ -48,7 +50,9 @@ use crate::tool_name::disambiguate_provider_safe_tool_name;
 use crate::types::{AgentMessage, LlmMessage, ModelSpec};
 
 // Re-export so `lib.rs` can still do `pub use agent::{AgentOptions, SubscriptionId, ...}`.
-pub use crate::agent_options::{AgentOptions, DEFAULT_PLAN_MODE_ADDENDUM};
+pub use crate::agent_options::{
+    AgentOptions, DEFAULT_MODEL, DEFAULT_PLAN_MODE_ADDENDUM, DEFAULT_SYSTEM_PROMPT,
+};
 pub use crate::agent_subscriptions::SubscriptionId;
 
 // ─── Enums / modes ───────────────────────────────────────────────────────────
@@ -78,6 +82,7 @@ pub enum FollowUpMode {
 // ─── AgentState ──────────────────────────────────────────────────────────────
 
 /// Observable state of the agent.
+#[non_exhaustive]
 pub struct AgentState {
     /// The system prompt sent to the LLM.
     pub system_prompt: String,
@@ -86,6 +91,12 @@ pub struct AgentState {
     /// Available tools.
     pub tools: Vec<Arc<dyn AgentTool>>,
     /// Full conversation history.
+    ///
+    /// While a loop is running this holds the pre-run context plus any turns
+    /// already written back from drained events; it is replaced with the
+    /// loop's final context on `AgentEnd`. Dropping an event stream before
+    /// `AgentEnd` therefore never empties the history (see the "Stream
+    /// lifecycle" section on [`Agent::prompt_stream`]).
     pub messages: Vec<AgentMessage>,
     /// Whether the agent loop is currently executing.
     pub is_running: bool,
@@ -227,8 +238,6 @@ pub struct Agent {
     stream_options: StreamOptions,
     structured_output_max_retries: usize,
     idle_notify: Arc<Notify>,
-    in_flight_llm_messages: Option<Vec<AgentMessage>>,
-    in_flight_messages: Option<Vec<AgentMessage>>,
     pending_message_snapshot: Arc<crate::pause_state::PendingMessageSnapshot>,
     loop_context_snapshot: Arc<crate::pause_state::LoopContextSnapshot>,
     approve_tool: Option<ApproveToolArc>,
@@ -267,6 +276,9 @@ pub struct Agent {
     cache_config: Option<crate::context_cache::CacheConfig>,
     /// Optional dynamic system prompt.
     dynamic_system_prompt: Option<Arc<dyn Fn() -> String + Send + Sync>>,
+    /// Optional operator-declared cost calculator consulted before the compiled
+    /// model catalog when pricing assistant messages.
+    cost_calculator: Option<Arc<dyn crate::pricing::CostCalculator>>,
     /// Shared flag: true while a spawned loop task is active. Set to false by
     /// the `LoopGuardStream` wrapper on drop or by `collect_stream`/`AgentEnd`.
     /// Used by `check_not_running` and `wait_for_idle` as the ground truth for
@@ -340,8 +352,6 @@ impl Agent {
             stream_options: options.stream_options,
             structured_output_max_retries: options.structured_output_max_retries,
             idle_notify: Arc::new(Notify::new()),
-            in_flight_llm_messages: None,
-            in_flight_messages: None,
             pending_message_snapshot: Arc::new(
                 crate::pause_state::PendingMessageSnapshot::default(),
             ),
@@ -369,6 +379,7 @@ impl Agent {
             credential_timeout: options.credential_timeout,
             cache_config: options.cache_config,
             dynamic_system_prompt: options.dynamic_system_prompt.map(Arc::from),
+            cost_calculator: options.cost_calculator,
             loop_active: Arc::new(AtomicBool::new(false)),
             loop_generation: Arc::new(AtomicU64::new(0)),
             #[cfg(feature = "plugins")]

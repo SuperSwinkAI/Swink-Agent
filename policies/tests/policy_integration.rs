@@ -49,10 +49,7 @@ async fn cost_cap_stops_agent() {
             AssistantMessageEvent::Done {
                 stop_reason: StopReason::ToolUse,
                 usage: Usage::default(),
-                cost: Cost {
-                    total: 0.005,
-                    ..Cost::default()
-                },
+                cost: Cost::default().with_total(0.005),
             },
         ]
     };
@@ -73,10 +70,7 @@ async fn cost_cap_stops_agent() {
             AssistantMessageEvent::Done {
                 stop_reason: StopReason::ToolUse,
                 usage: Usage::default(),
-                cost: Cost {
-                    total: 0.005,
-                    ..Cost::default()
-                },
+                cost: Cost::default().with_total(0.005),
             },
         ]
     };
@@ -94,7 +88,7 @@ async fn cost_cap_stops_agent() {
 
     let options = AgentOptions::new_simple("test", default_model(), stream_fn)
         .with_tools(vec![tool.clone()])
-        .with_pre_turn_policy(BudgetPolicy::new().max_cost(0.01));
+        .with_pre_turn_policy(BudgetPolicy::new().with_max_cost(0.01));
 
     let mut agent = swink_agent::Agent::new(options);
     let result = agent.prompt_text("go").await;
@@ -108,7 +102,7 @@ async fn cost_cap_stops_agent() {
 /// Every built-in remote adapter reports token `Usage` but emits
 /// `Cost::default()` on assistant messages — only the proxy adapter passes
 /// real billed cost through. The loop used to accumulate that zero verbatim,
-/// so `BudgetPolicy::max_cost` never fired against any real provider. The loop
+/// so `BudgetPolicy::with_max_cost` never fired against any real provider. The loop
 /// now prices unpriced messages from the model catalog, so the ceiling engages.
 ///
 /// The mock below mimics a real adapter exactly: real `Usage`, zero `Cost`.
@@ -133,10 +127,7 @@ async fn cost_cap_stops_agent_when_adapter_reports_no_cost() {
             AssistantMessageEvent::ToolCallEnd { content_index: 0 },
             AssistantMessageEvent::Done {
                 stop_reason: StopReason::ToolUse,
-                usage: Usage {
-                    input: 1_000_000,
-                    ..Usage::default()
-                },
+                usage: Usage::default().with_input(1_000_000),
                 // What every built-in remote adapter actually emits.
                 cost: Cost::default(),
             },
@@ -158,7 +149,7 @@ async fn cost_cap_stops_agent_when_adapter_reports_no_cost() {
     let model = ModelSpec::new("anthropic", "claude-sonnet-4-6");
     let options = AgentOptions::new_simple("test", model, stream_fn)
         .with_tools(vec![tool.clone()])
-        .with_pre_turn_policy(BudgetPolicy::new().max_cost(5.0));
+        .with_pre_turn_policy(BudgetPolicy::new().with_max_cost(5.0));
 
     let mut agent = swink_agent::Agent::new(options);
     let result = agent.prompt_text("go").await;
@@ -197,15 +188,8 @@ async fn adapter_supplied_cost_takes_precedence_over_catalog_pricing() {
                 // adapter says the call was billed at $1.00. The loop must
                 // trust the adapter, so the $5.00 ceiling takes five turns
                 // rather than two to trip.
-                usage: Usage {
-                    input: 1_000_000,
-                    ..Usage::default()
-                },
-                cost: Cost {
-                    input: 1.0,
-                    total: 1.0,
-                    ..Cost::default()
-                },
+                usage: Usage::default().with_input(1_000_000),
+                cost: Cost::default().with_input(1.0).with_total(1.0),
             },
         ]
     };
@@ -219,7 +203,7 @@ async fn adapter_supplied_cost_takes_precedence_over_catalog_pricing() {
     let model = ModelSpec::new("anthropic", "claude-sonnet-4-6");
     let options = AgentOptions::new_simple("test", model, stream_fn)
         .with_tools(vec![tool.clone()])
-        .with_pre_turn_policy(BudgetPolicy::new().max_cost(5.0));
+        .with_pre_turn_policy(BudgetPolicy::new().with_max_cost(5.0));
 
     let mut agent = swink_agent::Agent::new(options);
     let result = agent.prompt_text("go").await;
@@ -249,7 +233,7 @@ async fn composed_policies_apply_all() {
     let options = AgentOptions::new_simple("test", default_model(), stream_fn)
         .with_tools(vec![tool.clone()])
         .with_pre_turn_policy(MaxTurnsPolicy::new(5))
-        .with_pre_turn_policy(BudgetPolicy::new().max_cost(0.0));
+        .with_pre_turn_policy(BudgetPolicy::new().with_max_cost(0.0));
 
     let mut agent = swink_agent::Agent::new(options);
     let result = agent.prompt_text("go").await;

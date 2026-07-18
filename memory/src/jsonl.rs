@@ -845,6 +845,12 @@ impl JsonlSessionStore {
             .clone()
     }
 
+    /// Best-effort full re-index of one session in an already-open index.
+    ///
+    /// Reloads the session from disk and replaces every document for it, so
+    /// this is O(session).  It is the right tool for rewrite paths (`save`,
+    /// `save_full`) where existing content may have changed wholesale;
+    /// append paths must use [`Self::append_to_active_search_index`] instead.
     #[cfg(feature = "search")]
     fn refresh_active_search_index(&self, id: &str, operation: &str) {
         let Some(index) = self.active_tantivy_index() else {
@@ -870,6 +876,32 @@ impl JsonlSessionStore {
                     "failed to load session for search index refresh"
                 );
             }
+        }
+    }
+
+    /// Best-effort incremental index update for append paths.
+    ///
+    /// Adds documents for only the newly appended `entries` instead of
+    /// reloading and re-indexing the whole session, making the index cost of
+    /// an append O(new entries) rather than O(session).  Rewrite paths must
+    /// keep using [`Self::refresh_active_search_index`] for its replacement
+    /// semantics.
+    #[cfg(feature = "search")]
+    fn append_to_active_search_index(
+        &self,
+        id: &str,
+        meta: &SessionMeta,
+        entries: &[SessionEntry],
+    ) {
+        let Some(index) = self.active_tantivy_index() else {
+            return;
+        };
+        if let Err(err) = index.append_session_entries(meta, entries) {
+            tracing::warn!(
+                session_id = %id,
+                error = %err,
+                "failed to append entries to search index after session append"
+            );
         }
     }
 
@@ -954,8 +986,32 @@ impl SessionStore for JsonlSessionStore {
                 .iter()
                 .filter_map(|msg| SessionRecord::from_message(msg, id)),
         )?;
+
+        // Index only the newly appended messages (best-effort). Custom
+        // messages are not `SessionEntry`s and were never indexed by the
+        // previous full-refresh either, so only LLM messages are converted.
         #[cfg(feature = "search")]
-        self.refresh_active_search_index(id, "append");
+        if self.active_tantivy_index().is_some() {
+            let entries: Vec<SessionEntry> = messages
+                .iter()
+                .filter_map(|msg| match msg {
+                    AgentMessage::Llm(llm) => Some(SessionEntry::Message(llm.clone())),
+                    // Custom (and any future) variants are not `SessionEntry`s
+                    // and were never indexed by the previous full refresh.
+                    _ => None,
+                })
+                .collect();
+            if !entries.is_empty() {
+                match read_meta_with_line_len(&path, id) {
+                    Ok((meta, _)) => self.append_to_active_search_index(id, &meta, &entries),
+                    Err(err) => tracing::warn!(
+                        session_id = %id,
+                        error = %err,
+                        "failed to read session meta for search index append"
+                    ),
+                }
+            }
+        }
         Ok(())
     }
 
@@ -1215,13 +1271,13 @@ fn linear_search(
             let Some((relevance, snippet)) = search::search_entry(&entry, &terms) else {
                 continue;
             };
-            hits.push(SessionHit {
-                session_id: meta.id.clone(),
-                session_title: meta.title.clone(),
+            hits.push(SessionHit::new(
+                meta.id.clone(),
+                meta.title.clone(),
                 entry,
-                score: relevance,
+                relevance,
                 snippet,
-            });
+            ));
         }
     }
 
@@ -1348,9 +1404,10 @@ impl JsonlSessionStore {
     /// Errors if the session file does not exist; use [`Self::save_entries`] to
     /// create a new session.
     ///
-    /// When the `search` feature is enabled, the tantivy index is refreshed
-    /// from the full on-disk session afterwards (best-effort — index errors
-    /// are logged but do not fail the append).
+    /// When the `search` feature is enabled, only the newly appended
+    /// `entries` are added to the tantivy index afterwards — the session's
+    /// existing documents are untouched (best-effort — index errors are
+    /// logged but do not fail the append).
     pub fn append_entries(
         &self,
         id: &str,
@@ -1385,7 +1442,7 @@ impl JsonlSessionStore {
         })?;
 
         #[cfg(feature = "search")]
-        self.refresh_active_search_index(id, "append_entries");
+        self.append_to_active_search_index(id, &write_meta, entries);
 
         Ok(write_meta)
     }
@@ -1707,23 +1764,21 @@ mod tests {
         };
 
         let messages: Vec<AgentMessage> = vec![
-            AgentMessage::Llm(swink_agent::LlmMessage::User(swink_agent::UserMessage {
-                content: vec![swink_agent::ContentBlock::Text {
+            AgentMessage::Llm(swink_agent::LlmMessage::User(
+                swink_agent::UserMessage::new(vec![swink_agent::ContentBlock::Text {
                     text: "Hello".to_string(),
-                }],
-                timestamp: 100,
-                cache_hint: None,
-            })),
+                }])
+                .with_timestamp(100),
+            )),
             AgentMessage::Custom(Box::new(TestCustomMsg {
                 data: "custom-payload".to_string(),
             })),
-            AgentMessage::Llm(swink_agent::LlmMessage::User(swink_agent::UserMessage {
-                content: vec![swink_agent::ContentBlock::Text {
+            AgentMessage::Llm(swink_agent::LlmMessage::User(
+                swink_agent::UserMessage::new(vec![swink_agent::ContentBlock::Text {
                     text: "World".to_string(),
-                }],
-                timestamp: 200,
-                cache_hint: None,
-            })),
+                }])
+                .with_timestamp(200),
+            )),
         ];
 
         store.save("test-full", &meta, &messages).unwrap();
@@ -1783,13 +1838,10 @@ mod tests {
         };
 
         let initial_messages: Vec<AgentMessage> = vec![AgentMessage::Llm(LlmMessage::User(
-            swink_agent::UserMessage {
-                content: vec![swink_agent::ContentBlock::Text {
-                    text: "hello".to_string(),
-                }],
-                timestamp: 1,
-                cache_hint: None,
-            },
+            swink_agent::UserMessage::new(vec![swink_agent::ContentBlock::Text {
+                text: "hello".to_string(),
+            }])
+            .with_timestamp(1),
         ))];
         store.save("test-state", &meta, &initial_messages).unwrap();
         store
@@ -1797,13 +1849,10 @@ mod tests {
             .unwrap();
 
         let appended_messages: Vec<AgentMessage> = vec![AgentMessage::Llm(LlmMessage::User(
-            swink_agent::UserMessage {
-                content: vec![swink_agent::ContentBlock::Text {
-                    text: "world".to_string(),
-                }],
-                timestamp: 2,
-                cache_hint: None,
-            },
+            swink_agent::UserMessage::new(vec![swink_agent::ContentBlock::Text {
+                text: "world".to_string(),
+            }])
+            .with_timestamp(2),
         ))];
         store.append("test-state", &appended_messages).unwrap();
 
@@ -1957,13 +2006,10 @@ mod tests {
             sequence: 0,
         };
         let messages: Vec<AgentMessage> = vec![AgentMessage::Llm(LlmMessage::User(
-            swink_agent::UserMessage {
-                content: vec![swink_agent::ContentBlock::Text {
-                    text: "first".to_string(),
-                }],
-                timestamp: 1,
-                cache_hint: None,
-            },
+            swink_agent::UserMessage::new(vec![swink_agent::ContentBlock::Text {
+                text: "first".to_string(),
+            }])
+            .with_timestamp(1),
         ))];
         store.save("atomic", &meta, &messages).unwrap();
 
@@ -1999,25 +2045,23 @@ mod tests {
         };
 
         let entries = vec![
-            SessionEntry::Message(LlmMessage::User(swink_agent::UserMessage {
-                content: vec![swink_agent::ContentBlock::Text {
+            SessionEntry::Message(LlmMessage::User(
+                swink_agent::UserMessage::new(vec![swink_agent::ContentBlock::Text {
                     text: "hello".to_string(),
-                }],
-                timestamp: 1,
-                cache_hint: None,
-            })),
+                }])
+                .with_timestamp(1),
+            )),
             SessionEntry::Label {
                 text: "bookmark".to_string(),
                 message_index: 0,
                 timestamp: 2,
             },
-            SessionEntry::Message(LlmMessage::User(swink_agent::UserMessage {
-                content: vec![swink_agent::ContentBlock::Text {
+            SessionEntry::Message(LlmMessage::User(
+                swink_agent::UserMessage::new(vec![swink_agent::ContentBlock::Text {
                     text: "world".to_string(),
-                }],
-                timestamp: 3,
-                cache_hint: None,
-            })),
+                }])
+                .with_timestamp(3),
+            )),
         ];
 
         store
@@ -2043,13 +2087,12 @@ mod tests {
 
         let meta = fresh_meta("preserve-save");
         let entries = vec![
-            SessionEntry::Message(LlmMessage::User(swink_agent::UserMessage {
-                content: vec![swink_agent::ContentBlock::Text {
+            SessionEntry::Message(LlmMessage::User(
+                swink_agent::UserMessage::new(vec![swink_agent::ContentBlock::Text {
                     text: "hello".to_string(),
-                }],
-                timestamp: 1,
-                cache_hint: None,
-            })),
+                }])
+                .with_timestamp(1),
+            )),
             SessionEntry::Label {
                 text: "bookmark".to_string(),
                 message_index: 0,
@@ -2100,13 +2143,12 @@ mod tests {
 
         let (loaded_meta, _) = store.load("preserve-entry-save", None).unwrap();
         let entries = vec![
-            SessionEntry::Message(LlmMessage::User(swink_agent::UserMessage {
-                content: vec![swink_agent::ContentBlock::Text {
+            SessionEntry::Message(LlmMessage::User(
+                swink_agent::UserMessage::new(vec![swink_agent::ContentBlock::Text {
                     text: "updated".to_string(),
-                }],
-                timestamp: 2,
-                cache_hint: None,
-            })),
+                }])
+                .with_timestamp(2),
+            )),
             SessionEntry::Label {
                 text: "kept".to_string(),
                 message_index: 0,
@@ -2163,13 +2205,12 @@ mod tests {
 
         let (loaded_meta, _) = store.load("preserve-entry-custom", None).unwrap();
         let entries = vec![
-            SessionEntry::Message(LlmMessage::User(swink_agent::UserMessage {
-                content: vec![swink_agent::ContentBlock::Text {
+            SessionEntry::Message(LlmMessage::User(
+                swink_agent::UserMessage::new(vec![swink_agent::ContentBlock::Text {
                     text: "updated".to_string(),
-                }],
-                timestamp: 2,
-                cache_hint: None,
-            })),
+                }])
+                .with_timestamp(2),
+            )),
             SessionEntry::Label {
                 text: "kept".to_string(),
                 message_index: 0,
@@ -2205,13 +2246,12 @@ mod tests {
     }
 
     fn user_msg(text: &str, ts: u64) -> AgentMessage {
-        AgentMessage::Llm(LlmMessage::User(swink_agent::UserMessage {
-            content: vec![swink_agent::ContentBlock::Text {
+        AgentMessage::Llm(LlmMessage::User(
+            swink_agent::UserMessage::new(vec![swink_agent::ContentBlock::Text {
                 text: text.to_string(),
-            }],
-            timestamp: ts,
-            cache_hint: None,
-        }))
+            }])
+            .with_timestamp(ts),
+        ))
     }
 
     fn fresh_meta(id: &str) -> SessionMeta {
@@ -2227,13 +2267,12 @@ mod tests {
     }
 
     fn user_entry(text: &str, ts: u64) -> SessionEntry {
-        SessionEntry::Message(LlmMessage::User(swink_agent::UserMessage {
-            content: vec![swink_agent::ContentBlock::Text {
+        SessionEntry::Message(LlmMessage::User(
+            swink_agent::UserMessage::new(vec![swink_agent::ContentBlock::Text {
                 text: text.to_string(),
-            }],
-            timestamp: ts,
-            cache_hint: None,
-        }))
+            }])
+            .with_timestamp(ts),
+        ))
     }
 
     #[test]
@@ -3253,6 +3292,81 @@ mod tests {
         );
     }
 
+    /// Append paths must extend a warm index incrementally — adding only the
+    /// new entries' documents — never by reloading and re-indexing the whole
+    /// session (the pre-fix behavior, which made every append O(session)).
+    ///
+    /// Instrumented via `TantivyIndex::full_reindex_count`, a test-only
+    /// counter of whole-session (re)index operations: cheap, exact, and it
+    /// fails loudly if an append path regresses to `index_session`.
+    #[cfg(feature = "search")]
+    #[test]
+    fn append_paths_update_search_index_without_full_reindex() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+        store.open_search_index().unwrap();
+
+        let meta = fresh_meta("append-incremental");
+        store
+            .save_entries("append-incremental", &meta, &[user_entry("quokka", 1)])
+            .unwrap();
+        let index = store.active_tantivy_index().expect("index is open");
+        let after_save = index.full_reindex_count();
+
+        let (loaded_meta, _) = store.load_entries("append-incremental").unwrap();
+        let bumped = store
+            .append_entries(
+                "append-incremental",
+                &loaded_meta,
+                &[user_entry("wombat", 2)],
+            )
+            .unwrap();
+        store
+            .append_entries("append-incremental", &bumped, &[user_entry("numbat", 3)])
+            .unwrap();
+        store
+            .append("append-incremental", &[user_msg("kookaburra", 4)])
+            .unwrap();
+
+        assert_eq!(
+            index.full_reindex_count(),
+            after_save,
+            "append paths must not re-index the whole session"
+        );
+
+        // Everything — original and appended — is searchable. The first
+        // search triggers the lazy full build (which legitimately calls
+        // index_session), so it runs after the counter assertion above.
+        for term in ["quokka", "wombat", "numbat", "kookaburra"] {
+            let hits = store
+                .search(term, &SessionSearchOptions::default())
+                .unwrap();
+            assert_eq!(hits.len(), 1, "expected exactly one hit for {term:?}");
+            assert_eq!(hits[0].session_id, "append-incremental");
+        }
+
+        // Steady state: once the index is built, appends stay incremental
+        // and are immediately searchable.
+        let after_build = index.full_reindex_count();
+        let (steady_meta, _) = store.load_entries("append-incremental").unwrap();
+        store
+            .append_entries(
+                "append-incremental",
+                &steady_meta,
+                &[user_entry("capybara", 5)],
+            )
+            .unwrap();
+        assert_eq!(
+            index.full_reindex_count(),
+            after_build,
+            "post-build appends must stay incremental"
+        );
+        let hits = store
+            .search("capybara", &SessionSearchOptions::default())
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+    }
+
     #[test]
     fn load_full_returns_messages_and_state_from_one_snapshot() {
         let dir = tempfile::tempdir().unwrap();
@@ -3443,13 +3557,12 @@ mod tests {
             sequence: 0,
         };
 
-        let raw_msg_line = serde_json::to_string(&LlmMessage::User(swink_agent::UserMessage {
-            content: vec![swink_agent::ContentBlock::Text {
+        let raw_msg_line = serde_json::to_string(&LlmMessage::User(
+            swink_agent::UserMessage::new(vec![swink_agent::ContentBlock::Text {
                 text: "hello".to_string(),
-            }],
-            timestamp: 1,
-            cache_hint: None,
-        }))
+            }])
+            .with_timestamp(1),
+        ))
         .unwrap();
 
         let custom_envelope = serde_json::json!({

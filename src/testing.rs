@@ -3,6 +3,7 @@
 //! Previously gated behind the `test-helpers` feature; now always available so
 //! both downstream crates and this crate's own integration tests can reuse them
 //! without duplicating constructors.
+#![allow(clippy::exhaustive_structs, clippy::exhaustive_enums)] // Test-support types: exempt from the public-API non_exhaustive policy.
 
 use crate::loop_::AgentEvent;
 use crate::stream::{AssistantMessageEvent, StreamErrorKind, StreamFn, StreamOptions};

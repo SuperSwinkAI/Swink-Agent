@@ -75,6 +75,7 @@ pub trait Reporter: Send + Sync {
 ///   persist (e.g. `--out report.json`).
 /// * [`Remote`](Self::Remote) — the payload was pushed to an external
 ///   backend; `identifier` is backend-specific (LangSmith run id, etc.).
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum ReporterOutput {
     /// Plain text suitable for stdout or a log line.
@@ -97,6 +98,7 @@ pub enum ReporterOutput {
 }
 
 /// Error surface for [`Reporter`] implementations.
+#[non_exhaustive]
 #[derive(Debug, Error)]
 pub enum ReporterError {
     /// Filesystem or stream I/O failed.

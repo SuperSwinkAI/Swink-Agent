@@ -182,13 +182,7 @@ mod tests {
         execution_root: Option<&'a Path>,
         state: &'a swink_agent::SessionState,
     ) -> ToolDispatchContext<'a> {
-        ToolDispatchContext {
-            tool_name,
-            tool_call_id: "id1",
-            arguments: args,
-            execution_root,
-            state,
-        }
+        ToolDispatchContext::new(tool_name, "id1", args, execution_root, state)
     }
 
     fn sandbox_fixture() -> (TempDir, PathBuf) {

@@ -20,7 +20,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 search = ["dep:tantivy"]
 
 [dependencies]
-swink-agent = { path = "..", version = "0.11.0", default-features = false }
+swink-agent = { path = "..", version = "0.12.0", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt"] }
@@ -34,7 +34,7 @@ tantivy = { version = "0.22.1", optional = true }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
 pretty_assertions.workspace = true
-tracing-subscriber = { version = "0.3.23", features = ["fmt"] }
+tracing-subscriber = { workspace = true, features = ["fmt"] }
 
 [lints]
 workspace = true

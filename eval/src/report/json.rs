@@ -264,18 +264,14 @@ impl SummaryDocOwned {
             total_cases: self.total_cases,
             passed: self.passed,
             failed: self.failed,
-            total_cost: Cost {
-                total: self.total_cost,
-                ..Default::default()
-            },
-            total_usage: Usage {
-                input: self.total_input_tokens,
-                output: self.total_output_tokens,
-                total: self
-                    .total_input_tokens
-                    .saturating_add(self.total_output_tokens),
-                ..Default::default()
-            },
+            total_cost: Cost::default().with_total(self.total_cost),
+            total_usage: Usage::default()
+                .with_input(self.total_input_tokens)
+                .with_output(self.total_output_tokens)
+                .with_total(
+                    self.total_input_tokens
+                        .saturating_add(self.total_output_tokens),
+                ),
             total_duration: millis_to_duration(
                 self.total_duration_ms,
                 "summary total_duration_ms",

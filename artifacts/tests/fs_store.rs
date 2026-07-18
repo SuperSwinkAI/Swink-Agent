@@ -6,11 +6,7 @@ use swink_agent::{ArtifactData, ArtifactStore};
 use swink_agent_artifacts::FileArtifactStore;
 
 fn text_data(content: &str) -> ArtifactData {
-    ArtifactData {
-        content: content.as_bytes().to_vec(),
-        content_type: "text/plain".to_string(),
-        metadata: HashMap::new(),
-    }
+    ArtifactData::new(content.as_bytes().to_vec(), "text/plain".to_string())
 }
 
 fn assert_storage_error_kind(err: swink_agent::ArtifactError, expected_kinds: &[ErrorKind]) {
@@ -63,15 +59,12 @@ async fn fs_save_and_load_round_trip() {
     let tmpdir = tempfile::TempDir::new().unwrap();
     let store = FileArtifactStore::new(tmpdir.path());
 
-    let original = ArtifactData {
-        content: b"hello world".to_vec(),
-        content_type: "text/plain".to_string(),
-        metadata: {
+    let original = ArtifactData::new(b"hello world".to_vec(), "text/plain".to_string())
+        .with_metadata({
             let mut m = HashMap::new();
             m.insert("key".to_string(), "value".to_string());
             m
-        },
-    };
+        });
 
     let version = store
         .save("s1", "report.md", original.clone())
@@ -157,11 +150,10 @@ async fn fs_large_artifact_integrity() {
 
     // 1 MB deterministic pattern
     let large_content: Vec<u8> = (0..1_048_576u32).map(|i| (i % 256) as u8).collect();
-    let data = ArtifactData {
-        content: large_content.clone(),
-        content_type: "application/octet-stream".to_string(),
-        metadata: HashMap::new(),
-    };
+    let data = ArtifactData::new(
+        large_content.clone(),
+        "application/octet-stream".to_string(),
+    );
 
     let version = store.save("s1", "big.bin", data).await.unwrap();
     assert_eq!(version.size, 1_048_576);
@@ -182,11 +174,7 @@ async fn fs_concurrent_saves_no_corruption() {
         let store = Arc::clone(&store);
         handles.push(tokio::spawn(async move {
             let content = format!("concurrent-{i}");
-            let data = ArtifactData {
-                content: content.into_bytes(),
-                content_type: "text/plain".to_string(),
-                metadata: HashMap::new(),
-            };
+            let data = ArtifactData::new(content.into_bytes(), "text/plain".to_string());
             store.save("s1", "shared.txt", data).await.unwrap()
         }));
     }

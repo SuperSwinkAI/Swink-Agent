@@ -4,9 +4,11 @@ use chrono::NaiveDate;
 use serde::Deserialize;
 
 use crate::ModelSpec;
+use crate::pricing::CostCalculator;
 use crate::types::{AssistantMessage, Cost, ModelCapabilities, ThinkingLevel, Usage};
 
 /// Whether a provider's models run on a remote API or on local hardware.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderKind {
@@ -15,6 +17,7 @@ pub enum ProviderKind {
 }
 
 /// How requests to a provider are authenticated.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthMode {
@@ -24,6 +27,7 @@ pub enum AuthMode {
 }
 
 /// Provider API version selector used when building request URLs.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApiVersion {
@@ -32,6 +36,7 @@ pub enum ApiVersion {
 }
 
 /// A capability a preset's model supports, as declared in the catalog TOML.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PresetCapability {
@@ -44,6 +49,7 @@ pub enum PresetCapability {
 }
 
 /// Release maturity of a preset's model at the provider.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PresetStatus {
@@ -77,6 +83,7 @@ impl PresetStatus {
 }
 
 /// A single named model preset within a [`ProviderCatalog`], as loaded from the catalog TOML.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct PresetCatalog {
     pub id: String,
@@ -103,7 +110,129 @@ pub struct PresetCatalog {
     pub cost_per_million_cache_write: Option<f64>,
 }
 
+impl PresetCatalog {
+    /// Create a preset with the required identifying fields; everything else
+    /// starts unset and can be filled in with the `with_*` builders.
+    #[must_use]
+    pub fn new(
+        id: impl Into<String>,
+        display_name: impl Into<String>,
+        model_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            display_name: display_name.into(),
+            group: None,
+            model_id: model_id.into(),
+            api_version: None,
+            capabilities: Vec::new(),
+            status: None,
+            context_window_tokens: None,
+            max_output_tokens: None,
+            include_by_default: false,
+            repo_id: None,
+            filename: None,
+            cost_per_million_input: None,
+            cost_per_million_output: None,
+            cost_per_million_cache_read: None,
+            cost_per_million_cache_write: None,
+        }
+    }
+
+    /// Set the display group this preset is listed under.
+    #[must_use]
+    pub fn with_group(mut self, group: impl Into<String>) -> Self {
+        self.group = Some(group.into());
+        self
+    }
+
+    /// Set the provider API version used when building request URLs.
+    #[must_use]
+    pub fn with_api_version(mut self, api_version: ApiVersion) -> Self {
+        self.api_version = Some(api_version);
+        self
+    }
+
+    /// Set the declared capabilities.
+    #[must_use]
+    pub fn with_capabilities(mut self, capabilities: Vec<PresetCapability>) -> Self {
+        self.capabilities = capabilities;
+        self
+    }
+
+    /// Set the release maturity status.
+    #[must_use]
+    pub fn with_status(mut self, status: PresetStatus) -> Self {
+        self.status = Some(status);
+        self
+    }
+
+    /// Set the model's context window size, in tokens.
+    #[must_use]
+    pub const fn with_context_window_tokens(mut self, tokens: u64) -> Self {
+        self.context_window_tokens = Some(tokens);
+        self
+    }
+
+    /// Set the model's maximum output tokens.
+    #[must_use]
+    pub const fn with_max_output_tokens(mut self, tokens: u64) -> Self {
+        self.max_output_tokens = Some(tokens);
+        self
+    }
+
+    /// Set whether this preset is included by default.
+    #[must_use]
+    pub const fn with_include_by_default(mut self, include: bool) -> Self {
+        self.include_by_default = include;
+        self
+    }
+
+    /// Set the local model repository identifier.
+    #[must_use]
+    pub fn with_repo_id(mut self, repo_id: impl Into<String>) -> Self {
+        self.repo_id = Some(repo_id.into());
+        self
+    }
+
+    /// Set the local model file name.
+    #[must_use]
+    pub fn with_filename(mut self, filename: impl Into<String>) -> Self {
+        self.filename = Some(filename.into());
+        self
+    }
+
+    /// Set the USD-per-million-input-token rate.
+    #[must_use]
+    pub const fn with_cost_per_million_input(mut self, cost: f64) -> Self {
+        self.cost_per_million_input = Some(cost);
+        self
+    }
+
+    /// Set the USD-per-million-output-token rate.
+    #[must_use]
+    pub const fn with_cost_per_million_output(mut self, cost: f64) -> Self {
+        self.cost_per_million_output = Some(cost);
+        self
+    }
+
+    /// Set the USD-per-million-cache-read-token rate.
+    #[must_use]
+    pub const fn with_cost_per_million_cache_read(mut self, cost: f64) -> Self {
+        self.cost_per_million_cache_read = Some(cost);
+        self
+    }
+
+    /// Set the USD-per-million-cache-write-token rate.
+    #[must_use]
+    pub const fn with_cost_per_million_cache_write(mut self, cost: f64) -> Self {
+        self.cost_per_million_cache_write = Some(cost);
+        self
+    }
+}
+
 /// A provider entry in the model catalog, holding its auth/connection settings and presets.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ProviderCatalog {
     pub key: String,
@@ -121,6 +250,77 @@ pub struct ProviderCatalog {
 }
 
 impl ProviderCatalog {
+    /// Create a provider entry with the required identifying fields; everything
+    /// else starts unset and can be filled in with the `with_*` builders.
+    #[must_use]
+    pub fn new(
+        key: impl Into<String>,
+        display_name: impl Into<String>,
+        kind: ProviderKind,
+    ) -> Self {
+        Self {
+            key: key.into(),
+            display_name: display_name.into(),
+            kind,
+            auth_mode: None,
+            credential_env_var: None,
+            base_url_env_var: None,
+            default_base_url: None,
+            requires_base_url: false,
+            region_env_var: None,
+            presets: Vec::new(),
+        }
+    }
+
+    /// Set the authentication mode.
+    #[must_use]
+    pub fn with_auth_mode(mut self, auth_mode: AuthMode) -> Self {
+        self.auth_mode = Some(auth_mode);
+        self
+    }
+
+    /// Set the environment variable that holds the credential.
+    #[must_use]
+    pub fn with_credential_env_var(mut self, var: impl Into<String>) -> Self {
+        self.credential_env_var = Some(var.into());
+        self
+    }
+
+    /// Set the environment variable that holds the base URL override.
+    #[must_use]
+    pub fn with_base_url_env_var(mut self, var: impl Into<String>) -> Self {
+        self.base_url_env_var = Some(var.into());
+        self
+    }
+
+    /// Set the default base URL.
+    #[must_use]
+    pub fn with_default_base_url(mut self, url: impl Into<String>) -> Self {
+        self.default_base_url = Some(url.into());
+        self
+    }
+
+    /// Set whether a base URL is required to use this provider.
+    #[must_use]
+    pub const fn with_requires_base_url(mut self, requires: bool) -> Self {
+        self.requires_base_url = requires;
+        self
+    }
+
+    /// Set the environment variable that holds the region (e.g. for AWS).
+    #[must_use]
+    pub fn with_region_env_var(mut self, var: impl Into<String>) -> Self {
+        self.region_env_var = Some(var.into());
+        self
+    }
+
+    /// Set the provider's presets.
+    #[must_use]
+    pub fn with_presets(mut self, presets: Vec<PresetCatalog>) -> Self {
+        self.presets = presets;
+        self
+    }
+
     #[must_use]
     pub fn preset(&self, preset_id: &str) -> Option<&PresetCatalog> {
         self.presets.iter().find(|preset| preset.id == preset_id)
@@ -128,6 +328,7 @@ impl ProviderCatalog {
 }
 
 /// The full model catalog: a list of providers, each with its own presets.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ModelCatalog {
     /// Date (`YYYY-MM-DD`) the compiled-in pricing table was last verified
@@ -140,6 +341,29 @@ pub struct ModelCatalog {
 }
 
 impl ModelCatalog {
+    /// Create an empty catalog with no `pricing_as_of` date and no providers.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            pricing_as_of: None,
+            providers: Vec::new(),
+        }
+    }
+
+    /// Set the `pricing_as_of` date (`YYYY-MM-DD`).
+    #[must_use]
+    pub fn with_pricing_as_of(mut self, pricing_as_of: impl Into<String>) -> Self {
+        self.pricing_as_of = Some(pricing_as_of.into());
+        self
+    }
+
+    /// Set the catalog's providers.
+    #[must_use]
+    pub fn with_providers(mut self, providers: Vec<ProviderCatalog>) -> Self {
+        self.providers = providers;
+        self
+    }
+
     #[must_use]
     pub fn provider(&self, provider_key: &str) -> Option<&ProviderCatalog> {
         self.providers
@@ -194,8 +418,15 @@ impl ModelCatalog {
     }
 }
 
+impl Default for ModelCatalog {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// A preset flattened together with its parent provider's fields, for standalone use
 /// once resolved via [`ModelCatalog::preset`].
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub struct CatalogPreset {
     pub provider_key: String,
@@ -226,6 +457,181 @@ pub struct CatalogPreset {
 }
 
 impl CatalogPreset {
+    /// Create a flattened preset with the required identifying fields;
+    /// everything else starts unset and can be filled in with the `with_*`
+    /// builders.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        provider_key: impl Into<String>,
+        provider_display_name: impl Into<String>,
+        provider_kind: ProviderKind,
+        preset_id: impl Into<String>,
+        display_name: impl Into<String>,
+        model_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            provider_key: provider_key.into(),
+            provider_display_name: provider_display_name.into(),
+            provider_kind,
+            preset_id: preset_id.into(),
+            display_name: display_name.into(),
+            group: None,
+            model_id: model_id.into(),
+            api_version: None,
+            capabilities: Vec::new(),
+            status: None,
+            context_window_tokens: None,
+            max_output_tokens: None,
+            auth_mode: None,
+            credential_env_var: None,
+            base_url_env_var: None,
+            default_base_url: None,
+            requires_base_url: false,
+            region_env_var: None,
+            include_by_default: false,
+            repo_id: None,
+            filename: None,
+            cost_per_million_input: None,
+            cost_per_million_output: None,
+            cost_per_million_cache_read: None,
+            cost_per_million_cache_write: None,
+        }
+    }
+
+    /// Set the display group this preset is listed under.
+    #[must_use]
+    pub fn with_group(mut self, group: impl Into<String>) -> Self {
+        self.group = Some(group.into());
+        self
+    }
+
+    /// Set the provider API version used when building request URLs.
+    #[must_use]
+    pub fn with_api_version(mut self, api_version: ApiVersion) -> Self {
+        self.api_version = Some(api_version);
+        self
+    }
+
+    /// Set the declared capabilities.
+    #[must_use]
+    pub fn with_capabilities(mut self, capabilities: Vec<PresetCapability>) -> Self {
+        self.capabilities = capabilities;
+        self
+    }
+
+    /// Set the release maturity status.
+    #[must_use]
+    pub fn with_status(mut self, status: PresetStatus) -> Self {
+        self.status = Some(status);
+        self
+    }
+
+    /// Set the model's context window size, in tokens.
+    #[must_use]
+    pub const fn with_context_window_tokens(mut self, tokens: u64) -> Self {
+        self.context_window_tokens = Some(tokens);
+        self
+    }
+
+    /// Set the model's maximum output tokens.
+    #[must_use]
+    pub const fn with_max_output_tokens(mut self, tokens: u64) -> Self {
+        self.max_output_tokens = Some(tokens);
+        self
+    }
+
+    /// Set the provider's authentication mode.
+    #[must_use]
+    pub fn with_auth_mode(mut self, auth_mode: AuthMode) -> Self {
+        self.auth_mode = Some(auth_mode);
+        self
+    }
+
+    /// Set the environment variable that holds the credential.
+    #[must_use]
+    pub fn with_credential_env_var(mut self, var: impl Into<String>) -> Self {
+        self.credential_env_var = Some(var.into());
+        self
+    }
+
+    /// Set the environment variable that holds the base URL override.
+    #[must_use]
+    pub fn with_base_url_env_var(mut self, var: impl Into<String>) -> Self {
+        self.base_url_env_var = Some(var.into());
+        self
+    }
+
+    /// Set the default base URL.
+    #[must_use]
+    pub fn with_default_base_url(mut self, url: impl Into<String>) -> Self {
+        self.default_base_url = Some(url.into());
+        self
+    }
+
+    /// Set whether a base URL is required to use this provider.
+    #[must_use]
+    pub const fn with_requires_base_url(mut self, requires: bool) -> Self {
+        self.requires_base_url = requires;
+        self
+    }
+
+    /// Set the environment variable that holds the region (e.g. for AWS).
+    #[must_use]
+    pub fn with_region_env_var(mut self, var: impl Into<String>) -> Self {
+        self.region_env_var = Some(var.into());
+        self
+    }
+
+    /// Set whether this preset is included by default.
+    #[must_use]
+    pub const fn with_include_by_default(mut self, include: bool) -> Self {
+        self.include_by_default = include;
+        self
+    }
+
+    /// Set the local model repository identifier.
+    #[must_use]
+    pub fn with_repo_id(mut self, repo_id: impl Into<String>) -> Self {
+        self.repo_id = Some(repo_id.into());
+        self
+    }
+
+    /// Set the local model file name.
+    #[must_use]
+    pub fn with_filename(mut self, filename: impl Into<String>) -> Self {
+        self.filename = Some(filename.into());
+        self
+    }
+
+    /// Set the USD-per-million-input-token rate.
+    #[must_use]
+    pub const fn with_cost_per_million_input(mut self, cost: f64) -> Self {
+        self.cost_per_million_input = Some(cost);
+        self
+    }
+
+    /// Set the USD-per-million-output-token rate.
+    #[must_use]
+    pub const fn with_cost_per_million_output(mut self, cost: f64) -> Self {
+        self.cost_per_million_output = Some(cost);
+        self
+    }
+
+    /// Set the USD-per-million-cache-read-token rate.
+    #[must_use]
+    pub const fn with_cost_per_million_cache_read(mut self, cost: f64) -> Self {
+        self.cost_per_million_cache_read = Some(cost);
+        self
+    }
+
+    /// Set the USD-per-million-cache-write-token rate.
+    #[must_use]
+    pub const fn with_cost_per_million_cache_write(mut self, cost: f64) -> Self {
+        self.cost_per_million_cache_write = Some(cost);
+        self
+    }
+
     /// Build a [`ModelCapabilities`] from the catalog's capability list and
     /// token limits.
     #[must_use]
@@ -322,6 +728,7 @@ pub const PRICING_STALENESS_ENV_VAR: &str = "SWINK_PRICING_STALENESS_DAYS";
 ///
 /// Produced by [`pricing_staleness`] / [`ModelCatalog::pricing_staleness_at`]
 /// when the catalog's `pricing_as_of` date is older than the threshold.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PricingStaleness {
     /// Date the pricing table was last verified.
@@ -330,6 +737,18 @@ pub struct PricingStaleness {
     pub age_days: i64,
     /// The threshold that was exceeded.
     pub threshold_days: u32,
+}
+
+impl PricingStaleness {
+    /// Create a staleness record from its three fields.
+    #[must_use]
+    pub const fn new(as_of: NaiveDate, age_days: i64, threshold_days: u32) -> Self {
+        Self {
+            as_of,
+            age_days,
+            threshold_days,
+        }
+    }
 }
 
 /// Check the compiled-in catalog's pricing staleness against today's date.
@@ -428,32 +847,71 @@ pub fn calculate_cost(model_id: &str, usage: &Usage) -> Cost {
 ///
 /// # Example
 /// ```rust
-/// use swink_agent::{AssistantMessage, Cost, StopReason, Usage, price_assistant_message};
+/// use swink_agent::{AssistantMessage, StopReason, Usage, price_assistant_message};
 ///
-/// let mut message = AssistantMessage {
-///     content: vec![],
-///     provider: "anthropic".to_string(),
-///     model_id: "claude-sonnet-4-6".to_string(),
-///     usage: Usage {
-///         input: 1_000_000,
-///         ..Usage::default()
-///     },
-///     cost: Cost::default(),
-///     stop_reason: StopReason::Stop,
-///     error_message: None,
-///     error_kind: None,
-///     timestamp: 0,
-///     cache_hint: None,
-/// };
+/// let mut message = AssistantMessage::new(vec![], "anthropic", "claude-sonnet-4-6")
+///     .with_usage(Usage::default().with_input(1_000_000))
+///     .with_stop_reason(StopReason::Stop)
+///     .with_timestamp(0);
 ///
 /// assert!(price_assistant_message(&mut message));
 /// assert!((message.cost.total - 3.0).abs() < 1e-9);
 /// ```
 pub fn price_assistant_message(message: &mut AssistantMessage) -> bool {
+    price_assistant_message_with(message, None)
+}
+
+/// Like [`price_assistant_message`], but consults an operator-declared
+/// [`CostCalculator`] before falling back to the compiled model catalog.
+///
+/// This is what the agent loop actually calls, threading through the calculator
+/// configured via
+/// [`AgentOptions::with_cost_calculator`](crate::AgentOptions::with_cost_calculator).
+/// It exists because the catalog only knows about models shipped with the
+/// crate — local endpoints, private deployments, and negotiated per-tier rates
+/// all price at zero without an override.
+///
+/// Precedence, highest first:
+///
+/// 1. The adapter's own non-zero [`Cost`] — never overwritten.
+/// 2. `calculator`, when it returns a non-zero [`Cost`] for this model.
+/// 3. The compiled model catalog.
+///
+/// Returns `true` if the message was repriced.
+///
+/// # Example
+/// ```rust
+/// use swink_agent::{
+///     AssistantMessage, ModelRates, PricingTable, StopReason, Usage,
+///     price_assistant_message_with,
+/// };
+///
+/// // `claude-sonnet-4-6` is in the catalog at $3.00/M input, but the operator
+/// // negotiated $1.00/M and says so.
+/// let table = PricingTable::new().with_model(
+///     "claude-sonnet-4-6",
+///     ModelRates::default().with_input_per_million(1.0),
+/// );
+///
+/// let mut message = AssistantMessage::new(vec![], "anthropic", "claude-sonnet-4-6")
+///     .with_usage(Usage::default().with_input(1_000_000))
+///     .with_stop_reason(StopReason::Stop)
+///     .with_timestamp(0);
+///
+/// assert!(price_assistant_message_with(&mut message, Some(&table)));
+/// assert!((message.cost.total - 1.0).abs() < 1e-9);
+/// ```
+pub fn price_assistant_message_with(
+    message: &mut AssistantMessage,
+    calculator: Option<&dyn CostCalculator>,
+) -> bool {
     if !message.cost.is_zero() {
         return false;
     }
-    let priced = calculate_cost(&message.model_id, &message.usage);
+    let priced = calculator
+        .and_then(|calculator| calculator.calculate(&message.model_id, &message.usage))
+        .filter(|cost| !cost.is_zero())
+        .unwrap_or_else(|| calculate_cost(&message.model_id, &message.usage));
     if priced.is_zero() {
         return false;
     }
@@ -742,6 +1200,115 @@ mod tests {
         let mut msg = message("claude-sonnet-4-6", usage(0, 0, 0, 0), Cost::default());
         assert!(!price_assistant_message(&mut msg));
         assert!(msg.cost.is_zero());
+    }
+
+    /// Issue #1084: operator-declared rates must beat the compiled catalog.
+    ///
+    /// `claude-sonnet-4-6` is in the catalog at $3.00/M input. An operator who
+    /// declares $1.00/M must see $1.00 — otherwise a `[pricing]` config section
+    /// silently does nothing for any model the catalog happens to know.
+    #[test]
+    fn operator_declared_rates_take_precedence_over_catalog() {
+        let table = crate::pricing::PricingTable::new().with_model(
+            "claude-sonnet-4-6",
+            crate::pricing::ModelRates {
+                input_per_million: 1.0,
+                ..crate::pricing::ModelRates::default()
+            },
+        );
+        let mut msg = message(
+            "claude-sonnet-4-6",
+            usage(1_000_000, 0, 0, 0),
+            Cost::default(),
+        );
+
+        assert!(price_assistant_message_with(&mut msg, Some(&table)));
+        assert!(
+            (msg.cost.total - 1.0).abs() < 0.001,
+            "expected the operator's $1.00/M rate, got ${:.4} (catalog rate is $3.00/M)",
+            msg.cost.total
+        );
+    }
+
+    /// A calculator that declines a model must not suppress catalog pricing.
+    #[test]
+    fn calculator_declining_a_model_falls_back_to_catalog() {
+        let table = crate::pricing::PricingTable::new().with_model(
+            "some-other-model",
+            crate::pricing::ModelRates {
+                input_per_million: 1.0,
+                ..crate::pricing::ModelRates::default()
+            },
+        );
+        let mut msg = message(
+            "claude-sonnet-4-6",
+            usage(1_000_000, 0, 0, 0),
+            Cost::default(),
+        );
+
+        assert!(price_assistant_message_with(&mut msg, Some(&table)));
+        assert!(
+            (msg.cost.total - 3.0).abs() < 0.001,
+            "expected catalog pricing"
+        );
+    }
+
+    /// Operator rates are the only way to price a model the catalog has never
+    /// heard of — local endpoints and private deployments.
+    #[test]
+    fn operator_declared_rates_price_a_model_absent_from_the_catalog() {
+        let table = crate::pricing::PricingTable::new().with_model(
+            "my-local-llama",
+            crate::pricing::ModelRates {
+                input_per_million: 0.10,
+                output_per_million: 0.40,
+                ..crate::pricing::ModelRates::default()
+            },
+        );
+        let mut msg = message(
+            "my-local-llama",
+            usage(1_000_000, 1_000_000, 0, 0),
+            Cost::default(),
+        );
+
+        assert!(price_assistant_message_with(&mut msg, Some(&table)));
+        assert!((msg.cost.total - 0.50).abs() < 0.001);
+    }
+
+    /// The adapter's own billed cost outranks even an operator override.
+    #[test]
+    fn adapter_supplied_cost_outranks_operator_declared_rates() {
+        let table = crate::pricing::PricingTable::new().with_model(
+            "claude-sonnet-4-6",
+            crate::pricing::ModelRates {
+                input_per_million: 1.0,
+                ..crate::pricing::ModelRates::default()
+            },
+        );
+        let adapter_cost = Cost {
+            input: 0.25,
+            total: 0.25,
+            ..Cost::default()
+        };
+        let mut msg = message("claude-sonnet-4-6", usage(1_000_000, 0, 0, 0), adapter_cost);
+
+        assert!(!price_assistant_message_with(&mut msg, Some(&table)));
+        assert!((msg.cost.total - 0.25).abs() < 0.001);
+    }
+
+    /// A calculator returning an explicit zero declines rather than pinning the
+    /// message to zero, so the catalog still gets a turn.
+    #[test]
+    fn calculator_returning_zero_cost_falls_back_to_catalog() {
+        let zeroing = |_model_id: &str, _usage: &Usage| Some(Cost::default());
+        let mut msg = message(
+            "claude-sonnet-4-6",
+            usage(1_000_000, 0, 0, 0),
+            Cost::default(),
+        );
+
+        assert!(price_assistant_message_with(&mut msg, Some(&zeroing)));
+        assert!((msg.cost.total - 3.0).abs() < 0.001);
     }
 
     #[test]

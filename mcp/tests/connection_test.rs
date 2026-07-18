@@ -225,19 +225,15 @@ async fn connect_discovers_tools_via_in_process_server() {
 /// with `McpError::SpawnFailed`.
 #[tokio::test]
 async fn connect_to_nonexistent_server_returns_spawn_failed() {
-    let config = McpServerConfig {
-        name: "nonexistent".into(),
-        transport: McpTransport::Stdio {
+    let config = McpServerConfig::new(
+        "nonexistent",
+        McpTransport::Stdio {
             command: "/tmp/definitely-not-a-real-mcp-server-binary-xyz".into(),
             args: vec![],
             env: std::collections::HashMap::default(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
 
     let result = McpConnection::connect(config, None).await;
     assert!(
@@ -256,19 +252,16 @@ async fn connect_to_nonexistent_server_returns_spawn_failed() {
 #[tokio::test]
 async fn connect_timeout_returns_connection_failed() {
     let (command, args) = sleep_command(5);
-    let config = McpServerConfig {
-        name: "sleepy-stdio".into(),
-        transport: McpTransport::Stdio {
+    let config = McpServerConfig::new(
+        "sleepy-stdio",
+        McpTransport::Stdio {
             command,
             args,
             env: HashMap::default(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: Some(50),
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false)
+    .with_connect_timeout_ms(50);
 
     let start = Instant::now();
     let result = McpConnection::connect(config, None).await;
@@ -307,7 +300,7 @@ async fn from_service_discovers_tools() {
     let names: Vec<_> = conn
         .discovered_tools
         .iter()
-        .map(|t| t.name.as_ref())
+        .map(|t| t.name.as_str())
         .collect();
     assert!(
         names.contains(&"echo"),
@@ -319,20 +312,16 @@ async fn from_service_discovers_tools() {
 /// (exercises the HTTP streaming code path with an unreachable endpoint).
 #[tokio::test]
 async fn connect_sse_to_unreachable_url_returns_error() {
-    let config = McpServerConfig {
-        name: "sse-unreachable".into(),
-        transport: McpTransport::Sse {
+    let config = McpServerConfig::new(
+        "sse-unreachable",
+        McpTransport::StreamableHttp {
             url: "http://127.0.0.1:1/mcp".into(),
             bearer_token: Some("test-bearer-token-123".into()),
             bearer_auth: None,
             headers: HashMap::new(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
 
     let result = McpConnection::connect(config, None).await;
     assert!(result.is_err(), "connecting to unreachable URL should fail");
@@ -358,9 +347,9 @@ async fn connect_sse_sends_bearer_and_custom_headers() {
         let _ = axum::serve(listener, app).await;
     });
 
-    let config = McpServerConfig {
-        name: "sse-header-test".into(),
-        transport: McpTransport::Sse {
+    let config = McpServerConfig::new(
+        "sse-header-test",
+        McpTransport::StreamableHttp {
             url: format!("http://{address}/mcp"),
             bearer_token: Some("test-bearer-token-123".into()),
             bearer_auth: None,
@@ -369,12 +358,8 @@ async fn connect_sse_sends_bearer_and_custom_headers() {
                 ("x-trace-id".into(), "trace-789".into()),
             ]),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
 
     let result = McpConnection::connect(config, None).await;
     assert!(
@@ -418,23 +403,16 @@ async fn connect_sse_uses_resolved_bearer_auth_over_static_token() {
         let _ = axum::serve(listener, app).await;
     });
 
-    let config = McpServerConfig {
-        name: "sse-resolver-auth".into(),
-        transport: McpTransport::Sse {
+    let config = McpServerConfig::new(
+        "sse-resolver-auth",
+        McpTransport::StreamableHttp {
             url: format!("http://{address}/mcp"),
             bearer_token: Some("static-token".into()),
-            bearer_auth: Some(SseBearerAuth {
-                credential_key: "mcp-sse-token".into(),
-                credential_type: CredentialType::ApiKey,
-            }),
+            bearer_auth: Some(SseBearerAuth::new("mcp-sse-token", CredentialType::ApiKey)),
             headers: HashMap::new(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
 
     let resolver = Arc::new(StaticCredentialResolver::new(
         "mcp-sse-token",
@@ -463,23 +441,16 @@ async fn connect_sse_uses_resolved_bearer_auth_over_static_token() {
 
 #[tokio::test]
 async fn connect_sse_with_resolver_auth_requires_resolver() {
-    let config = McpServerConfig {
-        name: "sse-missing-resolver".into(),
-        transport: McpTransport::Sse {
+    let config = McpServerConfig::new(
+        "sse-missing-resolver",
+        McpTransport::StreamableHttp {
             url: "http://127.0.0.1:1/mcp".into(),
             bearer_token: None,
-            bearer_auth: Some(SseBearerAuth {
-                credential_key: "mcp-sse-token".into(),
-                credential_type: CredentialType::Bearer,
-            }),
+            bearer_auth: Some(SseBearerAuth::new("mcp-sse-token", CredentialType::Bearer)),
             headers: HashMap::new(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
 
     let result = McpConnection::connect(config, None).await;
     assert!(result.is_err(), "missing resolver should fail fast");
@@ -533,23 +504,16 @@ async fn sse_resolver_auth_refreshes_during_session_recovery() {
         "mcp-sse-token",
         Arc::clone(&current_token),
     ));
-    let config = McpServerConfig {
-        name: "sse-refresh-auth".into(),
-        transport: McpTransport::Sse {
+    let config = McpServerConfig::new(
+        "sse-refresh-auth",
+        McpTransport::StreamableHttp {
             url: format!("http://{address}/mcp"),
             bearer_token: Some("stale-static-token".into()),
-            bearer_auth: Some(SseBearerAuth {
-                credential_key: "mcp-sse-token".into(),
-                credential_type: CredentialType::Bearer,
-            }),
+            bearer_auth: Some(SseBearerAuth::new("mcp-sse-token", CredentialType::Bearer)),
             headers: HashMap::new(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
 
     let conn = McpConnection::connect_with_resolver(config, Some(resolver.clone()), None)
         .await
@@ -559,11 +523,10 @@ async fn sse_resolver_auth_refreshes_during_session_recovery() {
     *current_token.write().await = "rotated-token".to_string();
     session_manager.sessions.write().await.clear();
 
-    let result = conn
+    let agent_result = conn
         .call_tool("echo", serde_json::json!({ "text": "recovered" }))
         .await
         .expect("tool call should recover with the refreshed bearer token");
-    let agent_result = swink_agent_mcp::convert::call_result_to_agent_result(&result);
     let text = ContentBlock::extract_text(&agent_result.content);
     assert!(
         text.contains("recovered"),

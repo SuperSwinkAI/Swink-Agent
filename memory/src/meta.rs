@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Metadata stored as the first line of a session JSONL file.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionMeta {
     /// Unique session identifier.
@@ -24,6 +25,44 @@ pub struct SessionMeta {
 
 const fn default_version() -> u32 {
     1
+}
+
+impl SessionMeta {
+    /// Creates a new session metadata record with the given identity and timestamps.
+    ///
+    /// `version` defaults to `1` and `sequence` defaults to `0`; use
+    /// [`with_version`](Self::with_version) / [`with_sequence`](Self::with_sequence)
+    /// to override either.
+    #[must_use]
+    pub fn new(
+        id: impl Into<String>,
+        title: impl Into<String>,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            title: title.into(),
+            created_at,
+            updated_at,
+            version: default_version(),
+            sequence: 0,
+        }
+    }
+
+    /// Overrides the schema version (defaults to 1).
+    #[must_use]
+    pub const fn with_version(mut self, version: u32) -> Self {
+        self.version = version;
+        self
+    }
+
+    /// Overrides the optimistic-concurrency sequence number (defaults to 0).
+    #[must_use]
+    pub const fn with_sequence(mut self, sequence: u64) -> Self {
+        self.sequence = sequence;
+        self
+    }
 }
 
 #[cfg(test)]

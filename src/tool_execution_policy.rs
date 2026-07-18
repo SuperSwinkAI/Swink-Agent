@@ -17,6 +17,7 @@ use serde_json::Value;
 ///
 /// This is intentionally a borrowed view so priority functions do not need
 /// to clone arguments.
+#[non_exhaustive]
 #[derive(Debug)]
 pub struct ToolCallSummary<'a> {
     /// Unique identifier for this tool call.
@@ -25,6 +26,18 @@ pub struct ToolCallSummary<'a> {
     pub name: &'a str,
     /// Arguments passed to the tool.
     pub arguments: &'a Value,
+}
+
+impl<'a> ToolCallSummary<'a> {
+    /// Create a new tool call summary from its borrowed fields.
+    #[must_use]
+    pub const fn new(id: &'a str, name: &'a str, arguments: &'a Value) -> Self {
+        Self {
+            id,
+            name,
+            arguments,
+        }
+    }
 }
 
 // ─── PriorityFn ──────────────────────────────────────────────────────────────
@@ -68,6 +81,7 @@ pub trait ToolExecutionStrategy: Send + Sync {
 ///
 /// The default is [`Concurrent`](ToolExecutionPolicy::Concurrent), which
 /// preserves backward compatibility by spawning all tool calls at once.
+#[non_exhaustive]
 #[derive(Default)]
 pub enum ToolExecutionPolicy {
     /// Execute all tool calls concurrently via `tokio::spawn` (default).

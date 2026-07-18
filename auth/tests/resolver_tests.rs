@@ -345,14 +345,12 @@ async fn with_timeout_bounds_store_lookup() {
 #[tokio::test]
 async fn with_authorization_config_required_alongside_handler() {
     let store: Arc<dyn swink_agent::CredentialStore> = Arc::new(InMemoryCredentialStore::empty());
-    let config = AuthorizationConfig {
-        authorization_endpoint: "https://accounts.example.com/o/authorize".to_string(),
-        token_url: "https://accounts.example.com/token".to_string(),
-        client_id: "client".to_string(),
-        client_secret: None,
-        redirect_uri: "http://localhost:8080/callback".to_string(),
-        scopes: vec![],
-    };
+    let config = AuthorizationConfig::new(
+        "https://accounts.example.com/o/authorize",
+        "https://accounts.example.com/token",
+        "client",
+        "http://localhost:8080/callback",
+    );
     // Config registered for a DIFFERENT key than the one being resolved.
     let resolver = DefaultCredentialResolver::new(store)
         .with_authorization_handler(Arc::new(UnusedHandler))

@@ -137,7 +137,7 @@ fn try_proxy() -> Option<ModelConnections> {
         .and_then(credentials::credential)
         .unwrap_or_default();
     let model_id =
-        std::env::var("LLM_MODEL").unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
+        std::env::var("LLM_MODEL").unwrap_or_else(|_| swink_agent::DEFAULT_MODEL.to_string());
     let stream_fn: Arc<dyn StreamFn> = Arc::new(ProxyStreamFn::new(&base_url, &api_key));
     let model = ModelSpec::new("proxy", &model_id);
 

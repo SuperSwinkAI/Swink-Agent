@@ -29,8 +29,10 @@ use swink_agent::{
 };
 
 use crate::convert;
-use crate::oai_transport::{OaiAdapterShell, classify_oai_error_body, oai_send_and_parse};
-use crate::openai_compat::{OaiConverter, OaiMessage, build_oai_tools};
+use crate::oai_transport::{
+    OaiAdapterShell, classify_oai_error_body, oai_send_and_parse_with_options,
+};
+use crate::openai_compat::{OaiConverter, OaiMessage, OaiParserOptions, build_oai_tools};
 
 /// Charset for generating Mistral-compatible 9-char tool call IDs.
 const MISTRAL_ID_CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -165,6 +167,12 @@ struct MistralChatRequest {
     tools: Vec<crate::openai_compat::OaiTool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_choice: Option<String>,
+    /// Extra provider-native body fields (`swink_agent::ServingOptions::extra`)
+    /// minus keys colliding with the typed fields above (typed fields win);
+    /// built with `crate::base::merge_extra`. Empty flattened maps serialize
+    /// to nothing, so default bodies are unchanged.
+    #[serde(flatten)]
+    extra: serde_json::Map<String, serde_json::Value>,
 }
 
 // ─── Stream implementation ─────────────────────────────────────────────────
@@ -191,6 +199,20 @@ fn mistral_stream<'a>(
             convert_messages_for_mistral(&context.messages, &context.system_prompt, &mut id_map);
         let (tools, tool_choice) = build_oai_tools(&context.tools);
 
+        // Typed request fields win over colliding `ServingOptions::extra`
+        // keys, same rule as the shared OAI transport.
+        const TYPED_KEYS: &[&str] = &[
+            "model",
+            "messages",
+            "stream",
+            "temperature",
+            "max_tokens",
+            "tools",
+            "tool_choice",
+        ];
+        let mut extra = serde_json::Map::new();
+        crate::base::merge_extra(&mut extra, &options.serving.extra, TYPED_KEYS);
+
         let body = MistralChatRequest {
             model: model.model_id.clone(),
             messages,
@@ -199,16 +221,21 @@ fn mistral_stream<'a>(
             max_tokens: options.max_tokens,
             tools,
             tool_choice,
+            extra,
         };
 
         let request = mistral.shell.post_json_request(&url, &body, options);
 
-        let raw_stream = oai_send_and_parse(
+        let raw_stream = oai_send_and_parse_with_options(
             request,
             mistral.shell.provider(),
             cancellation_token,
             options.on_raw_payload.clone(),
             |status, body| classify_oai_error_body(status, body, mistral.shell.provider()),
+            OaiParserOptions {
+                error_finish_reason_is_error: true,
+                ..OaiParserOptions::default()
+            },
         );
         normalize_response_stream(raw_stream, id_map)
     })
@@ -271,9 +298,12 @@ fn convert_messages_for_mistral(
 /// - Remap tool call IDs from Mistral 9-char format back to harness format.
 ///
 /// Note: `model_length` → `Length` mapping is handled in the shared
-/// `process_oai_chunk` parser. `finish_reason: "error"` maps to
-/// `StopReason::Stop` (catch-all) which is acceptable — errors from the
-/// Mistral side are rare and the stop reason still allows callers to inspect.
+/// `process_oai_chunk` parser. `finish_reason: "error"` is surfaced as a
+/// terminal `AssistantMessageEvent::Error` via
+/// `OaiParserOptions::error_finish_reason_is_error`, set by this adapter when
+/// calling `oai_send_and_parse_with_options` — Mistral's own finish reason
+/// for a mid-stream provider failure, distinct from the catch-all
+/// `StopReason::Stop` used for unrecognized finish reasons.
 fn normalize_response_stream(
     raw: impl Stream<Item = AssistantMessageEvent> + Send,
     mut id_map: MistralIdMap,

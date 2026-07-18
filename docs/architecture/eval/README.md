@@ -428,7 +428,7 @@ Serializable via serde for persistence alongside evaluation results. Note: `serd
 
 ## L3 — YAML Eval Specs
 
-The `yaml` feature gate enables `load_eval_set_yaml(path)`, which deserializes an `EvalSet` from a YAML file via `serde_yaml`. All `ResponseCriteria` variants except `Custom` are supported; `Custom` requires programmatic construction.
+The `yaml` feature gate enables `load_eval_set_yaml(path)`, which deserializes an `EvalSet` from a YAML file via `serde_yaml_ng`. All `ResponseCriteria` variants except `Custom` are supported; `Custom` requires programmatic construction.
 
 ---
 

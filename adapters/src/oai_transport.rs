@@ -22,7 +22,7 @@ use tracing::warn;
 #[cfg(feature = "mistral")]
 use serde::Serialize;
 
-use swink_agent::{AgentContext, AssistantMessageEvent, ModelSpec, StreamOptions};
+use swink_agent::{AgentContext, AssistantMessageEvent, ModelSpec, ResponseFormat, StreamOptions};
 
 use crate::base::AdapterBase;
 use crate::convert;
@@ -44,7 +44,10 @@ pub struct OaiAdapterShell {
 }
 
 impl OaiAdapterShell {
-    #[cfg(any(feature = "openai-compat", feature = "mistral"))]
+    // Callers are the `openai`, `xai` and `mistral` adapters. `openai-compat`
+    // is an internal umbrella that `openai`/`xai` both imply, so gating on it
+    // was too broad: enabling `openai-compat` on its own left this dead.
+    #[cfg(any(feature = "openai", feature = "xai", feature = "mistral"))]
     pub(crate) fn new(
         provider: &'static str,
         base_url: impl Into<String>,
@@ -209,6 +212,37 @@ pub(crate) fn classify_oai_error_body(
     None
 }
 
+/// Map [`ResponseFormat`] onto the OAI protocol's `response_format` field.
+///
+/// `Json` becomes `{"type": "json_object"}`. `Schema` is a bare JSON Schema
+/// (what Ollama takes verbatim), so it gets wrapped in the `json_schema`
+/// envelope this protocol requires; `strict` opts into constrained decoding.
+///
+/// `allow(dead_code)`: reachable only from [`prepare_oai_request`], which is
+/// itself live only under a consuming adapter feature.
+#[allow(dead_code)]
+fn oai_response_format(options: &StreamOptions) -> Option<serde_json::Value> {
+    options
+        .serving
+        .format
+        .as_ref()
+        .and_then(|format| match format {
+            ResponseFormat::Json => Some(serde_json::json!({ "type": "json_object" })),
+            ResponseFormat::Schema(schema) => Some(serde_json::json!({
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "response",
+                    "strict": true,
+                    "schema": schema,
+                },
+            })),
+            // Unknown future variant: we don't know how to represent it on the
+            // wire, so omit `response_format` entirely rather than sending
+            // something wrong.
+            _ => None,
+        })
+}
+
 /// Build a standard OAI-compatible HTTP request (without auth headers).
 ///
 /// Handles message conversion, tool extraction, and body serialization.
@@ -216,6 +250,12 @@ pub(crate) fn classify_oai_error_body(
 ///
 /// Used by adapters that follow the standard OAI message format (`OpenAI`,
 /// Azure, xAI). Mistral uses its own message conversion and body type.
+///
+/// `allow(dead_code)`: live only when a consuming adapter feature is enabled,
+/// so it is dead under feature combinations that pull in none of them (same
+/// rationale as [`oai_send_and_parse`] below). This also keeps the
+/// `OaiChatRequest`/`OaiStreamOptions` bodies it constructs reachable.
+#[allow(dead_code)]
 pub fn prepare_oai_request(
     client: &reqwest::Client,
     url: &str,
@@ -234,16 +274,12 @@ pub fn prepare_oai_request(
         "temperature",
         "max_tokens",
         "top_p",
+        "response_format",
         "tools",
         "tool_choice",
     ];
-    let extra = options
-        .serving
-        .extra
-        .iter()
-        .filter(|(k, _)| !TYPED_KEYS.contains(&k.as_str()))
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
+    let mut extra = serde_json::Map::new();
+    crate::base::merge_extra(&mut extra, &options.serving.extra, TYPED_KEYS);
 
     let messages =
         convert::convert_messages::<OaiConverter>(&context.messages, &context.system_prompt);
@@ -258,6 +294,7 @@ pub fn prepare_oai_request(
         temperature: options.temperature,
         max_tokens: options.max_tokens,
         top_p: options.serving.top_p,
+        response_format: oai_response_format(options),
         tools,
         tool_choice,
         extra,

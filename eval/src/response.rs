@@ -15,7 +15,17 @@ use crate::types::{EvalCase, EvalMetricResult, Invocation, ResponseCriteria};
 /// Evaluator that scores the final response text against expected criteria.
 ///
 /// Returns `None` when the case has no `expected_response` defined.
+#[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
 pub struct ResponseMatcher;
+
+impl ResponseMatcher {
+    /// Create a new `ResponseMatcher`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 impl Evaluator for ResponseMatcher {
     fn name(&self) -> &'static str {
@@ -135,20 +145,14 @@ mod tests {
         Invocation {
             turns: vec![TurnRecord {
                 turn_index: 0,
-                assistant_message: AssistantMessage {
-                    content: vec![ContentBlock::Text {
+                assistant_message: AssistantMessage::new(
+                    vec![ContentBlock::Text {
                         text: text.to_string(),
                     }],
-                    provider: "test".to_string(),
-                    model_id: "test-model".to_string(),
-                    usage: Usage::default(),
-                    cost: Cost::default(),
-                    stop_reason: StopReason::Stop,
-                    error_message: None,
-                    error_kind: None,
-                    timestamp: 0,
-                    cache_hint: None,
-                },
+                    "test".to_string(),
+                    "test-model".to_string(),
+                )
+                .with_timestamp(0),
                 tool_calls: vec![],
                 tool_results: vec![],
                 duration: Duration::from_millis(10),

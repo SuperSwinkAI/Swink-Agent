@@ -9,6 +9,27 @@
 //! - `#[tool(name = "...", description = "...")]` — wraps an async function as
 //!   an `AgentTool` implementation. Schema is derived from a hidden params struct
 //!   via `schemars`, replacing the previous bespoke type mapper.
+//!
+//! # Scope: external SDK consumers
+//!
+//! These macros target **downstream users of the `swink-agent` SDK** who want
+//! to turn a plain async function into a tool with minimal ceremony. They are
+//! intentionally **not** used by the built-in tools inside the `swink-agent`
+//! crate itself, for two structural reasons:
+//!
+//! 1. The expansion names the SDK by its external path (`swink_agent::…`), so
+//!    it cannot be invoked from within the `swink-agent` crate without an
+//!    `extern crate self` alias.
+//! 2. `#[tool]` produces a stateless unit struct whose `label()` equals its
+//!    `name()`. The built-in tools carry constructor state (stores, execution
+//!    roots), human-readable labels, `deny_unknown_fields` schemas, and
+//!    `execution_root`/`approval_context` overrides — capabilities the macro
+//!    deliberately does not model, keeping its surface small.
+//!
+//! The generated code is exercised end-to-end against the real `AgentTool`
+//! trait by this crate's integration tests (`tests/`) and the runnable
+//! `examples/derived_tool.rs`, both of which compile against the actual
+//! `swink-agent` crate — so the macros cannot silently drift from the trait.
 
 mod tool_attr;
 mod tool_schema;
@@ -24,6 +45,10 @@ use proc_macro::TokenStream;
 /// `swink_agent::JsonSchema` or `schemars::JsonSchema`). Doc comments
 /// (`/// …`) are automatically picked up as field descriptions by schemars.
 /// Use `#[schemars(description = "…")]` to override a field description.
+///
+/// `#[tool(...)]` is **not** a helper attribute of this derive: schema
+/// customization goes through `schemars` attributes exclusively. Putting
+/// `#[tool(...)]` on a field is a compile error rather than a silent no-op.
 ///
 /// All Rust types supported by `schemars` are accepted — there is no
 /// restricted subset of primitives.
@@ -42,7 +67,11 @@ use proc_macro::TokenStream;
 ///     limit: Option<u32>,
 /// }
 /// ```
-#[proc_macro_derive(ToolSchema, attributes(tool))]
+// No `attributes(tool)` here: the derive never read a `#[tool(...)]` helper
+// attribute, so registering it made `#[tool(description = "...")]` on a field
+// a silent no-op. Without the registration, misuse is a compile error and the
+// user is pointed at `#[schemars(description = "...")]`, which works.
+#[proc_macro_derive(ToolSchema)]
 pub fn derive_tool_schema(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     tool_schema::derive_tool_schema_impl(&input).into()

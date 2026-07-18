@@ -14,7 +14,17 @@ use crate::types::{EvalCase, EvalMetricResult, Invocation};
 ///
 /// Returns `None` when either `expected_environment_state` or `state_capture`
 /// is absent on the case.
+#[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
 pub struct EnvironmentStateEvaluator;
+
+impl EnvironmentStateEvaluator {
+    /// Create a new `EnvironmentStateEvaluator`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 impl Evaluator for EnvironmentStateEvaluator {
     fn name(&self) -> &'static str {
@@ -135,18 +145,8 @@ mod tests {
         Invocation {
             turns: vec![TurnRecord {
                 turn_index: 0,
-                assistant_message: swink_agent::AssistantMessage {
-                    content: vec![],
-                    provider: "test".into(),
-                    model_id: "test-model".into(),
-                    usage: Usage::default(),
-                    cost: Cost::default(),
-                    stop_reason: StopReason::Stop,
-                    error_message: None,
-                    error_kind: None,
-                    timestamp: 0,
-                    cache_hint: None,
-                },
+                assistant_message: swink_agent::AssistantMessage::new(vec![], "test", "test-model")
+                    .with_timestamp(0),
                 tool_calls: vec![],
                 tool_results: vec![],
                 duration: std::time::Duration::from_millis(10),

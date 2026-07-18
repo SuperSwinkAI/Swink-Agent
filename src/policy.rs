@@ -32,6 +32,7 @@ use crate::types::{
 /// Outcome of a policy evaluation for `PreTurn`, `PostTurn`, and `PostLoop` slots.
 ///
 /// Does not include `Skip` — that is only available in [`PreDispatchVerdict`].
+#[non_exhaustive]
 #[derive(Debug)]
 pub enum PolicyVerdict {
     /// Proceed normally.
@@ -46,6 +47,7 @@ pub enum PolicyVerdict {
 ///
 /// Includes `Skip` for per-tool-call rejection, in addition to the
 /// verdicts available in [`PolicyVerdict`].
+#[non_exhaustive]
 #[derive(Debug)]
 pub enum PreDispatchVerdict {
     /// Proceed normally.
@@ -61,6 +63,7 @@ pub enum PreDispatchVerdict {
 // ─── Context Structs ────────────────────────────────────────────────────────
 
 /// Shared read-only context available to every policy evaluation.
+#[non_exhaustive]
 #[derive(Debug)]
 pub struct PolicyContext<'a> {
     /// Zero-based index of the current/completed turn.
@@ -85,6 +88,30 @@ pub struct PolicyContext<'a> {
     pub state: &'a crate::SessionState,
 }
 
+impl<'a> PolicyContext<'a> {
+    /// Create a new policy context.
+    #[must_use]
+    pub const fn new(
+        turn_index: usize,
+        accumulated_usage: &'a Usage,
+        accumulated_cost: &'a Cost,
+        message_count: usize,
+        overflow_signal: bool,
+        new_messages: &'a [AgentMessage],
+        state: &'a crate::SessionState,
+    ) -> Self {
+        Self {
+            turn_index,
+            accumulated_usage,
+            accumulated_cost,
+            message_count,
+            overflow_signal,
+            new_messages,
+            state,
+        }
+    }
+}
+
 /// Combined context for `PreDispatch` policies.
 ///
 /// Contains only the data reliably available during tool dispatch — the per-call
@@ -92,6 +119,7 @@ pub struct PolicyContext<'a> {
 /// usage/cost, message count, overflow signal) are intentionally excluded: they are
 /// not tracked at the tool dispatch call site, and fabricating placeholder values
 /// would give policies incorrect data to reason from.
+#[non_exhaustive]
 pub struct ToolDispatchContext<'a> {
     /// Name of the tool being called.
     pub tool_name: &'a str,
@@ -103,6 +131,26 @@ pub struct ToolDispatchContext<'a> {
     pub execution_root: Option<&'a Path>,
     /// Read-only access to the session state.
     pub state: &'a crate::SessionState,
+}
+
+impl<'a> ToolDispatchContext<'a> {
+    /// Create a new tool dispatch context.
+    #[must_use]
+    pub const fn new(
+        tool_name: &'a str,
+        tool_call_id: &'a str,
+        arguments: &'a mut serde_json::Value,
+        execution_root: Option<&'a Path>,
+        state: &'a crate::SessionState,
+    ) -> Self {
+        Self {
+            tool_name,
+            tool_call_id,
+            arguments,
+            execution_root,
+            state,
+        }
+    }
 }
 
 impl std::fmt::Debug for ToolDispatchContext<'_> {
@@ -117,6 +165,7 @@ impl std::fmt::Debug for ToolDispatchContext<'_> {
 }
 
 /// Per-turn context for `PostTurn` policies.
+#[non_exhaustive]
 #[derive(Debug)]
 pub struct TurnPolicyContext<'a> {
     /// The assistant message from the completed turn.
@@ -135,6 +184,28 @@ pub struct TurnPolicyContext<'a> {
     /// results before `PostTurn` policies run, regardless of whether the turn
     /// ended with plain text, tool execution, or transfer termination.
     pub context_messages: &'a [AgentMessage],
+}
+
+impl<'a> TurnPolicyContext<'a> {
+    /// Create a new per-turn policy context.
+    #[must_use]
+    pub const fn new(
+        assistant_message: &'a AssistantMessage,
+        tool_results: &'a [ToolResultMessage],
+        stop_reason: StopReason,
+        system_prompt: &'a str,
+        model_spec: &'a ModelSpec,
+        context_messages: &'a [AgentMessage],
+    ) -> Self {
+        Self {
+            assistant_message,
+            tool_results,
+            stop_reason,
+            system_prompt,
+            model_spec,
+            context_messages,
+        }
+    }
 }
 
 // ─── Slot Traits ────────────────────────────────────────────────────────────

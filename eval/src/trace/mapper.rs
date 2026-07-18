@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use opentelemetry::Value;
 use opentelemetry_sdk::trace::SpanData;
-use swink_agent::{AssistantMessage, ContentBlock, Cost, ModelSpec, StopReason, Usage};
+use swink_agent::{AssistantMessage, ContentBlock, Cost, ModelSpec, Usage};
 use thiserror::Error;
 
 use crate::trace::provider::RawSession;
@@ -158,18 +158,9 @@ fn assistant_message(
     {
         content.push(ContentBlock::Text { text });
     }
-    AssistantMessage {
-        content,
-        provider: provider.to_string(),
-        model_id: model.to_string(),
-        usage,
-        cost: Cost::default(),
-        stop_reason: StopReason::Stop,
-        error_message: None,
-        error_kind: None,
-        timestamp: current_ts(),
-        cache_hint: None,
-    }
+    AssistantMessage::new(content, provider, model)
+        .with_usage(usage)
+        .with_timestamp(current_ts())
 }
 
 /// Extract `RecordedToolCall`s from tool-kind spans using the conventional
@@ -264,8 +255,17 @@ fn build_invocation(
 /// * `llm.token_count.prompt`, `llm.token_count.completion` — optional usage.
 /// * `output.value` — optional final response text.
 /// * Tool spans: `tool.name`, `tool.parameters`, `tool.call_id`.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OpenInferenceSessionMapper;
+
+impl OpenInferenceSessionMapper {
+    /// Create a new `OpenInferenceSessionMapper`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 impl OpenInferenceSessionMapper {
     pub const PROVIDER_KEY: &'static str = "llm.provider";
@@ -295,12 +295,10 @@ impl SessionMapper for OpenInferenceSessionMapper {
 
         let input = sum_u64_attr(spans, Self::INPUT_TOKENS_KEY)?;
         let output = sum_u64_attr(spans, Self::OUTPUT_TOKENS_KEY)?;
-        let usage = Usage {
-            input,
-            output,
-            total: input.saturating_add(output),
-            ..Usage::default()
-        };
+        let usage = Usage::default()
+            .with_input(input)
+            .with_output(output)
+            .with_total(input.saturating_add(output));
         let response = first_string_attr(spans, Self::RESPONSE_KEY);
 
         let tool_calls = extract_tool_calls(
@@ -327,8 +325,17 @@ impl SessionMapper for OpenInferenceSessionMapper {
 ///   — optional usage.
 /// * `langchain.llm.output_text` — optional final response.
 /// * Tool spans: `langchain.tool.name`, `langchain.tool.input`.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LangChainSessionMapper;
+
+impl LangChainSessionMapper {
+    /// Create a new `LangChainSessionMapper`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 impl LangChainSessionMapper {
     pub const PROVIDER_KEY: &'static str = "langchain.llm.provider";
@@ -358,12 +365,10 @@ impl SessionMapper for LangChainSessionMapper {
 
         let input = sum_u64_attr(spans, Self::INPUT_TOKENS_KEY)?;
         let output = sum_u64_attr(spans, Self::OUTPUT_TOKENS_KEY)?;
-        let usage = Usage {
-            input,
-            output,
-            total: input.saturating_add(output),
-            ..Usage::default()
-        };
+        let usage = Usage::default()
+            .with_input(input)
+            .with_output(output)
+            .with_total(input.saturating_add(output));
         let response = first_string_attr(spans, Self::RESPONSE_KEY);
 
         let tool_calls = extract_tool_calls(
@@ -401,6 +406,7 @@ pub enum GenAIConventionVersion {
 ///
 /// Exposed (rather than hidden inside the mapper) so out-of-tree callers can
 /// inspect exactly which keys are consumed per version.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct GenAIAttributeTable {
     pub system: &'static str,
@@ -500,12 +506,10 @@ impl SessionMapper for OtelGenAiSessionMapper {
 
         let input = sum_u64_attr(spans, tbl.input_tokens)?;
         let output = sum_u64_attr(spans, tbl.output_tokens)?;
-        let usage = Usage {
-            input,
-            output,
-            total: input.saturating_add(output),
-            ..Usage::default()
-        };
+        let usage = Usage::default()
+            .with_input(input)
+            .with_output(output)
+            .with_total(input.saturating_add(output));
         let response = first_string_attr(spans, tbl.response_text);
 
         let tool_calls = extract_tool_calls(

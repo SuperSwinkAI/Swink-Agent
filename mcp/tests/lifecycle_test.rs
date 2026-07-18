@@ -11,7 +11,8 @@ use rmcp::transport::streamable_http_server::{
 };
 use swink_agent::{AgentEvent, AgentTool, ContentBlock, SessionState};
 use swink_agent_mcp::{
-    McpConnection, McpConnectionStatus, McpManager, McpServerConfig, McpTool, McpTransport,
+    McpConnection, McpConnectionStatus, McpManager, McpServerConfig, McpServiceHandle, McpTool,
+    McpTransport,
 };
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::oneshot;
@@ -38,19 +39,15 @@ async fn drop_manager_cleans_up_without_panic() {
 /// Verifies graceful degradation when MCP server is unavailable.
 #[tokio::test]
 async fn call_tool_on_disconnected_connection_returns_error() {
-    let config = McpServerConfig {
-        name: "disconnected-server".into(),
-        transport: McpTransport::Stdio {
+    let config = McpServerConfig::new(
+        "disconnected-server",
+        McpTransport::Stdio {
             command: "mock".into(),
             args: vec![],
             env: HashMap::default(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
     let conn = McpConnection::disconnected(config);
 
     let result = conn
@@ -120,23 +117,20 @@ async fn explicit_shutdown_emits_disconnect_event() {
     let service =
         common::spawn_mock_server_with_client(&common::MockServerConfig::new(vec![])).await;
 
-    let config = McpServerConfig {
-        name: "explicit-shutdown-server".into(),
-        transport: McpTransport::Stdio {
+    let config = McpServerConfig::new(
+        "explicit-shutdown-server",
+        McpTransport::Stdio {
             command: "mock".into(),
             args: vec![],
             env: HashMap::default(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
 
-    let conn = McpConnection::from_service(config, service, Some(event_tx))
-        .await
-        .expect("connection should succeed");
+    let conn =
+        McpConnection::from_service(config, McpServiceHandle::from_rmcp(service), Some(event_tx))
+            .await
+            .expect("connection should succeed");
 
     let _connect = event_rx.try_recv().expect("connect event");
     let _discovery = event_rx.try_recv().expect("discovery event");
@@ -189,20 +183,16 @@ async fn repeated_connect_all_replaces_prior_live_connections() {
         }
     });
 
-    let config = McpServerConfig {
-        name: "connect-all-reset-server".into(),
-        transport: McpTransport::Sse {
+    let config = McpServerConfig::new(
+        "connect-all-reset-server",
+        McpTransport::StreamableHttp {
             url: format!("http://{addr}/mcp"),
             bearer_token: None,
             bearer_auth: None,
             headers: HashMap::new(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
 
     let mut manager = McpManager::new(vec![config]);
     manager
@@ -288,23 +278,20 @@ async fn monitor_detects_transport_close_and_emits_event() {
         .await
         .expect("client should connect");
 
-    let config = McpServerConfig {
-        name: "crash-test-server".into(),
-        transport: McpTransport::Stdio {
+    let config = McpServerConfig::new(
+        "crash-test-server",
+        McpTransport::Stdio {
             command: "mock".into(),
             args: vec![],
             env: HashMap::default(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
 
-    let conn = McpConnection::from_service(config, service, Some(event_tx))
-        .await
-        .expect("connection should succeed");
+    let conn =
+        McpConnection::from_service(config, McpServiceHandle::from_rmcp(service), Some(event_tx))
+            .await
+            .expect("connection should succeed");
 
     assert_eq!(
         conn.status(),
@@ -405,20 +392,16 @@ async fn sse_session_expiry_recovers_without_wrapper_disconnect() {
     });
 
     let conn = McpConnection::connect(
-        McpServerConfig {
-            name: "sse-recovery-server".into(),
-            transport: McpTransport::Sse {
+        McpServerConfig::new(
+            "sse-recovery-server",
+            McpTransport::StreamableHttp {
                 url: format!("http://{addr}/mcp"),
                 bearer_token: None,
                 bearer_auth: None,
                 headers: HashMap::new(),
             },
-            tool_prefix: None,
-            tool_filter: None,
-            requires_approval: false,
-            connect_timeout_ms: None,
-            discovery_timeout_ms: None,
-        },
+        )
+        .with_requires_approval(false),
         Some(event_tx),
     )
     .await
@@ -442,11 +425,10 @@ async fn sse_session_expiry_recovers_without_wrapper_disconnect() {
         sessions.clear();
     }
 
-    let result = conn
+    let agent_result = conn
         .call_tool("echo", serde_json::json!({ "text": "reconnected" }))
         .await
         .expect("tool call should transparently recover after session expiry");
-    let agent_result = swink_agent_mcp::convert::call_result_to_agent_result(&result);
     let text = ContentBlock::extract_text(&agent_result.content);
     assert!(
         text.contains("reconnected"),
@@ -485,23 +467,20 @@ async fn connected_event_emitted_after_handshake() {
     let mock_cfg = common::MockServerConfig::new(vec![]);
     let service = common::spawn_mock_server_with_client(&mock_cfg).await;
 
-    let config = McpServerConfig {
-        name: "connect-event-server".into(),
-        transport: McpTransport::Stdio {
+    let config = McpServerConfig::new(
+        "connect-event-server",
+        McpTransport::Stdio {
             command: "mock".into(),
             args: vec![],
             env: HashMap::default(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
 
-    let _conn = McpConnection::from_service(config, service, Some(event_tx))
-        .await
-        .expect("connection should succeed");
+    let _conn =
+        McpConnection::from_service(config, McpServiceHandle::from_rmcp(service), Some(event_tx))
+            .await
+            .expect("connection should succeed");
 
     let first = event_rx.try_recv().expect("connect event should be queued");
     match first {
@@ -521,23 +500,20 @@ async fn tools_discovered_event_emitted_after_discovery() {
     let mock_cfg = common::MockServerConfig::new(vec![]);
     let service = common::spawn_mock_server_with_client(&mock_cfg).await;
 
-    let config = McpServerConfig {
-        name: "discovery-event-server".into(),
-        transport: McpTransport::Stdio {
+    let config = McpServerConfig::new(
+        "discovery-event-server",
+        McpTransport::Stdio {
             command: "mock".into(),
             args: vec![],
             env: HashMap::default(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
 
-    let conn = McpConnection::from_service(config, service, Some(event_tx))
-        .await
-        .expect("connection should succeed");
+    let conn =
+        McpConnection::from_service(config, McpServiceHandle::from_rmcp(service), Some(event_tx))
+            .await
+            .expect("connection should succeed");
 
     // Drain events in order and assert we see connect followed by discovery.
     let connect_evt = event_rx.try_recv().expect("connect event should fire");
@@ -575,23 +551,20 @@ async fn tool_call_events_bracket_successful_call() {
     let mock_cfg = common::MockServerConfig::new(vec![]);
     let service = common::spawn_mock_server_with_client(&mock_cfg).await;
 
-    let config = McpServerConfig {
-        name: "call-event-server".into(),
-        transport: McpTransport::Stdio {
+    let config = McpServerConfig::new(
+        "call-event-server",
+        McpTransport::Stdio {
             command: "mock".into(),
             args: vec![],
             env: HashMap::default(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
 
-    let conn = McpConnection::from_service(config, service, Some(event_tx))
-        .await
-        .expect("connection should succeed");
+    let conn =
+        McpConnection::from_service(config, McpServiceHandle::from_rmcp(service), Some(event_tx))
+            .await
+            .expect("connection should succeed");
 
     // Drain the connect + discovery events emitted during construction.
     let _connect = event_rx.try_recv().expect("connect event");
@@ -669,23 +642,20 @@ async fn tool_call_completed_event_reports_error_on_failure() {
     let mock_cfg = common::MockServerConfig::new(vec![]);
     let service = common::spawn_mock_server_with_client(&mock_cfg).await;
 
-    let config = McpServerConfig {
-        name: "error-call-event-server".into(),
-        transport: McpTransport::Stdio {
+    let config = McpServerConfig::new(
+        "error-call-event-server",
+        McpTransport::Stdio {
             command: "mock".into(),
             args: vec![],
             env: HashMap::default(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
 
-    let conn = McpConnection::from_service(config, service, Some(event_tx))
-        .await
-        .expect("connection should succeed");
+    let conn =
+        McpConnection::from_service(config, McpServiceHandle::from_rmcp(service), Some(event_tx))
+            .await
+            .expect("connection should succeed");
 
     // Drain connect + discovery events so only call-related events remain.
     let _connect = event_rx.try_recv().expect("connect event");
@@ -750,26 +720,19 @@ async fn tool_call_completed_event_reports_error_on_failure() {
 /// returning an error `AgentToolResult`, not panicking or hanging.
 #[tokio::test]
 async fn mcp_tool_execute_on_disconnected_returns_error_result() {
-    let mock_cfg = common::MockServerConfig::new(vec![]);
-    let client = common::spawn_mock_server_with_client(&mock_cfg).await;
-    let tools = client.peer().list_all_tools().await.unwrap();
-    let echo_def = tools.iter().find(|t| t.name == "echo").unwrap();
+    let echo_def = common::echo_tool_info().await;
 
-    let config = McpServerConfig {
-        name: "disconnected-server".into(),
-        transport: McpTransport::Stdio {
+    let config = McpServerConfig::new(
+        "disconnected-server",
+        McpTransport::Stdio {
             command: "mock".into(),
             args: vec![],
             env: HashMap::default(),
         },
-        tool_prefix: None,
-        tool_filter: None,
-        requires_approval: false,
-        connect_timeout_ms: None,
-        discovery_timeout_ms: None,
-    };
+    )
+    .with_requires_approval(false);
     let conn = Arc::new(McpConnection::disconnected(config));
-    let tool = McpTool::new(echo_def, None, "disconnected-server", false, conn);
+    let tool = McpTool::new(&echo_def, None, "disconnected-server", false, conn);
 
     let cancel = tokio_util::sync::CancellationToken::new();
     let state = Arc::new(std::sync::RwLock::new(SessionState::default()));

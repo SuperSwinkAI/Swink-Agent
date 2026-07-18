@@ -28,6 +28,15 @@ use super::{Agent, SharedRetryStrategy};
 /// This ensures the agent becomes idle even if the caller drops the stream
 /// without draining it to `AgentEnd`. A generation counter prevents a stale
 /// guard from clearing the flag for a newer run.
+///
+/// Note on history preservation: this guard deliberately does **not** touch
+/// `state.messages`. `start_loop` keeps a snapshot of the full pre-run
+/// context in `state.messages` (rather than leaving it empty after moving
+/// the history into the loop task), so an early drop has nothing to restore
+/// — the history was never removed from observable state. Attempting a
+/// restore from `Drop` would also be unsound: the guard has no access to
+/// `&mut Agent`, and the spawned loop task may still be running when `Drop`
+/// executes (cancellation is signalled here, not joined).
 struct LoopGuardStream {
     inner: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>,
     cancellation_token: CancellationToken,
@@ -64,6 +73,23 @@ impl Drop for LoopGuardStream {
 
 impl Agent {
     /// Start a new loop with input messages, returning an event stream.
+    ///
+    /// # Stream lifecycle
+    ///
+    /// - On start, the conversation history (plus `input`) moves into the
+    ///   spawned loop task. [`Agent::state`]'s `messages` retains a snapshot
+    ///   of that same pre-run context (custom messages that cannot be
+    ///   snapshotted are dropped with a warning).
+    /// - As the caller drains events through [`Agent::handle_stream_event`],
+    ///   completed turns are appended to `state.messages`; on `AgentEnd`,
+    ///   `state.messages` is replaced with the loop's final context.
+    /// - Dropping the stream **before** `AgentEnd` cancels the loop.
+    ///   `state.messages` keeps the pre-run history plus any turns already
+    ///   processed by the caller — nothing already observable is lost. Turns
+    ///   the loop task completed but that were never drained from the stream
+    ///   are discarded along with it.
+    /// - Draining to `AgentEnd` is the reliable way to observe the complete
+    ///   final history.
     ///
     /// # Errors
     ///
@@ -165,6 +191,15 @@ impl Agent {
 
     /// Continue from existing messages, returning an event stream.
     ///
+    /// # Stream lifecycle
+    ///
+    /// The returned stream follows the same lifecycle as
+    /// [`prompt_stream`](Self::prompt_stream): the history (plus any drained
+    /// steering/follow-up messages) moves into the loop task while
+    /// `state.messages` retains an equivalent snapshot, so dropping the
+    /// stream before `AgentEnd` does not lose the conversation. Drain to
+    /// `AgentEnd` to observe the complete final history.
+    ///
     /// # Errors
     ///
     /// Returns [`AgentError::AlreadyRunning`], [`AgentError::NoMessages`],
@@ -246,17 +281,6 @@ impl Agent {
 
         let config = self.build_loop_config();
         let system_prompt = self.state.system_prompt.clone();
-        let llm_source: Box<dyn Iterator<Item = &AgentMessage>> = if is_continue {
-            Box::new(self.state.messages.iter())
-        } else {
-            Box::new(self.state.messages.iter().chain(input.iter()))
-        };
-        let in_flight_llm_messages: Vec<AgentMessage> = llm_source
-            .filter_map(|msg| match msg {
-                AgentMessage::Llm(llm) => Some(AgentMessage::Llm(llm.clone())),
-                AgentMessage::Custom(_) => None,
-            })
-            .collect();
 
         let mut initial_new_messages_len = input.len();
         let messages_for_loop = if is_continue {
@@ -277,7 +301,19 @@ impl Agent {
             msgs.extend(input);
             msgs
         };
-        let in_flight_messages = clone_messages_for_send(&messages_for_loop);
+        // History-loss guard: `messages_for_loop` (which now owns the entire
+        // conversation history) moves into the spawned loop task below. Leave
+        // an equivalent snapshot in `state.messages` so that dropping the
+        // returned stream before `AgentEnd` cannot silently empty the
+        // observable history. Every completion path (`collect_stream` and
+        // `handle_stream_event` on `AgentEnd`) replaces `state.messages`
+        // wholesale, so this snapshot is never double-counted. Custom
+        // messages that cannot be snapshotted by `clone_messages_for_send`
+        // are dropped here with a warning — the same limitation every other
+        // state-rebuild path already has. This is the only full history pass
+        // per run: `state.messages` doubles as the pause/checkpoint fallback
+        // that the removed `in_flight_messages` field used to provide.
+        self.state.messages = clone_messages_for_send(&messages_for_loop);
 
         let raw_stream = if is_continue {
             agent_loop_continue(
@@ -297,9 +333,6 @@ impl Agent {
             )
         };
 
-        self.in_flight_llm_messages = Some(in_flight_llm_messages);
-        self.in_flight_messages = Some(in_flight_messages);
-
         let guarded: Pin<Box<dyn Stream<Item = AgentEvent> + Send>> = Box::pin(LoopGuardStream {
             inner: raw_stream,
             cancellation_token: token,
@@ -313,30 +346,84 @@ impl Agent {
         Ok(guarded)
     }
 
-    #[allow(clippy::type_complexity)]
+    #[allow(clippy::type_complexity, clippy::too_many_lines)]
     fn build_loop_config(&self) -> AgentLoopConfig {
-        let convert = Arc::clone(&self.convert_to_llm);
+        // ── Field-mirroring drift guard ─────────────────────────────────
+        // Destructure `self` exhaustively (no `..` rest pattern) so that
+        // adding a field to `Agent` is a compile error right here until it
+        // is either mirrored into the loop config below or consciously
+        // ignored with a `_` binding. Without this, a new Agent setting
+        // whose mirror line was forgotten would silently never reach the
+        // running loop.
+        let Self {
+            id: _,
+            state,
+            steering_queue,
+            follow_up_queue,
+            listeners: _,
+            abort_controller: _,
+            steering_mode,
+            follow_up_mode,
+            stream_fn,
+            convert_to_llm,
+            transform_context,
+            get_api_key,
+            retry_strategy,
+            stream_options,
+            structured_output_max_retries: _,
+            idle_notify: _,
+            pending_message_snapshot,
+            loop_context_snapshot,
+            approve_tool,
+            approval_mode,
+            pre_turn_policies,
+            pre_dispatch_policies,
+            post_turn_policies,
+            post_loop_policies,
+            model_stream_fns: _,
+            event_forwarders: _,
+            async_transform_context,
+            checkpoint_store: _,
+            custom_message_registry: _,
+            metrics_collector,
+            fallback,
+            external_message_provider,
+            tool_execution_policy,
+            plan_mode_addendum: _,
+            session_state,
+            credential_resolver,
+            credential_timeout,
+            cache_config,
+            dynamic_system_prompt,
+            cost_calculator,
+            loop_active: _,
+            loop_generation: _,
+            #[cfg(feature = "plugins")]
+                plugins: _,
+            agent_name,
+            transfer_chain,
+        } = self;
+
+        let convert = Arc::clone(convert_to_llm);
         let convert_box: Box<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + Sync> =
             Box::new(move |msg| convert(msg));
 
-        let transform = self.transform_context.as_ref().map(Arc::clone);
-
-        let api_key_box = self.get_api_key.as_ref().map(|k| {
+        let api_key_box = get_api_key.as_ref().map(|k| {
             let k = Arc::clone(k);
             let b: Box<GetApiKeyFn> = Box::new(move |provider| k(provider));
             b
         });
 
         let queue_provider: Arc<dyn MessageProvider> = Arc::new(QueueMessageProvider {
-            steering_queue: Arc::clone(&self.steering_queue),
-            follow_up_queue: Arc::clone(&self.follow_up_queue),
-            steering_mode: self.steering_mode,
-            follow_up_mode: self.follow_up_mode,
-            pending_message_snapshot: Arc::clone(&self.pending_message_snapshot),
+            steering_queue: Arc::clone(steering_queue),
+            follow_up_queue: Arc::clone(follow_up_queue),
+            steering_mode: *steering_mode,
+            follow_up_mode: *follow_up_mode,
+            pending_message_snapshot: Arc::clone(pending_message_snapshot),
         });
 
         let message_provider: Arc<dyn MessageProvider> =
-            if let Some(ref external) = self.external_message_provider {
+            if let Some(external) = external_message_provider {
                 Arc::new(crate::message_provider::ComposedMessageProvider::new(
                     queue_provider,
                     Arc::clone(external),
@@ -345,50 +432,44 @@ impl Agent {
                 queue_provider
             };
 
-        let mut config = AgentLoopConfig::new(
-            self.state.model.clone(),
-            Arc::clone(&self.stream_fn),
-            convert_box,
-        )
-        .with_runtime_snapshots(
-            Arc::clone(&self.pending_message_snapshot),
-            Arc::clone(&self.loop_context_snapshot),
-        );
-        config.agent_name.clone_from(&self.agent_name);
-        config.transfer_chain.clone_from(&self.transfer_chain);
-        config.stream_options = self.stream_options.clone();
-        config.retry_strategy = Box::new(SharedRetryStrategy(Arc::clone(&self.retry_strategy)));
-        config.tools.clone_from(&self.state.tools);
-        config.transform_context = transform;
+        let mut config =
+            AgentLoopConfig::new(state.model.clone(), Arc::clone(stream_fn), convert_box)
+                .with_runtime_snapshots(
+                    Arc::clone(pending_message_snapshot),
+                    Arc::clone(loop_context_snapshot),
+                );
+        config.agent_name.clone_from(agent_name);
+        config.transfer_chain.clone_from(transfer_chain);
+        config.stream_options = stream_options.clone();
+        config.retry_strategy = Box::new(SharedRetryStrategy(Arc::clone(retry_strategy)));
+        config.tools.clone_from(&state.tools);
+        config.transform_context = transform_context.as_ref().map(Arc::clone);
         config.get_api_key = api_key_box;
         config.message_provider = Some(message_provider);
-        config.approve_tool = self.approve_tool.as_ref().map(|a| {
+        config.approve_tool = approve_tool.as_ref().map(|a| {
             let a = Arc::clone(a);
             let b: Box<ApproveToolFn> = Box::new(move |req| a(req));
             b
         });
-        config.approval_mode = self.approval_mode;
-        config.pre_turn_policies.clone_from(&self.pre_turn_policies);
+        config.approval_mode = *approval_mode;
+        config.pre_turn_policies.clone_from(pre_turn_policies);
         config
             .pre_dispatch_policies
-            .clone_from(&self.pre_dispatch_policies);
-        config
-            .post_turn_policies
-            .clone_from(&self.post_turn_policies);
-        config
-            .post_loop_policies
-            .clone_from(&self.post_loop_policies);
-        config.async_transform_context = self.async_transform_context.as_ref().map(Arc::clone);
-        config.metrics_collector = self.metrics_collector.as_ref().map(Arc::clone);
-        config.fallback.clone_from(&self.fallback);
-        config.tool_execution_policy = self.tool_execution_policy.clone();
-        config.session_state = Arc::clone(&self.session_state);
-        config.credential_resolver = self.credential_resolver.as_ref().map(Arc::clone);
-        config.credential_timeout = self.credential_timeout;
-        config.cache_config.clone_from(&self.cache_config);
+            .clone_from(pre_dispatch_policies);
+        config.post_turn_policies.clone_from(post_turn_policies);
+        config.post_loop_policies.clone_from(post_loop_policies);
+        config.async_transform_context = async_transform_context.as_ref().map(Arc::clone);
+        config.metrics_collector = metrics_collector.as_ref().map(Arc::clone);
+        config.fallback.clone_from(fallback);
+        config.tool_execution_policy = tool_execution_policy.clone();
+        config.session_state = Arc::clone(session_state);
+        config.credential_resolver = credential_resolver.as_ref().map(Arc::clone);
+        config.credential_timeout = *credential_timeout;
+        config.cache_config.clone_from(cache_config);
         config
             .dynamic_system_prompt
-            .clone_from(&self.dynamic_system_prompt);
+            .clone_from(dynamic_system_prompt);
+        config.cost_calculator = cost_calculator.as_ref().map(Arc::clone);
         config
     }
 }

@@ -18,6 +18,7 @@ use crate::tools::{ExtractTool, FetchTool, ScreenshotTool, SearchTool};
 ///
 /// These replace the previous panics on recoverable misconfiguration so that
 /// hosts embedding the plugin can surface a diagnostic instead of aborting.
+#[non_exhaustive]
 #[derive(Debug, Error)]
 pub enum WebPluginError {
     /// The underlying `reqwest` HTTP client failed to build (e.g. invalid
@@ -74,6 +75,7 @@ impl WebPlugin {
     /// configured search provider is unavailable (missing feature flag or
     /// missing API key).
     pub fn from_config(config: WebPluginConfig) -> Result<Self, WebPluginError> {
+        crate::ensure_default_crypto_provider();
         let http_client = reqwest::Client::builder()
             .user_agent(&config.user_agent)
             .redirect(reqwest::redirect::Policy::none())

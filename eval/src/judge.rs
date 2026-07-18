@@ -113,6 +113,7 @@ pub type JudgeFuture<'a> =
     Pin<Box<dyn Future<Output = Result<JudgeVerdict, JudgeError>> + Send + 'a>>;
 
 /// Retry configuration shared by judge-backed evaluators.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RetryPolicy {
     /// Maximum number of attempts for one judge request.
@@ -576,6 +577,7 @@ impl JudgeRegistryBuilder {
 }
 
 /// Errors returned while constructing a [`JudgeRegistry`].
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum JudgeRegistryError {
     /// No explicit model identifier was provided.
@@ -593,6 +595,7 @@ pub enum JudgeRegistryError {
 ///
 /// Mirrors `strands-evals::EvaluationOutput` so future provider bindings can
 /// map cleanly without provider-specific types leaking into this crate.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JudgeVerdict {
     /// Numeric score in `[0.0, 1.0]`. Callers SHOULD clamp before constructing.
@@ -616,10 +619,51 @@ pub struct JudgeVerdict {
     pub cost: Option<f64>,
 }
 
+impl JudgeVerdict {
+    /// Create a verdict with the given raw score and pass flag; reason, label,
+    /// and cost default to `None`.
+    ///
+    /// The score is stored verbatim — clamping to `[0.0, 1.0]` (and recording a
+    /// `ScoreClamped` detail, FR-021) is `dispatch_judge`'s job. Clamping here
+    /// would hide out-of-range judge scores from that instrumentation.
+    #[must_use]
+    pub fn new(score: f64, pass: bool) -> Self {
+        Self {
+            score,
+            pass,
+            reason: None,
+            label: None,
+            cost: None,
+        }
+    }
+
+    /// Set the human-readable justification.
+    #[must_use]
+    pub fn with_reason(mut self, reason: impl Into<String>) -> Self {
+        self.reason = Some(reason.into());
+        self
+    }
+
+    /// Set the optional category label.
+    #[must_use]
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    /// Set the dollar cost of the judge call.
+    #[must_use]
+    pub fn with_cost(mut self, cost: f64) -> Self {
+        self.cost = Some(cost);
+        self
+    }
+}
+
 /// Error type returned by [`JudgeClient::judge`].
 ///
 /// Semantic evaluators map every variant to `Score::fail()` with the variant
 /// name and context captured in `EvalMetricResult.details` (FR-014).
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum JudgeError {
     /// Network or transport failure (connection refused, DNS error, etc.).

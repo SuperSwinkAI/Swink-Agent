@@ -22,17 +22,16 @@ use swink_agent_local_llm::{
 };
 
 fn simple_context(prompt: &str) -> AgentContext {
-    AgentContext {
-        system_prompt: "You are a helpful assistant. Be concise.".to_string(),
-        messages: vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
+    AgentContext::new(
+        "You are a helpful assistant. Be concise.",
+        vec![AgentMessage::Llm(LlmMessage::User(
+            UserMessage::new(vec![ContentBlock::Text {
                 text: prompt.to_string(),
-            }],
-            timestamp: 0,
-            cache_hint: None,
-        }))],
-        tools: vec![],
-    }
+            }])
+            .with_timestamp(0),
+        ))],
+        vec![],
+    )
 }
 
 /// Try to load the local model, returning `None` if the download fails
@@ -198,17 +197,16 @@ mod gemma4_live {
     use swink_agent_local_llm::ModelPreset;
 
     fn gemma4_context(system: &str, prompt: &str) -> AgentContext {
-        AgentContext {
-            system_prompt: system.to_string(),
-            messages: vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
+        AgentContext::new(
+            system,
+            vec![AgentMessage::Llm(LlmMessage::User(
+                UserMessage::new(vec![ContentBlock::Text {
                     text: prompt.to_string(),
-                }],
-                timestamp: 0,
-                cache_hint: None,
-            }))],
-            tools: vec![],
-        }
+                }])
+                .with_timestamp(0),
+            ))],
+            vec![],
+        )
     }
 
     async fn ready_gemma4_or_skip() -> Option<Arc<LocalModel>> {
@@ -344,11 +342,8 @@ mod gemma4_live {
         let stream_fn = LocalStreamFn::new(Arc::clone(&local_model));
 
         // Build a ModelSpec with thinking enabled.
-        let mut model = ModelSpec::new("local", "gemma-4-E2B-it");
-        model.capabilities = Some(ModelCapabilities {
-            supports_thinking: true,
-            ..Default::default()
-        });
+        let model = ModelSpec::new("local", "gemma-4-E2B-it")
+            .with_capabilities(ModelCapabilities::default().with_thinking(true));
         let options = StreamOptions::default();
 
         let ctx = gemma4_context(

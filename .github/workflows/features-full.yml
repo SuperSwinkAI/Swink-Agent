@@ -1,0 +1,45 @@
+name: Features (full matrix)
+
+# The combinatorial feature work, moved off the PR critical path (ci.yml's
+# `features` job keeps the cheap per-PR sentinels). A feature-combination
+# break found here surfaces minutes after merge instead of pre-merge; with
+# the admin-merge flow that trade buys back the single most expensive PR job
+# (the workspace recompiled once per feature, ~127 combos). Failures show as
+# a red X on the integration/main commit.
+on:
+  push:
+    branches: [integration, main]
+  schedule:
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  features-full:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: ./.github/actions/rust-setup
+        with:
+          cache-key: features-full
+
+      - uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
+
+      - run: cargo binstall --no-confirm --force cargo-hack
+
+      # Each-feature check (excludes local-llm: metal/cuda/cudnn/vulkan all
+      # need GPU toolchains unavailable on ubuntu-latest).
+      # No --locked here: --no-dev-deps rewrites Cargo.toml while cargo-hack
+      # runs, and --locked then refuses to update Cargo.lock. The two flags
+      # are mutually exclusive. Every other step keeps --locked.
+      - name: cargo hack (each feature)
+        run: cargo hack check --workspace --each-feature --no-dev-deps --exclude swink-agent-local-llm
+
+      # All-features workspace test
+      - name: Test (all features)
+        run: cargo test --workspace --all-features --exclude swink-agent-local-llm --locked

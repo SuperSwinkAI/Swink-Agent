@@ -19,6 +19,16 @@
 //! `cfg`-gated item fails to resolve.)
 
 mod in_memory;
+
+/// Ensure a process-wide default rustls crypto provider is installed.
+///
+/// The workspace builds reqwest with `rustls-no-provider` (#1110), so a
+/// `reqwest::Client` cannot be constructed until a process default
+/// [`rustls::crypto::CryptoProvider`] exists. Installs ring; idempotent —
+/// an already-installed provider (e.g. a host's aws-lc-rs for FIPS) wins.
+pub(crate) fn ensure_default_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
 #[cfg(feature = "keychain")]
 mod keychain;
 pub mod oauth2;

@@ -11,6 +11,7 @@ use swink_agent::{ContentBlock, PolicyContext, PolicyVerdict, PostTurnPolicy, Tu
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 /// A single filter rule consisting of a compiled regex and metadata.
+#[non_exhaustive]
 #[derive(Debug)]
 pub struct FilterRule {
     /// The compiled regex pattern.
@@ -19,6 +20,32 @@ pub struct FilterRule {
     pub display_name: String,
     /// Optional category for selective filtering.
     pub category: Option<String>,
+}
+
+impl FilterRule {
+    /// Compile `pattern` into a standalone rule with no category, using the
+    /// pattern text itself as the display name. Adjust the public fields
+    /// afterwards to customize either.
+    ///
+    /// This is the direct counterpart to [`ContentFilter::with_regex`] for
+    /// constructing rules outside a filter (e.g. in unit tests).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContentFilterError::InvalidRegex`] if the pattern fails to
+    /// compile.
+    pub fn new(pattern: &str) -> Result<Self, ContentFilterError> {
+        let compiled =
+            compile_regex(pattern).map_err(|source| ContentFilterError::InvalidRegex {
+                pattern: pattern.to_string(),
+                source,
+            })?;
+        Ok(Self {
+            pattern: compiled,
+            display_name: pattern.to_string(),
+            category: None,
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -30,6 +57,7 @@ struct KeywordRule {
 }
 
 /// Errors returned when constructing a [`ContentFilter`].
+#[non_exhaustive]
 #[derive(Debug)]
 pub enum ContentFilterError {
     /// The supplied regex pattern failed to compile.
@@ -109,12 +137,7 @@ impl ContentFilter {
     /// Returns [`ContentFilterError::InvalidRegex`] if the pattern fails to
     /// compile.
     pub fn with_regex(mut self, pattern: &str) -> Result<Self, ContentFilterError> {
-        let compiled = Self::compile_rule(pattern)?;
-        self.regex_rules.push(FilterRule {
-            pattern: compiled,
-            display_name: pattern.to_string(),
-            category: None,
-        });
+        self.regex_rules.push(FilterRule::new(pattern)?);
         Ok(self)
     }
 
@@ -145,12 +168,9 @@ impl ContentFilter {
         category: impl Into<String>,
         pattern: &str,
     ) -> Result<Self, ContentFilterError> {
-        let compiled = Self::compile_rule(pattern)?;
-        self.regex_rules.push(FilterRule {
-            pattern: compiled,
-            display_name: pattern.to_string(),
-            category: Some(category.into()),
-        });
+        let mut rule = FilterRule::new(pattern)?;
+        rule.category = Some(category.into());
+        self.regex_rules.push(rule);
         Ok(self)
     }
 
@@ -204,13 +224,6 @@ impl ContentFilter {
             (Some(cat), Some(enabled)) => enabled.contains(cat),
             _ => true,
         }
-    }
-
-    fn compile_rule(pattern: &str) -> Result<Regex, ContentFilterError> {
-        compile_regex(pattern).map_err(|source| ContentFilterError::InvalidRegex {
-            pattern: pattern.to_string(),
-            source,
-        })
     }
 
     fn push_keyword_rule(&mut self, category: Option<String>, word: String) {
@@ -300,45 +313,24 @@ mod tests {
         cost: &'a Cost,
         state: &'a swink_agent::SessionState,
     ) -> PolicyContext<'a> {
-        PolicyContext {
-            turn_index: 0,
-            accumulated_usage: usage,
-            accumulated_cost: cost,
-            message_count: 0,
-            overflow_signal: false,
-            new_messages: &[],
-            state,
-        }
+        PolicyContext::new(0, usage, cost, 0, false, &[], state)
     }
 
     fn make_turn_ctx(msg: &AssistantMessage) -> TurnPolicyContext<'_> {
         static MODEL: std::sync::LazyLock<swink_agent::ModelSpec> =
             std::sync::LazyLock::new(|| swink_agent::ModelSpec::new("test", "test-model"));
-        TurnPolicyContext {
-            assistant_message: msg,
-            tool_results: &[],
-            stop_reason: StopReason::Stop,
-            system_prompt: "",
-            model_spec: &MODEL,
-            context_messages: &[],
-        }
+        TurnPolicyContext::new(msg, &[], StopReason::Stop, "", &MODEL, &[])
     }
 
     fn make_msg(text: &str) -> AssistantMessage {
-        AssistantMessage {
-            content: vec![ContentBlock::Text {
+        AssistantMessage::new(
+            vec![ContentBlock::Text {
                 text: text.to_string(),
             }],
-            provider: String::new(),
-            model_id: String::new(),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::Stop,
-            error_message: None,
-            error_kind: None,
-            timestamp: 0,
-            cache_hint: None,
-        }
+            String::new(),
+            String::new(),
+        )
+        .with_timestamp(0)
     }
 
     #[test]
@@ -455,6 +447,20 @@ mod tests {
         let result = ContentFilter::new().with_regex("[invalid");
         assert!(result.is_err());
         let err = result.unwrap_err();
+        assert!(matches!(err, ContentFilterError::InvalidRegex { .. }));
+    }
+
+    #[test]
+    fn filter_rule_new_compiles_standalone_rule() {
+        let rule = FilterRule::new(r"(?i)top\s+secret").expect("valid regex");
+        assert!(rule.pattern.is_match("This is Top Secret material."));
+        assert_eq!(rule.display_name, r"(?i)top\s+secret");
+        assert!(rule.category.is_none());
+    }
+
+    #[test]
+    fn filter_rule_new_rejects_invalid_regex() {
+        let err = FilterRule::new("[invalid").unwrap_err();
         assert!(matches!(err, ContentFilterError::InvalidRegex { .. }));
     }
 

@@ -18,6 +18,7 @@ pub use duckduckgo::DuckDuckGoProvider;
 pub use tavily::TavilyProvider;
 
 /// A single search result.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     pub title: String,
@@ -25,7 +26,24 @@ pub struct SearchResult {
     pub snippet: String,
 }
 
+impl SearchResult {
+    /// Construct a new `SearchResult`.
+    #[must_use]
+    pub fn new(
+        title: impl Into<String>,
+        url: impl Into<String>,
+        snippet: impl Into<String>,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            url: url.into(),
+            snippet: snippet.into(),
+        }
+    }
+}
+
 /// Errors from search providers.
+#[non_exhaustive]
 #[derive(Debug, Error)]
 pub enum SearchError {
     #[error("Network error: {0}")]

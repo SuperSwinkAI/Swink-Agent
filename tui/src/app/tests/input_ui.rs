@@ -13,9 +13,6 @@ use crate::session::{JsonlSessionStore, SessionMeta, SessionStore};
 use super::super::*;
 use super::helpers::*;
 
-/// Guards tests that depend on the global `COLOR_MODE` atomic from running in parallel.
-static COLOR_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 #[tokio::test]
 async fn capital_e_inserts_char() {
     let mut app = App::new(TuiConfig::default());
@@ -24,7 +21,7 @@ async fn capital_e_inserts_char() {
     app.handle_key_event(key);
 
     assert_eq!(
-        app.input.lines()[0],
+        app.editor.input.lines()[0],
         "E",
         "Shift+E should insert 'E' into input"
     );
@@ -34,11 +31,11 @@ async fn capital_e_inserts_char() {
 async fn f3_cycles_color_mode() {
     use crate::theme::{self, ColorMode};
 
-    let _guard = COLOR_TEST_LOCK.lock().unwrap();
-
     let mut app = App::new(TuiConfig::default());
 
-    // Set color mode AFTER App::new(), since construction resets the global from config.
+    // Set color mode AFTER App::new(), since construction applies config.color_mode.
+    // No lock needed: under cfg(test) the mode is thread-local, so this test's
+    // App::new cannot be stomped by another test's. See `theme`'s module docs.
     theme::set_color_mode(ColorMode::Custom);
 
     let key = KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE);
@@ -58,33 +55,33 @@ async fn f3_cycles_color_mode() {
 #[tokio::test]
 async fn shift_left_right_cycles_from_input_focus() {
     let mut app = App::new(TuiConfig::default());
-    app.messages.push(make_tool_result_message("tool 1"));
-    app.messages.push(make_user_message("hello"));
-    app.messages.push(make_tool_result_message("tool 2"));
+    app.view.messages.push(make_tool_result_message("tool 1"));
+    app.view.messages.push(make_user_message("hello"));
+    app.view.messages.push(make_tool_result_message("tool 2"));
 
-    assert_eq!(app.focus, Focus::Input);
-    assert_eq!(app.selected_tool_block, None);
+    assert_eq!(app.view.focus, Focus::Input);
+    assert_eq!(app.view.selected_tool_block, None);
 
     let key = KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT);
     app.handle_key_event(key);
-    assert_eq!(app.selected_tool_block, Some(0));
-    assert_eq!(app.focus, Focus::Input, "focus should stay on input");
+    assert_eq!(app.view.selected_tool_block, Some(0));
+    assert_eq!(app.view.focus, Focus::Input, "focus should stay on input");
 
     app.handle_key_event(key);
-    assert_eq!(app.selected_tool_block, Some(2));
+    assert_eq!(app.view.selected_tool_block, Some(2));
 
     let key = KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT);
     app.handle_key_event(key);
-    assert_eq!(app.selected_tool_block, Some(0));
-    assert_eq!(app.focus, Focus::Input, "focus should stay on input");
+    assert_eq!(app.view.selected_tool_block, Some(0));
+    assert_eq!(app.view.focus, Focus::Input, "focus should stay on input");
 }
 
 #[tokio::test]
 async fn mouse_scroll_over_conversation_scrolls_history() {
     let mut app = App::new(TuiConfig::default());
-    app.conversation_area = Rect::new(0, 0, 40, 10);
-    app.conversation.scroll_offset = 6;
-    app.focus = Focus::Input;
+    app.view.conversation_area = Rect::new(0, 0, 40, 10);
+    app.view.conversation.scroll_offset = 6;
+    app.view.focus = Focus::Input;
 
     app.handle_mouse_event(MouseEvent {
         kind: MouseEventKind::ScrollUp,
@@ -93,16 +90,16 @@ async fn mouse_scroll_over_conversation_scrolls_history() {
         modifiers: KeyModifiers::NONE,
     });
 
-    assert_eq!(app.conversation.scroll_offset, 3);
-    assert_eq!(app.focus, Focus::Input);
+    assert_eq!(app.view.conversation.scroll_offset, 3);
+    assert_eq!(app.view.focus, Focus::Input);
 }
 
 #[tokio::test]
 async fn mouse_scroll_outside_conversation_does_nothing() {
     let mut app = App::new(TuiConfig::default());
-    app.conversation_area = Rect::new(0, 0, 40, 10);
-    app.conversation.scroll_offset = 6;
-    app.focus = Focus::Input;
+    app.view.conversation_area = Rect::new(0, 0, 40, 10);
+    app.view.conversation.scroll_offset = 6;
+    app.view.focus = Focus::Input;
 
     app.handle_mouse_event(MouseEvent {
         kind: MouseEventKind::ScrollUp,
@@ -111,20 +108,20 @@ async fn mouse_scroll_outside_conversation_does_nothing() {
         modifiers: KeyModifiers::NONE,
     });
 
-    assert_eq!(app.conversation.scroll_offset, 6);
-    assert_eq!(app.focus, Focus::Input);
+    assert_eq!(app.view.conversation.scroll_offset, 6);
+    assert_eq!(app.view.focus, Focus::Input);
 }
 
 #[tokio::test]
 async fn page_scroll_uses_actual_conversation_height() {
     let mut app = App::new(TuiConfig::default());
-    app.conversation_visible_height = 7;
-    app.conversation.scroll_offset = 10;
+    app.view.conversation_visible_height = 7;
+    app.view.conversation.scroll_offset = 10;
 
     let key = KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE);
     app.handle_key_event(key);
 
-    assert_eq!(app.conversation.scroll_offset, 3);
+    assert_eq!(app.view.conversation.scroll_offset, 3);
 }
 
 #[tokio::test]
@@ -132,15 +129,18 @@ async fn trim_messages_keeps_newest_twenty_turns() {
     let mut app = App::new(TuiConfig::default());
 
     for turn in 1..=25 {
-        app.messages
+        app.view
+            .messages
             .push(make_user_message(&format!("user {turn}")));
-        app.messages
+        app.view
+            .messages
             .push(make_assistant_message(&format!("assistant {turn}")));
     }
 
     app.trim_messages_to_recent_turns();
 
     let visible_users: Vec<&str> = app
+        .view
         .messages
         .iter()
         .filter(|message| message.role == MessageRole::User)
@@ -156,22 +156,29 @@ async fn trim_messages_repairs_selected_tool_block() {
     let mut app = App::new(TuiConfig::default());
 
     for turn in 1..=21 {
-        app.messages
+        app.view
+            .messages
             .push(make_user_message(&format!("user {turn}")));
         if turn == 21 {
-            app.messages.push(make_tool_result_message("tool output"));
+            app.view
+                .messages
+                .push(make_tool_result_message("tool output"));
         } else {
-            app.messages
+            app.view
+                .messages
                 .push(make_assistant_message(&format!("assistant {turn}")));
         }
     }
-    app.selected_tool_block = Some(app.messages.len() - 1);
+    app.view.selected_tool_block = Some(app.view.messages.len() - 1);
 
     app.trim_messages_to_recent_turns();
 
-    assert_eq!(app.selected_tool_block, Some(app.messages.len() - 1));
+    assert_eq!(
+        app.view.selected_tool_block,
+        Some(app.view.messages.len() - 1)
+    );
     assert!(matches!(
-        app.messages[app.selected_tool_block.unwrap()].role,
+        app.view.messages[app.view.selected_tool_block.unwrap()].role,
         MessageRole::ToolResult
     ));
 }
@@ -179,20 +186,22 @@ async fn trim_messages_repairs_selected_tool_block() {
 #[tokio::test]
 async fn trim_messages_clamps_scroll_offset() {
     let mut app = App::new(TuiConfig::default());
-    app.conversation_visible_height = 5;
-    app.conversation.scroll_offset = 40;
+    app.view.conversation_visible_height = 5;
+    app.view.conversation.scroll_offset = 40;
 
     for turn in 1..=25 {
-        app.messages
+        app.view
+            .messages
             .push(make_user_message(&format!("user {turn}")));
-        app.messages
+        app.view
+            .messages
             .push(make_assistant_message(&format!("assistant {turn}")));
     }
-    app.conversation.set_rendered_lines_for_test(12);
+    app.view.conversation.set_rendered_lines_for_test(12);
 
     app.trim_messages_to_recent_turns();
 
-    assert_eq!(app.conversation.scroll_offset, 7);
+    assert_eq!(app.view.conversation.scroll_offset, 7);
 }
 
 #[tokio::test]
@@ -206,32 +215,26 @@ async fn load_session_keeps_full_agent_state_but_trims_visible_history() {
     }
     let session_id = "session-1";
     let now = swink_agent_memory::now_utc();
-    let meta = SessionMeta {
-        id: session_id.to_string(),
-        title: "mock-model".to_string(),
-        created_at: now,
-        updated_at: now,
-        version: 1,
-        sequence: 0,
-    };
+    let meta = SessionMeta::new(session_id, "mock-model", now, now);
     store.save(session_id, &meta, &full_messages).unwrap();
 
     let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent(stream_fn);
     let mut app = App::new(TuiConfig::default());
-    app.session_store = Some(store);
+    app.session.session_store = Some(store);
     app.set_agent(agent);
 
     app.load_session(session_id).unwrap();
 
     let visible_turns = app
+        .view
         .messages
         .iter()
         .filter(|message| message.role == MessageRole::User)
         .count();
     assert_eq!(visible_turns, 20);
     assert_eq!(
-        app.agent.as_ref().unwrap().state().messages.len(),
+        app.agent_io.agent.as_ref().unwrap().state().messages.len(),
         full_messages.len()
     );
 }
@@ -270,48 +273,51 @@ fn minimum_terminal_size_check() {
 #[test]
 fn tick_toggles_blink_and_sets_dirty() {
     let mut app = App::new(TuiConfig::default());
-    app.status = AgentStatus::Running;
-    app.dirty = false;
+    app.agent_io.status = AgentStatus::Running;
+    app.view.dirty = false;
 
     // Blink toggles every 23 ticks (~759ms at 33ms tick cadence)
     for _ in 0..23 {
         app.tick();
     }
 
-    assert!(!app.blink_on, "blink should have toggled after 23 ticks");
-    assert!(app.dirty, "dirty should be set when agent is running");
+    assert!(
+        !app.view.blink_on,
+        "blink should have toggled after 23 ticks"
+    );
+    assert!(app.view.dirty, "dirty should be set when agent is running");
 }
 
 #[test]
 fn tab_cycles_focus_from_input() {
     let mut app = App::new(TuiConfig::default());
-    assert_eq!(app.focus, Focus::Input);
+    assert_eq!(app.view.focus, Focus::Input);
 
     let tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
     app.handle_key_event(tab);
-    assert_eq!(app.focus, Focus::Conversation);
+    assert_eq!(app.view.focus, Focus::Conversation);
 }
 
 #[test]
 fn non_navigation_key_returns_focus_to_input() {
     // When focus is on Conversation, any non-navigation key switches back to Input
     let mut app = App::new(TuiConfig::default());
-    app.focus = Focus::Conversation;
+    app.view.focus = Focus::Conversation;
 
     // A regular character key should switch focus back to Input
     let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
     app.handle_key_event(key);
-    assert_eq!(app.focus, Focus::Input);
+    assert_eq!(app.view.focus, Focus::Input);
 }
 
 #[test]
 fn resize_event_sets_dirty() {
     let mut app = App::new(TuiConfig::default());
-    app.dirty = false;
+    app.view.dirty = false;
 
     app.handle_terminal_event(&crossterm::event::Event::Resize(120, 40));
 
-    assert!(app.dirty, "resize should set dirty flag");
+    assert!(app.view.dirty, "resize should set dirty flag");
 }
 
 #[test]
@@ -320,8 +326,8 @@ fn with_session_store_overrides_default_store_and_id() {
     let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
     let app =
         App::new(TuiConfig::default()).with_session_store(store, "tui_chat_custom-id".to_string());
-    assert_eq!(app.session_id, "tui_chat_custom-id");
-    assert!(app.session_store.is_some());
+    assert_eq!(app.session.session_id, "tui_chat_custom-id");
+    assert!(app.session.session_store.is_some());
 }
 
 #[tokio::test]
@@ -331,14 +337,7 @@ async fn resume_into_loads_existing_session() {
 
     let session_id = "session-resume-test";
     let now = swink_agent_memory::now_utc();
-    let meta = SessionMeta {
-        id: session_id.to_string(),
-        title: "mock-model".to_string(),
-        created_at: now,
-        updated_at: now,
-        version: 1,
-        sequence: 0,
-    };
+    let meta = SessionMeta::new(session_id, "mock-model", now, now);
     let messages = vec![
         make_user_agent_message("hello"),
         make_assistant_agent_message("world"),
@@ -353,7 +352,7 @@ async fn resume_into_loads_existing_session() {
         "resume_into should succeed for existing session"
     );
     assert_eq!(
-        app.session_id, session_id,
+        app.session.session_id, session_id,
         "session_id updated after resume"
     );
 }
@@ -374,19 +373,23 @@ async fn repeated_auto_save_preserves_created_at_and_advances_sequence() {
     app.set_agent(agent);
 
     // Populate at least one message so the save has content to persist.
-    if let Some(ref mut agent) = app.agent {
+    if let Some(ref mut agent) = app.agent_io.agent {
         agent.set_messages(vec![make_user_agent_message("hello")]);
     }
 
     // First save: auto-save writes transcript and session-state together, so
     // the store sequence advances once.
     app.auto_save_session().expect("first save should succeed");
-    let first_meta = app.session_meta.clone().expect("meta set after save");
+    let first_meta = app
+        .session
+        .session_meta
+        .clone()
+        .expect("meta set after save");
     let created_at = first_meta.created_at;
     assert_eq!(first_meta.sequence, 1, "local sequence mirrors the store");
 
     // Second save: previously failed silently with a sequence conflict.
-    if let Some(ref mut agent) = app.agent {
+    if let Some(ref mut agent) = app.agent_io.agent {
         agent.set_messages(vec![
             make_user_agent_message("hello"),
             make_assistant_agent_message("world"),
@@ -394,7 +397,7 @@ async fn repeated_auto_save_preserves_created_at_and_advances_sequence() {
     }
     app.auto_save_session()
         .expect("second save should succeed without sequence conflict");
-    let second_meta = app.session_meta.clone().unwrap();
+    let second_meta = app.session.session_meta.clone().unwrap();
     assert_eq!(second_meta.sequence, 2, "sequence advanced on second save");
     assert_eq!(
         second_meta.created_at, created_at,
@@ -403,7 +406,7 @@ async fn repeated_auto_save_preserves_created_at_and_advances_sequence() {
 
     // Third save — make sure advancement keeps working.
     app.auto_save_session().expect("third save should succeed");
-    assert_eq!(app.session_meta.as_ref().unwrap().sequence, 3);
+    assert_eq!(app.session.session_meta.as_ref().unwrap().sequence, 3);
 
     // Reload from disk and confirm the persisted state matches what we expected.
     let reload_store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
@@ -426,14 +429,7 @@ async fn auto_save_after_load_preserves_created_at_and_continues_sequence() {
     let session_id = "session-load-then-save";
 
     let original_created = swink_agent_memory::now_utc();
-    let meta = SessionMeta {
-        id: session_id.to_string(),
-        title: "mock-model".to_string(),
-        created_at: original_created,
-        updated_at: original_created,
-        version: 1,
-        sequence: 0,
-    };
+    let meta = SessionMeta::new(session_id, "mock-model", original_created, original_created);
     store
         .save(session_id, &meta, &[make_user_agent_message("hi")])
         .unwrap();
@@ -447,12 +443,16 @@ async fn auto_save_after_load_preserves_created_at_and_continues_sequence() {
     app.set_agent(agent);
     app.load_session(session_id).unwrap();
 
-    let loaded_meta = app.session_meta.clone().expect("meta set after load");
+    let loaded_meta = app
+        .session
+        .session_meta
+        .clone()
+        .expect("meta set after load");
     assert_eq!(loaded_meta.sequence, 1);
     assert_eq!(loaded_meta.created_at, original_created);
 
     // Mutate and save — combined transcript+state write advances sequence once.
-    if let Some(ref mut agent) = app.agent {
+    if let Some(ref mut agent) = app.agent_io.agent {
         agent.set_messages(vec![
             make_user_agent_message("hi"),
             make_assistant_agent_message("there"),
@@ -460,9 +460,9 @@ async fn auto_save_after_load_preserves_created_at_and_continues_sequence() {
     }
     app.auto_save_session()
         .expect("save after load should succeed");
-    assert_eq!(app.session_meta.as_ref().unwrap().sequence, 2);
+    assert_eq!(app.session.session_meta.as_ref().unwrap().sequence, 2);
     assert_eq!(
-        app.session_meta.as_ref().unwrap().created_at,
+        app.session.session_meta.as_ref().unwrap().created_at,
         original_created,
         "loaded created_at is preserved on subsequent saves"
     );
@@ -483,41 +483,41 @@ async fn resume_into_errors_on_missing_session() {
 #[tokio::test]
 async fn f1_toggles_help_panel() {
     let mut app = App::new(TuiConfig::default());
-    assert!(!app.help_panel.visible);
+    assert!(!app.view.help_panel.visible);
 
     let key = KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE);
     app.handle_key_event(key);
-    assert!(app.help_panel.visible);
+    assert!(app.view.help_panel.visible);
 
     app.handle_key_event(key);
-    assert!(!app.help_panel.visible);
+    assert!(!app.view.help_panel.visible);
 }
 
 #[tokio::test]
 async fn f1_works_from_conversation_focus() {
     let mut app = App::new(TuiConfig::default());
-    app.focus = Focus::Conversation;
+    app.view.focus = Focus::Conversation;
 
     let key = KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE);
     app.handle_key_event(key);
 
-    assert!(app.help_panel.visible);
-    assert_eq!(app.focus, Focus::Conversation);
+    assert!(app.view.help_panel.visible);
+    assert_eq!(app.view.focus, Focus::Conversation);
 }
 
 #[tokio::test]
 async fn hash_help_toggles_panel() {
     let mut app = App::new(TuiConfig::default());
-    assert!(!app.help_panel.visible);
+    assert!(!app.view.help_panel.visible);
 
-    app.input.insert_char('#');
-    app.input.insert_char('h');
-    app.input.insert_char('e');
-    app.input.insert_char('l');
-    app.input.insert_char('p');
+    app.editor.input.insert_char('#');
+    app.editor.input.insert_char('h');
+    app.editor.input.insert_char('e');
+    app.editor.input.insert_char('l');
+    app.editor.input.insert_char('p');
     app.submit_input();
 
-    assert!(app.help_panel.visible);
+    assert!(app.view.help_panel.visible);
 }
 
 #[tokio::test]
@@ -531,12 +531,19 @@ async fn slash_thinking_updates_agent_model_and_display_flag() {
     app.submit_input();
 
     assert_eq!(
-        app.agent.as_ref().unwrap().state().model.thinking_level,
+        app.agent_io
+            .agent
+            .as_ref()
+            .unwrap()
+            .state()
+            .model
+            .thinking_level,
         ThinkingLevel::Medium
     );
     assert!(app.config.show_thinking);
     assert!(
-        app.messages
+        app.view
+            .messages
             .last()
             .is_some_and(|msg| msg.content.contains("Medium"))
     );
@@ -545,7 +552,13 @@ async fn slash_thinking_updates_agent_model_and_display_flag() {
     app.submit_input();
 
     assert_eq!(
-        app.agent.as_ref().unwrap().state().model.thinking_level,
+        app.agent_io
+            .agent
+            .as_ref()
+            .unwrap()
+            .state()
+            .model
+            .thinking_level,
         ThinkingLevel::Off
     );
     assert!(!app.config.show_thinking);
@@ -571,11 +584,14 @@ async fn slash_thinking_updates_pending_model_before_next_send() {
     app.submit_input();
 
     assert_eq!(
-        app.pending_model.as_ref().map(|model| model.thinking_level),
+        app.mode
+            .pending_model
+            .as_ref()
+            .map(|model| model.thinking_level),
         Some(ThinkingLevel::High)
     );
     assert_eq!(
-        app.available_models[app.model_index].thinking_level,
+        app.mode.available_models[app.mode.model_index].thinking_level,
         ThinkingLevel::High
     );
 }
@@ -583,25 +599,26 @@ async fn slash_thinking_updates_pending_model_before_next_send() {
 #[tokio::test]
 async fn running_clear_command_is_blocked_without_clearing_messages() {
     let mut app = App::new(TuiConfig::default());
-    app.status = AgentStatus::Running;
-    app.messages.push(make_user_message("keep me"));
+    app.agent_io.status = AgentStatus::Running;
+    app.view.messages.push(make_user_message("keep me"));
 
     type_input(&mut app, "#clear");
     app.submit_input();
 
     assert!(
-        app.messages
+        app.view
+            .messages
             .iter()
             .any(|message| message.role == MessageRole::User && message.content == "keep me"),
         "running #clear must not remove existing transcript messages"
     );
     assert!(
-        app.messages.iter().any(|message| {
+        app.view.messages.iter().any(|message| {
             message.role == MessageRole::System && message.content.contains("agent is running")
         }),
         "blocked command should tell the user why it was rejected"
     );
-    assert_eq!(app.status, AgentStatus::Running);
+    assert_eq!(app.agent_io.status, AgentStatus::Running);
 }
 
 #[tokio::test]
@@ -609,35 +626,30 @@ async fn running_load_command_is_blocked_without_switching_sessions() {
     let tempdir = tempdir().unwrap();
     let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
     let now = swink_agent_memory::now_utc();
-    let meta = SessionMeta {
-        id: "saved-session".to_string(),
-        title: "saved-model".to_string(),
-        created_at: now,
-        updated_at: now,
-        version: 1,
-        sequence: 0,
-    };
+    let meta = SessionMeta::new("saved-session", "saved-model", now, now);
     store
         .save("saved-session", &meta, &[make_user_agent_message("loaded")])
         .unwrap();
 
     let mut app =
         App::new(TuiConfig::default()).with_session_store(store, "active-session".to_string());
-    app.status = AgentStatus::Running;
-    app.messages.push(make_user_message("active"));
+    app.agent_io.status = AgentStatus::Running;
+    app.view.messages.push(make_user_message("active"));
 
     type_input(&mut app, "#load saved-session");
     app.submit_input();
 
-    assert_eq!(app.session_id, "active-session");
+    assert_eq!(app.session.session_id, "active-session");
     assert!(
-        app.messages
+        app.view
+            .messages
             .iter()
             .any(|message| message.role == MessageRole::User && message.content == "active"),
         "running #load must not replace the active transcript"
     );
     assert!(
-        !app.messages
+        !app.view
+            .messages
             .iter()
             .any(|message| message.role == MessageRole::User && message.content == "loaded"),
         "running #load must not restore another session"
@@ -647,18 +659,21 @@ async fn running_load_command_is_blocked_without_switching_sessions() {
 #[tokio::test]
 async fn running_reset_command_is_blocked_without_resetting_state() {
     let mut app = App::new(TuiConfig::default());
-    app.status = AgentStatus::Running;
-    app.operating_mode = OperatingMode::Plan;
-    app.session_trusted_tools.insert("write_file".to_string());
-    app.messages.push(make_user_message("keep me"));
+    app.agent_io.status = AgentStatus::Running;
+    app.mode.operating_mode = OperatingMode::Plan;
+    app.agent_io
+        .session_trusted_tools
+        .insert("write_file".to_string());
+    app.view.messages.push(make_user_message("keep me"));
 
     type_input(&mut app, "/reset");
     app.submit_input();
 
-    assert_eq!(app.operating_mode, OperatingMode::Plan);
-    assert!(app.session_trusted_tools.contains("write_file"));
+    assert_eq!(app.mode.operating_mode, OperatingMode::Plan);
+    assert!(app.agent_io.session_trusted_tools.contains("write_file"));
     assert!(
-        app.messages
+        app.view
+            .messages
             .iter()
             .any(|message| message.role == MessageRole::User && message.content == "keep me"),
         "running /reset must not clear current UI state"
@@ -668,7 +683,7 @@ async fn running_reset_command_is_blocked_without_resetting_state() {
 /// Helper: type a literal string into the input editor.
 fn type_input(app: &mut App, s: &str) {
     for c in s.chars() {
-        app.input.insert_char(c);
+        app.editor.input.insert_char(c);
     }
 }
 
@@ -682,14 +697,14 @@ async fn hash_key_submission_is_not_recallable_via_history() {
     app.submit_input();
 
     // Navigate history up — nothing should come back.
-    app.input.history_prev();
+    app.editor.input.history_prev();
 
     assert_eq!(
-        app.input.lines(),
+        app.editor.input.lines(),
         &[String::new()],
         "sensitive `#key` submission must not be recallable via history"
     );
-    for line in app.input.lines() {
+    for line in app.editor.input.lines() {
         assert!(
             !line.contains("sk-leak-sentinel-xyz"),
             "secret value leaked into recalled history line: {line}"
@@ -704,23 +719,23 @@ async fn multiline_hash_key_submission_is_fully_redacted() {
     let mut app = App::new(TuiConfig::default());
 
     type_input(&mut app, "preamble");
-    app.input.insert_newline();
+    app.editor.input.insert_newline();
     type_input(&mut app, "#key anthropic sk-ant-top-secret-multi");
-    app.input.insert_newline();
+    app.editor.input.insert_newline();
     type_input(&mut app, "epilogue");
 
     app.submit_input();
 
-    app.input.history_prev();
+    app.editor.input.history_prev();
 
-    for line in app.input.lines() {
+    for line in app.editor.input.lines() {
         assert!(
             !line.contains("sk-ant-top-secret-multi"),
             "multi-line sensitive entry leaked into history: {line}"
         );
     }
     assert_eq!(
-        app.input.lines(),
+        app.editor.input.lines(),
         &[String::new()],
         "multi-line sensitive entry must be fully absent from history"
     );
@@ -734,21 +749,21 @@ async fn malformed_sensitive_submission_is_blocked_without_user_echo() {
     let mut app = App::new(TuiConfig::default());
 
     type_input(&mut app, "preamble");
-    app.input.insert_newline();
+    app.editor.input.insert_newline();
     type_input(&mut app, "#key\topenai\t sk-leak-sentinel-block");
-    app.input.insert_newline();
+    app.editor.input.insert_newline();
     type_input(&mut app, "epilogue");
 
     app.submit_input();
 
     assert!(
-        !app.messages.iter().any(|message| {
+        !app.view.messages.iter().any(|message| {
             message.role == MessageRole::User && message.content.contains("sk-leak-sentinel-block")
         }),
         "malformed sensitive input must not be echoed as a user message"
     );
     assert!(
-        app.messages.iter().any(|message| {
+        app.view.messages.iter().any(|message| {
             message.role == MessageRole::System
                 && message
                     .content
@@ -767,10 +782,10 @@ async fn non_sensitive_command_is_recallable_via_history() {
     type_input(&mut app, "/help");
     app.submit_input();
 
-    app.input.history_prev();
+    app.editor.input.history_prev();
 
     assert_eq!(
-        app.input.lines(),
+        app.editor.input.lines(),
         &["/help".to_string()],
         "non-sensitive command should remain recallable via history"
     );
@@ -784,10 +799,10 @@ async fn plain_text_submission_is_recallable_via_history() {
     type_input(&mut app, "hello world");
     app.submit_input();
 
-    app.input.history_prev();
+    app.editor.input.history_prev();
 
     assert_eq!(
-        app.input.lines(),
+        app.editor.input.lines(),
         &["hello world".to_string()],
         "plain text should remain recallable via history"
     );
@@ -800,23 +815,28 @@ async fn editor_style_submission_queues_once_while_running() {
 
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
-    app.status = AgentStatus::Running;
+    app.agent_io.status = AgentStatus::Running;
 
     app.submit_user_text("queued from editor".to_string());
 
     assert!(
-        !app.messages
+        !app.view
+            .messages
             .iter()
             .any(|message| message.role == MessageRole::User
                 && message.content == "queued from editor"),
         "running submission should stay queued until MessageStart promotion"
     );
-    assert_eq!(app.pending_steered, vec!["queued from editor".to_string()]);
+    assert_eq!(
+        app.agent_io.pending_steered,
+        vec!["queued from editor".to_string()]
+    );
 
     app.handle_agent_event(AgentEvent::MessageStart);
 
     assert_eq!(
-        app.messages
+        app.view
+            .messages
             .iter()
             .filter(|message| {
                 message.role == MessageRole::User && message.content == "queued from editor"
@@ -826,13 +846,14 @@ async fn editor_style_submission_queues_once_while_running() {
         "queued submission should be promoted into the transcript exactly once"
     );
     assert!(
-        app.messages
+        app.view
+            .messages
             .last()
             .is_some_and(|message| message.role == MessageRole::Assistant && message.is_streaming),
         "assistant streaming placeholder should still be added after promotion"
     );
     assert!(
-        app.pending_steered.is_empty(),
+        app.agent_io.pending_steered.is_empty(),
         "queued submission should be drained after MessageStart promotion"
     );
 }
@@ -840,11 +861,12 @@ async fn editor_style_submission_queues_once_while_running() {
 #[test]
 fn copy_code_extracts_all_fenced_blocks_from_last_assistant_message() {
     let mut app = App::new(TuiConfig::default());
-    app.messages.push(make_assistant_message(
+    app.view.messages.push(make_assistant_message(
         "Intro\n```rust\nlet first = 1;\n```\ntext\n```json\n{\"second\":2}\n```",
     ));
 
     let copied = app
+        .view
         .messages
         .iter()
         .rev()

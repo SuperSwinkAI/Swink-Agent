@@ -20,6 +20,7 @@ use crate::url_filter::UrlFilter;
 // ─── Recorded Data ──────────────────────────────────────────────────────────
 
 /// A tool call as captured from the agent event stream.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecordedToolCall {
     /// Provider-assigned tool call ID.
@@ -30,7 +31,24 @@ pub struct RecordedToolCall {
     pub arguments: serde_json::Value,
 }
 
+impl RecordedToolCall {
+    /// Create a recorded tool call with the given ID, name, and arguments.
+    #[must_use]
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        arguments: serde_json::Value,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            arguments,
+        }
+    }
+}
+
 /// A single recorded turn from an agent run.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TurnRecord {
     /// Zero-based index of this turn within the run.
@@ -45,7 +63,43 @@ pub struct TurnRecord {
     pub duration: Duration,
 }
 
+impl TurnRecord {
+    /// Create a turn record with empty tool calls/results and zero duration.
+    #[must_use]
+    pub fn new(turn_index: usize, assistant_message: AssistantMessage) -> Self {
+        Self {
+            turn_index,
+            assistant_message,
+            tool_calls: Vec::new(),
+            tool_results: Vec::new(),
+            duration: Duration::ZERO,
+        }
+    }
+
+    /// Set the tool calls made during this turn.
+    #[must_use]
+    pub fn with_tool_calls(mut self, tool_calls: Vec<RecordedToolCall>) -> Self {
+        self.tool_calls = tool_calls;
+        self
+    }
+
+    /// Set the tool results returned during this turn.
+    #[must_use]
+    pub fn with_tool_results(mut self, tool_results: Vec<ToolResultMessage>) -> Self {
+        self.tool_results = tool_results;
+        self
+    }
+
+    /// Set the wall-clock duration of this turn.
+    #[must_use]
+    pub fn with_duration(mut self, duration: Duration) -> Self {
+        self.duration = duration;
+        self
+    }
+}
+
 /// Complete trace of an agent run, built by [`TrajectoryCollector`](crate::TrajectoryCollector).
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Invocation {
     /// All turns in execution order.
@@ -64,9 +118,62 @@ pub struct Invocation {
     pub model: ModelSpec,
 }
 
+impl Invocation {
+    /// Create an invocation with empty turns, default usage/cost, zero duration, and no
+    /// final response.
+    #[must_use]
+    pub fn new(stop_reason: StopReason, model: ModelSpec) -> Self {
+        Self {
+            turns: Vec::new(),
+            total_usage: Usage::default(),
+            total_cost: Cost::default(),
+            total_duration: Duration::ZERO,
+            final_response: None,
+            stop_reason,
+            model,
+        }
+    }
+
+    /// Set all turns in execution order.
+    #[must_use]
+    pub fn with_turns(mut self, turns: Vec<TurnRecord>) -> Self {
+        self.turns = turns;
+        self
+    }
+
+    /// Set the aggregated token usage across all turns.
+    #[must_use]
+    pub fn with_total_usage(mut self, total_usage: Usage) -> Self {
+        self.total_usage = total_usage;
+        self
+    }
+
+    /// Set the aggregated cost across all turns.
+    #[must_use]
+    pub fn with_total_cost(mut self, total_cost: Cost) -> Self {
+        self.total_cost = total_cost;
+        self
+    }
+
+    /// Set the wall-clock duration of the entire run.
+    #[must_use]
+    pub fn with_total_duration(mut self, total_duration: Duration) -> Self {
+        self.total_duration = total_duration;
+        self
+    }
+
+    /// Set the extracted text from the final assistant message.
+    #[must_use]
+    pub fn with_final_response(mut self, final_response: impl Into<String>) -> Self {
+        self.final_response = Some(final_response.into());
+        self
+    }
+}
+
 // ─── Expected Data ──────────────────────────────────────────────────────────
 
 /// A single expected tool invocation in a golden path.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExpectedToolCall {
     /// The tool name that should be called.
@@ -76,7 +183,26 @@ pub struct ExpectedToolCall {
     pub arguments: Option<serde_json::Value>,
 }
 
+impl ExpectedToolCall {
+    /// Create an expected tool call with no argument constraint.
+    #[must_use]
+    pub fn new(tool_name: impl Into<String>) -> Self {
+        Self {
+            tool_name: tool_name.into(),
+            arguments: None,
+        }
+    }
+
+    /// Set the expected arguments (compared via exact JSON equality).
+    #[must_use]
+    pub fn with_arguments(mut self, arguments: serde_json::Value) -> Self {
+        self.arguments = Some(arguments);
+        self
+    }
+}
+
 /// Criteria for matching the final response text.
+#[non_exhaustive]
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum ResponseCriteria {
@@ -112,6 +238,7 @@ impl std::fmt::Debug for ResponseCriteria {
 /// Used with `EvalCase::expected_environment_state` to assert that after the
 /// agent completes, the captured environment matches the expected values via
 /// full JSON equality (FR-013, FR-015).
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvironmentState {
     /// Identifier for this state entry. Duplicate names within a single
@@ -122,10 +249,22 @@ pub struct EnvironmentState {
     pub state: serde_json::Value,
 }
 
+impl EnvironmentState {
+    /// Create an environment state entry with the given name and value.
+    #[must_use]
+    pub fn new(name: impl Into<String>, state: serde_json::Value) -> Self {
+        Self {
+            name: name.into(),
+            state,
+        }
+    }
+}
+
 /// Expected semantic tool intent used by the tool-parameter semantic evaluator.
 ///
 /// When `tool_name` is `Some`, only tool calls whose name matches are judged;
 /// other calls are skipped (not Pass, not Fail).
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolIntent {
     /// Natural-language description of what the tool call should accomplish.
@@ -133,6 +272,24 @@ pub struct ToolIntent {
     /// When `Some`, restrict judging to tool calls with this exact name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_name: Option<String>,
+}
+
+impl ToolIntent {
+    /// Create a tool intent that judges every tool call.
+    #[must_use]
+    pub fn new(intent: impl Into<String>) -> Self {
+        Self {
+            intent: intent.into(),
+            tool_name: None,
+        }
+    }
+
+    /// Set the tool name that restricts which calls are judged.
+    #[must_use]
+    pub fn with_tool_name(mut self, tool_name: impl Into<String>) -> Self {
+        self.tool_name = Some(tool_name.into());
+        self
+    }
 }
 
 /// Callback that captures the environment state after an agent run completes.
@@ -146,6 +303,7 @@ pub struct ToolIntent {
 pub type StateCapture = Arc<dyn Fn(&Invocation) -> Vec<EnvironmentState> + Send + Sync>;
 
 /// Judge-evaluated assertion expected to hold after an agent invocation.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Assertion {
     /// Natural-language assertion description.
@@ -154,7 +312,19 @@ pub struct Assertion {
     pub kind: AssertionKind,
 }
 
+impl Assertion {
+    /// Create an assertion with the given description and kind.
+    #[must_use]
+    pub fn new(description: impl Into<String>, kind: AssertionKind) -> Self {
+        Self {
+            description: description.into(),
+            kind,
+        }
+    }
+}
+
 /// Assertion categories used by judge-backed evaluators.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AssertionKind {
@@ -169,6 +339,7 @@ pub enum AssertionKind {
 }
 
 /// Expected interaction between agents, tools, or hand-off participants.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InteractionExpectation {
     /// Source participant or component.
@@ -179,7 +350,24 @@ pub struct InteractionExpectation {
     pub description: String,
 }
 
+impl InteractionExpectation {
+    /// Create an expected interaction between the given participants.
+    #[must_use]
+    pub fn new(
+        from: impl Into<String>,
+        to: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
+        Self {
+            from: from.into(),
+            to: to.into(),
+            description: description.into(),
+        }
+    }
+}
+
 /// Example shown to a judge prompt before the case being evaluated.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FewShotExample {
     /// Example input.
@@ -191,7 +379,27 @@ pub struct FewShotExample {
     pub reasoning: Option<String>,
 }
 
+impl FewShotExample {
+    /// Create a few-shot example with no accompanying reasoning.
+    #[must_use]
+    pub fn new(input: impl Into<String>, expected: impl Into<String>) -> Self {
+        Self {
+            input: input.into(),
+            expected: expected.into(),
+            reasoning: None,
+        }
+    }
+
+    /// Set the reasoning to include with the example.
+    #[must_use]
+    pub fn with_reasoning(mut self, reasoning: impl Into<String>) -> Self {
+        self.reasoning = Some(reasoning.into());
+        self
+    }
+}
+
 /// Multimodal attachment reference attached to an evaluation case.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Attachment {
@@ -204,13 +412,26 @@ pub enum Attachment {
 }
 
 /// Bytes ready for judge-client payload construction.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MaterializedAttachment {
     pub mime: String,
     pub bytes: Vec<u8>,
 }
 
+impl MaterializedAttachment {
+    /// Create a materialized attachment from its MIME type and bytes.
+    #[must_use]
+    pub fn new(mime: impl Into<String>, bytes: Vec<u8>) -> Self {
+        Self {
+            mime: mime.into(),
+            bytes,
+        }
+    }
+}
+
 /// Structured attachment materialization errors.
+#[non_exhaustive]
 #[derive(Debug, Error)]
 pub enum AttachmentError {
     #[error("attachment path not found: {0}")]
@@ -288,6 +509,7 @@ async fn materialize_checked_url(
     parsed: Url,
     filter: &dyn UrlFilter,
 ) -> Result<MaterializedAttachment, AttachmentError> {
+    crate::ensure_default_crypto_provider();
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
@@ -457,6 +679,9 @@ pub const CASE_NAMESPACE: Uuid = Uuid::from_bytes([
 
 /// Canonical serializable projection of an [`EvalCase`] used for deterministic
 /// session IDs and future cache keys.
+///
+/// Construct via [`EvalCase::content_fingerprint`].
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CaseFingerprint {
     pub id: String,
@@ -494,6 +719,9 @@ pub struct CaseFingerprint {
 /// they intentionally do NOT invalidate the agent-invocation cache — the same
 /// cached invocation remains valid for a case whose only change is, say, an
 /// added assertion or a new evaluator filter.
+///
+/// Construct via [`EvalCase::cache_fingerprint`].
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CacheFingerprint {
     pub case_id: String,
@@ -511,12 +739,15 @@ impl From<&EvalCase> for CacheFingerprint {
     }
 }
 
+/// Canonical fingerprint projection of an [`ExpectedToolCall`], constructed via `From`.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ExpectedToolCallFingerprint {
     pub tool_name: String,
     pub arguments: Option<CanonicalJsonValue>,
 }
 
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum ResponseCriteriaFingerprint {
     Exact { expected: String },
@@ -525,6 +756,8 @@ pub enum ResponseCriteriaFingerprint {
     Custom,
 }
 
+/// Canonical fingerprint projection of [`BudgetConstraints`], constructed via `From`.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BudgetConstraintsFingerprint {
     pub cost_limit_bits: Option<u64>,
@@ -533,18 +766,23 @@ pub struct BudgetConstraintsFingerprint {
     pub turn_limit: Option<usize>,
 }
 
+/// Canonical fingerprint projection of an [`EnvironmentState`], constructed via `From`.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct EnvironmentStateFingerprint {
     pub name: String,
     pub state: CanonicalJsonValue,
 }
 
+/// Canonical fingerprint projection of a [`ToolIntent`], constructed via `From`.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ToolIntentFingerprint {
     pub intent: String,
     pub tool_name: Option<String>,
 }
 
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum AttachmentFingerprint {
     Path(String),
@@ -552,6 +790,9 @@ pub enum AttachmentFingerprint {
     Url(String),
 }
 
+/// Frozen by design: a complete classification of the JSON value domain
+/// (RFC 8259) — a new variant is impossible without JSON itself changing.
+#[allow(clippy::exhaustive_enums)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum CanonicalJsonValue {
@@ -665,7 +906,8 @@ fn hex_lower(bytes: &[u8]) -> String {
 }
 
 /// Budget constraints for cost and latency governance.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BudgetConstraints {
     /// Maximum allowed cost in dollars.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -682,6 +924,34 @@ pub struct BudgetConstraints {
 }
 
 impl BudgetConstraints {
+    /// Set the maximum allowed cost in dollars.
+    #[must_use]
+    pub fn with_max_cost(mut self, max_cost: f64) -> Self {
+        self.max_cost = Some(max_cost);
+        self
+    }
+
+    /// Set the maximum allowed input tokens.
+    #[must_use]
+    pub fn with_max_input(mut self, max_input: u64) -> Self {
+        self.max_input = Some(max_input);
+        self
+    }
+
+    /// Set the maximum allowed output tokens.
+    #[must_use]
+    pub fn with_max_output(mut self, max_output: u64) -> Self {
+        self.max_output = Some(max_output);
+        self
+    }
+
+    /// Set the maximum allowed number of turns.
+    #[must_use]
+    pub fn with_max_turns(mut self, max_turns: usize) -> Self {
+        self.max_turns = Some(max_turns);
+        self
+    }
+
     /// Convert budget constraints into loop policies for agent construction.
     #[must_use]
     pub fn to_policies(&self) -> (Option<BudgetPolicy>, Option<MaxTurnsPolicy>) {
@@ -691,13 +961,13 @@ impl BudgetConstraints {
             } else {
                 let mut policy = BudgetPolicy::new();
                 if let Some(max_cost) = self.max_cost {
-                    policy = policy.max_cost(max_cost);
+                    policy = policy.with_max_cost(max_cost);
                 }
                 if let Some(max_input) = self.max_input {
-                    policy = policy.max_input(max_input);
+                    policy = policy.with_max_input(max_input);
                 }
                 if let Some(max_output) = self.max_output {
-                    policy = policy.max_output(max_output);
+                    policy = policy.with_max_output(max_output);
                 }
                 Some(policy)
             };
@@ -713,6 +983,7 @@ impl BudgetConstraints {
 /// A single evaluation scenario.
 ///
 /// Defines the agent prompt, expected outcomes, and which evaluators to run.
+#[non_exhaustive]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct EvalCase {
     /// Unique identifier for this case.
@@ -857,6 +1128,148 @@ impl From<&EvalCase> for CaseFingerprint {
 }
 
 impl EvalCase {
+    /// Create an eval case with no expected criteria, budget, evaluators, or attachments.
+    #[must_use]
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        system_prompt: impl Into<String>,
+        user_messages: Vec<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            description: None,
+            system_prompt: system_prompt.into(),
+            user_messages,
+            expected_trajectory: None,
+            expected_response: None,
+            expected_assertion: None,
+            expected_interactions: None,
+            few_shot_examples: vec![],
+            budget: None,
+            evaluators: vec![],
+            metadata: serde_json::Value::Null,
+            attachments: vec![],
+            session_id: None,
+            expected_environment_state: None,
+            expected_tool_intent: None,
+            semantic_tool_selection: false,
+            state_capture: None,
+        }
+    }
+
+    /// Set the description of what this case tests.
+    #[must_use]
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// Set the expected tool call trajectory (golden path).
+    #[must_use]
+    pub fn with_expected_trajectory(mut self, expected_trajectory: Vec<ExpectedToolCall>) -> Self {
+        self.expected_trajectory = Some(expected_trajectory);
+        self
+    }
+
+    /// Set the expected final response criteria.
+    #[must_use]
+    pub fn with_expected_response(mut self, expected_response: ResponseCriteria) -> Self {
+        self.expected_response = Some(expected_response);
+        self
+    }
+
+    /// Set the judge-evaluated assertion expected to hold after the run.
+    #[must_use]
+    pub fn with_expected_assertion(mut self, expected_assertion: Assertion) -> Self {
+        self.expected_assertion = Some(expected_assertion);
+        self
+    }
+
+    /// Set the expected interactions or hand-offs within the run.
+    #[must_use]
+    pub fn with_expected_interactions(
+        mut self,
+        expected_interactions: Vec<InteractionExpectation>,
+    ) -> Self {
+        self.expected_interactions = Some(expected_interactions);
+        self
+    }
+
+    /// Set the prompt examples injected ahead of judge-backed evaluations.
+    #[must_use]
+    pub fn with_few_shot_examples(mut self, few_shot_examples: Vec<FewShotExample>) -> Self {
+        self.few_shot_examples = few_shot_examples;
+        self
+    }
+
+    /// Set the cost/budget governance constraints.
+    #[must_use]
+    pub fn with_budget(mut self, budget: BudgetConstraints) -> Self {
+        self.budget = Some(budget);
+        self
+    }
+
+    /// Set the names of evaluators to run.
+    #[must_use]
+    pub fn with_evaluators(mut self, evaluators: Vec<String>) -> Self {
+        self.evaluators = evaluators;
+        self
+    }
+
+    /// Set arbitrary metadata for user-defined extensions and filtering.
+    #[must_use]
+    pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
+        self.metadata = metadata;
+        self
+    }
+
+    /// Set multimodal data references consumed by multimodal evaluators.
+    #[must_use]
+    pub fn with_attachments(mut self, attachments: Vec<Attachment>) -> Self {
+        self.attachments = attachments;
+        self
+    }
+
+    /// Set the stable case/session identifier.
+    #[must_use]
+    pub fn with_session_id(mut self, session_id: Uuid) -> Self {
+        self.session_id = Some(session_id);
+        self
+    }
+
+    /// Set the expected environment-state snapshots keyed by name.
+    #[must_use]
+    pub fn with_expected_environment_state(
+        mut self,
+        expected_environment_state: Vec<EnvironmentState>,
+    ) -> Self {
+        self.expected_environment_state = Some(expected_environment_state);
+        self
+    }
+
+    /// Set the expected semantic tool intent for the tool-parameter evaluator.
+    #[must_use]
+    pub fn with_expected_tool_intent(mut self, expected_tool_intent: ToolIntent) -> Self {
+        self.expected_tool_intent = Some(expected_tool_intent);
+        self
+    }
+
+    /// Set whether semantic tool-selection scoring is enabled for this case.
+    #[must_use]
+    pub fn with_semantic_tool_selection(mut self, semantic_tool_selection: bool) -> Self {
+        self.semantic_tool_selection = semantic_tool_selection;
+        self
+    }
+
+    /// Set the callback that produces the actual environment state after the agent completes.
+    #[must_use]
+    pub fn with_state_capture(mut self, state_capture: StateCapture) -> Self {
+        self.state_capture = Some(state_capture);
+        self
+    }
+
     /// Canonical serializable projection used by deterministic ID and cache-key
     /// derivation.
     #[must_use]
@@ -974,6 +1387,7 @@ const fn is_false(b: &bool) -> bool {
 }
 
 /// A named collection of evaluation cases.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvalSet {
     /// Unique identifier for this set.
@@ -987,9 +1401,30 @@ pub struct EvalSet {
     pub cases: Vec<EvalCase>,
 }
 
+impl EvalSet {
+    /// Create an eval set with no description.
+    #[must_use]
+    pub fn new(id: impl Into<String>, name: impl Into<String>, cases: Vec<EvalCase>) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            description: None,
+            cases,
+        }
+    }
+
+    /// Set the description.
+    #[must_use]
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+}
+
 // ─── Results ────────────────────────────────────────────────────────────────
 
 /// Per-evaluator result for a single case.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvalMetricResult {
     /// Name of the evaluator that produced this result.
@@ -1001,7 +1436,27 @@ pub struct EvalMetricResult {
     pub details: Option<String>,
 }
 
+impl EvalMetricResult {
+    /// Create a metric result with no additional details.
+    #[must_use]
+    pub fn new(evaluator_name: impl Into<String>, score: Score) -> Self {
+        Self {
+            evaluator_name: evaluator_name.into(),
+            score,
+            details: None,
+        }
+    }
+
+    /// Set human-readable details about the scoring.
+    #[must_use]
+    pub fn with_details(mut self, details: impl Into<String>) -> Self {
+        self.details = Some(details.into());
+        self
+    }
+}
+
 /// Result of evaluating a single case.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvalCaseResult {
     /// The case ID that was evaluated.
@@ -1014,7 +1469,28 @@ pub struct EvalCaseResult {
     pub verdict: Verdict,
 }
 
+impl EvalCaseResult {
+    /// Create a case result with no per-evaluator metric results.
+    #[must_use]
+    pub fn new(case_id: impl Into<String>, invocation: Invocation, verdict: Verdict) -> Self {
+        Self {
+            case_id: case_id.into(),
+            invocation,
+            metric_results: Vec::new(),
+            verdict,
+        }
+    }
+
+    /// Set the per-evaluator metric results.
+    #[must_use]
+    pub fn with_metric_results(mut self, metric_results: Vec<EvalMetricResult>) -> Self {
+        self.metric_results = metric_results;
+        self
+    }
+}
+
 /// Result of evaluating an entire eval set.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvalSetResult {
     /// The eval set ID.
@@ -1027,8 +1503,27 @@ pub struct EvalSetResult {
     pub timestamp: u64,
 }
 
+impl EvalSetResult {
+    /// Create a result for an entire eval set run.
+    #[must_use]
+    pub fn new(
+        eval_set_id: impl Into<String>,
+        case_results: Vec<EvalCaseResult>,
+        summary: EvalSummary,
+        timestamp: u64,
+    ) -> Self {
+        Self {
+            eval_set_id: eval_set_id.into(),
+            case_results,
+            summary,
+            timestamp,
+        }
+    }
+}
+
 /// Aggregated statistics for an eval set run.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EvalSummary {
     /// Total number of cases evaluated.
     pub total_cases: usize,
@@ -1042,6 +1537,50 @@ pub struct EvalSummary {
     pub total_usage: Usage,
     /// Total wall-clock duration across all cases.
     pub total_duration: Duration,
+}
+
+impl EvalSummary {
+    /// Set the total number of cases evaluated.
+    #[must_use]
+    pub fn with_total_cases(mut self, total_cases: usize) -> Self {
+        self.total_cases = total_cases;
+        self
+    }
+
+    /// Set the number of cases that passed all metrics.
+    #[must_use]
+    pub fn with_passed(mut self, passed: usize) -> Self {
+        self.passed = passed;
+        self
+    }
+
+    /// Set the number of cases that failed at least one metric.
+    #[must_use]
+    pub fn with_failed(mut self, failed: usize) -> Self {
+        self.failed = failed;
+        self
+    }
+
+    /// Set the aggregated cost across all cases.
+    #[must_use]
+    pub fn with_total_cost(mut self, total_cost: Cost) -> Self {
+        self.total_cost = total_cost;
+        self
+    }
+
+    /// Set the aggregated token usage across all cases.
+    #[must_use]
+    pub fn with_total_usage(mut self, total_usage: Usage) -> Self {
+        self.total_usage = total_usage;
+        self
+    }
+
+    /// Set the total wall-clock duration across all cases.
+    #[must_use]
+    pub fn with_total_duration(mut self, total_duration: Duration) -> Self {
+        self.total_duration = total_duration;
+        self
+    }
 }
 
 // ─── Case-load Validation (FR-015, SC-009) ──────────────────────────────────
@@ -1361,6 +1900,23 @@ mod validation_tests {
         case.user_messages.push("follow-up".into());
         assert_ne!(original, case.default_session_id());
     }
+
+    #[test]
+    fn builders_cover_every_field() {
+        let case = EvalCase::new("b1", "Builder case", "sys", vec!["hi".to_string()])
+            .with_description("a description")
+            .with_budget(BudgetConstraints::default().with_max_cost(2.0))
+            .with_semantic_tool_selection(true);
+        assert_eq!(case.description.as_deref(), Some("a description"));
+        assert_eq!(
+            case.budget.as_ref().and_then(|budget| budget.max_cost),
+            Some(2.0)
+        );
+        assert!(case.semantic_tool_selection);
+
+        let budget = BudgetConstraints::default().with_max_cost(1.0);
+        assert_eq!(budget.max_cost, Some(1.0));
+    }
 }
 
 #[cfg(test)]
@@ -1370,15 +1926,7 @@ mod budget_policy_tests {
 
     fn make_ctx<'a>(turn_index: usize, usage: &'a Usage, cost: &'a Cost) -> PolicyContext<'a> {
         let state = Box::leak(Box::new(SessionState::new()));
-        PolicyContext {
-            turn_index,
-            accumulated_usage: usage,
-            accumulated_cost: cost,
-            message_count: 0,
-            overflow_signal: false,
-            new_messages: &[],
-            state,
-        }
+        PolicyContext::new(turn_index, usage, cost, 0, false, &[], state)
     }
 
     #[test]
@@ -1407,10 +1955,7 @@ mod budget_policy_tests {
 
         let (budget_policy, max_turns_policy) = constraints.to_policies();
         let usage = Usage::default();
-        let cost = Cost {
-            total: 1.0,
-            ..Default::default()
-        };
+        let cost = Cost::default().with_total(1.0);
         let ctx = make_ctx(0, &usage, &cost);
 
         assert!(matches!(
@@ -1430,12 +1975,10 @@ mod budget_policy_tests {
         };
 
         let (budget_policy, max_turns_policy) = constraints.to_policies();
-        let usage = Usage {
-            input: 10,
-            output: 20,
-            total: 30,
-            ..Default::default()
-        };
+        let usage = Usage::default()
+            .with_input(10)
+            .with_output(20)
+            .with_total(30);
         let cost = Cost::default();
         let ctx = make_ctx(0, &usage, &cost);
 
@@ -1457,10 +2000,7 @@ mod budget_policy_tests {
 
         let (budget_policy, max_turns_policy) = constraints.to_policies();
         let usage = Usage::default();
-        let cost = Cost {
-            total: 2.0,
-            ..Default::default()
-        };
+        let cost = Cost::default().with_total(2.0);
         let budget_ctx = make_ctx(0, &usage, &cost);
         let turn_cost = Cost::default();
         let turn_ctx = make_ctx(3, &usage, &turn_cost);

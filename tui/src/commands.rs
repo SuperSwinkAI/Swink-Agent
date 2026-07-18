@@ -46,6 +46,8 @@ pub enum CommandResult {
     UntrustTool(String),
     /// Revoke all session trust.
     UntrustAll,
+    /// Show the per-turn token/cost breakdown.
+    ShowUsage,
     /// Input was not a recognized command.
     NotACommand,
 }
@@ -86,6 +88,28 @@ pub fn execute_command(input: &str) -> CommandResult {
     }
 
     CommandResult::NotACommand
+}
+
+/// Split a `#`/`/`-prefixed input into its bare command name and argument
+/// string.
+///
+/// Returns `None` for plain text and for a bare sigil. The name is the first
+/// whitespace-delimited token after the sigil; the arguments are everything
+/// after it, trimmed. Used to match input against host-registered commands
+/// before consulting the built-in table.
+pub fn split_command(input: &str) -> Option<(&str, &str)> {
+    let trimmed = input.trim();
+    let body = trimmed
+        .strip_prefix('#')
+        .or_else(|| trimmed.strip_prefix('/'))?
+        .trim();
+    if body.is_empty() {
+        return None;
+    }
+    let (name, args) = body
+        .split_once(|c: char| c.is_whitespace())
+        .unwrap_or((body, ""));
+    Some((name, args.trim()))
 }
 
 /// Classify whether the given input carries a user-supplied secret.
@@ -220,6 +244,7 @@ fn execute_slash_command(cmd: &str) -> CommandResult {
         "reset" => CommandResult::Reset,
         "editor" => CommandResult::OpenEditor,
         "plan" => CommandResult::TogglePlanMode,
+        "usage" => CommandResult::ShowUsage,
         _ => CommandResult::Feedback(format!(
             "Unknown command: /{name}\nType #help for available commands."
         )),
@@ -505,6 +530,55 @@ mod tests {
             execute_command("/plan"),
             CommandResult::TogglePlanMode
         ));
+    }
+
+    #[test]
+    fn slash_usage() {
+        assert!(matches!(
+            execute_command("/usage"),
+            CommandResult::ShowUsage
+        ));
+    }
+
+    #[test]
+    fn slash_usage_ignores_trailing_args() {
+        assert!(matches!(
+            execute_command("/usage all"),
+            CommandResult::ShowUsage
+        ));
+    }
+
+    // --- split_command ---
+
+    #[test]
+    fn split_command_extracts_slash_name_and_args() {
+        assert_eq!(split_command("/thinking high"), Some(("thinking", "high")));
+    }
+
+    #[test]
+    fn split_command_extracts_hash_name_and_args() {
+        assert_eq!(split_command("#approve on"), Some(("approve", "on")));
+    }
+
+    #[test]
+    fn split_command_gives_empty_args_when_none_supplied() {
+        assert_eq!(split_command("/usage"), Some(("usage", "")));
+    }
+
+    #[test]
+    fn split_command_trims_surrounding_whitespace() {
+        assert_eq!(
+            split_command("  /system  be terse  "),
+            Some(("system", "be terse"))
+        );
+    }
+
+    #[test]
+    fn split_command_rejects_plain_text_and_bare_sigils() {
+        assert_eq!(split_command("hello"), None);
+        assert_eq!(split_command("/"), None);
+        assert_eq!(split_command("#"), None);
+        assert_eq!(split_command(""), None);
     }
 
     #[test]

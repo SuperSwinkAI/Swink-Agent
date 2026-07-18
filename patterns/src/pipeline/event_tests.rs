@@ -325,12 +325,10 @@ fn pipeline_event_to_emission_produces_valid_emission() {
     assert_eq!(step_started.payload["step_index"], 0);
     assert_eq!(step_started.payload["agent_name"], "agent-a");
 
-    let usage = swink_agent::Usage {
-        input: 12,
-        output: 34,
-        total: 46,
-        ..Default::default()
-    };
+    let usage = swink_agent::Usage::default()
+        .with_input(12)
+        .with_output(34)
+        .with_total(46);
     let step_completed = PipelineEvent::StepCompleted {
         pipeline_id: id.clone(),
         step_index: 0,

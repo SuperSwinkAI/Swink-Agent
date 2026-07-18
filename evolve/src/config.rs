@@ -30,10 +30,8 @@ impl Clone for OptimizationTarget {
             tool_schemas: self
                 .tool_schemas
                 .iter()
-                .map(|t| ToolSchema {
-                    name: t.name.clone(),
-                    description: t.description.clone(),
-                    parameters: t.parameters.clone(),
+                .map(|t| {
+                    ToolSchema::new(t.name.clone(), t.description.clone(), t.parameters.clone())
                 })
                 .collect(),
             section_delimiter: self.section_delimiter.clone(),
@@ -84,10 +82,8 @@ impl OptimizationTarget {
             tool_schemas: self
                 .tool_schemas
                 .iter()
-                .map(|t| ToolSchema {
-                    name: t.name.clone(),
-                    description: t.description.clone(),
-                    parameters: t.parameters.clone(),
+                .map(|t| {
+                    ToolSchema::new(t.name.clone(), t.description.clone(), t.parameters.clone())
                 })
                 .collect(),
             section_delimiter: new_delim,
@@ -111,10 +107,8 @@ impl OptimizationTarget {
             tool_schemas: self
                 .tool_schemas
                 .iter()
-                .map(|t| ToolSchema {
-                    name: t.name.clone(),
-                    description: t.description.clone(),
-                    parameters: t.parameters.clone(),
+                .map(|t| {
+                    ToolSchema::new(t.name.clone(), t.description.clone(), t.parameters.clone())
                 })
                 .collect(),
             section_delimiter: new_delim,
@@ -129,17 +123,11 @@ impl OptimizationTarget {
             .iter()
             .map(|t| {
                 if t.name == tool_name {
-                    replacement.take().unwrap_or_else(|| ToolSchema {
-                        name: t.name.clone(),
-                        description: t.description.clone(),
-                        parameters: t.parameters.clone(),
+                    replacement.take().unwrap_or_else(|| {
+                        ToolSchema::new(t.name.clone(), t.description.clone(), t.parameters.clone())
                     })
                 } else {
-                    ToolSchema {
-                        name: t.name.clone(),
-                        description: t.description.clone(),
-                        parameters: t.parameters.clone(),
-                    }
+                    ToolSchema::new(t.name.clone(), t.description.clone(), t.parameters.clone())
                 }
             })
             .collect();
@@ -230,10 +218,7 @@ impl CycleBudget {
 
     pub fn remaining(&self) -> Cost {
         let spent = self.spent.lock().unwrap();
-        Cost {
-            total: (self.max_cost.total - spent.total).max(0.0),
-            ..Cost::default()
-        }
+        Cost::default().with_total((self.max_cost.total - spent.total).max(0.0))
     }
 
     pub fn is_exhausted(&self) -> bool {
@@ -262,10 +247,7 @@ impl OptimizationConfig {
             strategies: Vec::new(),
             acceptance_threshold: 0.01,
             // Unlimited budget by default — callers set an explicit cap via with_budget.
-            budget: CycleBudget::new(Cost {
-                total: f64::INFINITY,
-                ..Cost::default()
-            }),
+            budget: CycleBudget::new(Cost::default().with_total(f64::INFINITY)),
             parallelism: 1,
             seed: None,
             max_weak_points: 5,
@@ -347,36 +329,18 @@ mod tests {
 
     #[test]
     fn budget_tracks_spending() {
-        let budget = CycleBudget::new(Cost {
-            total: 1.0,
-            ..Cost::default()
-        });
-        budget.record(Cost {
-            total: 0.3,
-            ..Cost::default()
-        });
-        budget.record(Cost {
-            total: 0.3,
-            ..Cost::default()
-        });
+        let budget = CycleBudget::new(Cost::default().with_total(1.0));
+        budget.record(Cost::default().with_total(0.3));
+        budget.record(Cost::default().with_total(0.3));
         assert!(!budget.is_exhausted());
-        budget.record(Cost {
-            total: 0.5,
-            ..Cost::default()
-        });
+        budget.record(Cost::default().with_total(0.5));
         assert!(budget.is_exhausted());
     }
 
     #[test]
     fn budget_exhausted_at_max() {
-        let budget = CycleBudget::new(Cost {
-            total: 1.0,
-            ..Cost::default()
-        });
-        budget.record(Cost {
-            total: 1.0,
-            ..Cost::default()
-        });
+        let budget = CycleBudget::new(Cost::default().with_total(1.0));
+        budget.record(Cost::default().with_total(1.0));
         assert!(budget.is_exhausted());
     }
 }

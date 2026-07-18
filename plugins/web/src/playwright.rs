@@ -11,6 +11,11 @@ use tokio::process::{Child, Command};
 use crate::domain::DomainFilter;
 
 /// Viewport dimensions for screenshots.
+///
+/// Deliberately exhaustive (never `#[non_exhaustive]`): a plain
+/// width x height pair with no further fields expected, so it is safe to
+/// construct this struct literally.
+#[allow(clippy::exhaustive_structs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Viewport {
     pub width: u32,
@@ -18,6 +23,7 @@ pub struct Viewport {
 }
 
 /// Preset extraction types.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ExtractionPreset {
@@ -27,6 +33,7 @@ pub enum ExtractionPreset {
 }
 
 /// A single extracted element from a web page.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExtractedElement {
     pub tag: String,
