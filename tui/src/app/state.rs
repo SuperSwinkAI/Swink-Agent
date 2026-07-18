@@ -15,7 +15,7 @@ use swink_agent::{
 use crate::config::TuiConfig;
 use crate::extensions::{PathCandidate, SkillCandidate};
 use crate::session::JsonlSessionStore;
-use crate::transport::{InProcessTransport, TuiTransport, UserInput};
+use crate::transport::{ControlRequest, InProcessTransport, TuiTransport, UserInput};
 use crate::ui::conversation::ConversationView;
 use crate::ui::help_panel::HelpPanel;
 use crate::ui::input::InputEditor;
@@ -514,6 +514,45 @@ impl Default for EditorState {
     }
 }
 
+/// A queued control-plane request awaiting the event loop's flush pass.
+///
+/// Key handlers and slash commands are synchronous, so they cannot await
+/// [`TuiTransport::control`] directly. In transport mode they queue here —
+/// mirroring `AgentIo::outbound` for turn input — and `App::flush_controls`
+/// drives each request and routes its response.
+pub(crate) struct PendingControl {
+    /// Short operation name for status-line error messages.
+    pub(crate) label: &'static str,
+    /// The request to issue through [`TuiTransport::control`].
+    pub(crate) request: ControlRequest,
+    /// What to do with the response once it arrives.
+    pub(crate) follow_up: ControlFollowUp,
+}
+
+/// How to apply a control response once it arrives.
+pub(crate) enum ControlFollowUp {
+    /// Nothing beyond surfacing errors; `Ack` payloads are discarded.
+    Discard,
+    /// Populate `ModeState::available_models` from a
+    /// [`ControlResponse::Models`](crate::transport::ControlResponse::Models)
+    /// reply, then cycle — F4 was pressed before the model list was known.
+    PopulateModelsAndCycle,
+    /// Display the approval mode carried by an
+    /// [`ControlResponse::ApprovalMode`](crate::transport::ControlResponse::ApprovalMode)
+    /// reply.
+    ShowApprovalMode,
+    /// Persist a
+    /// [`ControlResponse::SessionSnapshot`](crate::transport::ControlResponse::SessionSnapshot)
+    /// reply through the session store. `announce` distinguishes an explicit
+    /// `#save` (report success or failure) from auto-save on turn end
+    /// (silent — including on `Unsupported`, preserving the old skip for
+    /// turn-I/O-only transports).
+    SaveSnapshot {
+        /// Whether to report the outcome as a system message.
+        announce: bool,
+    },
+}
+
 /// Agent I/O state: the agent handle, in-flight turn status, event channels,
 /// pending tool approvals, and mid-turn steering.
 #[non_exhaustive]
@@ -542,6 +581,11 @@ pub struct AgentIo {
     /// User input queued for [`TuiTransport::send`]; flushed by the event
     /// loop. Only ever populated when `external_transport` is set.
     pub(crate) outbound: Vec<UserInput>,
+    /// Control requests queued for [`TuiTransport::control`]; flushed by the
+    /// event loop *before* `outbound` so e.g. a pending model change is
+    /// applied ahead of the prompt it should affect. Only ever populated
+    /// when `external_transport` is set.
+    pub(crate) pending_controls: Vec<PendingControl>,
     /// Receiver for tool approval requests from the agent callback.
     pub(crate) approval_rx: mpsc::Receiver<(ToolApprovalRequest, oneshot::Sender<ToolApproval>)>,
     /// Sender for tool approval requests (cloned into the approval callback).
@@ -580,6 +624,7 @@ impl AgentIo {
             transport,
             external_transport: false,
             outbound: Vec::new(),
+            pending_controls: Vec::new(),
             approval_rx,
             approval_tx,
             pending_approval: None,

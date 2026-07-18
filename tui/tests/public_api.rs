@@ -9,9 +9,9 @@ use swink_agent::{
     Usage,
 };
 use swink_agent_tui::{
-    App, CustomCommandOutcome, InProcessTransport, MessageRole, PathCandidate, SkillCandidate,
-    TransportError, TuiConfig, TuiExtensions, TuiTransport, UserInput, parse_mentions,
-    parse_skill_invocation,
+    App, ControlRequest, ControlResponse, CustomCommandOutcome, InProcessTransport, MessageRole,
+    PathCandidate, SkillCandidate, TransportError, TuiConfig, TuiExtensions, TuiTransport,
+    UserInput, parse_mentions, parse_skill_invocation,
 };
 
 #[test]
@@ -229,6 +229,71 @@ async fn an_app_can_be_driven_through_a_mock_transport() {
             .any(|message| message.role == MessageRole::Assistant && message.content == "stub"),
         "the scripted assistant reply should reach the conversation"
     );
+}
+
+/// The control seam defaults to `Unsupported`, so a turn-I/O-only transport
+/// written against the pre-control trait is still a complete implementation.
+#[tokio::test]
+async fn default_transport_control_is_unsupported_outside_the_crate() {
+    let mut transport = MockWireTransport { events: Vec::new() };
+
+    let result = transport.control(ControlRequest::Abort).await;
+    assert!(matches!(result, Err(TransportError::Unsupported)));
+}
+
+/// A downstream transport can override `control` and answer with the public
+/// response types — the seam a remote bridge implements.
+struct ControllingWireTransport;
+
+impl TuiTransport for ControllingWireTransport {
+    fn send(
+        &self,
+        _input: UserInput,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), TransportError>> + Send + '_>>
+    {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn recv(
+        &mut self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<AgentEvent>> + Send + '_>> {
+        Box::pin(async { None })
+    }
+
+    fn try_recv(&mut self) -> Option<AgentEvent> {
+        None
+    }
+
+    fn control(
+        &mut self,
+        request: ControlRequest,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<ControlResponse, TransportError>> + Send + '_>,
+    > {
+        let response = match request {
+            ControlRequest::QueryApprovalMode => {
+                ControlResponse::ApprovalMode(swink_agent::ApprovalMode::Smart)
+            }
+            _ => ControlResponse::Ack,
+        };
+        Box::pin(async move { Ok(response) })
+    }
+}
+
+#[tokio::test]
+async fn a_downstream_transport_can_answer_control_requests() {
+    let mut transport = ControllingWireTransport;
+
+    let ack = transport.control(ControlRequest::Reset).await;
+    assert!(matches!(ack, Ok(ControlResponse::Ack)));
+
+    let mode = transport.control(ControlRequest::QueryApprovalMode).await;
+    assert!(matches!(
+        mode,
+        Ok(ControlResponse::ApprovalMode(
+            swink_agent::ApprovalMode::Smart
+        ))
+    ));
 }
 
 // ─── @path file mentions (issue #1093) ───────────────────────────────────

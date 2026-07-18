@@ -9,9 +9,12 @@ use swink_agent::{
     UserMessage,
 };
 
+use crate::transport::ControlRequest;
+
 use super::render_helpers::timestamp_now;
 use super::state::{
-    AgentStatus, App, DisplayMessage, HunkReview, MessageRole, OperatingMode, TurnUsage,
+    AgentStatus, App, ControlFollowUp, DisplayMessage, HunkReview, MessageRole, OperatingMode,
+    TurnUsage,
 };
 
 impl App {
@@ -48,6 +51,16 @@ impl App {
         if self.agent_io.external_transport {
             if self.agent_io.status == AgentStatus::Running {
                 self.agent_io.pending_steered.push(text);
+            } else if let Some(pending) = self.mode.pending_model.take() {
+                // Same deferred-apply point as the in-process `set_model`
+                // below: the change rides ahead of the prompt because the
+                // event loop flushes the control queue before the outbound
+                // queue, so the new turn starts on the new model.
+                self.queue_control(
+                    "set model",
+                    ControlRequest::SetModel(pending),
+                    ControlFollowUp::Discard,
+                );
             }
             self.agent_io
                 .outbound
@@ -545,13 +558,21 @@ impl App {
     }
 
     pub(super) fn enter_plan_mode(&mut self) {
-        let Some(agent) = &mut self.agent_io.agent else {
+        if let Some(agent) = &mut self.agent_io.agent {
+            let (saved_tools, saved_prompt) = agent.enter_plan_mode();
+            self.mode.saved_tools = Some(saved_tools);
+            self.mode.saved_system_prompt = Some(saved_prompt);
+        } else if self.agent_io.external_transport {
+            // The saved tool set and system prompt live on the backend for
+            // the round trip; only the display-mode toggle is local.
+            self.queue_control(
+                "enter plan mode",
+                ControlRequest::EnterPlanMode,
+                ControlFollowUp::Discard,
+            );
+        } else {
             return;
-        };
-
-        let (saved_tools, saved_prompt) = agent.enter_plan_mode();
-        self.mode.saved_tools = Some(saved_tools);
-        self.mode.saved_system_prompt = Some(saved_prompt);
+        }
         self.mode.plan_session_start = Some(self.view.messages.len());
 
         self.mode.operating_mode = OperatingMode::Plan;
@@ -566,6 +587,18 @@ impl App {
             )
         {
             agent.exit_plan_mode(tools, prompt);
+        } else if self.agent_io.external_transport
+            && self.mode.operating_mode == OperatingMode::Plan
+        {
+            // The backend holds the saved tools/prompt (see
+            // `enter_plan_mode`), so there is nothing to juggle locally —
+            // just tell it to restore. Guarded on Plan so a plain `#reset`
+            // outside plan mode does not emit a spurious exit.
+            self.queue_control(
+                "exit plan mode",
+                ControlRequest::ExitPlanMode,
+                ControlFollowUp::Discard,
+            );
         }
 
         self.mode.saved_tools = None;
