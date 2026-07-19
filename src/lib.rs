@@ -91,7 +91,8 @@ pub use config::{
 pub use context::CompactionReport;
 #[allow(deprecated)]
 pub use context::{
-    DefaultTokenCounter, TokenCounter, estimate_tokens, is_context_overflow, sliding_window,
+    DefaultTokenCounter, TokenCounter, estimate_context_tokens, estimate_tokens,
+    estimate_tool_schema_tokens, is_context_overflow, sliding_window,
 };
 pub use context_cache::{CacheConfig, CacheHint, CacheState};
 pub use context_transformer::{ContextTransformer, SlidingWindowTransformer};
