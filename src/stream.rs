@@ -128,6 +128,24 @@ pub type OnRawPayload = Arc<dyn Fn(&str) + Send + Sync>;
 /// `extra` entries. The default (all `None`, empty `extra`) leaves request
 /// bodies byte-identical to builds without serving options.
 ///
+/// # Per-adapter support
+///
+/// Each adapter consumes only the fields its protocol can express and
+/// ignores the rest. The bundled adapters honor:
+///
+/// | Adapter                                        | `context_length` | `top_p` | `keep_alive` | `format` | `extra` |
+/// |------------------------------------------------|------------------|---------|--------------|----------|---------|
+/// | Ollama                                         | ✓                | ✓       | ✓            | ✓        | ✓       |
+/// | OpenAI-protocol (OpenAI, compat, xAI, Azure)   | —                | ✓       | —            | ✓        | ✓       |
+/// | Anthropic                                      | —                | —       | —            | —        | ✓       |
+/// | Gemini                                         | —                | —       | —            | —        | ✓       |
+/// | Bedrock                                        | —                | —       | —            | —        | ✓       |
+/// | Mistral                                        | —                | —       | —            | —        | ✓       |
+/// | Proxy                                          | —                | —       | —            | —        | — (warns) |
+///
+/// Query it programmatically via [`StreamFn::supported_serving_options`] and
+/// [`ServingOptions::unsupported_fields`] instead of hard-coding this table.
+///
 /// [`format`]: ServingOptions::format
 /// [`keep_alive`]: ServingOptions::keep_alive
 #[non_exhaustive]
@@ -217,6 +235,120 @@ impl ServingOptions {
     /// True when nothing is set — adapters can skip serialization work.
     pub fn is_default(&self) -> bool {
         *self == Self::default()
+    }
+
+    /// Names of the fields set on `self` that `support` does not honor.
+    ///
+    /// This is the host-side warning primitive: pair a tier's configured
+    /// [`ServingOptions`] with the adapter's
+    /// [`StreamFn::supported_serving_options`] to tell the operator exactly
+    /// which knobs the request shape will drop, instead of hard-coding a
+    /// per-provider table downstream.
+    #[must_use]
+    pub fn unsupported_fields(&self, support: ServingOptionSupport) -> Vec<&'static str> {
+        let mut dropped = Vec::new();
+        if self.context_length.is_some() && !support.context_length {
+            dropped.push("context_length");
+        }
+        if self.top_p.is_some() && !support.top_p {
+            dropped.push("top_p");
+        }
+        if self.keep_alive.is_some() && !support.keep_alive {
+            dropped.push("keep_alive");
+        }
+        if self.format.is_some() && !support.format {
+            dropped.push("format");
+        }
+        if !self.extra.is_empty() && !support.extra {
+            dropped.push("extra");
+        }
+        dropped
+    }
+}
+
+/// Which [`ServingOptions`] fields a [`StreamFn`]'s request shape honors.
+///
+/// Reported by [`StreamFn::supported_serving_options`]. A `false` field
+/// means the adapter ignores that option — configuring it has no effect on
+/// the request. Hosts can compare against a configured [`ServingOptions`]
+/// via [`ServingOptions::unsupported_fields`] to warn accurately without
+/// maintaining a per-provider table.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// A per-field capability bitmap is exactly N independent bools — a state
+// machine would misrepresent it.
+#[allow(clippy::struct_excessive_bools)]
+pub struct ServingOptionSupport {
+    /// `context_length` reaches the request (Ollama `num_ctx`).
+    pub context_length: bool,
+    /// `top_p` reaches the request.
+    pub top_p: bool,
+    /// `keep_alive` reaches the request (Ollama).
+    pub keep_alive: bool,
+    /// `format` (structured output / JSON mode) reaches the request.
+    pub format: bool,
+    /// `extra` entries are merged into the request.
+    pub extra: bool,
+}
+
+impl ServingOptionSupport {
+    /// Every field honored.
+    #[must_use]
+    pub const fn all() -> Self {
+        Self {
+            context_length: true,
+            top_p: true,
+            keep_alive: true,
+            format: true,
+            extra: true,
+        }
+    }
+
+    /// No field honored.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            context_length: false,
+            top_p: false,
+            keep_alive: false,
+            format: false,
+            extra: false,
+        }
+    }
+
+    /// Set whether `context_length` is honored.
+    #[must_use]
+    pub const fn with_context_length(mut self, supported: bool) -> Self {
+        self.context_length = supported;
+        self
+    }
+
+    /// Set whether `top_p` is honored.
+    #[must_use]
+    pub const fn with_top_p(mut self, supported: bool) -> Self {
+        self.top_p = supported;
+        self
+    }
+
+    /// Set whether `keep_alive` is honored.
+    #[must_use]
+    pub const fn with_keep_alive(mut self, supported: bool) -> Self {
+        self.keep_alive = supported;
+        self
+    }
+
+    /// Set whether `format` is honored.
+    #[must_use]
+    pub const fn with_format(mut self, supported: bool) -> Self {
+        self.format = supported;
+        self
+    }
+
+    /// Set whether `extra` is honored.
+    #[must_use]
+    pub const fn with_extra(mut self, supported: bool) -> Self {
+        self.extra = supported;
+        self
     }
 }
 
@@ -568,6 +700,18 @@ pub trait StreamFn: Send + Sync {
         options: &'a StreamOptions,
         cancellation_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>>;
+
+    /// Which [`ServingOptions`] fields this implementation's request shape
+    /// honors.
+    ///
+    /// Defaults to [`ServingOptionSupport::all`] — optimistic, so external
+    /// adapters that predate this method are not falsely reported as
+    /// dropping options. Adapters that ignore fields should override this so
+    /// hosts can warn accurately (see
+    /// [`ServingOptions::unsupported_fields`]).
+    fn supported_serving_options(&self) -> ServingOptionSupport {
+        ServingOptionSupport::all()
+    }
 }
 
 // ─── Tool-call sanitization ──────────────────────────────────────────────────
@@ -1013,6 +1157,57 @@ const _: () = {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsupported_fields_names_only_set_and_unhonored_options() {
+        let serving = ServingOptions::default()
+            .with_context_length(8192)
+            .with_top_p(0.9);
+
+        // Fully supported → nothing reported, even with fields set.
+        assert!(
+            serving
+                .unsupported_fields(ServingOptionSupport::all())
+                .is_empty()
+        );
+
+        // OAI-shape support: context_length is set but not honored; top_p is
+        // honored; unset fields (keep_alive/format/extra) are never reported.
+        let oai = ServingOptionSupport::none()
+            .with_top_p(true)
+            .with_format(true)
+            .with_extra(true);
+        assert_eq!(serving.unsupported_fields(oai), vec!["context_length"]);
+
+        // Nothing set → nothing reported regardless of support.
+        assert!(
+            ServingOptions::default()
+                .unsupported_fields(ServingOptionSupport::none())
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn stream_fn_default_reports_full_support() {
+        struct Bare;
+        impl StreamFn for Bare {
+            fn stream<'a>(
+                &'a self,
+                _model: &'a ModelSpec,
+                _context: &'a AgentContext,
+                _options: &'a StreamOptions,
+                _cancellation_token: CancellationToken,
+            ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+                Box::pin(futures::stream::empty())
+            }
+        }
+        // External adapters that predate the method must not be falsely
+        // reported as dropping options.
+        assert_eq!(
+            Bare.supported_serving_options(),
+            ServingOptionSupport::all()
+        );
+    }
 
     #[test]
     fn done_with_unterminated_text_block_is_rejected() {

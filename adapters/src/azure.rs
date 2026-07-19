@@ -12,7 +12,9 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
-use swink_agent::{AgentContext, AssistantMessageEvent, ModelSpec, StreamFn, StreamOptions};
+use swink_agent::{
+    AgentContext, AssistantMessageEvent, ModelSpec, ServingOptionSupport, StreamFn, StreamOptions,
+};
 use swink_agent_auth::{ExpiringValue, SingleFlightTokenSource};
 
 use crate::classify::{HttpErrorKind, classify_with_overrides};
@@ -280,6 +282,15 @@ impl std::fmt::Debug for AzureStreamFn {
 }
 
 impl StreamFn for AzureStreamFn {
+    // OAI-protocol request shape: `top_p`, `format`, and `extra` reach the
+    // body; `context_length`/`keep_alive` have no equivalent.
+    fn supported_serving_options(&self) -> ServingOptionSupport {
+        ServingOptionSupport::none()
+            .with_top_p(true)
+            .with_format(true)
+            .with_extra(true)
+    }
+
     fn stream<'a>(
         &'a self,
         model: &'a ModelSpec,

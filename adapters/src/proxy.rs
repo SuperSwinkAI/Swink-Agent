@@ -168,6 +168,13 @@ impl std::fmt::Debug for ProxyStreamFn {
 }
 
 impl StreamFn for ProxyStreamFn {
+    // The proxy wire protocol has a fixed options schema
+    // (temperature / max_tokens / session_id) — no serving field survives;
+    // `extra` is warned about and dropped at stream time.
+    fn supported_serving_options(&self) -> swink_agent::ServingOptionSupport {
+        swink_agent::ServingOptionSupport::none()
+    }
+
     fn stream<'a>(
         &'a self,
         model: &'a ModelSpec,
