@@ -65,6 +65,39 @@ pub fn estimate_tokens(msg: &AgentMessage) -> usize {
     DefaultTokenCounter.count_tokens(msg)
 }
 
+/// Estimate the token cost of a request's tool schemas.
+///
+/// Prices each tool's name + description + serialized parameters schema at
+/// `chars / 4`, separately from the message history, so hosts budgeting
+/// injected context (repo maps, file mentions) against a model's context
+/// window can subtract the fixed overhead first.
+pub fn estimate_tool_schema_tokens(tools: &[std::sync::Arc<dyn crate::tool::AgentTool>]) -> usize {
+    tools
+        .iter()
+        .map(|tool| {
+            (tool.name().len()
+                + tool.description().len()
+                + tool.parameters_schema().to_string().len())
+                / 4
+        })
+        .sum()
+}
+
+/// Estimate the token cost of an entire request context.
+///
+/// Sums the system prompt, tool schemas, and message history with the same
+/// `chars / 4` heuristic the loop's built-in [`DefaultTokenCounter`] uses
+/// for messages.
+///
+/// Use this instead of re-deriving the arithmetic downstream: a host budget
+/// computed here stays in agreement with the loop's own estimates if the
+/// heuristic ever changes.
+pub fn estimate_context_tokens(context: &crate::types::AgentContext) -> usize {
+    context.system_prompt.len() / 4
+        + estimate_tool_schema_tokens(&context.tools)
+        + context.messages.iter().map(estimate_tokens).sum::<usize>()
+}
+
 fn content_blocks(msg: &LlmMessage) -> &[ContentBlock] {
     match msg {
         LlmMessage::User(m) => &m.content,
@@ -963,5 +996,32 @@ mod tests {
             &model_with_window(100),
             None
         ));
+    }
+
+    #[test]
+    fn tool_schema_tokens_price_name_description_and_schema() {
+        let tool: std::sync::Arc<dyn crate::tool::AgentTool> =
+            std::sync::Arc::new(crate::NoopTool::new("legacy_tool"));
+        let expected = (tool.name().len()
+            + tool.description().len()
+            + tool.parameters_schema().to_string().len())
+            / 4;
+        assert_eq!(estimate_tool_schema_tokens(&[tool]), expected);
+        assert_eq!(estimate_tool_schema_tokens(&[]), 0);
+    }
+
+    #[test]
+    fn context_tokens_sum_system_tools_and_messages() {
+        let tool: std::sync::Arc<dyn crate::tool::AgentTool> =
+            std::sync::Arc::new(crate::NoopTool::new("legacy_tool"));
+        let system = "s".repeat(40); // 10 tokens
+        let message = text_message(&"x".repeat(400)); // 100 tokens
+        let message_tokens = estimate_tokens(&message);
+        let tool_tokens = estimate_tool_schema_tokens(std::slice::from_ref(&tool));
+        let context = crate::types::AgentContext::new(system, vec![message], vec![tool]);
+        assert_eq!(
+            estimate_context_tokens(&context),
+            10 + tool_tokens + message_tokens
+        );
     }
 }
