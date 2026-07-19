@@ -346,6 +346,24 @@ impl AgentClient {
             .await
     }
 
+    /// Run the remote agent's context transformers against its stored
+    /// history now (manual compaction, e.g. a `/compact` command).
+    ///
+    /// Returns the last transformer's report, or `None` when no transformer
+    /// is configured or every transformer declined (history under budget).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RpcError`] on transport failure or when the server rejects
+    /// the request; servers that predate `context.compact` answer
+    /// `METHOD_NOT_FOUND`.
+    pub async fn compact(&self) -> Result<crate::dto::CompactResult, RpcError> {
+        self.peer
+            .sender()
+            .request(method::CONTEXT_COMPACT, &serde_json::json!({}))
+            .await
+    }
+
     /// Put the remote agent into plan mode (read-only tools, plan-mode
     /// system prompt addendum). The server holds the saved tools and prompt
     /// until [`exit_plan_mode`](Self::exit_plan_mode).
@@ -830,6 +848,17 @@ mod tests {
                         assert_eq!(p.messages.len(), 1);
                         server_sender.respond_ok(id, Ack::new()).await.unwrap();
                     }
+                    method::CONTEXT_COMPACT => {
+                        server_sender
+                            .respond_ok(
+                                id,
+                                crate::dto::CompactResult::new(Some(
+                                    swink_agent::CompactionReport::new(3, 9_000, 2_000, true),
+                                )),
+                            )
+                            .await
+                            .unwrap();
+                    }
                     other => panic!("unexpected control method: {other}"),
                 }
             }
@@ -866,6 +895,10 @@ mod tests {
         assert!(snapshot.state.is_some());
         client.session_restore(snapshot).await.unwrap();
 
+        let compacted = client.compact().await.unwrap();
+        let report = compacted.report.expect("mock server returns a report");
+        assert_eq!(report.dropped_count, 3);
+
         drop(client);
         let seen = server_task.await.unwrap();
         assert_eq!(
@@ -882,6 +915,7 @@ mod tests {
                 method::PLAN_EXIT,
                 method::SESSION_SNAPSHOT,
                 method::SESSION_RESTORE,
+                method::CONTEXT_COMPACT,
             ]
         );
     }

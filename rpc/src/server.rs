@@ -316,7 +316,7 @@ async fn run_session(
                 method: m,
                 params,
             }) if method::is_control(&m) => {
-                match dispatch_control(&mut agent, &mut plan_state, &m, params) {
+                match dispatch_control(&mut agent, &mut plan_state, &m, params).await {
                     Ok(result) => peer.sender().respond_ok(id, result).await?,
                     Err(e) => peer.sender().respond_err(id, e).await?,
                 }
@@ -433,14 +433,14 @@ type PlanModeState = Option<(Vec<Arc<dyn swink_agent::AgentTool>>, String)>;
 /// while a turn is in flight `run_prompt` answers control requests with
 /// [`RpcError::busy`](crate::jsonrpc::RpcError::busy) instead.
 #[cfg(any(unix, test))]
-fn dispatch_control(
+async fn dispatch_control(
     agent: &mut swink_agent::Agent,
     plan_state: &mut PlanModeState,
     method_name: &str,
     params: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, crate::jsonrpc::RpcError> {
     use crate::dto::{
-        Ack, ApprovalGetResult, ApprovalSetParams, ModelListResult, ModelSetParams,
+        Ack, ApprovalGetResult, ApprovalSetParams, CompactResult, ModelListResult, ModelSetParams,
         SystemPromptSetParams, ThinkingSetParams, method,
     };
     use crate::jsonrpc::RpcError;
@@ -495,6 +495,15 @@ fn dispatch_control(
                 .ok_or_else(|| RpcError::invalid_request("not in plan mode"))?;
             agent.exit_plan_mode(saved_tools, saved_prompt);
             encode(Ack::new())
+        }
+        method::CONTEXT_COMPACT => {
+            // Only dispatched between turns (see `is_control`), so the
+            // agent-side `Err(AlreadyRunning)` guard is a backstop.
+            let report = agent
+                .compact_context()
+                .await
+                .map_err(|e| RpcError::invalid_request(e.to_string()))?;
+            encode(CompactResult::new(report))
         }
         method::SESSION_SNAPSHOT => encode(session_snapshot(agent)?),
         method::SESSION_RESTORE => {

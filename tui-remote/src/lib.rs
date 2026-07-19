@@ -247,6 +247,12 @@ async fn handle_control(
                 state: snapshot.state,
             })
         }
+        ControlRequest::Compact => {
+            let result = client.compact().await.map_err(|e| map_rpc_error(&e))?;
+            Ok(ControlResponse::Compacted {
+                report: result.report,
+            })
+        }
         ControlRequest::RestoreSession { messages, state } => {
             client
                 .session_restore(SessionSnapshot::new(
