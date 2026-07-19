@@ -356,7 +356,25 @@ pub fn format_error_with_sources(error: &AgentError) -> String {
 ///
 /// When `error_kind` is present, structural classification takes priority
 /// over string matching on the error message.
+///
+/// Context-overflow errors classified through this entry point carry an empty
+/// `model` id; use [`classify_stream_error_for_model`] when the in-flight
+/// model is known so the error names it.
 pub fn classify_stream_error(
+    error_message: &str,
+    stop_reason: StopReason,
+    error_kind: Option<StreamErrorKind>,
+) -> AgentError {
+    classify_stream_error_for_model("", error_message, stop_reason, error_kind)
+}
+
+/// Classify an `AssistantMessageEvent::Error` into a `AgentError`, naming
+/// `model_id` in model-scoped variants ([`AgentError::ContextWindowOverflow`]).
+///
+/// When `error_kind` is present, structural classification takes priority
+/// over string matching on the error message.
+pub fn classify_stream_error_for_model(
+    model_id: &str,
     error_message: &str,
     stop_reason: StopReason,
     error_kind: Option<StreamErrorKind>,
@@ -366,10 +384,10 @@ pub fn classify_stream_error(
         return match kind {
             StreamErrorKind::Throttled => AgentError::ModelThrottled,
             StreamErrorKind::ContextWindowExceeded => AgentError::ContextWindowOverflow {
-                model: String::new(),
+                model: model_id.to_string(),
             },
-            StreamErrorKind::Auth => AgentError::StreamError {
-                source: Box::new(std::io::Error::other(error_message.to_string())),
+            StreamErrorKind::Auth => AgentError::Auth {
+                message: error_message.to_string(),
             },
             StreamErrorKind::Network => {
                 AgentError::network(std::io::Error::other(error_message.to_string()))
@@ -385,7 +403,7 @@ pub fn classify_stream_error(
     let lower = error_message.to_lowercase();
     if lower.contains("context window") || lower.contains("context_length_exceeded") {
         return AgentError::ContextWindowOverflow {
-            model: String::new(),
+            model: model_id.to_string(),
         };
     }
     if lower.contains("rate limit") || lower.contains("429") || lower.contains("throttl") {
@@ -406,6 +424,17 @@ pub fn classify_stream_error(
             && (lower.contains("decommissioned") || lower.contains("has been retired")))
     {
         return AgentError::ModelRetired {
+            message: error_message.to_string(),
+        };
+    }
+    // Deliberately no bare "401"/"403" digit matching: token counts and ids
+    // trip substring checks on 3-digit codes far too easily.
+    if lower.contains("unauthorized")
+        || lower.contains("invalid api key")
+        || lower.contains("authentication")
+        || lower.contains("forbidden")
+    {
+        return AgentError::Auth {
             message: error_message.to_string(),
         };
     }
@@ -492,8 +521,61 @@ mod tests {
             StopReason::Error,
             Some(StreamErrorKind::Auth),
         );
-        assert!(matches!(err, AgentError::StreamError { .. }));
+        match err {
+            AgentError::Auth { ref message } => assert_eq!(message, "invalid api key"),
+            ref other => panic!("expected Auth, got {other:?}"),
+        }
         assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn classify_auth_by_string() {
+        for msg in [
+            "Unauthorized",
+            "invalid API key provided",
+            "authentication failed for tenant",
+            "403 Forbidden",
+        ] {
+            let err = classify_stream_error(msg, StopReason::Error, None);
+            assert!(
+                matches!(err, AgentError::Auth { .. }),
+                "expected Auth for \"{msg}\", got {err:?}"
+            );
+        }
+        // Bare 3-digit codes must not trigger auth classification: token
+        // counts and ids contain "401"/"403" too easily.
+        let err = classify_stream_error(
+            "request used 40123 tokens of budget",
+            StopReason::Error,
+            None,
+        );
+        assert!(!matches!(err, AgentError::Auth { .. }));
+    }
+
+    #[test]
+    fn classify_for_model_names_model_in_overflow() {
+        // Structural path
+        let err = classify_stream_error_for_model(
+            "claude-fable-5",
+            "too many tokens",
+            StopReason::Error,
+            Some(StreamErrorKind::ContextWindowExceeded),
+        );
+        match err {
+            AgentError::ContextWindowOverflow { ref model } => assert_eq!(model, "claude-fable-5"),
+            ref other => panic!("expected ContextWindowOverflow, got {other:?}"),
+        }
+        // String-matching fallback path
+        let err = classify_stream_error_for_model(
+            "claude-fable-5",
+            "context_length_exceeded: too long",
+            StopReason::Error,
+            None,
+        );
+        match err {
+            AgentError::ContextWindowOverflow { ref model } => assert_eq!(model, "claude-fable-5"),
+            ref other => panic!("expected ContextWindowOverflow, got {other:?}"),
+        }
     }
 
     #[test]

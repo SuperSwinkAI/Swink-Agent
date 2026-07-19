@@ -134,6 +134,17 @@ pub enum AgentError {
         #[source]
         source: std::io::Error,
     },
+
+    /// Authentication or authorization failure (HTTP 401/403).
+    ///
+    /// Non-retryable — the credential is missing, invalid, or lacks
+    /// permission. Callers can match on this variant to tell a bad API key
+    /// apart from a transient stream failure without string matching.
+    // Appended last: inserting mid-enum shifts the implicit discriminants of
+    // the variants after it (cargo-semver-checks
+    // `enum_no_repr_variant_discriminant_changed`).
+    #[error("authentication failed: {message}")]
+    Auth { message: String },
 }
 
 impl AgentError {
@@ -148,6 +159,13 @@ impl AgentError {
     pub fn network(err: impl std::error::Error + Send + Sync + 'static) -> Self {
         Self::NetworkError {
             source: Box::new(err),
+        }
+    }
+
+    /// Convenience constructor for [`AgentError::Auth`].
+    pub fn auth(message: impl Into<String>) -> Self {
+        Self::Auth {
+            message: message.into(),
         }
     }
 
