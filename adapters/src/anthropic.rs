@@ -16,7 +16,7 @@ use tracing::{debug, error, warn};
 use swink_agent::ContentBlock;
 use swink_agent::{
     AgentContext, AgentMessage, AssistantMessageEvent, CacheStrategy, Cost, LlmMessage, ModelSpec,
-    StopReason, StreamFn, StreamOptions, ThinkingLevel, Usage,
+    ServingOptionSupport, StopReason, StreamFn, StreamOptions, ThinkingLevel, Usage,
 };
 
 use crate::base::AdapterBase;
@@ -165,6 +165,12 @@ impl std::fmt::Debug for AnthropicStreamFn {
 }
 
 impl StreamFn for AnthropicStreamFn {
+    // Only `extra` is merged into the request body; the typed serving
+    // fields have no Anthropic-protocol equivalent.
+    fn supported_serving_options(&self) -> ServingOptionSupport {
+        ServingOptionSupport::none().with_extra(true)
+    }
+
     fn stream<'a>(
         &'a self,
         model: &'a ModelSpec,

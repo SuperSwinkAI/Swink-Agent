@@ -25,7 +25,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
 use swink_agent::{
-    AgentContext, AgentMessage, AssistantMessageEvent, ModelSpec, StreamFn, StreamOptions,
+    AgentContext, AgentMessage, AssistantMessageEvent, ModelSpec, ServingOptionSupport, StreamFn,
+    StreamOptions,
 };
 
 use crate::convert;
@@ -70,6 +71,12 @@ impl std::fmt::Debug for MistralStreamFn {
 }
 
 impl StreamFn for MistralStreamFn {
+    // Only `extra` is merged into the request body; the typed serving
+    // fields have no Mistral-protocol equivalent.
+    fn supported_serving_options(&self) -> ServingOptionSupport {
+        ServingOptionSupport::none().with_extra(true)
+    }
+
     fn stream<'a>(
         &'a self,
         model: &'a ModelSpec,
