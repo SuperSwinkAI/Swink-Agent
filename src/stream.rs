@@ -714,6 +714,139 @@ pub trait StreamFn: Send + Sync {
     }
 }
 
+// ─── Owned-input streaming & decorators ─────────────────────────────────────
+
+/// Stream from `stream_fn` with owned inputs, yielding a `'static` stream.
+///
+/// [`StreamFn::stream`] ties the returned stream's lifetime to the caller's
+/// borrows, so a decorator that *modifies* the request (clamping
+/// `max_tokens`, rewriting the context) cannot delegate directly — the
+/// modified values are locals the returned stream may not borrow. Every
+/// downstream decorator ends up hand-rolling the same spawn-a-task,
+/// forward-over-a-channel dance. This helper is that dance, written once:
+/// a task owns the inputs and drives the inner stream; the returned stream
+/// yields its events and is `'static`.
+///
+/// Must be called within a Tokio runtime. Cancellation flows through
+/// `cancellation_token` exactly as with a direct [`StreamFn::stream`] call;
+/// if the consumer drops the returned stream, the forwarding task stops on
+/// its next send.
+#[must_use]
+pub fn stream_owned(
+    stream_fn: Arc<dyn StreamFn>,
+    model: ModelSpec,
+    context: AgentContext,
+    options: StreamOptions,
+    cancellation_token: CancellationToken,
+) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'static>> {
+    let (tx, rx) = tokio::sync::mpsc::channel(16);
+    tokio::spawn(async move {
+        use futures::StreamExt as _;
+        let mut events = stream_fn.stream(&model, &context, &options, cancellation_token);
+        while let Some(event) = events.next().await {
+            if tx.send(event).await.is_err() {
+                break;
+            }
+        }
+    });
+    Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx))
+}
+
+/// Outcome of a [`MapOptionsStreamFn`] rewrite callback.
+///
+/// `Ok` carries the options to delegate with; `Err` refuses the request and
+/// the carried events are emitted as the response stream (typically
+/// [`AssistantMessageEvent::Start`] followed by an
+/// [`AssistantMessageEvent::Error`]).
+pub type MappedOptions = Result<StreamOptions, Vec<AssistantMessageEvent>>;
+
+/// A [`StreamFn`] decorator that rewrites per-request [`StreamOptions`]
+/// before delegating to an inner stream function.
+///
+/// This is the supported shape for per-request policy around a provider
+/// adapter — reply-budget clamping, request refusal, option injection —
+/// without each host reimplementing the owned-input plumbing (see
+/// [`stream_owned`]). The callback sees the model, the context, and the
+/// caller's options, and either returns the options to delegate with or
+/// refuses the request with a ready-made event sequence:
+///
+/// ```
+/// # use std::{pin::Pin, sync::Arc};
+/// # use futures::Stream;
+/// # use tokio_util::sync::CancellationToken;
+/// # use swink_agent::{
+/// #     AgentContext, AssistantMessageEvent, MapOptionsStreamFn, ModelSpec, StreamFn,
+/// #     StreamOptions,
+/// # };
+/// # struct Silent;
+/// # impl StreamFn for Silent {
+/// #     fn stream<'a>(
+/// #         &'a self,
+/// #         _model: &'a ModelSpec,
+/// #         _context: &'a AgentContext,
+/// #         _options: &'a StreamOptions,
+/// #         _cancellation_token: CancellationToken,
+/// #     ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+/// #         Box::pin(futures::stream::empty())
+/// #     }
+/// # }
+/// let inner: Arc<dyn StreamFn> = Arc::new(Silent);
+/// let clamped = MapOptionsStreamFn::new(inner, |_model, _context, mut options| {
+///     options.max_tokens = Some(options.max_tokens.unwrap_or(4096).min(1024));
+///     Ok(options)
+/// });
+/// # let _: Arc<dyn StreamFn> = Arc::new(clamped);
+/// ```
+///
+/// The rewritten options are owned locals, so delegation goes through
+/// [`stream_owned`]; the context crosses via
+/// [`AgentContext::clone_for_send`], whose best-effort snapshot semantics
+/// are safe here because provider adapters never consume custom messages.
+pub struct MapOptionsStreamFn<F> {
+    inner: Arc<dyn StreamFn>,
+    map: F,
+}
+
+impl<F> MapOptionsStreamFn<F>
+where
+    F: Fn(&ModelSpec, &AgentContext, StreamOptions) -> MappedOptions + Send + Sync,
+{
+    /// Wrap `inner`, rewriting each request's options through `map`.
+    pub fn new(inner: Arc<dyn StreamFn>, map: F) -> Self {
+        Self { inner, map }
+    }
+}
+
+impl<F> StreamFn for MapOptionsStreamFn<F>
+where
+    F: Fn(&ModelSpec, &AgentContext, StreamOptions) -> MappedOptions + Send + Sync,
+{
+    fn stream<'a>(
+        &'a self,
+        model: &'a ModelSpec,
+        context: &'a AgentContext,
+        options: &'a StreamOptions,
+        cancellation_token: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        match (self.map)(model, context, options.clone()) {
+            Ok(mapped) => stream_owned(
+                Arc::clone(&self.inner),
+                model.clone(),
+                context.clone_for_send(),
+                mapped,
+                cancellation_token,
+            ),
+            Err(events) => Box::pin(futures::stream::iter(events)),
+        }
+    }
+
+    // The decorator rewrites options but delegates the request shape, so it
+    // honors exactly what the inner adapter honors.
+    fn supported_serving_options(&self) -> ServingOptionSupport {
+        self.inner.supported_serving_options()
+    }
+}
+
 // ─── Tool-call sanitization ──────────────────────────────────────────────────
 
 /// Scrub incomplete `ToolCall` blocks in an assistant message so it can safely
@@ -1157,6 +1290,125 @@ const _: () = {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A `StreamFn` that records the `max_tokens` it was called with and
+    /// yields a fixed terminal event.
+    struct OptionsCapturingStreamFn {
+        seen_max_tokens: std::sync::Mutex<Vec<Option<u64>>>,
+    }
+
+    impl StreamFn for OptionsCapturingStreamFn {
+        fn stream<'a>(
+            &'a self,
+            _model: &'a ModelSpec,
+            _context: &'a AgentContext,
+            options: &'a StreamOptions,
+            _cancellation_token: CancellationToken,
+        ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+            self.seen_max_tokens
+                .lock()
+                .unwrap()
+                .push(options.max_tokens);
+            Box::pin(futures::stream::iter([
+                AssistantMessageEvent::Start,
+                AssistantMessageEvent::Done {
+                    stop_reason: StopReason::Stop,
+                    usage: Usage::default(),
+                    cost: Cost::default(),
+                },
+            ]))
+        }
+    }
+
+    fn empty_context() -> AgentContext {
+        AgentContext::new("system", Vec::new(), Vec::new())
+    }
+
+    #[tokio::test]
+    async fn stream_owned_forwards_all_events_with_static_lifetime() {
+        use futures::StreamExt as _;
+        let inner: Arc<dyn StreamFn> = Arc::new(OptionsCapturingStreamFn {
+            seen_max_tokens: std::sync::Mutex::new(Vec::new()),
+        });
+        // The returned stream is 'static: it outlives every owned local we
+        // pass in, which is the whole point.
+        let events: Vec<_> = stream_owned(
+            inner,
+            ModelSpec::new("mock", "m"),
+            empty_context(),
+            StreamOptions::default(),
+            CancellationToken::new(),
+        )
+        .collect()
+        .await;
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
+        assert!(matches!(events[1], AssistantMessageEvent::Done { .. }));
+    }
+
+    #[tokio::test]
+    async fn map_options_rewrites_the_delegated_options() {
+        use futures::StreamExt as _;
+        let inner = Arc::new(OptionsCapturingStreamFn {
+            seen_max_tokens: std::sync::Mutex::new(Vec::new()),
+        });
+        let seen = Arc::clone(&inner);
+        let wrapped = MapOptionsStreamFn::new(inner, |_model, _context, mut options| {
+            options.max_tokens = Some(64);
+            Ok(options)
+        });
+
+        let model = ModelSpec::new("mock", "m");
+        let context = empty_context();
+        let options = StreamOptions::default();
+        let events: Vec<_> = wrapped
+            .stream(&model, &context, &options, CancellationToken::new())
+            .collect()
+            .await;
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(*seen.seen_max_tokens.lock().unwrap(), vec![Some(64)]);
+    }
+
+    #[tokio::test]
+    async fn map_options_refusal_emits_the_given_events_without_delegating() {
+        use futures::StreamExt as _;
+        let inner = Arc::new(OptionsCapturingStreamFn {
+            seen_max_tokens: std::sync::Mutex::new(Vec::new()),
+        });
+        let seen = Arc::clone(&inner);
+        let wrapped = MapOptionsStreamFn::new(inner, |_model, _context, _options| {
+            Err(vec![
+                AssistantMessageEvent::Start,
+                AssistantMessageEvent::Error {
+                    stop_reason: StopReason::Error,
+                    error_message: "prompt exceeds reply budget".to_string(),
+                    usage: None,
+                    error_kind: Some(StreamErrorKind::ContextWindowExceeded),
+                    retry_after: None,
+                },
+            ])
+        });
+
+        let model = ModelSpec::new("mock", "m");
+        let context = empty_context();
+        let options = StreamOptions::default();
+        let events: Vec<_> = wrapped
+            .stream(&model, &context, &options, CancellationToken::new())
+            .collect()
+            .await;
+
+        assert!(matches!(
+            events[1],
+            AssistantMessageEvent::Error {
+                error_kind: Some(StreamErrorKind::ContextWindowExceeded),
+                ..
+            }
+        ));
+        assert!(
+            seen.seen_max_tokens.lock().unwrap().is_empty(),
+            "a refused request must never reach the inner adapter"
+        );
+    }
 
     #[test]
     fn unsupported_fields_names_only_set_and_unhonored_options() {
