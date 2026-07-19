@@ -405,6 +405,136 @@ async fn unsupported_control_surfaces_a_status_message() {
     );
 }
 
+/// `/compact` in transport mode routes through `ControlRequest::Compact`
+/// and renders the returned report as a system message.
+#[tokio::test]
+async fn compact_in_transport_mode_renders_the_report() {
+    let responses = vec![Ok(ControlResponse::Compacted {
+        report: Some(swink_agent::CompactionReport::new(4, 12_000, 3_000, true)),
+    })];
+    let (mut app, _sent, controls) = app_with_control_transport(Vec::new(), responses);
+
+    for c in "/compact".chars() {
+        app.editor.input.insert_char(c);
+    }
+    app.submit_input();
+    app.flush_controls().await;
+
+    assert!(matches!(
+        controls.lock().unwrap()[..],
+        [ControlRequest::Compact]
+    ));
+    assert!(
+        app.view
+            .messages
+            .iter()
+            .any(|m| m.content == "Compacted context: dropped 4 message(s), ~12000 → ~3000 tokens."),
+        "the compaction report should be rendered as a system message"
+    );
+}
+
+/// A backend that declines to compact (history under budget) reports that
+/// instead of pretending work happened.
+#[tokio::test]
+async fn compact_with_no_report_renders_the_noop_notice() {
+    let responses = vec![Ok(ControlResponse::Compacted { report: None })];
+    let (mut app, _sent, controls) = app_with_control_transport(Vec::new(), responses);
+
+    for c in "/compact".chars() {
+        app.editor.input.insert_char(c);
+    }
+    app.submit_input();
+    app.flush_controls().await;
+
+    assert!(matches!(
+        controls.lock().unwrap()[..],
+        [ControlRequest::Compact]
+    ));
+    assert!(
+        app.view
+            .messages
+            .iter()
+            .any(|m| m.content == "Nothing to compact — history is already under budget."),
+    );
+}
+
+/// `/compact` is blocked while a turn is streaming, like the other
+/// session-mutating commands.
+#[tokio::test]
+async fn compact_is_blocked_while_the_agent_is_running() {
+    let (mut app, _sent, controls) = app_with_control_transport(Vec::new(), Vec::new());
+    app.agent_io.status = AgentStatus::Running;
+
+    for c in "/compact".chars() {
+        app.editor.input.insert_char(c);
+    }
+    app.submit_input();
+    app.flush_controls().await;
+
+    assert!(
+        controls.lock().unwrap().is_empty(),
+        "no control request may be issued mid-stream"
+    );
+    assert!(app.view.messages.iter().any(|m| {
+        m.content
+            .contains("Command blocked while the agent is running")
+    }),);
+}
+
+/// `/compact` on the in-process path runs `Agent::compact_context` on the
+/// event loop's flush pass and renders the report — no transport involved.
+#[tokio::test]
+async fn compact_in_process_runs_the_agent_transformer() {
+    use swink_agent::{
+        AgentMessage, AgentOptions, LlmMessage, SlidingWindowTransformer, UserMessage,
+        default_convert,
+    };
+
+    let agent = swink_agent::Agent::new(
+        AgentOptions::new(
+            "test system prompt",
+            ModelSpec::new("test", "mock-model"),
+            Arc::new(super::helpers::PromptCapturingStreamFn {
+                prompts: Arc::new(Mutex::new(Vec::new())),
+            }) as Arc<dyn swink_agent::StreamFn>,
+            default_convert,
+        )
+        // normal_budget high so only manual (overflow=true) compaction fires.
+        .with_transform_context(SlidingWindowTransformer::new(10_000, 150, 1)),
+    );
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+    // ~10 messages * ~50 estimated tokens, over the 150 overflow budget.
+    let history: Vec<AgentMessage> = (0..10)
+        .map(|i| {
+            AgentMessage::Llm(LlmMessage::User(
+                UserMessage::new(vec![swink_agent::ContentBlock::Text {
+                    text: format!("m{i}:{}", "x".repeat(200)),
+                }])
+                .with_timestamp(0),
+            ))
+        })
+        .collect();
+    app.agent_io.agent.as_mut().unwrap().set_messages(history);
+
+    for c in "/compact".chars() {
+        app.editor.input.insert_char(c);
+    }
+    app.submit_input();
+    assert!(app.agent_io.pending_compact, "dispatch defers to the flush");
+
+    app.flush_compact().await;
+
+    assert!(!app.agent_io.pending_compact);
+    assert!(
+        app.view
+            .messages
+            .iter()
+            .any(|m| m.content.starts_with("Compacted context: dropped")),
+        "the in-process compaction report should be rendered"
+    );
+}
+
 /// Auto-save keeps its old silent skip when the transport does not support
 /// session snapshots — no message, no error, nothing persisted.
 #[tokio::test]

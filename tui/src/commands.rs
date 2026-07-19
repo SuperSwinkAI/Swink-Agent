@@ -20,6 +20,8 @@ pub enum CommandResult {
     SetSystemPrompt(String),
     /// Command requests agent reset.
     Reset,
+    /// Command requests manual context compaction.
+    Compact,
     /// Copy text to clipboard.
     CopyToClipboard(ClipboardContent),
     /// Save current session.
@@ -242,6 +244,7 @@ fn execute_slash_command(cmd: &str) -> CommandResult {
             }
         }
         "reset" => CommandResult::Reset,
+        "compact" => CommandResult::Compact,
         "editor" => CommandResult::OpenEditor,
         "plan" => CommandResult::TogglePlanMode,
         "usage" => CommandResult::ShowUsage,
@@ -514,6 +517,14 @@ mod tests {
     #[test]
     fn slash_reset() {
         assert!(matches!(execute_command("/reset"), CommandResult::Reset));
+    }
+
+    #[test]
+    fn slash_compact() {
+        assert!(matches!(
+            execute_command("/compact"),
+            CommandResult::Compact
+        ));
     }
 
     #[test]

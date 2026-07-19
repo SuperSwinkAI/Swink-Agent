@@ -551,6 +551,9 @@ pub(crate) enum ControlFollowUp {
         /// Whether to report the outcome as a system message.
         announce: bool,
     },
+    /// Render the [`ControlResponse::Compacted`](crate::transport::ControlResponse::Compacted)
+    /// reply to a `/compact` request as a system message.
+    RenderCompaction,
 }
 
 /// Agent I/O state: the agent handle, in-flight turn status, event channels,
@@ -601,6 +604,10 @@ pub struct AgentIo {
     /// Messages steered into the agent while it was already running.
     /// Held here until `AgentEnd`, then promoted into `messages`.
     pub(crate) pending_steered: Vec<String>,
+    /// A `/compact` was requested on the in-process agent; the event loop
+    /// runs it on its next pass (compact_context is async, command dispatch
+    /// is sync). External transports queue a control request instead.
+    pub(crate) pending_compact: bool,
 }
 
 impl AgentIo {
@@ -632,6 +639,7 @@ impl AgentIo {
             session_trusted_tools: HashSet::new(),
             trust_follow_up: None,
             pending_steered: Vec::new(),
+            pending_compact: false,
         }
     }
 }
