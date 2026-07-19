@@ -16,7 +16,7 @@ use crate::types::{
 
 use super::{
     AgentEvent, AgentLoopConfig, StreamResult, build_abort_message, build_error_message,
-    classify_stream_error, emit,
+    classify_stream_error, classify_stream_error_for_model, emit,
 };
 
 /// Stream an assistant response with retry logic and optional model fallback,
@@ -465,7 +465,8 @@ fn handle_stream_error(
     retry_after: Option<std::time::Duration>,
     attempt: u32,
 ) -> StreamErrorAction {
-    let harness_error = classify_stream_error(error_message, stop_reason, error_kind);
+    let harness_error =
+        classify_stream_error_for_model(&model.model_id, error_message, stop_reason, error_kind);
 
     // Context window overflow — signal and retry
     if matches!(harness_error, AgentError::ContextWindowOverflow { .. }) {
