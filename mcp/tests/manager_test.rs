@@ -352,7 +352,11 @@ async fn discovery_timeout_skips_hung_server_and_keeps_healthy_tools() {
         )
         .with_tool_prefix("healthy")
         .with_requires_approval(false)
-        .with_discovery_timeout_ms(500),
+        // Generous on purpose: this budget only guards genuine hangs. Real
+        // HTTP against the local mock server has exceeded 500ms under
+        // full-suite load, flaking the test by skipping the healthy server
+        // (#1160).
+        .with_discovery_timeout_ms(10_000),
     ]);
 
     let start = Instant::now();
@@ -368,8 +372,13 @@ async fn discovery_timeout_skips_hung_server_and_keeps_healthy_tools() {
         .map(|tool| tool.name().into())
         .collect();
     assert_eq!(names, vec!["healthy_echo".to_string()]);
+    // Bounds bootstrap against an *unapplied* hung-server timeout, which
+    // would otherwise pend forever. Connects run sequentially, so `elapsed`
+    // includes the healthy server's real latency — observed up to ~8s on a
+    // loaded machine (#1160); the margin must tolerate that while still
+    // failing fast when the timeout machinery is broken.
     assert!(
-        elapsed < Duration::from_secs(2),
+        elapsed < Duration::from_secs(30),
         "discovery timeout should keep bootstrap bounded, elapsed: {elapsed:?}"
     );
 
