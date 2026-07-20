@@ -17,7 +17,7 @@ tavily = []
 all = ["duckduckgo", "brave", "tavily"]
 
 [dependencies]
-swink-agent = { path = "../..", version = "0.12.0", default-features = false, features = ["plugins"] }
+swink-agent = { path = "../..", version = "0.12.1", default-features = false, features = ["plugins"] }
 reqwest.workspace = true
 # Supplies the `ring` crypto provider, installed as the process default
 # before any reqwest client is built (workspace reqwest is
