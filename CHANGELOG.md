@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `TurnEndReason::ReasoningOnly` — structural signal for turns that end with hidden-channel reasoning only (no visible text, no tool call), plus `AssistantMessage::has_visible_content()` / `is_reasoning_only()` helpers; hosts can now tell "answered invisibly" apart from a normal completion (#1195)
 - `AgentOptions::with_reasoning_only_nudge` — opt-in one-shot corrective reminder + single retry when a turn ends reasoning-only; a second consecutive reasoning-only turn is accepted as-is (#1195)
 - `testing::thinking_only_events` — mock event sequence for a reasoning-only response (#1195)
+- Documented guarantee + regression tests that bash-tool subprocesses inherit the host process environment unmodified — orchestrators inject per-agent identity env overlays (`GH_TOKEN`, `GIT_AUTHOR_*`, `GIT_SSH_COMMAND`) and depend on full inheritance; any future env-policy feature must keep inheritance the default (#1197)
 
 ## [0.12.1] - 2026-07-19
 
