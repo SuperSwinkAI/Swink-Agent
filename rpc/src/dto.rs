@@ -435,6 +435,24 @@ impl SessionSnapshot {
     }
 }
 
+/// Result of the `context.compact` request.
+#[non_exhaustive]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CompactResult {
+    /// The last transformer's report, or `None` when no transformer is
+    /// configured or every transformer declined (history under budget).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub report: Option<swink_agent::CompactionReport>,
+}
+
+impl CompactResult {
+    /// Construct a new `CompactResult`.
+    #[must_use]
+    pub const fn new(report: Option<swink_agent::CompactionReport>) -> Self {
+        Self { report }
+    }
+}
+
 // ─── Protocol constants ───────────────────────────────────────────────────────
 
 pub const PROTOCOL_VERSION: &str = "1.1";
@@ -461,6 +479,9 @@ pub mod method {
     pub const PLAN_EXIT: &str = "plan.exit";
     pub const SESSION_SNAPSHOT: &str = "session.snapshot";
     pub const SESSION_RESTORE: &str = "session.restore";
+    /// Additive since 1.1: pre-1.1-plus servers answer `METHOD_NOT_FOUND`,
+    /// which clients surface as "unsupported" rather than an error.
+    pub const CONTEXT_COMPACT: &str = "context.compact";
 
     /// Returns `true` for control-plane request methods (protocol 1.1).
     ///
@@ -484,6 +505,7 @@ pub mod method {
                 | PLAN_EXIT
                 | SESSION_SNAPSHOT
                 | SESSION_RESTORE
+                | CONTEXT_COMPACT
         )
     }
 }
@@ -513,6 +535,7 @@ mod tests {
             method::PLAN_EXIT,
             method::SESSION_SNAPSHOT,
             method::SESSION_RESTORE,
+            method::CONTEXT_COMPACT,
         ] {
             assert!(method::is_control(m), "{m} should be a control method");
         }
