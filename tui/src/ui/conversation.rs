@@ -18,6 +18,10 @@ pub struct ConversationView {
     pub scroll_offset: usize,
     /// Whether auto-scroll is engaged.
     pub auto_scroll: bool,
+    /// Whether hidden channels (currently: reasoning/thinking content) render
+    /// inline for every message instead of the collapsed `[thinking...]`
+    /// placeholder. Session-stateful; toggled globally via F5. Off by default.
+    pub show_hidden_channels: bool,
     /// Total rendered lines (computed each frame).
     rendered_lines: usize,
     /// Per-row cell symbols captured from the last render pass while a
@@ -40,6 +44,7 @@ impl ConversationView {
         Self {
             scroll_offset: 0,
             auto_scroll: true,
+            show_hidden_channels: false,
             rendered_lines: 0,
             visible_cells: Vec::new(),
             cache: RenderCache::new(),
@@ -133,18 +138,17 @@ impl ConversationView {
     }
 
     /// Render the conversation view.
-    #[allow(
-        clippy::too_many_lines,
-        clippy::too_many_arguments,
-        clippy::fn_params_excessive_bools
-    )]
+    ///
+    /// Inline visibility of hidden channels is controlled by the
+    /// [`show_hidden_channels`](Self::show_hidden_channels) field rather
+    /// than a parameter.
+    #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         frame: &mut Frame,
         area: Rect,
         messages: &[DisplayMessage],
         show_thinking: bool,
-        show_hidden_channels: bool,
         focused: bool,
         blink_on: bool,
         selected_tool_block: Option<usize>,
@@ -159,13 +163,20 @@ impl ConversationView {
         let inner_width = area.width.saturating_sub(2); // account for borders
         let inner_height = area.height.saturating_sub(2) as usize; // account for borders
 
+        let ctx = RenderContext {
+            show_thinking,
+            show_hidden_channels: self.show_hidden_channels,
+            inner_width,
+            blink_on,
+        };
+
         // Invalidate the cache when a global render input changes, then
         // rebuild per-message lines only where the message itself changed.
         self.cache.sync(
             inner_width,
             theme::color_mode(),
             show_thinking,
-            show_hidden_channels,
+            self.show_hidden_channels,
             messages.len(),
         );
 
@@ -179,14 +190,7 @@ impl ConversationView {
             // blinks), so render it fresh and drop any stale cache slot.
             if msg.is_streaming {
                 self.cache.entries[msg_idx] = None;
-                all_lines.extend(render_message_lines(
-                    msg,
-                    selected,
-                    show_thinking,
-                    show_hidden_channels,
-                    inner_width,
-                    blink_on,
-                ));
+                all_lines.extend(render_message_lines(msg, selected, ctx));
                 continue;
             }
 
@@ -196,14 +200,7 @@ impl ConversationView {
                 Some(cached) if cached.fingerprint == fingerprint
             );
             if !cache_hit {
-                let lines = render_message_lines(
-                    msg,
-                    selected,
-                    show_thinking,
-                    show_hidden_channels,
-                    inner_width,
-                    blink_on,
-                );
+                let lines = render_message_lines(msg, selected, ctx);
                 self.cache.entries[msg_idx] = Some(CachedMessage { fingerprint, lines });
             }
             if let Some(cached) = &self.cache.entries[msg_idx] {
@@ -401,21 +398,36 @@ fn message_fingerprint(msg: &DisplayMessage, selected: bool) -> u64 {
     hasher.finish()
 }
 
+/// Global render inputs shared by every message in a frame.
+///
+/// Groups the per-frame globals so per-message rendering takes one context
+/// instead of a widening list of loose parameters.
+#[derive(Clone, Copy)]
+struct RenderContext {
+    /// Whether thinking sections are shown at all (config-driven).
+    show_thinking: bool,
+    /// Whether hidden channels render inline instead of the collapsed
+    /// `[thinking...]` placeholder (F5 toggle).
+    show_hidden_channels: bool,
+    /// Inner width of the conversation viewport, for word-wrapping.
+    inner_width: u16,
+    /// Blink phase for the streaming cursor.
+    blink_on: bool,
+}
+
 /// Render one message into its display lines, including the colored gutter,
 /// role header, optional thinking section, markdown content, optional diff,
 /// optional streaming cursor, and the trailing blank separator line.
 ///
-/// When `show_hidden_channels` is on, the thinking section renders the full
-/// reasoning text inline (dim + italic, so it never reads as the assistant's
-/// visible reply); otherwise it collapses to the `[thinking...]` placeholder.
-#[allow(clippy::too_many_lines, clippy::fn_params_excessive_bools)]
+/// When `ctx.show_hidden_channels` is on, the thinking section renders the
+/// full reasoning text inline (dim + italic, so it never reads as the
+/// assistant's visible reply); otherwise it collapses to the `[thinking...]`
+/// placeholder.
+#[allow(clippy::too_many_lines)]
 fn render_message_lines(
     msg: &DisplayMessage,
     selected: bool,
-    show_thinking: bool,
-    show_hidden_channels: bool,
-    inner_width: u16,
-    blink_on: bool,
+    ctx: RenderContext,
 ) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
 
@@ -479,14 +491,14 @@ fn render_message_lines(
     lines.push(Line::from(header_spans));
 
     // Thinking section (dimmed, not collapsible)
-    if show_thinking
+    if ctx.show_thinking
         && let Some(thinking) = &msg.thinking
         && !thinking.is_empty()
     {
         let thinking_style = Style::default()
             .fg(theme::thinking_color())
             .add_modifier(Modifier::DIM);
-        if show_hidden_channels {
+        if ctx.show_hidden_channels {
             // Inline reasoning content — italic on top of the usual dim
             // thinking style so it never reads as the assistant's actual
             // visible reply, even when the model's reasoning text contains
@@ -498,7 +510,7 @@ fn render_message_lines(
                 Span::styled("thinking:", thinking_style),
             ]));
             let thinking_lines =
-                markdown::markdown_to_lines(thinking, inner_width.saturating_sub(2));
+                markdown::markdown_to_lines(thinking, ctx.inner_width.saturating_sub(2));
             for line in thinking_lines {
                 let mut spans = vec![Span::styled("│ ", Style::default().fg(role_color))];
                 spans.extend(
@@ -518,7 +530,8 @@ fn render_message_lines(
     }
 
     // Message content with markdown rendering
-    let content_lines = markdown::markdown_to_lines(&msg.content, inner_width.saturating_sub(2));
+    let content_lines =
+        markdown::markdown_to_lines(&msg.content, ctx.inner_width.saturating_sub(2));
     for line in content_lines {
         let mut spans = vec![Span::styled("│ ", Style::default().fg(role_color))];
         spans.extend(line.spans);
@@ -529,7 +542,7 @@ fn render_message_lines(
     if msg.role == MessageRole::ToolResult
         && let Some(ref diff) = msg.diff_data
     {
-        let diff_lines = crate::ui::diff::render_diff_lines(diff, inner_width);
+        let diff_lines = crate::ui::diff::render_diff_lines(diff, ctx.inner_width);
         for line in diff_lines {
             let mut spans = vec![Span::styled("│ ", Style::default().fg(role_color))];
             spans.extend(line.spans);
@@ -540,7 +553,7 @@ fn render_message_lines(
     // Streaming cursor — always occupies a line so rendered_lines stays
     // stable across blink cycles (prevents scroll jitter).
     if msg.is_streaming {
-        let cursor_char = if blink_on { "█" } else { " " };
+        let cursor_char = if ctx.blink_on { "█" } else { " " };
         lines.push(Line::from(vec![
             Span::styled("│ ", Style::default().fg(role_color)),
             Span::styled(cursor_char, Style::default().fg(role_color)),
@@ -583,7 +596,6 @@ mod tests {
                     messages,
                     false,
                     false,
-                    false,
                     true,
                     None,
                     selection,
@@ -593,27 +605,18 @@ mod tests {
     }
 
     /// Render `messages` with thinking visible, toggling hidden-channels
-    /// inline rendering on or off.
+    /// inline rendering on or off via the view's own field.
     fn draw_with_thinking(
         view: &mut ConversationView,
         messages: &[DisplayMessage],
         show_hidden_channels: bool,
         width: u16,
     ) {
+        view.show_hidden_channels = show_hidden_channels;
         let mut terminal = Terminal::new(TestBackend::new(width, 12)).expect("test backend");
         terminal
             .draw(|frame| {
-                view.render(
-                    frame,
-                    frame.area(),
-                    messages,
-                    true,
-                    show_hidden_channels,
-                    false,
-                    true,
-                    None,
-                    None,
-                );
+                view.render(frame, frame.area(), messages, true, false, true, None, None);
             })
             .expect("draw");
     }

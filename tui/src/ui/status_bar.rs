@@ -40,7 +40,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     // Hidden-channels badge (only when the toggle is on)
-    if app.view.show_hidden_channels {
+    if app.view.conversation.show_hidden_channels {
         spans.push(Span::styled(
             " HIDDEN ",
             Style::default()
