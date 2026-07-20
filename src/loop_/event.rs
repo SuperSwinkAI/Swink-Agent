@@ -27,6 +27,13 @@ pub enum TurnEndReason {
     Aborted,
     /// Turn ended due to a transfer signal from a tool.
     Transfer,
+    /// Assistant completed with hidden-channel reasoning only — no visible
+    /// text, no tool call — so the turn produced nothing a user can see.
+    ///
+    /// Structurally equivalent to [`Complete`](Self::Complete) for loop flow;
+    /// hosts can use it to render a "no visible reply" notice or classify
+    /// the turn for retry. See `AssistantMessage::is_reasoning_only`.
+    ReasoningOnly,
 }
 
 // ─── TransferRejectionReason ─────────────────────────────────────────────────
