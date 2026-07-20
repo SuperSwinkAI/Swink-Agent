@@ -242,6 +242,8 @@ pub struct Agent {
     loop_context_snapshot: Arc<crate::pause_state::LoopContextSnapshot>,
     approve_tool: Option<ApproveToolArc>,
     approval_mode: ApprovalMode,
+    /// One-shot corrective retry for reasoning-only turns (default off).
+    reasoning_only_nudge: bool,
     pre_turn_policies: Vec<Arc<dyn crate::policy::PreTurnPolicy>>,
     pre_dispatch_policies: Vec<Arc<dyn crate::policy::PreDispatchPolicy>>,
     post_turn_policies: Vec<Arc<dyn crate::policy::PostTurnPolicy>>,
@@ -358,6 +360,7 @@ impl Agent {
             loop_context_snapshot: Arc::new(crate::pause_state::LoopContextSnapshot::default()),
             approve_tool: options.approve_tool,
             approval_mode: options.approval_mode,
+            reasoning_only_nudge: options.reasoning_only_nudge,
             pre_turn_policies: options.pre_turn_policies,
             pre_dispatch_policies: options.pre_dispatch_policies,
             post_turn_policies: options.post_turn_policies,

@@ -177,6 +177,15 @@ pub struct AgentLoopConfig {
     ///
     /// See [`AgentOptions::with_cost_calculator`](crate::AgentOptions::with_cost_calculator).
     pub cost_calculator: Option<Arc<dyn crate::pricing::CostCalculator>>,
+
+    /// When `true`, a turn that ends with hidden-channel reasoning only (no
+    /// visible text, no tool call) triggers a one-shot corrective reminder
+    /// and one retry before the turn is accepted. Defaults to `false`; the
+    /// structural [`TurnEndReason::ReasoningOnly`](crate::TurnEndReason::ReasoningOnly)
+    /// signal is emitted regardless of this setting.
+    ///
+    /// See [`AgentOptions::with_reasoning_only_nudge`](crate::AgentOptions::with_reasoning_only_nudge).
+    pub reasoning_only_nudge: bool,
 }
 
 impl AgentLoopConfig {
@@ -220,6 +229,7 @@ impl AgentLoopConfig {
             cache_state: std::sync::Mutex::new(crate::context_cache::CacheState::default()),
             dynamic_system_prompt: None,
             cost_calculator: None,
+            reasoning_only_nudge: false,
         }
     }
 

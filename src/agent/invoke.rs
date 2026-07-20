@@ -376,6 +376,7 @@ impl Agent {
             loop_context_snapshot,
             approve_tool,
             approval_mode,
+            reasoning_only_nudge,
             pre_turn_policies,
             pre_dispatch_policies,
             post_turn_policies,
@@ -452,6 +453,7 @@ impl Agent {
             b
         });
         config.approval_mode = *approval_mode;
+        config.reasoning_only_nudge = *reasoning_only_nudge;
         config.pre_turn_policies.clone_from(pre_turn_policies);
         config
             .pre_dispatch_policies

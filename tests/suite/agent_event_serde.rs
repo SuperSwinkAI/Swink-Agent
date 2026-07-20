@@ -213,6 +213,16 @@ fn turn_end_serializes_with_expected_keys() {
 }
 
 #[test]
+fn turn_end_reason_reasoning_only_round_trips() {
+    // #1195: the reasoning-only structural signal must survive serde so
+    // remote hosts (rpc/tui-remote) can classify silent turns.
+    let val = serde_json::to_value(TurnEndReason::ReasoningOnly).unwrap();
+    assert_eq!(val, "reasoning_only");
+    let back: TurnEndReason = serde_json::from_value(val).unwrap();
+    assert_eq!(back, TurnEndReason::ReasoningOnly);
+}
+
+#[test]
 fn tool_execution_start_serializes_with_expected_keys() {
     let event = AgentEvent::ToolExecutionStart {
         id: "tc99".into(),

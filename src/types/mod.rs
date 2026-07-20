@@ -229,6 +229,39 @@ impl AssistantMessage {
         self.cache_hint = Some(cache_hint);
         self
     }
+
+    /// Whether this message contains anything a consumer would surface:
+    /// non-whitespace text, a tool call, an image, or an extension block.
+    ///
+    /// `Thinking` blocks are *not* visible content — they are hidden-channel
+    /// reasoning that hosts collapse or omit by default. A message that fails
+    /// this check produced nothing the user (or a tool dispatcher) can see.
+    #[must_use]
+    pub fn has_visible_content(&self) -> bool {
+        self.content.iter().any(|block| match block {
+            ContentBlock::Text { text } => !text.trim().is_empty(),
+            ContentBlock::Thinking { .. } => false,
+            // Tool calls, images, and any plugin-defined block count as
+            // visible: they carry consumer-facing (or actionable) payload.
+            _ => true,
+        })
+    }
+
+    /// Whether this message consists of hidden-channel reasoning only:
+    /// at least one `Thinking` block and no visible content at all.
+    ///
+    /// This is the condition behind
+    /// [`TurnEndReason::ReasoningOnly`](crate::TurnEndReason::ReasoningOnly) —
+    /// the model "answered" into a channel the user never sees. Distinct from
+    /// an empty message, which has neither reasoning nor visible content.
+    #[must_use]
+    pub fn is_reasoning_only(&self) -> bool {
+        !self.has_visible_content()
+            && self
+                .content
+                .iter()
+                .any(|block| matches!(block, ContentBlock::Thinking { .. }))
+    }
 }
 
 /// Returns a message whose `provider` and `model_id` are **empty strings**.
