@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `tui`: F5 hotkey toggles hidden channels (reasoning/thinking content) inline for the whole conversation — including scrollback — instead of the collapsed `[thinking...]` placeholder; reasoning renders dim/italic so it never reads as the assistant's visible reply, and the status bar shows a `HIDDEN` badge while the toggle is on (#1194)
+
 ## [0.12.1] - 2026-07-19
 
 ### Added

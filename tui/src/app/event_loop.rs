@@ -925,6 +925,9 @@ impl App {
             (_, KeyCode::F(4)) => {
                 self.cycle_model();
             }
+            (_, KeyCode::F(5)) => {
+                self.view.show_hidden_channels = !self.view.show_hidden_channels;
+            }
             (KeyModifiers::SHIFT, KeyCode::Left) => {
                 self.select_prev_tool_block();
             }

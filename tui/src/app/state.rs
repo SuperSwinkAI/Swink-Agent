@@ -437,6 +437,10 @@ pub struct ViewState {
     pub(crate) tick_count: u64,
     /// Index of the currently selected tool result block (for collapse toggling).
     pub selected_tool_block: Option<usize>,
+    /// Whether hidden channels (currently: reasoning/thinking content) render
+    /// inline for every message instead of the collapsed `[thinking...]`
+    /// placeholder. Toggled globally via F5; off by default.
+    pub show_hidden_channels: bool,
     /// Conversation viewport area from the most recent render pass.
     pub(crate) conversation_area: Rect,
     /// Visible line height inside the conversation viewport.
@@ -461,6 +465,7 @@ impl ViewState {
             blink_on: true,
             tick_count: 0,
             selected_tool_block: None,
+            show_hidden_channels: false,
             conversation_area: Rect::new(0, 0, 0, 0),
             conversation_visible_height: 0,
             steered_fade_ticks: 0,
