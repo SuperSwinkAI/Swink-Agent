@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-07-19
+
+### Added
+- `AgentError::Auth` structured variant (with `AgentError::auth()` constructor); stream-error classification maps `StreamErrorKind::Auth` and auth-shaped provider messages ("unauthorized", "invalid api key", "authentication", "forbidden") to it instead of the generic stream error, and `ContextWindowOverflow` now carries the failing model id on both classification paths (#1176)
+- Public context-level token estimators: `estimate_context_tokens(&AgentContext)` and `estimate_tool_schema_tokens(&[Arc<dyn AgentTool>])` — system prompt + tool schemas + messages, matching the loop's internal accounting (#1177)
+- `AgentMessage::try_clone` (Custom messages via `clone_box`, falling back to a `SerializedCustomMessage` snapshot) plus `AgentContext::try_clone` (all-or-nothing) and `AgentContext::clone_for_send` (best-effort) (#1178)
+- `tui`: built-in `/compact` slash command wired through the new `ControlRequest::Compact` / `ControlResponse::Compacted` transport seam; in-process sessions compact directly, external transports round-trip through the control channel and render the compaction report (#1179)
+- `ServingOptionSupport`: `StreamFn` implementations declare which `ServingOptions` fields they honor (`supported_serving_options`, default all); `ServingOptions::unsupported_fields` reports what an adapter will ignore; all nine bundled adapters carry accurate overrides (#1181)
+- `tui`: `TuiLauncher` builder — `build()` returns the assembled `App` as an embeddable/testable seam; `launch_with_extensions` / `launch_with_session` now delegate to it (#1182)
+- `stream_owned` — adapt any `Arc<dyn StreamFn>` call into a `'static` event stream (spawn + channel) — and `MapOptionsStreamFn`, a supported decorator that rewrites `StreamOptions` per call or short-circuits with synthetic events (`MappedOptions`); delegates `supported_serving_options` to the inner adapter (#1183)
+- `rpc`: `context.compact` control method + `AgentClient::compact()`; `tui-remote` maps `ControlRequest::Compact` over JSON-RPC. Additive — protocol stays 1.1, pre-existing servers degrade gracefully via `METHOD_NOT_FOUND` → `TransportError::Unsupported` (#1184)
+
+### Fixed
+- `mcp`: flaky `discovery_timeout_skips_hung_server_and_keeps_healthy_tools` test — the healthy server's 500ms discovery budget and 2s elapsed bound were too tight under full-suite load; budgets now only guard genuine hangs (#1160, #1185)
+
 ## [0.12.0] - 2026-07-18
 
 ### Added
@@ -573,7 +588,8 @@ are folded in here rather than kept as a phantom release.
 
 Major additions: Gemma 4 local inference, `BlockAccumulator` for streaming event assembly, `schemars`-based proc-macro engine, multi-agent patterns and artifact service, MCP integration, plugin system, policy slots, credential management, TUI session management, and web browse plugin. 42 specs implemented across the 0.6 lifecycle.
 
-[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.1...HEAD
+[0.12.1]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.11.0...v0.12.0
 [0.7.8]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.7...v0.7.8
 [0.7.7]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.6...v0.7.7
