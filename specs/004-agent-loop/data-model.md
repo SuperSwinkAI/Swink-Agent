@@ -67,7 +67,10 @@ Why the turn ended. Enum.
 | ToolsExecuted | Tool calls processed, continuing |
 | SteeringInterrupt | Steering message interrupted tools |
 | Error | Error during turn |
-| Aborted | Cancellation token triggered |
+| Cancelled | External cancellation via `CancellationToken` |
+| Aborted | Stream aborted mid-generation |
+| Transfer | Transfer signal from a tool ended the turn |
+| ReasoningOnly | Natural end with hidden reasoning only — no visible text, no tool call |
 
 ## State Transitions
 

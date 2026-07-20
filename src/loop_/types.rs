@@ -153,6 +153,12 @@ pub struct LoopState {
     /// Transfer chain tracking agent handoff sequence for safety enforcement.
     /// Prevents circular transfers and enforces max-depth limits.
     pub transfer_chain: crate::transfer::TransferChain,
+    /// Whether the reasoning-only nudge has been spent on the current
+    /// occurrence. Set when a nudge is injected; cleared by the next turn
+    /// that produces visible content. Guarantees at most one retry per
+    /// reasoning-only occurrence (a second consecutive reasoning-only turn
+    /// is accepted as-is).
+    pub reasoning_only_nudged: bool,
 }
 
 // ─── TurnOutcome ────────────────────────────────────────────────────────────

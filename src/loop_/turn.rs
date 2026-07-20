@@ -930,9 +930,24 @@ fn assistant_replacement_preserves_tool_calls(
     original_tool_calls == replacement_tool_calls
 }
 
+/// Corrective reminder injected (as a user-role message) when a turn ends
+/// with hidden-channel reasoning only and the nudge is enabled. User-role
+/// keeps provider-side prompt caches valid, mirroring how the dynamic
+/// system prompt is injected.
+const REASONING_ONLY_NUDGE: &str = "Your previous turn produced only hidden \
+reasoning — no visible text and no tool call — so the user saw no reply. \
+Respond again now with your answer as visible text (or a tool call if \
+action is needed).";
+
 /// Handle the case where no tool calls are present: commit the assistant,
 /// run post-turn policies against the committed snapshot, emit `TurnEnd`,
 /// and break inner.
+///
+/// A turn whose committed message is reasoning-only (no visible text, no
+/// tool call) ends with [`TurnEndReason::ReasoningOnly`] instead of
+/// `Complete`; when [`AgentLoopConfig::reasoning_only_nudge`] is enabled it
+/// additionally injects a one-shot corrective reminder and continues the
+/// inner loop for a single retry before accepting the outcome.
 #[allow(clippy::too_many_arguments)]
 async fn handle_no_tool_calls(
     assistant_message: AssistantMessage,
@@ -973,6 +988,12 @@ async fn handle_no_tool_calls(
         AgentMessage::Llm(LlmMessage::Assistant(assistant_message.clone())),
     );
 
+    // Classify against the committed (post-policy) message: a turn that
+    // produced only hidden-channel reasoning gets the structural
+    // `ReasoningOnly` signal so hosts can tell "answered invisibly" apart
+    // from a normal completion.
+    let reasoning_only = assistant_message.is_reasoning_only();
+
     let stop = assistant_message.stop_reason;
     let state_delta = flush_state_delta(config, tx).await;
     let snapshot = build_snapshot(state, stop, state_delta);
@@ -981,7 +1002,11 @@ async fn handle_no_tool_calls(
         AgentEvent::TurnEnd {
             assistant_message,
             tool_results: vec![],
-            reason: TurnEndReason::Complete,
+            reason: if reasoning_only {
+                TurnEndReason::ReasoningOnly
+            } else {
+                TurnEndReason::Complete
+            },
             snapshot,
         },
     )
@@ -993,6 +1018,28 @@ async fn handle_no_tool_calls(
     if let Some(reason) = policy_stop {
         tracing::info!("post-turn policy stopped agent: {reason}");
         return emit_agent_end(state, tx).await;
+    }
+
+    if reasoning_only {
+        // Opt-in nudge: one corrective retry per occurrence. A second
+        // consecutive reasoning-only turn is accepted as-is — the signal
+        // above already told the host, and looping the model would only
+        // burn tokens.
+        if config.reasoning_only_nudge && !state.reasoning_only_nudged {
+            tracing::info!("reasoning-only turn: injecting one-shot nudge");
+            state.reasoning_only_nudged = true;
+            state
+                .pending_messages
+                .push(AgentMessage::Llm(LlmMessage::User(
+                    crate::types::UserMessage::new(vec![ContentBlock::Text {
+                        text: REASONING_ONLY_NUDGE.to_string(),
+                    }]),
+                )));
+            sync_pending_message_snapshot(config, state);
+        }
+    } else {
+        // A visible turn re-arms the nudge for the next occurrence.
+        state.reasoning_only_nudged = false;
     }
 
     if let Some(ref provider) = config.message_provider {

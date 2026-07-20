@@ -85,7 +85,10 @@ pub enum TurnEndReason {
     ToolsExecuted,
     SteeringInterrupt,
     Error,
+    Cancelled,
     Aborted,
+    Transfer,
+    ReasoningOnly,
 }
 ```
 
@@ -98,3 +101,9 @@ pub enum TurnEndReason {
 - When `transform_context` is `None`, context passes through unchanged (identity behavior)
 - Steering messages with no active tools are queued as pending for the next turn
 - Error/abort exits skip `get_follow_up_messages` — `AgentEnd` is emitted immediately
+- A turn whose committed assistant message is reasoning-only (thinking blocks but no
+  visible text, tool call, image, or extension — `AssistantMessage::is_reasoning_only`)
+  ends with `TurnEndReason::ReasoningOnly` instead of `Complete`
+- With `reasoning_only_nudge` enabled (default off), a reasoning-only turn injects one
+  corrective user-role reminder and retries once; a second consecutive reasoning-only
+  turn is accepted as-is
