@@ -128,6 +128,24 @@ pub type OnRawPayload = Arc<dyn Fn(&str) + Send + Sync>;
 /// `extra` entries. The default (all `None`, empty `extra`) leaves request
 /// bodies byte-identical to builds without serving options.
 ///
+/// # Per-adapter support
+///
+/// Each adapter consumes only the fields its protocol can express and
+/// ignores the rest. The bundled adapters honor:
+///
+/// | Adapter                                        | `context_length` | `top_p` | `keep_alive` | `format` | `extra` |
+/// |------------------------------------------------|------------------|---------|--------------|----------|---------|
+/// | Ollama                                         | ✓                | ✓       | ✓            | ✓        | ✓       |
+/// | OpenAI-protocol (OpenAI, compat, xAI, Azure)   | —                | ✓       | —            | ✓        | ✓       |
+/// | Anthropic                                      | —                | —       | —            | —        | ✓       |
+/// | Gemini                                         | —                | —       | —            | —        | ✓       |
+/// | Bedrock                                        | —                | —       | —            | —        | ✓       |
+/// | Mistral                                        | —                | —       | —            | —        | ✓       |
+/// | Proxy                                          | —                | —       | —            | —        | — (warns) |
+///
+/// Query it programmatically via [`StreamFn::supported_serving_options`] and
+/// [`ServingOptions::unsupported_fields`] instead of hard-coding this table.
+///
 /// [`format`]: ServingOptions::format
 /// [`keep_alive`]: ServingOptions::keep_alive
 #[non_exhaustive]
@@ -217,6 +235,120 @@ impl ServingOptions {
     /// True when nothing is set — adapters can skip serialization work.
     pub fn is_default(&self) -> bool {
         *self == Self::default()
+    }
+
+    /// Names of the fields set on `self` that `support` does not honor.
+    ///
+    /// This is the host-side warning primitive: pair a tier's configured
+    /// [`ServingOptions`] with the adapter's
+    /// [`StreamFn::supported_serving_options`] to tell the operator exactly
+    /// which knobs the request shape will drop, instead of hard-coding a
+    /// per-provider table downstream.
+    #[must_use]
+    pub fn unsupported_fields(&self, support: ServingOptionSupport) -> Vec<&'static str> {
+        let mut dropped = Vec::new();
+        if self.context_length.is_some() && !support.context_length {
+            dropped.push("context_length");
+        }
+        if self.top_p.is_some() && !support.top_p {
+            dropped.push("top_p");
+        }
+        if self.keep_alive.is_some() && !support.keep_alive {
+            dropped.push("keep_alive");
+        }
+        if self.format.is_some() && !support.format {
+            dropped.push("format");
+        }
+        if !self.extra.is_empty() && !support.extra {
+            dropped.push("extra");
+        }
+        dropped
+    }
+}
+
+/// Which [`ServingOptions`] fields a [`StreamFn`]'s request shape honors.
+///
+/// Reported by [`StreamFn::supported_serving_options`]. A `false` field
+/// means the adapter ignores that option — configuring it has no effect on
+/// the request. Hosts can compare against a configured [`ServingOptions`]
+/// via [`ServingOptions::unsupported_fields`] to warn accurately without
+/// maintaining a per-provider table.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// A per-field capability bitmap is exactly N independent bools — a state
+// machine would misrepresent it.
+#[allow(clippy::struct_excessive_bools)]
+pub struct ServingOptionSupport {
+    /// `context_length` reaches the request (Ollama `num_ctx`).
+    pub context_length: bool,
+    /// `top_p` reaches the request.
+    pub top_p: bool,
+    /// `keep_alive` reaches the request (Ollama).
+    pub keep_alive: bool,
+    /// `format` (structured output / JSON mode) reaches the request.
+    pub format: bool,
+    /// `extra` entries are merged into the request.
+    pub extra: bool,
+}
+
+impl ServingOptionSupport {
+    /// Every field honored.
+    #[must_use]
+    pub const fn all() -> Self {
+        Self {
+            context_length: true,
+            top_p: true,
+            keep_alive: true,
+            format: true,
+            extra: true,
+        }
+    }
+
+    /// No field honored.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            context_length: false,
+            top_p: false,
+            keep_alive: false,
+            format: false,
+            extra: false,
+        }
+    }
+
+    /// Set whether `context_length` is honored.
+    #[must_use]
+    pub const fn with_context_length(mut self, supported: bool) -> Self {
+        self.context_length = supported;
+        self
+    }
+
+    /// Set whether `top_p` is honored.
+    #[must_use]
+    pub const fn with_top_p(mut self, supported: bool) -> Self {
+        self.top_p = supported;
+        self
+    }
+
+    /// Set whether `keep_alive` is honored.
+    #[must_use]
+    pub const fn with_keep_alive(mut self, supported: bool) -> Self {
+        self.keep_alive = supported;
+        self
+    }
+
+    /// Set whether `format` is honored.
+    #[must_use]
+    pub const fn with_format(mut self, supported: bool) -> Self {
+        self.format = supported;
+        self
+    }
+
+    /// Set whether `extra` is honored.
+    #[must_use]
+    pub const fn with_extra(mut self, supported: bool) -> Self {
+        self.extra = supported;
+        self
     }
 }
 
@@ -568,6 +700,151 @@ pub trait StreamFn: Send + Sync {
         options: &'a StreamOptions,
         cancellation_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>>;
+
+    /// Which [`ServingOptions`] fields this implementation's request shape
+    /// honors.
+    ///
+    /// Defaults to [`ServingOptionSupport::all`] — optimistic, so external
+    /// adapters that predate this method are not falsely reported as
+    /// dropping options. Adapters that ignore fields should override this so
+    /// hosts can warn accurately (see
+    /// [`ServingOptions::unsupported_fields`]).
+    fn supported_serving_options(&self) -> ServingOptionSupport {
+        ServingOptionSupport::all()
+    }
+}
+
+// ─── Owned-input streaming & decorators ─────────────────────────────────────
+
+/// Stream from `stream_fn` with owned inputs, yielding a `'static` stream.
+///
+/// [`StreamFn::stream`] ties the returned stream's lifetime to the caller's
+/// borrows, so a decorator that *modifies* the request (clamping
+/// `max_tokens`, rewriting the context) cannot delegate directly — the
+/// modified values are locals the returned stream may not borrow. Every
+/// downstream decorator ends up hand-rolling the same spawn-a-task,
+/// forward-over-a-channel dance. This helper is that dance, written once:
+/// a task owns the inputs and drives the inner stream; the returned stream
+/// yields its events and is `'static`.
+///
+/// Must be called within a Tokio runtime. Cancellation flows through
+/// `cancellation_token` exactly as with a direct [`StreamFn::stream`] call;
+/// if the consumer drops the returned stream, the forwarding task stops on
+/// its next send.
+#[must_use]
+pub fn stream_owned(
+    stream_fn: Arc<dyn StreamFn>,
+    model: ModelSpec,
+    context: AgentContext,
+    options: StreamOptions,
+    cancellation_token: CancellationToken,
+) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'static>> {
+    let (tx, rx) = tokio::sync::mpsc::channel(16);
+    tokio::spawn(async move {
+        use futures::StreamExt as _;
+        let mut events = stream_fn.stream(&model, &context, &options, cancellation_token);
+        while let Some(event) = events.next().await {
+            if tx.send(event).await.is_err() {
+                break;
+            }
+        }
+    });
+    Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx))
+}
+
+/// Outcome of a [`MapOptionsStreamFn`] rewrite callback.
+///
+/// `Ok` carries the options to delegate with; `Err` refuses the request and
+/// the carried events are emitted as the response stream (typically
+/// [`AssistantMessageEvent::Start`] followed by an
+/// [`AssistantMessageEvent::Error`]).
+pub type MappedOptions = Result<StreamOptions, Vec<AssistantMessageEvent>>;
+
+/// A [`StreamFn`] decorator that rewrites per-request [`StreamOptions`]
+/// before delegating to an inner stream function.
+///
+/// This is the supported shape for per-request policy around a provider
+/// adapter — reply-budget clamping, request refusal, option injection —
+/// without each host reimplementing the owned-input plumbing (see
+/// [`stream_owned`]). The callback sees the model, the context, and the
+/// caller's options, and either returns the options to delegate with or
+/// refuses the request with a ready-made event sequence:
+///
+/// ```
+/// # use std::{pin::Pin, sync::Arc};
+/// # use futures::Stream;
+/// # use tokio_util::sync::CancellationToken;
+/// # use swink_agent::{
+/// #     AgentContext, AssistantMessageEvent, MapOptionsStreamFn, ModelSpec, StreamFn,
+/// #     StreamOptions,
+/// # };
+/// # struct Silent;
+/// # impl StreamFn for Silent {
+/// #     fn stream<'a>(
+/// #         &'a self,
+/// #         _model: &'a ModelSpec,
+/// #         _context: &'a AgentContext,
+/// #         _options: &'a StreamOptions,
+/// #         _cancellation_token: CancellationToken,
+/// #     ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+/// #         Box::pin(futures::stream::empty())
+/// #     }
+/// # }
+/// let inner: Arc<dyn StreamFn> = Arc::new(Silent);
+/// let clamped = MapOptionsStreamFn::new(inner, |_model, _context, mut options| {
+///     options.max_tokens = Some(options.max_tokens.unwrap_or(4096).min(1024));
+///     Ok(options)
+/// });
+/// # let _: Arc<dyn StreamFn> = Arc::new(clamped);
+/// ```
+///
+/// The rewritten options are owned locals, so delegation goes through
+/// [`stream_owned`]; the context crosses via
+/// [`AgentContext::clone_for_send`], whose best-effort snapshot semantics
+/// are safe here because provider adapters never consume custom messages.
+pub struct MapOptionsStreamFn<F> {
+    inner: Arc<dyn StreamFn>,
+    map: F,
+}
+
+impl<F> MapOptionsStreamFn<F>
+where
+    F: Fn(&ModelSpec, &AgentContext, StreamOptions) -> MappedOptions + Send + Sync,
+{
+    /// Wrap `inner`, rewriting each request's options through `map`.
+    pub fn new(inner: Arc<dyn StreamFn>, map: F) -> Self {
+        Self { inner, map }
+    }
+}
+
+impl<F> StreamFn for MapOptionsStreamFn<F>
+where
+    F: Fn(&ModelSpec, &AgentContext, StreamOptions) -> MappedOptions + Send + Sync,
+{
+    fn stream<'a>(
+        &'a self,
+        model: &'a ModelSpec,
+        context: &'a AgentContext,
+        options: &'a StreamOptions,
+        cancellation_token: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        match (self.map)(model, context, options.clone()) {
+            Ok(mapped) => stream_owned(
+                Arc::clone(&self.inner),
+                model.clone(),
+                context.clone_for_send(),
+                mapped,
+                cancellation_token,
+            ),
+            Err(events) => Box::pin(futures::stream::iter(events)),
+        }
+    }
+
+    // The decorator rewrites options but delegates the request shape, so it
+    // honors exactly what the inner adapter honors.
+    fn supported_serving_options(&self) -> ServingOptionSupport {
+        self.inner.supported_serving_options()
+    }
 }
 
 // ─── Tool-call sanitization ──────────────────────────────────────────────────
@@ -1013,6 +1290,176 @@ const _: () = {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A `StreamFn` that records the `max_tokens` it was called with and
+    /// yields a fixed terminal event.
+    struct OptionsCapturingStreamFn {
+        seen_max_tokens: std::sync::Mutex<Vec<Option<u64>>>,
+    }
+
+    impl StreamFn for OptionsCapturingStreamFn {
+        fn stream<'a>(
+            &'a self,
+            _model: &'a ModelSpec,
+            _context: &'a AgentContext,
+            options: &'a StreamOptions,
+            _cancellation_token: CancellationToken,
+        ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+            self.seen_max_tokens
+                .lock()
+                .unwrap()
+                .push(options.max_tokens);
+            Box::pin(futures::stream::iter([
+                AssistantMessageEvent::Start,
+                AssistantMessageEvent::Done {
+                    stop_reason: StopReason::Stop,
+                    usage: Usage::default(),
+                    cost: Cost::default(),
+                },
+            ]))
+        }
+    }
+
+    fn empty_context() -> AgentContext {
+        AgentContext::new("system", Vec::new(), Vec::new())
+    }
+
+    #[tokio::test]
+    async fn stream_owned_forwards_all_events_with_static_lifetime() {
+        use futures::StreamExt as _;
+        let inner: Arc<dyn StreamFn> = Arc::new(OptionsCapturingStreamFn {
+            seen_max_tokens: std::sync::Mutex::new(Vec::new()),
+        });
+        // The returned stream is 'static: it outlives every owned local we
+        // pass in, which is the whole point.
+        let events: Vec<_> = stream_owned(
+            inner,
+            ModelSpec::new("mock", "m"),
+            empty_context(),
+            StreamOptions::default(),
+            CancellationToken::new(),
+        )
+        .collect()
+        .await;
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
+        assert!(matches!(events[1], AssistantMessageEvent::Done { .. }));
+    }
+
+    #[tokio::test]
+    async fn map_options_rewrites_the_delegated_options() {
+        use futures::StreamExt as _;
+        let inner = Arc::new(OptionsCapturingStreamFn {
+            seen_max_tokens: std::sync::Mutex::new(Vec::new()),
+        });
+        let seen = Arc::clone(&inner);
+        let wrapped = MapOptionsStreamFn::new(inner, |_model, _context, mut options| {
+            options.max_tokens = Some(64);
+            Ok(options)
+        });
+
+        let model = ModelSpec::new("mock", "m");
+        let context = empty_context();
+        let options = StreamOptions::default();
+        let events: Vec<_> = wrapped
+            .stream(&model, &context, &options, CancellationToken::new())
+            .collect()
+            .await;
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(*seen.seen_max_tokens.lock().unwrap(), vec![Some(64)]);
+    }
+
+    #[tokio::test]
+    async fn map_options_refusal_emits_the_given_events_without_delegating() {
+        use futures::StreamExt as _;
+        let inner = Arc::new(OptionsCapturingStreamFn {
+            seen_max_tokens: std::sync::Mutex::new(Vec::new()),
+        });
+        let seen = Arc::clone(&inner);
+        let wrapped = MapOptionsStreamFn::new(inner, |_model, _context, _options| {
+            Err(vec![
+                AssistantMessageEvent::Start,
+                AssistantMessageEvent::Error {
+                    stop_reason: StopReason::Error,
+                    error_message: "prompt exceeds reply budget".to_string(),
+                    usage: None,
+                    error_kind: Some(StreamErrorKind::ContextWindowExceeded),
+                    retry_after: None,
+                },
+            ])
+        });
+
+        let model = ModelSpec::new("mock", "m");
+        let context = empty_context();
+        let options = StreamOptions::default();
+        let events: Vec<_> = wrapped
+            .stream(&model, &context, &options, CancellationToken::new())
+            .collect()
+            .await;
+
+        assert!(matches!(
+            events[1],
+            AssistantMessageEvent::Error {
+                error_kind: Some(StreamErrorKind::ContextWindowExceeded),
+                ..
+            }
+        ));
+        assert!(
+            seen.seen_max_tokens.lock().unwrap().is_empty(),
+            "a refused request must never reach the inner adapter"
+        );
+    }
+
+    #[test]
+    fn unsupported_fields_names_only_set_and_unhonored_options() {
+        let serving = ServingOptions::default()
+            .with_context_length(8192)
+            .with_top_p(0.9);
+
+        // Fully supported → nothing reported, even with fields set.
+        assert!(
+            serving
+                .unsupported_fields(ServingOptionSupport::all())
+                .is_empty()
+        );
+
+        // OAI-shape support: context_length is set but not honored; top_p is
+        // honored; unset fields (keep_alive/format/extra) are never reported.
+        let oai = ServingOptionSupport::none()
+            .with_top_p(true)
+            .with_format(true)
+            .with_extra(true);
+        assert_eq!(serving.unsupported_fields(oai), vec!["context_length"]);
+
+        // Nothing set → nothing reported regardless of support.
+        assert!(
+            ServingOptions::default()
+                .unsupported_fields(ServingOptionSupport::none())
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn stream_fn_default_reports_full_support() {
+        struct Bare;
+        impl StreamFn for Bare {
+            fn stream<'a>(
+                &'a self,
+                _model: &'a ModelSpec,
+                _context: &'a AgentContext,
+                _options: &'a StreamOptions,
+                _cancellation_token: CancellationToken,
+            ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+                Box::pin(futures::stream::empty())
+            }
+        }
+        // External adapters that predate the method must not be falsely
+        // reported as dropping options.
+        assert_eq!(
+            Bare.supported_serving_options(),
+            ServingOptionSupport::all()
+        );
+    }
 
     #[test]
     fn done_with_unterminated_text_block_is_rejected() {

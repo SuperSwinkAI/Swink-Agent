@@ -9,7 +9,9 @@ use std::pin::Pin;
 use futures::Stream;
 use tokio_util::sync::CancellationToken;
 
-use swink_agent::{AgentContext, AssistantMessageEvent, ModelSpec, StreamFn, StreamOptions};
+use swink_agent::{
+    AgentContext, AssistantMessageEvent, ModelSpec, ServingOptionSupport, StreamFn, StreamOptions,
+};
 
 use crate::oai_transport::OaiAdapterShell;
 
@@ -33,6 +35,15 @@ impl std::fmt::Debug for XAiStreamFn {
 }
 
 impl StreamFn for XAiStreamFn {
+    // OAI-protocol request shape: `top_p`, `format`, and `extra` reach the
+    // body; `context_length`/`keep_alive` have no equivalent.
+    fn supported_serving_options(&self) -> ServingOptionSupport {
+        ServingOptionSupport::none()
+            .with_top_p(true)
+            .with_format(true)
+            .with_extra(true)
+    }
+
     fn stream<'a>(
         &'a self,
         model: &'a ModelSpec,

@@ -200,13 +200,119 @@ pub async fn launch_with_extensions(
     options: swink_agent::AgentOptions,
     extensions: TuiExtensions,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    dotenvy::dotenv().ok();
-    let options = config.apply_pricing(options);
-    let mut app = App::new(config).with_extensions(extensions);
-    let approval_tx = app.approval_sender();
-    let options = options.with_approve_tool(tui_approval_callback(&approval_tx));
-    app.set_agent(Agent::new(options));
-    app.run(terminal).await
+    TuiLauncher::new(config)
+        .with_extensions(extensions)
+        .launch(terminal, options)
+        .await
+}
+
+/// Composable launcher: one place that owns the `App` assembly sequence.
+///
+/// The free-function launchers each accept a fixed combination of seams
+/// ([`launch_with_extensions`] takes extensions, [`launch_with_session`]
+/// takes a store) and there is no function for every combination — hosts
+/// that needed both had to open-code the assembly steps and silently drift
+/// from upstream. The builder composes all seams:
+///
+/// ```no_run
+/// # use swink_agent::{AgentOptions, ModelSpec, testing::SimpleMockStreamFn};
+/// # use swink_agent_tui::{JsonlSessionStore, TuiConfig, TuiExtensions, TuiLauncher, setup_terminal};
+/// # use std::sync::Arc;
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// # let options = AgentOptions::new_simple("system", ModelSpec::new("mock", "test"), Arc::new(SimpleMockStreamFn::from_text("hi")));
+/// # let store = JsonlSessionStore::new("/tmp/sessions".into())?;
+/// let mut terminal = setup_terminal()?;
+/// TuiLauncher::new(TuiConfig::load())
+///     .with_extensions(TuiExtensions::new())
+///     .with_session_store(store, "tui_chat_1".to_string())
+///     .launch(&mut terminal, options)
+///     .await
+/// # }
+/// ```
+///
+/// [`build`](Self::build) exposes the assembled [`App`] without running the
+/// event loop, for hosts that drive the terminal themselves (and for tests).
+#[must_use]
+pub struct TuiLauncher {
+    config: TuiConfig,
+    extensions: TuiExtensions,
+    session: Option<(JsonlSessionStore, String)>,
+    resume_id: Option<String>,
+}
+
+impl TuiLauncher {
+    /// Start a launcher from a loaded [`TuiConfig`].
+    pub fn new(config: TuiConfig) -> Self {
+        Self {
+            config,
+            extensions: TuiExtensions::new(),
+            session: None,
+            resume_id: None,
+        }
+    }
+
+    /// Register host-supplied [`TuiExtensions`] (custom commands, skill and
+    /// file-mention seams).
+    pub fn with_extensions(mut self, extensions: TuiExtensions) -> Self {
+        self.extensions = extensions;
+        self
+    }
+
+    /// Persist turns through `store` under `session_id` instead of the
+    /// default `JsonlSessionStore` location.
+    pub fn with_session_store(mut self, store: JsonlSessionStore, session_id: String) -> Self {
+        self.session = Some((store, session_id));
+        self
+    }
+
+    /// Load the prior session `resume_id` into the conversation before the
+    /// event loop starts. Requires [`with_session_store`](Self::with_session_store);
+    /// [`build`](Self::build) fails if the session cannot be loaded.
+    pub fn with_resume(mut self, resume_id: String) -> Self {
+        self.resume_id = Some(resume_id);
+        self
+    }
+
+    /// Assemble the [`App`] without running the event loop.
+    ///
+    /// Performs the canonical launch sequence — dotenv, pricing, extensions,
+    /// session store, approval wiring, agent construction, resume — and
+    /// returns the ready-to-run `App`. Use this instead of copying the steps
+    /// when you need the `App` before (or instead of) [`launch`](Self::launch).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error only when a requested resume session cannot be
+    /// loaded.
+    pub fn build(self, options: swink_agent::AgentOptions) -> io::Result<App> {
+        dotenvy::dotenv().ok();
+        let options = self.config.apply_pricing(options);
+        let mut app = App::new(self.config).with_extensions(self.extensions);
+        if let Some((store, session_id)) = self.session {
+            app = app.with_session_store(store, session_id);
+        }
+        let approval_tx = app.approval_sender();
+        let options = options.with_approve_tool(tui_approval_callback(&approval_tx));
+        app.set_agent(Agent::new(options));
+        if let Some(id) = self.resume_id {
+            app.resume_into(&id)?;
+        }
+        Ok(app)
+    }
+
+    /// Assemble the [`App`] and run the event loop on `terminal`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a requested resume session cannot be loaded or
+    /// the event loop fails.
+    pub async fn launch(
+        self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        options: swink_agent::AgentOptions,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.build(options)?.run(terminal).await
+    }
 }
 
 /// Like [`launch`], but with an injectable session store, session ID, and optional resume.
@@ -222,8 +328,8 @@ pub async fn launch_with_extensions(
 ///   Returns [`io::Error`] if the session is not found.
 ///
 /// As with [`launch`], any `[pricing]` rates declared in `config` are applied to
-/// `options`. To also register [`TuiExtensions`], build the [`App`] directly
-/// with [`App::with_session_store`] and [`App::with_extensions`].
+/// `options`. To also register [`TuiExtensions`], use [`TuiLauncher`], which
+/// composes every seam.
 pub async fn launch_with_session(
     config: TuiConfig,
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
@@ -232,22 +338,60 @@ pub async fn launch_with_session(
     session_id: String,
     resume_id: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    dotenvy::dotenv().ok();
-    let options = config.apply_pricing(options);
-    let mut app = App::new(config).with_session_store(store, session_id);
-    let approval_tx = app.approval_sender();
-    let options = options.with_approve_tool(tui_approval_callback(&approval_tx));
-    app.set_agent(Agent::new(options));
+    let mut launcher = TuiLauncher::new(config).with_session_store(store, session_id);
     if let Some(id) = resume_id {
-        app.resume_into(id)?;
+        launcher = launcher.with_resume(id.to_string());
     }
-    app.run(terminal).await
+    launcher.launch(terminal, options).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use tokio::sync::mpsc;
+
+    fn launcher_options() -> swink_agent::AgentOptions {
+        use swink_agent::testing::SimpleMockStreamFn;
+        swink_agent::AgentOptions::new_simple(
+            "system",
+            swink_agent::ModelSpec::new("mock", "test"),
+            std::sync::Arc::new(SimpleMockStreamFn::from_text("hi")),
+        )
+    }
+
+    #[tokio::test]
+    async fn launcher_build_assembles_agent_extensions_and_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+        let extensions = TuiExtensions::new().with_command("marker", |_app, _args| {
+            CustomCommandOutcome::Feedback("ok".into())
+        });
+
+        let app = TuiLauncher::new(TuiConfig::default())
+            .with_extensions(extensions)
+            .with_session_store(store, "launcher-session".to_string())
+            .build(launcher_options())
+            .unwrap();
+
+        assert!(app.agent_io.agent.is_some(), "agent must be constructed");
+        assert_eq!(app.session.session_id, "launcher-session");
+        assert!(
+            app.extensions.command_names().any(|name| name == "marker"),
+            "host command must be registered"
+        );
+    }
+
+    #[tokio::test]
+    async fn launcher_resume_of_missing_session_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let result = TuiLauncher::new(TuiConfig::default())
+            .with_session_store(store, "fresh".to_string())
+            .with_resume("does-not-exist".to_string())
+            .build(launcher_options());
+        assert!(result.is_err(), "resuming a nonexistent session must fail");
+    }
 
     fn approval_request() -> ToolApprovalRequest {
         ToolApprovalRequest::new(

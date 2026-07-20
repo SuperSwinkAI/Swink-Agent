@@ -264,8 +264,4 @@ jobs:
             git fetch origin main
           fi
 
-      # swink-agent-tui-remote is excluded until it exists in a release
-      # baseline (new in 0.12.0) — cargo-semver-checks errors, rather than
-      # skips, on a crate absent from the baseline rev. Drop the exclusion
-      # after the first tag that contains the crate.
-      - run: cargo semver-checks --workspace --exclude swink-agent-local-llm --exclude swink-agent-tui-remote --baseline-rev "${{ steps.baseline.outputs.ref }}"
+      - run: cargo semver-checks --workspace --exclude swink-agent-local-llm --baseline-rev "${{ steps.baseline.outputs.ref }}"

@@ -30,7 +30,7 @@ use tracing::{debug, warn};
 
 use swink_agent::{
     AgentContext, AgentMessage, AssistantMessageEvent, ContentBlock, Cost, LlmMessage, ModelSpec,
-    StopReason, StreamFn, StreamOptions, Usage,
+    ServingOptionSupport, StopReason, StreamFn, StreamOptions, Usage,
 };
 
 use crate::block_accumulator::BlockAccumulator;
@@ -348,6 +348,12 @@ impl std::fmt::Debug for BedrockStreamFn {
 }
 
 impl StreamFn for BedrockStreamFn {
+    // Only `extra` is merged into the request body; the typed serving
+    // fields have no ConverseStream equivalent.
+    fn supported_serving_options(&self) -> ServingOptionSupport {
+        ServingOptionSupport::none().with_extra(true)
+    }
+
     fn stream<'a>(
         &'a self,
         model: &'a ModelSpec,

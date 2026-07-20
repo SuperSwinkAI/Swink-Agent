@@ -194,6 +194,30 @@ pub enum AgentMessage {
 }
 
 impl AgentMessage {
+    /// Attempt to clone this message.
+    ///
+    /// `Llm` variants always clone. `Custom` variants clone via
+    /// [`CustomMessage::clone_box`], falling back to a
+    /// [`SerializedCustomMessage`](crate::types::SerializedCustomMessage)
+    /// snapshot when the type supports serialization. Returns `None` only
+    /// when the custom message supports neither — so a caller can refuse
+    /// (rather than silently drop) messages it cannot preserve. For a
+    /// best-effort snapshot of a whole slice, use
+    /// [`clone_messages_for_send`](crate::types::clone_messages_for_send).
+    #[must_use]
+    pub fn try_clone(&self) -> Option<Self> {
+        match self {
+            Self::Llm(msg) => Some(Self::Llm(msg.clone())),
+            Self::Custom(custom) => custom
+                .clone_box()
+                .or_else(|| {
+                    crate::types::SerializedCustomMessage::from_custom(custom.as_ref())
+                        .map(|snapshot| Box::new(snapshot) as Box<dyn CustomMessage>)
+                })
+                .map(Self::Custom),
+        }
+    }
+
     /// Get the cache hint for this message (if any).
     ///
     /// Returns `None` for `Custom` messages (they are never sent to the LLM).

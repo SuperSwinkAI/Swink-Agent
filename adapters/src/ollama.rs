@@ -208,6 +208,12 @@ impl std::fmt::Debug for OllamaStreamFn {
 }
 
 impl StreamFn for OllamaStreamFn {
+    // Every serving field maps onto the Ollama request shape; stated
+    // explicitly so this stays true even if the trait default changes.
+    fn supported_serving_options(&self) -> swink_agent::ServingOptionSupport {
+        swink_agent::ServingOptionSupport::all()
+    }
+
     fn stream<'a>(
         &'a self,
         model: &'a ModelSpec,

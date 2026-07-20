@@ -91,7 +91,8 @@ pub use config::{
 pub use context::CompactionReport;
 #[allow(deprecated)]
 pub use context::{
-    DefaultTokenCounter, TokenCounter, estimate_tokens, is_context_overflow, sliding_window,
+    DefaultTokenCounter, TokenCounter, estimate_context_tokens, estimate_tokens,
+    estimate_tool_schema_tokens, is_context_overflow, sliding_window,
 };
 pub use context_cache::{CacheConfig, CacheHint, CacheState};
 pub use context_transformer::{ContextTransformer, SlidingWindowTransformer};
@@ -144,9 +145,10 @@ pub use schema::schema_for;
 pub use schemars::JsonSchema;
 pub use state::{SessionState, StateDelta};
 pub use stream::{
-    AssistantMessageDelta, AssistantMessageEvent, CacheStrategy, OnRawPayload, ResponseFormat,
-    ServingOptions, StreamErrorKind, StreamFn, StreamOptions, StreamTransport, accumulate_message,
-    sanitize_incomplete_tool_calls,
+    AssistantMessageDelta, AssistantMessageEvent, CacheStrategy, MapOptionsStreamFn, MappedOptions,
+    OnRawPayload, ResponseFormat, ServingOptionSupport, ServingOptions, StreamErrorKind, StreamFn,
+    StreamOptions, StreamTransport, accumulate_message, sanitize_incomplete_tool_calls,
+    stream_owned,
 };
 pub use stream_middleware::StreamMiddleware;
 pub use sub_agent::SubAgent;

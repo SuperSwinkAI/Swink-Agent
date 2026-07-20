@@ -663,4 +663,63 @@ mod tests {
             "roundtrip"
         );
     }
+
+    // ── AgentMessage::try_clone / AgentContext ──────────────────────────────
+
+    #[test]
+    fn try_clone_llm_and_serializable_custom_succeed() {
+        assert!(user_msg("hello").try_clone().is_some());
+        // TaggedCustom has no clone_box but supports serialization — clones
+        // through the SerializedCustomMessage snapshot fallback.
+        let cloned = custom_msg("kept").try_clone().unwrap();
+        assert!(
+            cloned
+                .downcast_ref::<SerializedCustomMessage>()
+                .unwrap()
+                .type_name()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn try_clone_non_serializable_custom_returns_none() {
+        let msg = AgentMessage::Custom(Box::new(NonSerializableCustom));
+        assert!(msg.try_clone().is_none());
+    }
+
+    #[test]
+    fn context_try_clone_is_all_or_nothing() {
+        let ok = crate::types::AgentContext::new(
+            "system",
+            vec![user_msg("hello"), custom_msg("kept")],
+            vec![],
+        );
+        assert_eq!(ok.try_clone().unwrap().messages.len(), 2);
+
+        let bad = crate::types::AgentContext::new(
+            "system",
+            vec![
+                user_msg("hello"),
+                AgentMessage::Custom(Box::new(NonSerializableCustom)),
+            ],
+            vec![],
+        );
+        assert!(bad.try_clone().is_none());
+    }
+
+    #[test]
+    fn context_clone_for_send_drops_only_non_serializable() {
+        let context = crate::types::AgentContext::new(
+            "system",
+            vec![
+                user_msg("hello"),
+                AgentMessage::Custom(Box::new(NonSerializableCustom)),
+                custom_msg("kept"),
+            ],
+            vec![],
+        );
+        let snapshot = context.clone_for_send();
+        assert_eq!(snapshot.system_prompt, "system");
+        assert_eq!(snapshot.messages.len(), 2);
+    }
 }

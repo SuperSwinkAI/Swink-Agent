@@ -44,8 +44,8 @@ use futures::StreamExt as _;
 use tokio::sync::mpsc;
 
 use swink_agent::{
-    Agent, AgentEvent, AgentMessage, ApprovalMode, ContentBlock, LlmMessage, ModelSpec,
-    ThinkingLevel, UserMessage,
+    Agent, AgentEvent, AgentMessage, ApprovalMode, CompactionReport, ContentBlock, LlmMessage,
+    ModelSpec, ThinkingLevel, UserMessage,
 };
 
 /// Plain text input from the user, ready to be sent to the agent.
@@ -94,6 +94,11 @@ pub enum ControlRequest {
     /// Reset the agent's conversation state. Expects
     /// [`ControlResponse::Ack`].
     Reset,
+    /// Run the backend's context transformers against the stored history now
+    /// (manual compaction, e.g. a `/compact` command). Idle-only: backends
+    /// must refuse while a turn is in flight. Expects
+    /// [`ControlResponse::Compacted`].
+    Compact,
     /// Enter plan mode (read-only tools). The backend owns the saved tool
     /// set and system prompt for the round trip. Expects
     /// [`ControlResponse::Ack`].
@@ -139,6 +144,12 @@ pub enum ControlResponse {
         messages: Vec<AgentMessage>,
         /// Session state snapshot, or `None` if the backend has none.
         state: Option<serde_json::Value>,
+    },
+    /// Reply to [`ControlRequest::Compact`].
+    Compacted {
+        /// The last transformer's report, or `None` when no transformer is
+        /// configured or every transformer declined (history under budget).
+        report: Option<CompactionReport>,
     },
 }
 

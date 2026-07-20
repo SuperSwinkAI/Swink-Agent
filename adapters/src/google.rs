@@ -258,6 +258,12 @@ impl std::fmt::Debug for GeminiStreamFn {
 }
 
 impl StreamFn for GeminiStreamFn {
+    // Only `extra` is merged into `generationConfig`; the typed serving
+    // fields have no Gemini-protocol equivalent.
+    fn supported_serving_options(&self) -> swink_agent::ServingOptionSupport {
+        swink_agent::ServingOptionSupport::none().with_extra(true)
+    }
+
     fn stream<'a>(
         &'a self,
         model: &'a ModelSpec,

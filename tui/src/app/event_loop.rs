@@ -52,6 +52,7 @@ impl App {
             // prompt it should apply to.
             self.flush_controls().await;
             self.flush_outbound().await;
+            self.flush_compact().await;
 
             tokio::select! {
                 maybe_event = event_stream.next() => {
@@ -156,6 +157,42 @@ impl App {
         }
     }
 
+    /// Run a queued `/compact` against the in-process agent.
+    ///
+    /// Only ever has work on the in-process path — external transports route
+    /// `/compact` through [`ControlRequest::Compact`] instead. Runs on the
+    /// event loop's flush pass because
+    /// [`compact_context`](swink_agent::Agent::compact_context) is async
+    /// while command dispatch is sync.
+    pub(super) async fn flush_compact(&mut self) {
+        if !self.agent_io.pending_compact {
+            return;
+        }
+        self.agent_io.pending_compact = false;
+        let Some(agent) = &mut self.agent_io.agent else {
+            return;
+        };
+        let feedback = match agent.compact_context().await {
+            Ok(report) => Self::describe_compaction(report.as_ref()),
+            Err(error) => format!("Compaction failed: {error}"),
+        };
+        self.push_system_message(feedback);
+        self.view.dirty = true;
+    }
+
+    /// Human-readable summary of a manual compaction outcome.
+    fn describe_compaction(report: Option<&swink_agent::CompactionReport>) -> String {
+        report.map_or_else(
+            || "Nothing to compact — history is already under budget.".to_string(),
+            |report| {
+                format!(
+                    "Compacted context: dropped {} message(s), ~{} → ~{} tokens.",
+                    report.dropped_count, report.tokens_before, report.tokens_after
+                )
+            },
+        )
+    }
+
     /// Apply one control response (or error) per its queued follow-up.
     fn apply_control_outcome(
         &mut self,
@@ -209,6 +246,10 @@ impl App {
             (ControlFollowUp::ShowApprovalMode, ControlResponse::ApprovalMode(mode)) => {
                 let report = self.approval_mode_report(mode);
                 self.push_system_message(report);
+            }
+            (ControlFollowUp::RenderCompaction, ControlResponse::Compacted { report }) => {
+                let feedback = Self::describe_compaction(report.as_ref());
+                self.push_system_message(feedback);
             }
             (
                 ControlFollowUp::SaveSnapshot { announce },
@@ -911,6 +952,7 @@ impl App {
             CommandResult::Clear
                 | CommandResult::SetSystemPrompt(_)
                 | CommandResult::Reset
+                | CommandResult::Compact
                 | CommandResult::SaveSession
                 | CommandResult::LoadSession(_)
         )
@@ -1035,6 +1077,22 @@ impl App {
             }
             CommandResult::Reset => {
                 self.reset_session_state();
+                return;
+            }
+            CommandResult::Compact => {
+                if self.agent_io.agent.is_some() {
+                    // compact_context is async and command dispatch is sync:
+                    // flag it for the event loop's next async pass.
+                    self.agent_io.pending_compact = true;
+                } else if self.agent_io.external_transport {
+                    self.queue_control(
+                        "compact",
+                        ControlRequest::Compact,
+                        ControlFollowUp::RenderCompaction,
+                    );
+                } else {
+                    self.push_system_message("No agent connected.".to_string());
+                }
                 return;
             }
             CommandResult::CopyToClipboard(content) => {

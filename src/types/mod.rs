@@ -626,6 +626,49 @@ impl AgentContext {
             tools,
         }
     }
+
+    /// Attempt to clone this context without losing any message.
+    ///
+    /// Returns `None` if any message fails [`AgentMessage::try_clone`] —
+    /// all-or-nothing, so callers never silently truncate history. Tools are
+    /// shared via `Arc`.
+    ///
+    /// `StreamFn` decorators that need an owned context (to modify options
+    /// and delegate from a spawned task) should prefer this over hand-rolled
+    /// per-variant clones; for a best-effort snapshot that drops
+    /// non-serializable custom messages instead of failing, use
+    /// [`clone_for_send`](Self::clone_for_send).
+    #[must_use]
+    pub fn try_clone(&self) -> Option<Self> {
+        let messages = self
+            .messages
+            .iter()
+            .map(AgentMessage::try_clone)
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self {
+            system_prompt: self.system_prompt.clone(),
+            messages,
+            tools: self.tools.clone(),
+        })
+    }
+
+    /// Snapshot this context into fully owned values, best-effort.
+    ///
+    /// `Llm` messages clone directly; `Custom` messages are
+    /// snapshot-serialized via
+    /// [`clone_messages_for_send`](crate::types::clone_messages_for_send),
+    /// which silently drops custom messages that don't support
+    /// serialization. Provider adapters never see custom messages, so this
+    /// is safe for building request snapshots; use
+    /// [`try_clone`](Self::try_clone) when every message must survive.
+    #[must_use]
+    pub fn clone_for_send(&self) -> Self {
+        Self {
+            system_prompt: self.system_prompt.clone(),
+            messages: clone_messages_for_send(&self.messages),
+            tools: self.tools.clone(),
+        }
+    }
 }
 
 impl fmt::Debug for AgentContext {
