@@ -25,7 +25,7 @@ jobs:
         with:
           cache-key: coverage
 
-      - uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
+      - uses: cargo-bins/cargo-binstall@ead08b90bd7b2e6d81963fb9cf0b7239f66d5db4 # v1.21.0
 
       - run: cargo binstall --no-confirm --force cargo-tarpaulin
 

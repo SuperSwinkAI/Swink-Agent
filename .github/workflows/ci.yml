@@ -42,7 +42,7 @@ jobs:
       # on hosted runners.
       - run: cargo clippy --workspace --all-features --exclude swink-agent-local-llm --all-targets --locked -- -D warnings
 
-      - uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
+      - uses: cargo-bins/cargo-binstall@ead08b90bd7b2e6d81963fb9cf0b7239f66d5db4 # v1.21.0
 
       - run: cargo binstall --no-confirm --force --locked cargo-nextest
 
@@ -75,7 +75,7 @@ jobs:
         with:
           cache-key: check-macos
 
-      - uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
+      - uses: cargo-bins/cargo-binstall@ead08b90bd7b2e6d81963fb9cf0b7239f66d5db4 # v1.21.0
 
       - run: cargo binstall --no-confirm --force --locked cargo-nextest
 
@@ -149,7 +149,7 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
 
   # ── CVE scan: complements cargo-deny's advisory check ───────────────────
   # The --ignore list mirrors the `[advisories] ignore` list in deny.toml so
@@ -166,7 +166,7 @@ jobs:
       # pure overhead.
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
-      - uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
+      - uses: cargo-bins/cargo-binstall@ead08b90bd7b2e6d81963fb9cf0b7239f66d5db4 # v1.21.0
 
       - run: cargo binstall --no-confirm --force cargo-audit
 
@@ -208,7 +208,7 @@ jobs:
 
       - run: cargo clippy --workspace --locked -- -D warnings
 
-      - uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
+      - uses: cargo-bins/cargo-binstall@ead08b90bd7b2e6d81963fb9cf0b7239f66d5db4 # v1.21.0
 
       - run: cargo binstall --no-confirm --force cargo-nextest
 
@@ -243,7 +243,7 @@ jobs:
         with:
           cache-key: semver
 
-      - uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
+      - uses: cargo-bins/cargo-binstall@ead08b90bd7b2e6d81963fb9cf0b7239f66d5db4 # v1.21.0
 
       - run: cargo binstall --no-confirm --force cargo-semver-checks
 
