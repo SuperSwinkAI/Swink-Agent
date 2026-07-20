@@ -94,6 +94,10 @@ pub struct AgentOptions {
     pub approve_tool: Option<ApproveToolArc>,
     /// Controls whether the approval gate is active. Defaults to `Enabled`.
     pub approval_mode: ApprovalMode,
+    /// When `true`, a reasoning-only turn (hidden thinking, no visible text,
+    /// no tool call) triggers a one-shot corrective reminder and one retry
+    /// before being accepted. Defaults to `false`.
+    pub reasoning_only_nudge: bool,
     /// Additional model specs for model cycling (each with its own stream function).
     pub available_models: Vec<(ModelSpec, Arc<dyn StreamFn>)>,
     /// Pre-turn policies evaluated before each LLM call.
@@ -240,6 +244,7 @@ impl AgentOptions {
             structured_output_max_retries: 3,
             approve_tool: None,
             approval_mode: ApprovalMode::default(),
+            reasoning_only_nudge: false,
             available_models: Vec::new(),
             pre_turn_policies: Vec::new(),
             pre_dispatch_policies: Vec::new(),
@@ -412,6 +417,21 @@ impl AgentOptions {
     #[must_use]
     pub const fn with_approval_mode(mut self, mode: ApprovalMode) -> Self {
         self.approval_mode = mode;
+        self
+    }
+
+    /// Enable (or disable) the reasoning-only nudge.
+    ///
+    /// When enabled, a turn that ends with hidden-channel reasoning only —
+    /// no visible text, no tool call — triggers a one-shot corrective
+    /// reminder and a single retry before the turn is accepted. Small local
+    /// models produce such turns routinely; without the nudge the user sees
+    /// no reply at all. The structural
+    /// [`TurnEndReason::ReasoningOnly`](crate::TurnEndReason::ReasoningOnly)
+    /// signal is emitted regardless of this setting. Defaults to `false`.
+    #[must_use]
+    pub const fn with_reasoning_only_nudge(mut self, enabled: bool) -> Self {
+        self.reasoning_only_nudge = enabled;
         self
     }
 

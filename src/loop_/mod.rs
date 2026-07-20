@@ -186,6 +186,7 @@ async fn run_loop_inner(
             last_assistant_message: None,
             last_tool_results: Vec::new(),
             transfer_chain,
+            reasoning_only_nudged: false,
         };
 
         // 1. Emit AgentStart

@@ -2,6 +2,7 @@ mod helpers;
 
 mod agent_bridge;
 mod approval;
+mod hidden_channels;
 mod hunk_review;
 mod input_ui;
 mod path_mentions;

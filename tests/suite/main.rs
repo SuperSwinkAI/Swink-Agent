@@ -80,6 +80,8 @@ mod pre_policy_panic_rollback;
 mod property;
 mod public_api;
 #[cfg(feature = "testkit")]
+mod reasoning_only;
+#[cfg(feature = "testkit")]
 mod registry;
 mod retry;
 mod schema;

@@ -39,6 +39,16 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         ));
     }
 
+    // Hidden-channels badge (only when the toggle is on)
+    if app.view.conversation.show_hidden_channels {
+        spans.push(Span::styled(
+            " HIDDEN ",
+            Style::default()
+                .fg(theme::bar_bg())
+                .bg(theme::thinking_color()),
+        ));
+    }
+
     // Color mode badge (only when not Custom)
     let mode = theme::color_mode();
     if mode != ColorMode::Custom {

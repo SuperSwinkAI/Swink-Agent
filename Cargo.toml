@@ -73,7 +73,7 @@ chrono = { version = "0.4.45", features = ["serde"] }
 proptest = { version = "1.11.0", default-features = false, features = ["std"] }
 rstest = "0.26.1"
 insta = { version = "1.47.2", features = ["json"] }
-syn = { version = "2.0.117", features = ["full", "extra-traits"] }
+syn = { version = "3.0.1", features = ["full", "extra-traits"] }
 quote = "1.0.45"
 proc-macro2 = "1.0.106"
 bytes = "1.11.1"

@@ -20,11 +20,25 @@ const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 /// On Unix-like targets the command is passed to `sh -c`. On Windows the
 /// command is passed to `cmd /C`, matching the platform's native shell.
 ///
+/// # Environment inheritance (guaranteed)
+///
+/// Subprocesses inherit the host process environment **unmodified**: this
+/// tool never calls `env_clear`, `env`, or `env_remove` on the spawned
+/// command. Orchestrators depend on this contract — e.g. injecting a
+/// per-agent identity (`GH_TOKEN`, `GIT_AUTHOR_*`, `GIT_SSH_COMMAND`, …) as
+/// an env overlay on the host process and expecting every command the agent
+/// runs to see it (#1197). If a sandbox or env-policy feature is ever added,
+/// full inheritance must remain the default, and any filtering must be an
+/// explicit opt-in surfaced to orchestrators. Pinned by the
+/// `bash_inherits_*` regression tests in `tests/suite/tools.rs`.
+///
 /// # Security
 ///
 /// This tool executes arbitrary shell commands via the platform shell. It
 /// should only be used with trusted input. It is NOT suitable for production
-/// agents exposed to untrusted users.
+/// agents exposed to untrusted users. Note that full environment inheritance
+/// (above) is part of that trust surface: any secret in the host process
+/// environment is visible to every spawned command.
 pub struct BashTool {
     schema: Value,
     execution_root: Option<PathBuf>,

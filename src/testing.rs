@@ -640,6 +640,36 @@ pub fn text_only_events_multi(tokens: Vec<String>) -> Vec<AssistantMessageEvent>
     events
 }
 
+/// Build a well-formed event sequence for a reasoning-only response: a
+/// single thinking block and nothing else — no text, no tool call.
+///
+/// This is the turn shape small local models produce routinely (issue
+/// #1195): the model "answers" into the hidden reasoning channel, so the
+/// loop ends the turn with `TurnEndReason::ReasoningOnly`.
+///
+/// Produces: `Start -> ThinkingStart{0} -> ThinkingDelta{0, thinking} ->
+/// ThinkingEnd{0} -> Done`.
+#[must_use]
+pub fn thinking_only_events(thinking: &str) -> Vec<AssistantMessageEvent> {
+    vec![
+        AssistantMessageEvent::Start,
+        AssistantMessageEvent::ThinkingStart { content_index: 0 },
+        AssistantMessageEvent::ThinkingDelta {
+            content_index: 0,
+            delta: thinking.to_string(),
+        },
+        AssistantMessageEvent::ThinkingEnd {
+            content_index: 0,
+            signature: None,
+        },
+        AssistantMessageEvent::Done {
+            stop_reason: StopReason::Stop,
+            usage: Usage::default(),
+            cost: Cost::default(),
+        },
+    ]
+}
+
 /// Build events for a single tool call response.
 #[allow(dead_code)]
 #[must_use]
