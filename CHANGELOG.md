@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `tui`: F5 hotkey toggles hidden channels (reasoning/thinking content) inline for the whole conversation — including scrollback — instead of the collapsed `[thinking...]` placeholder; reasoning renders dim/italic so it never reads as the assistant's visible reply, and the status bar shows a `HIDDEN` badge while the toggle is on (#1194)
 - `TurnEndReason::ReasoningOnly` — structural signal for turns that end with hidden-channel reasoning only (no visible text, no tool call), plus `AssistantMessage::has_visible_content()` / `is_reasoning_only()` helpers; hosts can now tell "answered invisibly" apart from a normal completion (#1195)
 - `AgentOptions::with_reasoning_only_nudge` — opt-in one-shot corrective reminder + single retry when a turn ends reasoning-only; a second consecutive reasoning-only turn is accepted as-is (#1195)
 - `testing::thinking_only_events` — mock event sequence for a reasoning-only response (#1195)
