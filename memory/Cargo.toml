@@ -20,7 +20,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 search = ["dep:tantivy"]
 
 [dependencies]
-swink-agent = { path = "..", version = "0.12.0", default-features = false }
+swink-agent = { path = "..", version = "0.12.1", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt"] }

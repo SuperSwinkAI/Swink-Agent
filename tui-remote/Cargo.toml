@@ -24,9 +24,9 @@ default = ["cli"]
 cli = ["dep:clap", "dep:tracing-subscriber", "dep:tracing-appender", "dep:dirs"]
 
 [dependencies]
-swink-agent = { path = "..", version = "0.12.0", default-features = false }
-swink-agent-tui = { path = "../tui", version = "0.12.0", default-features = false }
-swink-agent-rpc = { path = "../rpc", version = "0.12.0", default-features = false, features = ["client"] }
+swink-agent = { path = "..", version = "0.12.1", default-features = false }
+swink-agent-tui = { path = "../tui", version = "0.12.1", default-features = false }
+swink-agent-rpc = { path = "../rpc", version = "0.12.1", default-features = false, features = ["client"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
 serde_json.workspace = true
 tracing.workspace = true
@@ -37,7 +37,7 @@ dirs = { workspace = true, optional = true }
 
 [dev-dependencies]
 swink-agent = { path = "..", default-features = false, features = ["testkit"] }
-swink-agent-rpc = { path = "../rpc", version = "0.12.0" }
+swink-agent-rpc = { path = "../rpc", version = "0.12.1" }
 tokio = { workspace = true, features = ["full", "test-util"] }
 tempfile.workspace = true
 

@@ -31,8 +31,8 @@ xai = ["openai-compat"]
 __no_default_features_sentinel = []
 
 [dependencies]
-swink-agent = { path = "..", version = "0.12.0", default-features = false }
-swink-agent-auth = { path = "../auth", version = "0.12.0", optional = true }
+swink-agent = { path = "..", version = "0.12.1", default-features = false }
+swink-agent-auth = { path = "../auth", version = "0.12.1", optional = true }
 chrono.workspace = true
 reqwest.workspace = true
 # Supplies the `ring` crypto provider, installed as the process default
