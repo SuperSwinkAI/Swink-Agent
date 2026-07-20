@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Documented guarantee + regression tests that bash-tool subprocesses inherit the host process environment unmodified — orchestrators inject per-agent identity env overlays (`GH_TOKEN`, `GIT_AUTHOR_*`, `GIT_SSH_COMMAND`) and depend on full inheritance; any future env-policy feature must keep inheritance the default (#1197)
+
 ## [0.12.1] - 2026-07-19
 
 ### Added

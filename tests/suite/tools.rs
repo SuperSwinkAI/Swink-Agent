@@ -93,6 +93,99 @@ async fn bash_uses_platform_shell() {
     );
 }
 
+// ─── #1197: environment inheritance contract ────────────────────────────
+//
+// Orchestrators (e.g. AgentShore) inject per-agent identity env overlays
+// (GH_TOKEN, GIT_AUTHOR_*, GIT_SSH_COMMAND, …) on the host process and
+// require every bash-tool subprocess to see them unmodified. Precedent for
+// the risk: Codex's shell tool stripped inherited env by default
+// (shell_environment_policy), which orchestrators discovered in production.
+// These tests pin the guarantee documented on `BashTool`.
+
+/// A pre-existing host variable round-trips into the subprocess with its
+/// exact value — inheritance is not just present but unmodified.
+#[tokio::test]
+async fn bash_inherits_host_path_unmodified() {
+    let host_path = std::env::var("PATH").expect("test host must have PATH");
+
+    let command = if cfg!(windows) {
+        "echo %PATH%".to_string()
+    } else {
+        r#"printf '%s' "$PATH""#.to_string()
+    };
+
+    let tool = BashTool::new();
+    let result = tool
+        .execute(
+            "tc_env_path",
+            json!({ "command": command }),
+            CancellationToken::new(),
+            None,
+            std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+            None,
+        )
+        .await;
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(
+        text.contains("Exit code: 0"),
+        "expected success, got: {text}"
+    );
+    assert!(
+        text.contains(&host_path),
+        "subprocess PATH must match the host value exactly.\nhost: {host_path}\ngot: {text}"
+    );
+}
+
+/// Every host variable — well-known or not — reaches the subprocess with its
+/// exact value. This is the allowlist tripwire: a policy that passes
+/// well-known vars (PATH, HOME) but strips unknown ones (CARGO_*, NEXTEST_*,
+/// arbitrary user/orchestrator vars) would pass the PATH test above and fail
+/// here. The shell may *add* vars (PWD, SHLVL, _); it must never drop or
+/// rewrite an inherited one.
+#[tokio::test]
+async fn bash_inherits_entire_host_environment() {
+    let command = if cfg!(windows) { "set" } else { "env" };
+
+    let tool = BashTool::new();
+    let result = tool
+        .execute(
+            "tc_env_full",
+            json!({ "command": command }),
+            CancellationToken::new(),
+            None,
+            std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+            None,
+        )
+        .await;
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(
+        text.contains("Exit code: 0"),
+        "expected success, got: {text}"
+    );
+
+    let missing: Vec<String> = std::env::vars()
+        .filter(|(key, value)| {
+            // Line-based comparison can't represent multi-line values, and
+            // `_`/`SHLVL`/`PWD` are legitimately rewritten by the shell.
+            !key.is_empty()
+                && !value.contains('\n')
+                && !value.contains('\r')
+                && key != "_"
+                && key != "SHLVL"
+                && key != "PWD"
+                && key != "OLDPWD"
+                && !text.contains(&format!("{key}={value}"))
+        })
+        .map(|(key, _)| key)
+        .collect();
+
+    assert!(
+        missing.is_empty(),
+        "host env vars missing or modified in the bash subprocess \
+         (inheritance contract #1197 violated): {missing:?}"
+    );
+}
+
 #[tokio::test]
 async fn bash_exit_code_nonzero() {
     let tool = BashTool::new();
