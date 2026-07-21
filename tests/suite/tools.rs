@@ -167,6 +167,10 @@ async fn bash_inherits_entire_host_environment() {
         .filter(|(key, value)| {
             // Line-based comparison can't represent multi-line values, and
             // `_`/`SHLVL`/`PWD` are legitimately rewritten by the shell.
+            // On macOS, SIP strips `DYLD_*` from the environment when
+            // exec-ing protected binaries such as `/bin/zsh`, below any
+            // control of ours (`cargo test` sets DYLD_FALLBACK_LIBRARY_PATH,
+            // so the suite only trips this under plain `cargo test`).
             !key.is_empty()
                 && !value.contains('\n')
                 && !value.contains('\r')
@@ -174,6 +178,7 @@ async fn bash_inherits_entire_host_environment() {
                 && key != "SHLVL"
                 && key != "PWD"
                 && key != "OLDPWD"
+                && !(cfg!(target_os = "macos") && key.starts_with("DYLD_"))
                 && !text.contains(&format!("{key}={value}"))
         })
         .map(|(key, _)| key)
