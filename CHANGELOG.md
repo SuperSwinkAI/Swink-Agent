@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `tui`: `CustomCommandOutcome::Deferred` — host commands can queue async work (`CustomCommandOutcome::deferred` / `deferred_with_notice`) that the event loop awaits on its next flush pass and applies to the running `App` with `&mut` access, via the new `HostAction` (`ReplaceAgent`/`Feedback`/`Nothing`) and `AgentSwap`. `AgentSwap` installs a host-rebuilt `Agent` mid-session — keeping the session id, the on-screen transcript, and the context budget, carrying the conversation across unless `.without_history()` — which closes the downstream `/model <name>` gap (provider/endpoint/credential changes need a new `Agent`, not just `Agent::set_model`). Swaps are refused mid-turn and on an external transport. Also adds `App::available_models()` so a host picker can read the roster the TUI is cycling through (#1201)
+
 ## [0.12.2] - 2026-07-20
 
 ### Added

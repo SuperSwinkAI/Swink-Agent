@@ -7,6 +7,7 @@ use tokio::sync::{mpsc, oneshot};
 use swink_agent::{Agent, ApprovalMode, ThinkingLevel, ToolApproval, ToolApprovalRequest};
 
 use crate::config::TuiConfig;
+use crate::extensions::{AgentSwap, CustomCommandOutcome, HostAction};
 use crate::session::JsonlSessionStore;
 use crate::theme;
 use crate::transport::ControlRequest;
@@ -246,6 +247,102 @@ impl App {
         self.mode.model_index = 0;
         self.usage.context_budget = 100_000;
         self.agent_io.agent = Some(agent);
+    }
+
+    /// The model roster the running agent offers for cycling.
+    ///
+    /// Empty before [`set_agent`](Self::set_agent) is called, or when the
+    /// agent was built without
+    /// [`AgentOptions::with_available_models`](swink_agent::AgentOptions::with_available_models).
+    /// Host commands read this to render a picker without keeping their own
+    /// copy of what the TUI is actually cycling through.
+    #[must_use]
+    pub fn available_models(&self) -> &[swink_agent::ModelSpec] {
+        &self.mode.available_models
+    }
+
+    /// Apply the outcome of a host-defined command.
+    ///
+    /// [`Feedback`](crate::CustomCommandOutcome::Feedback) renders now;
+    /// [`Deferred`](crate::CustomCommandOutcome::Deferred) renders its notice
+    /// now and queues the task for the event loop's next flush pass.
+    /// `NotHandled` never reaches here — `dispatch` turns it into a
+    /// fall-through.
+    pub(super) fn apply_custom_command_outcome(&mut self, outcome: CustomCommandOutcome) {
+        match outcome {
+            CustomCommandOutcome::Feedback(text) => self.push_system_message(text),
+            CustomCommandOutcome::Deferred { notice, task } => {
+                if let Some(notice) = notice {
+                    self.push_system_message(notice);
+                }
+                self.agent_io.pending_host_task = Some(task);
+            }
+            CustomCommandOutcome::NotHandled => {}
+        }
+    }
+
+    /// Apply the result of a completed host task.
+    pub(super) fn apply_host_action(&mut self, action: HostAction) {
+        match action {
+            HostAction::Feedback(text) => self.push_system_message(text),
+            HostAction::ReplaceAgent(swap) => self.apply_agent_swap(swap),
+            HostAction::Nothing => {}
+        }
+    }
+
+    /// Install a host-rebuilt agent on the running session.
+    ///
+    /// Keeps the session id, the on-screen transcript, and the context budget;
+    /// adopts the replacement's model name and model roster. The outgoing
+    /// agent's history is carried across unless the host opted out with
+    /// [`AgentSwap::without_history`] — messages a custom type cannot clone or
+    /// serialize are dropped, matching
+    /// [`clone_messages_for_send`](swink_agent::clone_messages_for_send).
+    ///
+    /// Refused (with a system message, leaving the running agent in place)
+    /// mid-turn, and on an external transport — there the backend owns the
+    /// agent, so a swap belongs on the host's side of the transport.
+    fn apply_agent_swap(&mut self, swap: AgentSwap) {
+        if self.agent_io.status == AgentStatus::Running {
+            self.push_system_message(
+                "Agent swap blocked while the agent is running. Stop the active stream and try again."
+                    .to_string(),
+            );
+            return;
+        }
+        if self.agent_io.external_transport {
+            self.push_system_message(
+                "Agent swap is not supported on an external transport — the backend owns the agent."
+                    .to_string(),
+            );
+            return;
+        }
+
+        let AgentSwap {
+            agent,
+            carry_history,
+            feedback,
+        } = swap;
+        let mut agent = *agent;
+        if carry_history && let Some(current) = &self.agent_io.agent {
+            let history = swink_agent::clone_messages_for_send(&current.state().messages);
+            if !history.is_empty() {
+                agent.set_messages(history);
+            }
+        }
+
+        // `set_agent` resets the context budget to its startup default, which
+        // is right for the first install and wrong for a swap: the budget the
+        // session has been reporting against should survive it.
+        let budget = self.usage.context_budget;
+        self.set_agent(agent);
+        self.usage.context_budget = budget;
+        // A queued F4 cycle targets the roster of the agent just replaced.
+        self.mode.pending_model = None;
+
+        if let Some(feedback) = feedback {
+            self.push_system_message(feedback);
+        }
     }
 
     /// Return the current approval mode.

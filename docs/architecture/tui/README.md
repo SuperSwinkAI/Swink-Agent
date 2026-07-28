@@ -334,6 +334,46 @@ credentials.
 `TuiExtensions` is a consuming builder with a `Default` impl — further seams are
 added as additional `with_*` methods without breaking existing callers.
 
+### Deferred host work and agent swaps
+
+Handlers are sync and see the `App` immutably. Anything that must `await`, or
+mutate the running session, comes back as `CustomCommandOutcome::Deferred`: the
+event loop awaits the task on its next flush pass — first in the pass, ahead of
+`flush_controls` / `flush_outbound` / `flush_compact` — and applies the
+resulting `HostAction` with `&mut App`. Because the draw happens at the top of
+the loop, the notice is on screen before the task is awaited.
+
+```rust,ignore
+let extensions = TuiExtensions::new().with_command("model", move |_app, args| {
+    let name = args.to_string();
+    CustomCommandOutcome::deferred_with_notice(format!("Switching to {name}…"), move || {
+        let name = name.clone();
+        async move {
+            match rebuild_agent(&name).await {          // host's own config, creds, MCP wiring
+                Ok(agent) => HostAction::ReplaceAgent(
+                    AgentSwap::new(agent).with_feedback(format!("Model: {name}")),
+                ),
+                Err(error) => HostAction::Feedback(format!("Switch failed: {error}")),
+            }
+        }
+    })
+});
+```
+
+`AgentSwap` keeps the session id, the on-screen transcript, and the context
+budget, and adopts the replacement's model name and roster (`set_agent`
+semantics). The outgoing conversation is carried into the replacement unless
+the host calls `.without_history()`, so a provider change is invisible to the
+conversation. Swaps are refused — with a system message, leaving the running
+agent in place — mid-turn and on an external transport, where the backend owns
+the agent and the swap belongs on the host's side of the transport.
+
+The task is awaited *inline* on the flush pass, so it blocks input while it
+runs: bounded work (rebuilding an agent, one round trip), never an unbounded
+wait. A second deferred command queued before the first has run replaces it.
+`App::available_models()` exposes the roster the TUI is actually cycling
+through, so a host picker does not need its own copy.
+
 ### `@path` file mentions
 
 Two seams, deliberately split by *when* they run:

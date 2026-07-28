@@ -63,8 +63,9 @@ pub use app::{
 pub use config::TuiConfig;
 pub use error::TuiError;
 pub use extensions::{
-    CustomCommandFn, CustomCommandOutcome, MentionResolverFn, PathCandidate, PathCompletionFn,
-    SkillCandidate, SkillCompletionFn, SkillDetailsFn, SkillResolverFn, TuiExtensions,
+    AgentSwap, CustomCommandFn, CustomCommandOutcome, HostAction, HostTaskFn, MentionResolverFn,
+    PathCandidate, PathCompletionFn, SkillCandidate, SkillCompletionFn, SkillDetailsFn,
+    SkillResolverFn, TuiExtensions,
 };
 pub use mentions::{PathMention, parse_mentions};
 pub use session::JsonlSessionStore;
