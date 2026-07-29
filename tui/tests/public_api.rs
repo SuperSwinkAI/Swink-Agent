@@ -9,9 +9,9 @@ use swink_agent::{
     Usage,
 };
 use swink_agent_tui::{
-    App, ControlRequest, ControlResponse, CustomCommandOutcome, InProcessTransport, MessageRole,
-    PathCandidate, SkillCandidate, TransportError, TuiConfig, TuiExtensions, TuiTransport,
-    UserInput, parse_mentions, parse_skill_invocation,
+    AgentSwap, App, ControlRequest, ControlResponse, CustomCommandOutcome, HostAction,
+    InProcessTransport, MessageRole, PathCandidate, SkillCandidate, TransportError, TuiConfig,
+    TuiExtensions, TuiTransport, UserInput, parse_mentions, parse_skill_invocation,
 };
 
 #[test]
@@ -84,6 +84,45 @@ fn host_commands_are_registrable_from_outside_the_crate() {
 
     let app = App::new(TuiConfig::default()).with_extensions(extensions);
     assert_eq!(app.usage.turn_usage.len(), 0);
+}
+
+/// Issue #1201: a host command must be able to queue async work and hand back
+/// a rebuilt agent for the running session. Dispatch itself is crate-internal
+/// (it runs from the event loop), so what this pins is that the whole shape —
+/// deferred outcome, awaited task, `AgentSwap` built from a host-constructed
+/// `Agent` — is expressible from outside the crate.
+#[tokio::test]
+async fn host_commands_can_defer_work_and_swap_the_agent_from_outside_the_crate() {
+    let extensions = TuiExtensions::new().with_command("model", |_app: &App, args: &str| {
+        let name = args.to_string();
+        CustomCommandOutcome::deferred_with_notice(format!("Switching to {name}…"), move || {
+            let name = name.clone();
+            async move {
+                let agent = Agent::new(AgentOptions::new(
+                    "host system prompt",
+                    ModelSpec::new("anthropic", &name),
+                    Arc::new(SimpleMockStreamFn::new(vec!["ok".to_string()]))
+                        as Arc<dyn swink_agent::StreamFn>,
+                    swink_agent::default_convert,
+                ));
+                HostAction::ReplaceAgent(
+                    AgentSwap::new(agent).with_feedback(format!("Model: {name}")),
+                )
+            }
+        })
+    });
+    assert_eq!(extensions.command_names().collect::<Vec<_>>(), ["model"]);
+
+    // The same task the event loop would await on its flush pass.
+    let outcome = CustomCommandOutcome::deferred(|| async { HostAction::Nothing });
+    let CustomCommandOutcome::Deferred { notice, task } = outcome else {
+        panic!("expected a deferred outcome");
+    };
+    assert!(notice.is_none());
+    assert!(matches!(task().await, HostAction::Nothing));
+
+    let app = App::new(TuiConfig::default()).with_extensions(extensions);
+    assert!(app.available_models().is_empty());
 }
 
 async fn recv_transport_event(transport: &mut InProcessTransport) -> AgentEvent {

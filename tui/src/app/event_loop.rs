@@ -45,11 +45,16 @@ impl App {
                 break;
             }
 
-            // Forward any control requests, then any input, queued for a
-            // host-installed transport. Both are no-ops on the default
-            // in-process path, which drives the agent directly. Controls
-            // flush first so e.g. a pending model change lands before the
-            // prompt it should apply to.
+            // Run any deferred host work, then forward any control requests,
+            // then any input, queued for a host-installed transport. The
+            // transport flushes are no-ops on the default in-process path,
+            // which drives the agent directly. Host work flushes first so an
+            // agent swap lands before any control or prompt queued behind it;
+            // controls flush before input so e.g. a pending model change lands
+            // before the prompt it should apply to. The draw above already
+            // ran, so a deferred command's notice is on screen before its
+            // task is awaited.
+            self.flush_host_task().await;
             self.flush_controls().await;
             self.flush_outbound().await;
             self.flush_compact().await;
@@ -177,6 +182,24 @@ impl App {
             Err(error) => format!("Compaction failed: {error}"),
         };
         self.push_system_message(feedback);
+        self.view.dirty = true;
+    }
+
+    /// Run the async work a host command queued via
+    /// [`CustomCommandOutcome::Deferred`](crate::CustomCommandOutcome::Deferred)
+    /// and apply its [`HostAction`](crate::HostAction).
+    ///
+    /// Runs on the event loop's flush pass for the same reason as
+    /// [`flush_compact`](App::flush_compact): host work is async while command
+    /// dispatch is sync. The task is awaited inline, so input is blocked for
+    /// its duration — that is the contract documented on
+    /// [`HostTaskFn`](crate::HostTaskFn).
+    pub(super) async fn flush_host_task(&mut self) {
+        let Some(task) = self.agent_io.pending_host_task.take() else {
+            return;
+        };
+        let action = task().await;
+        self.apply_host_action(action);
         self.view.dirty = true;
     }
 
@@ -1005,9 +1028,9 @@ impl App {
         // forking the crate (issue #1084 §2). This runs after the secret
         // classification above so `#key` input never reaches a host handler.
         if let Some((name, args)) = commands::split_command(&text)
-            && let Some(feedback) = self.extensions.dispatch(self, name, args)
+            && let Some(outcome) = self.extensions.dispatch(self, name, args)
         {
-            self.push_system_message(feedback);
+            self.apply_custom_command_outcome(outcome);
             return;
         }
 
