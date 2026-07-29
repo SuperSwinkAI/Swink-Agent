@@ -12,7 +12,7 @@ readme = "README.md"
 
 [dependencies]
 swink-agent = { path = "..", version = "0.12.1", default-features = false }
-rmcp = { version = "2.0.0", features = ["client", "client-side-sse", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "transport-child-process"] }
+rmcp = { version = "3.0.0", features = ["client", "client-side-sse", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "transport-child-process"] }
 reqwest = { workspace = true }
 # Supplies the `ring` crypto provider, installed as the process default
 # before any reqwest client is built (workspace reqwest is
@@ -29,7 +29,7 @@ sse-stream = "0.2.3"
 
 [dev-dependencies]
 axum = "0.8.9"
-rmcp = { version = "2.0.0", features = ["client", "server", "macros", "client-side-sse", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "transport-child-process", "transport-streamable-http-server"] }
+rmcp = { version = "3.0.0", features = ["client", "server", "macros", "client-side-sse", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "transport-child-process", "transport-streamable-http-server"] }
 swink-agent = { path = "..", default-features = false }
 tokio = { workspace = true, features = ["full", "test-util"] }
 tokio-util = { workspace = true }
