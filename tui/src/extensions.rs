@@ -105,7 +105,7 @@ impl CustomCommandOutcome {
     {
         Self::Deferred {
             notice: None,
-            task: Arc::new(move || Box::pin(task())),
+            task: HostTaskFn::new(task),
         }
     }
 
@@ -118,7 +118,7 @@ impl CustomCommandOutcome {
     {
         Self::Deferred {
             notice: Some(notice.into()),
-            task: Arc::new(move || Box::pin(task())),
+            task: HostTaskFn::new(task),
         }
     }
 }
@@ -129,8 +129,47 @@ impl CustomCommandOutcome {
 /// the event loop's flush pass, so it blocks input for as long as it runs —
 /// keep it to bounded work (rebuilding an agent, one HTTP round trip), not an
 /// unbounded wait.
-pub type HostTaskFn =
-    Arc<dyn Fn() -> Pin<Box<dyn Future<Output = HostAction> + Send>> + Send + Sync>;
+///
+/// A newtype rather than a bare `Arc<dyn Fn(..)>` alias so the unwind-safety
+/// markers can be asserted here instead of leaking a `RefUnwindSafe` bound onto
+/// every host closure — see the impls below.
+#[derive(Clone)]
+pub struct HostTaskFn(TaskFn);
+
+type TaskFn = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = HostAction> + Send>> + Send + Sync>;
+
+// A queued task is called at most once, from the event loop, and holds no
+// interior-mutable state the TUI can observe after a panic. Asserting the
+// markers keeps `CustomCommandOutcome` unwind-safe — an auto trait it carried
+// before `Deferred` existed — without constraining what hosts may capture.
+impl std::panic::UnwindSafe for HostTaskFn {}
+impl std::panic::RefUnwindSafe for HostTaskFn {}
+
+impl fmt::Debug for HostTaskFn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<host task>")
+    }
+}
+
+impl HostTaskFn {
+    /// Wrap an async closure. Prefer [`CustomCommandOutcome::deferred`], which
+    /// calls this for you.
+    #[must_use]
+    pub fn new<F, Fut>(task: F) -> Self
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HostAction> + Send + 'static,
+    {
+        Self(Arc::new(move || Box::pin(task())))
+    }
+
+    /// Run the task, yielding the [`HostAction`] to apply to the running
+    /// [`App`].
+    #[must_use]
+    pub fn call(&self) -> Pin<Box<dyn Future<Output = HostAction> + Send>> {
+        (self.0)()
+    }
+}
 
 /// What a completed [`HostTaskFn`] wants applied to the running [`App`].
 #[non_exhaustive]
@@ -847,7 +886,7 @@ mod tests {
             panic!("expected a deferred outcome");
         };
         assert_eq!(notice.as_deref(), Some("working…"));
-        match task().await {
+        match task.call().await {
             HostAction::Feedback(text) => assert_eq!(text, "done:sonnet"),
             other => panic!("expected feedback, got {other:?}"),
         }

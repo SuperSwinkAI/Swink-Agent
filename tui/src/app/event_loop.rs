@@ -198,7 +198,7 @@ impl App {
         let Some(task) = self.agent_io.pending_host_task.take() else {
             return;
         };
-        let action = task().await;
+        let action = task.call().await;
         self.apply_host_action(action);
         self.view.dirty = true;
     }

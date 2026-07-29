@@ -119,7 +119,7 @@ async fn host_commands_can_defer_work_and_swap_the_agent_from_outside_the_crate(
         panic!("expected a deferred outcome");
     };
     assert!(notice.is_none());
-    assert!(matches!(task().await, HostAction::Nothing));
+    assert!(matches!(task.call().await, HostAction::Nothing));
 
     let app = App::new(TuiConfig::default()).with_extensions(extensions);
     assert!(app.available_models().is_empty());
@@ -546,4 +546,14 @@ async fn a_host_skill_resolver_expands_only_on_submit() {
         .find(|message| message.role == MessageRole::User)
         .expect("user message should be displayed");
     assert_eq!(displayed.content, "/deploy now");
+}
+
+/// `CustomCommandOutcome` carried the unwind-safety auto traits before
+/// `Deferred` existed; `HostTaskFn` asserts them so adding a boxed future did
+/// not silently drop them from the public API.
+#[test]
+fn outcome_stays_unwind_safe() {
+    fn assert_unwind_safe<T: std::panic::UnwindSafe + std::panic::RefUnwindSafe>() {}
+    assert_unwind_safe::<CustomCommandOutcome>();
+    assert_unwind_safe::<swink_agent_tui::HostTaskFn>();
 }
