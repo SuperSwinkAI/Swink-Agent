@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `mcp`: `rmcp` 2.2 → 3.0. The bearer-auth SSE client tracks `StreamableHttpClient::get_stream`, whose `session_id` is now `Option<Arc<str>>` (rmcp resumes a stateless response from `last_event_id` alone), and overrides the new `get_stream_with_max_sse_event_size` so the transport-wide SSE event-size limit still reaches the byte layer instead of silently falling back to the default (#1216)
+
 ## [0.12.3] - 2026-07-29
 
 ### Added
