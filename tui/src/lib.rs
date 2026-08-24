@@ -319,7 +319,7 @@ impl TuiLauncher {
 /// Like [`launch`], but with an injectable session store, session ID, and optional resume.
 ///
 /// Use this when embedding the TUI in a host binary that needs to control where sessions
-/// are stored (e.g. `~/.superswink/sessions/`) or resume a prior transcript before the
+/// are stored (e.g. `~/.config/myapp/sessions/`) or resume a prior transcript before the
 /// event loop starts.
 ///
 /// # Arguments
