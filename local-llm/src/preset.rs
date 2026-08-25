@@ -145,7 +145,7 @@ fn default_chat_preset_defaults() -> Result<ChatPresetDefaults, LocalPresetError
 fn default_embedding_preset_defaults() -> EmbeddingPresetDefaults {
     EmbeddingPresetDefaults {
         repo_id: "unsloth/embeddinggemma-300m-GGUF".to_string(),
-        filename: "embeddinggemma-300m-Q8_0.gguf".to_string(),
+        filename: "embeddinggemma-300M-Q8_0.gguf".to_string(),
         context_length: 2048,
         dimensions: 768,
     }

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `local-llm`: default `EmbeddingConfig` filename corrected to `embeddinggemma-300M-Q8_0.gguf` (uppercase `M`) — the `unsloth/embeddinggemma-300m-GGUF` repo renamed the file, so `ensure_ready()` 404'd on every fresh machine and hf-hub cached a `.no_exist` marker that kept it failing on retry (#1221)
+
 ### Changed
 - `mcp`: `rmcp` 2.2 → 3.0. The bearer-auth SSE client tracks `StreamableHttpClient::get_stream`, whose `session_id` is now `Option<Arc<str>>` (rmcp resumes a stateless response from `last_event_id` alone), and overrides the new `get_stream_with_max_sse_event_size` so the transport-wide SSE event-size limit still reaches the byte layer instead of silently falling back to the default (#1216)
 
