@@ -140,8 +140,8 @@ mod tests {
         }
     }
 
-    /// Acceptance criterion for issue #1084 / SuperSwink-Coding#134: the status
-    /// line renders token counts and cost after a stubbed turn.
+    /// Acceptance criterion for issue #1084: the status line renders token
+    /// counts and cost after a stubbed turn.
     #[test]
     fn status_line_renders_token_counts_after_a_stubbed_turn() {
         let mut app = App::new(TuiConfig::default());

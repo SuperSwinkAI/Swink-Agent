@@ -261,7 +261,7 @@ impl TantivyIndex {
         // Fetch more than `limit` to allow post-filtering.
         let fetch = (limit * 4).max(200);
         let top_docs: Vec<(tantivy::Score, tantivy::DocAddress)> = searcher
-            .search(&parsed_query, &TopDocs::with_limit(fetch))
+            .search(&parsed_query, &TopDocs::with_limit(fetch).order_by_score())
             .map_err(tantivy_to_io)?;
 
         let mut hits: Vec<SessionHit> = Vec::new();

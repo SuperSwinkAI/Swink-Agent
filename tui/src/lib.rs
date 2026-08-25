@@ -63,8 +63,9 @@ pub use app::{
 pub use config::TuiConfig;
 pub use error::TuiError;
 pub use extensions::{
-    CustomCommandFn, CustomCommandOutcome, MentionResolverFn, PathCandidate, PathCompletionFn,
-    SkillCandidate, SkillCompletionFn, SkillDetailsFn, SkillResolverFn, TuiExtensions,
+    AgentSwap, CustomCommandFn, CustomCommandOutcome, HostAction, HostTaskFn, MentionResolverFn,
+    PathCandidate, PathCompletionFn, SkillCandidate, SkillCompletionFn, SkillDetailsFn,
+    SkillResolverFn, TuiExtensions,
 };
 pub use mentions::{PathMention, parse_mentions};
 pub use session::JsonlSessionStore;
@@ -318,7 +319,7 @@ impl TuiLauncher {
 /// Like [`launch`], but with an injectable session store, session ID, and optional resume.
 ///
 /// Use this when embedding the TUI in a host binary that needs to control where sessions
-/// are stored (e.g. `~/.superswink/sessions/`) or resume a prior transcript before the
+/// are stored (e.g. `~/.config/myapp/sessions/`) or resume a prior transcript before the
 /// event loop starts.
 ///
 /// # Arguments

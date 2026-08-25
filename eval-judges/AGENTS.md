@@ -1,5 +1,9 @@
 # AGENTS.md — swink-agent-eval-judges
 
+## Scope
+
+`eval-judges/` — LLM-backed judge clients for the eval framework. One `JudgeClient` impl per provider.
+
 ## Key Invariants
 
 - `XaiJudgeClient` uses same wire format as `OpenAiJudgeClient` (bearer auth + `/v1/chat/completions`).

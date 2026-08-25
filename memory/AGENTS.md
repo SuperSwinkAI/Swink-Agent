@@ -1,5 +1,9 @@
 # AGENTS.md — swink-agent-memory
 
+## Scope
+
+`memory/` — session persistence: `JsonlSessionStore` (append-oriented transcript + state), checkpoint store, compaction, migration, and transcript search.
+
 ## Key Invariants
 
 - `SessionStore::save_full()` is the atomic seam for transcript + state persistence. `JsonlSessionStore` rewrites both under one lock/sequence bump.

@@ -181,10 +181,12 @@ impl StreamableHttpClient for ResolverBackedSseHttpClient {
         .map_err(map_reqwest_streamable_http_error)
     }
 
+    /// `session_id` is `None` when rmcp resumes a stateless response from
+    /// `last_event_id` alone; it is forwarded as-is.
     async fn get_stream(
         &self,
         uri: Arc<str>,
-        session_id: Arc<str>,
+        session_id: Option<Arc<str>>,
         last_event_id: Option<String>,
         _auth_header: Option<String>,
         custom_headers: HashMap<HeaderName, HeaderValue>,
@@ -200,6 +202,36 @@ impl StreamableHttpClient for ResolverBackedSseHttpClient {
             last_event_id,
             Some(bearer_token),
             custom_headers,
+        )
+        .await
+        .map_err(map_reqwest_streamable_http_error)
+    }
+
+    /// Overridden rather than left to the default, which would delegate to
+    /// [`Self::get_stream`] and drop `max_sse_event_size` — the transport-wide
+    /// limit is applied inside the client, so forwarding to `reqwest`'s own
+    /// override is the only way it reaches the byte layer.
+    async fn get_stream_with_max_sse_event_size(
+        &self,
+        uri: Arc<str>,
+        session_id: Option<Arc<str>>,
+        last_event_id: Option<String>,
+        _auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+        max_sse_event_size: usize,
+    ) -> Result<BoxStream<'static, Result<Sse, SseError>>, StreamableHttpError<Self::Error>> {
+        let bearer_token = self
+            .resolve_bearer_token()
+            .await
+            .map_err(StreamableHttpError::Client)?;
+        <reqwest::Client as StreamableHttpClient>::get_stream_with_max_sse_event_size(
+            &self.inner,
+            uri,
+            session_id,
+            last_event_id,
+            Some(bearer_token),
+            custom_headers,
+            max_sse_event_size,
         )
         .await
         .map_err(map_reqwest_streamable_http_error)

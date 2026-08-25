@@ -11,6 +11,13 @@
 //! Today it carries host-defined slash/hash commands, the `@path` file-mention
 //! seam, and the `/skill` discovery seam.
 //!
+//! Command handlers are synchronous and see the [`App`] immutably. Work that
+//! has to `await` — or to mutate the running session, such as swapping in a
+//! rebuilt [`Agent`] for a mid-session model change — is returned as
+//! [`CustomCommandOutcome::Deferred`]: the event loop awaits the task on its
+//! next flush pass (alongside `/compact`) and applies the resulting
+//! [`HostAction`] with `&mut App`.
+//!
 //! # Example
 //!
 //! ```rust
@@ -23,7 +30,12 @@
 //! assert_eq!(extensions.command_names().collect::<Vec<_>>(), ["budget"]);
 //! ```
 
+use std::fmt;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
+
+use swink_agent::Agent;
 
 use crate::app::App;
 use crate::mentions::{PathMention, parse_mentions};
@@ -31,15 +43,215 @@ use crate::skills::{SkillInvocation, parse_skill_invocation};
 
 /// What a host-defined command wants the TUI to do.
 ///
-/// Deliberately narrow: hosts render information, they do not drive the event
-/// loop. Further variants can be added as the need is demonstrated.
+/// Handlers are synchronous and see the [`App`] immutably, so anything that
+/// needs to `await` or to mutate the running session goes through
+/// [`Deferred`](Self::Deferred): the handler returns a task, the event loop
+/// runs it on its next flush pass and applies the resulting [`HostAction`]
+/// with `&mut App`.
 #[non_exhaustive]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum CustomCommandOutcome {
     /// Show this text in the conversation as a system message.
     Feedback(String),
     /// Decline the command; fall through to the built-in command table.
     NotHandled,
+    /// Run async host work on the event loop's next flush pass, then apply its
+    /// [`HostAction`] to the running [`App`].
+    ///
+    /// Build with [`CustomCommandOutcome::deferred`] or
+    /// [`CustomCommandOutcome::deferred_with_notice`] rather than naming the
+    /// boxed-future type by hand.
+    Deferred {
+        /// Rendered as a system message immediately, before `task` runs — the
+        /// task is awaited on the flush pass *after* the frame carrying this
+        /// notice, so a slow rebuild does not look like a hang.
+        notice: Option<String>,
+        /// The work to run.
+        task: HostTaskFn,
+    },
+}
+
+impl fmt::Debug for CustomCommandOutcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Feedback(text) => f.debug_tuple("Feedback").field(text).finish(),
+            Self::NotHandled => f.write_str("NotHandled"),
+            Self::Deferred { notice, .. } => f
+                .debug_struct("Deferred")
+                .field("notice", notice)
+                .field("task", &"<host task>")
+                .finish(),
+        }
+    }
+}
+
+impl CustomCommandOutcome {
+    /// Queue async host work with no immediate feedback.
+    ///
+    /// # Example
+    /// ```rust
+    /// # use swink_agent_tui::{CustomCommandOutcome, HostAction, TuiExtensions};
+    /// let extensions = TuiExtensions::new().with_command("sync", |_app, _args| {
+    ///     CustomCommandOutcome::deferred(|| async {
+    ///         HostAction::Feedback("synced".to_string())
+    ///     })
+    /// });
+    /// ```
+    #[must_use]
+    pub fn deferred<F, Fut>(task: F) -> Self
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HostAction> + Send + 'static,
+    {
+        Self::Deferred {
+            notice: None,
+            task: HostTaskFn::new(task),
+        }
+    }
+
+    /// Queue async host work, showing `notice` while it runs.
+    #[must_use]
+    pub fn deferred_with_notice<F, Fut>(notice: impl Into<String>, task: F) -> Self
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HostAction> + Send + 'static,
+    {
+        Self::Deferred {
+            notice: Some(notice.into()),
+            task: HostTaskFn::new(task),
+        }
+    }
+}
+
+/// Async host work queued by [`CustomCommandOutcome::Deferred`].
+///
+/// Invoked at most once per queued command; the returned future is awaited on
+/// the event loop's flush pass, so it blocks input for as long as it runs —
+/// keep it to bounded work (rebuilding an agent, one HTTP round trip), not an
+/// unbounded wait.
+///
+/// A newtype rather than a bare `Arc<dyn Fn(..)>` alias so the unwind-safety
+/// markers can be asserted here instead of leaking a `RefUnwindSafe` bound onto
+/// every host closure — see the impls below.
+#[derive(Clone)]
+pub struct HostTaskFn(TaskFn);
+
+type TaskFn = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = HostAction> + Send>> + Send + Sync>;
+
+// A queued task is called at most once, from the event loop, and holds no
+// interior-mutable state the TUI can observe after a panic. Asserting the
+// markers keeps `CustomCommandOutcome` unwind-safe — an auto trait it carried
+// before `Deferred` existed — without constraining what hosts may capture.
+impl std::panic::UnwindSafe for HostTaskFn {}
+impl std::panic::RefUnwindSafe for HostTaskFn {}
+
+impl fmt::Debug for HostTaskFn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<host task>")
+    }
+}
+
+impl HostTaskFn {
+    /// Wrap an async closure. Prefer [`CustomCommandOutcome::deferred`], which
+    /// calls this for you.
+    #[must_use]
+    pub fn new<F, Fut>(task: F) -> Self
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HostAction> + Send + 'static,
+    {
+        Self(Arc::new(move || Box::pin(task())))
+    }
+
+    /// Run the task, yielding the [`HostAction`] to apply to the running
+    /// [`App`].
+    #[must_use]
+    pub fn call(&self) -> Pin<Box<dyn Future<Output = HostAction> + Send>> {
+        (self.0)()
+    }
+}
+
+/// What a completed [`HostTaskFn`] wants applied to the running [`App`].
+#[non_exhaustive]
+pub enum HostAction {
+    /// Install a rebuilt [`Agent`] on the running session.
+    ReplaceAgent(AgentSwap),
+    /// Show this text in the conversation as a system message.
+    Feedback(String),
+    /// Apply nothing — the task's effects were entirely on the host's side.
+    Nothing,
+}
+
+impl fmt::Debug for HostAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ReplaceAgent(swap) => f.debug_tuple("ReplaceAgent").field(swap).finish(),
+            Self::Feedback(text) => f.debug_tuple("Feedback").field(text).finish(),
+            Self::Nothing => f.write_str("Nothing"),
+        }
+    }
+}
+
+/// A rebuilt [`Agent`] to install on the running session, plus how to install
+/// it.
+///
+/// This is the mid-session model-switch seam: a host resolves a new
+/// provider/model/endpoint/credential set from its own config, builds a fresh
+/// [`Agent`], and hands it back. The TUI keeps the session id, the transcript
+/// on screen, and the context budget; it adopts the new agent's model name and
+/// model roster (as [`App::set_agent`](crate::App::set_agent) does).
+///
+/// By default the outgoing agent's conversation history is carried into the
+/// replacement, so the switch is invisible to the conversation. Opt out with
+/// [`without_history`](Self::without_history).
+///
+/// # Example
+/// ```rust,ignore
+/// HostAction::ReplaceAgent(
+///     AgentSwap::new(rebuild_agent(&name).await?).with_feedback(format!("Model: {name}")),
+/// )
+/// ```
+pub struct AgentSwap {
+    pub(crate) agent: Box<Agent>,
+    pub(crate) carry_history: bool,
+    pub(crate) feedback: Option<String>,
+}
+
+impl fmt::Debug for AgentSwap {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AgentSwap")
+            .field("model", &self.agent.state().model.model_id)
+            .field("carry_history", &self.carry_history)
+            .field("feedback", &self.feedback)
+            .finish()
+    }
+}
+
+impl AgentSwap {
+    /// Swap in `agent`, carrying the outgoing agent's history across.
+    #[must_use]
+    pub fn new(agent: Agent) -> Self {
+        Self {
+            agent: Box::new(agent),
+            carry_history: true,
+            feedback: None,
+        }
+    }
+
+    /// Start the replacement from whatever history `agent` already holds
+    /// instead of the outgoing agent's — an explicit reset, not a switch.
+    #[must_use]
+    pub fn without_history(mut self) -> Self {
+        self.carry_history = false;
+        self
+    }
+
+    /// Show this text as a system message once the swap lands.
+    #[must_use]
+    pub fn with_feedback(mut self, feedback: impl Into<String>) -> Self {
+        self.feedback = Some(feedback.into());
+        self
+    }
 }
 
 /// A host-defined command handler.
@@ -499,12 +711,18 @@ impl TuiExtensions {
     ///
     /// Returns `None` when no handler is registered, or when the registered
     /// handler declined with [`CustomCommandOutcome::NotHandled`] — both mean
-    /// "fall through to the built-ins".
-    pub(crate) fn dispatch(&self, app: &App, name: &str, args: &str) -> Option<String> {
+    /// "fall through to the built-ins". Any other outcome comes back owned, so
+    /// the caller can apply it with `&mut App` after this borrow ends.
+    pub(crate) fn dispatch(
+        &self,
+        app: &App,
+        name: &str,
+        args: &str,
+    ) -> Option<CustomCommandOutcome> {
         let (_, handler) = self.commands.iter().find(|(key, _)| key == name)?;
         match handler(app, args) {
-            CustomCommandOutcome::Feedback(text) => Some(text),
             CustomCommandOutcome::NotHandled => None,
+            outcome => Some(outcome),
         }
     }
 
@@ -603,6 +821,14 @@ mod tests {
         App::new(TuiConfig::default())
     }
 
+    /// Feedback text of a dispatched outcome, or `None` for a fall-through.
+    fn feedback(outcome: Option<CustomCommandOutcome>) -> Option<String> {
+        match outcome {
+            Some(CustomCommandOutcome::Feedback(text)) => Some(text),
+            _ => None,
+        }
+    }
+
     #[test]
     fn empty_extensions_dispatch_nothing() {
         let extensions = TuiExtensions::new();
@@ -616,7 +842,7 @@ mod tests {
             CustomCommandOutcome::Feedback("hello".to_string())
         });
         assert_eq!(
-            extensions.dispatch(&app(), "hi", ""),
+            feedback(extensions.dispatch(&app(), "hi", "")),
             Some("hello".to_string())
         );
     }
@@ -627,7 +853,7 @@ mod tests {
             CustomCommandOutcome::Feedback(format!("got:{args}"))
         });
         assert_eq!(
-            extensions.dispatch(&app(), "echo", "a b c"),
+            feedback(extensions.dispatch(&app(), "echo", "a b c")),
             Some("got:a b c".to_string())
         );
     }
@@ -640,9 +866,43 @@ mod tests {
         let mut app = app();
         app.usage.total_cost = 1.5;
         assert_eq!(
-            extensions.dispatch(&app, "cost", ""),
+            feedback(extensions.dispatch(&app, "cost", "")),
             Some("1.50".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn deferred_outcome_carries_a_runnable_task() {
+        let extensions = TuiExtensions::new().with_command("swap", |_app, args| {
+            let args = args.to_string();
+            CustomCommandOutcome::deferred_with_notice("working…", move || {
+                let args = args.clone();
+                async move { HostAction::Feedback(format!("done:{args}")) }
+            })
+        });
+        let Some(CustomCommandOutcome::Deferred { notice, task }) =
+            extensions.dispatch(&app(), "swap", "sonnet")
+        else {
+            panic!("expected a deferred outcome");
+        };
+        assert_eq!(notice.as_deref(), Some("working…"));
+        match task.call().await {
+            HostAction::Feedback(text) => assert_eq!(text, "done:sonnet"),
+            other => panic!("expected feedback, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deferred_without_notice_shows_nothing_up_front() {
+        let extensions = TuiExtensions::new().with_command("quiet", |_app, _args| {
+            CustomCommandOutcome::deferred(|| async { HostAction::Nothing })
+        });
+        let Some(CustomCommandOutcome::Deferred { notice, .. }) =
+            extensions.dispatch(&app(), "quiet", "")
+        else {
+            panic!("expected a deferred outcome");
+        };
+        assert!(notice.is_none());
     }
 
     #[test]
@@ -670,7 +930,7 @@ mod tests {
                 CustomCommandOutcome::Feedback("second".to_string())
             });
         assert_eq!(
-            extensions.dispatch(&app(), "dup", ""),
+            feedback(extensions.dispatch(&app(), "dup", "")),
             Some("first".to_string())
         );
     }

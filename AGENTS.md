@@ -2,11 +2,11 @@
 
 ## Project
 
-Pure-Rust library for LLM-powered agentic loops. Provider-agnostic core with pluggable streaming, concurrent tool execution, and lifecycle events. Workspace crates: core (`swink-agent`), adapters, artifacts, auth, eval, eval-judges, evolve, local-llm, macros, MCP, memory, patterns, policies, RPC, TUI, web plugin, and xtask.
+Pure-Rust library for LLM-powered agentic loops. Provider-agnostic core with pluggable streaming, concurrent tool execution, and lifecycle events. Core is `swink-agent` at the repo root; `Cargo.toml` lists the member crates.
 
 ## Development Principles
 
-- **Test-driven.** `cargo test --workspace` before every commit. Bug → regression test first, then fix.
+- **Test-driven.** `just test` (nextest, workspace) before every commit. Bug → regression test first, then fix.
 - **Speed.** Minimize allocations on hot paths. `tokio::spawn` for concurrent tool execution.
 - **No unsafe.** `#[forbid(unsafe_code)]` at every crate root.
 - **Lessons in nested AGENTS.md.** Update the nearest `AGENTS.md` when you discover something non-obvious.
@@ -33,22 +33,22 @@ Pure-Rust library for LLM-powered agentic loops. Provider-agnostic core with plu
 | serde / serde_json | 1 | Serialization |
 | reqwest | 0.13 | HTTP |
 | schemars | 1 | JSON schema derivation |
-| jsonschema | 0.46 | JSON schema validation |
+| jsonschema | 0.49 | JSON schema validation |
 | ratatui / crossterm | 0.30 / 0.29 | TUI |
-| llama-cpp-2 | latest | Local LLM (llama.cpp) |
-| rmcp | latest | MCP SDK |
+| llama-cpp-2 | 0.1 | Local LLM (llama.cpp) |
+| rmcp | 3.1 | MCP SDK |
 
 ## Build & Test
 
 ```bash
-cargo fmt --all --check
-cargo clippy --workspace -- -D warnings
-cargo test --workspace
-cargo test --workspace --features testkit
-just validate                              # canonical gate
+just fmt-check
+just lint          # clippy -D warnings
+just test          # nextest, workspace
+just test-testkit
+just validate      # canonical pre-PR gate
 ```
 
-Workspace builds compile `swink-agent-local-llm` which needs LLVM/libclang. Set `LIBCLANG_PATH` if auto-discovery fails. Common deps centralized in root `Cargo.toml`.
+`just` routes cargo through `scripts/cargo-with-sccache.sh` — prefer the recipes over bare cargo. Workspace builds compile `swink-agent-local-llm`, which needs LLVM/libclang; set `LIBCLANG_PATH` if auto-discovery fails. Common deps are centralized in root `Cargo.toml`. `CLAUDE.md` covers the full command list and agent-facing gotchas.
 
 ## Branch Model
 
@@ -114,9 +114,15 @@ See crate-specific `AGENTS.md` files for per-module details. Cross-cutting invar
 
 ## Feature Gates
 
-- `builtin-tools` (default) — `BashTool`, `EditFileTool`, `ReadFileTool`, `WriteFileTool`.
-- `testkit` — `testing` module. Not default; add as dev-dep feature.
-- `plugins` — `plugin` module. Not default.
-- Root crate cannot re-export adapters/local-llm/TUI (cyclic dep). Consumers depend on sub-crates directly.
+Root crate defaults: `builtin-tools`, `transfer`.
+
+- `builtin-tools` — `BashTool`, `EditFileTool`, `ReadFileTool`, `WriteFileTool`.
+- `transfer` — agent-to-agent handoff.
+- `testkit` — `testing` module; add as a dev-dep feature.
+- `plugins` — `plugin` module.
+- `artifact-store` / `artifact-tools` — artifact persistence and its tools.
+- `hot-reload` — TOML `ScriptTool` reloading. `tiktoken` — `TiktokenCounter`. `otel` — OpenTelemetry export.
+
+Root crate cannot re-export adapters/local-llm/TUI (cyclic dep). Consumers depend on sub-crates directly.
 
 See per-crate `AGENTS.md` for crate feature gates.

@@ -608,6 +608,13 @@ pub struct AgentIo {
     /// runs it on its next pass (compact_context is async, command dispatch
     /// is sync). External transports queue a control request instead.
     pub(crate) pending_compact: bool,
+    /// Async work a host command returned as
+    /// [`CustomCommandOutcome::Deferred`](crate::CustomCommandOutcome::Deferred).
+    /// Awaited on the event loop's next flush pass — same reason as
+    /// `pending_compact` — and its [`HostAction`](crate::HostAction) applied
+    /// with `&mut App`. A second deferred command queued before the first has
+    /// run replaces it.
+    pub(crate) pending_host_task: Option<crate::extensions::HostTaskFn>,
 }
 
 impl AgentIo {
@@ -640,6 +647,7 @@ impl AgentIo {
             trust_follow_up: None,
             pending_steered: Vec::new(),
             pending_compact: false,
+            pending_host_task: None,
         }
     }
 }

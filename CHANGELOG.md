@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.4] - 2026-08-25
+
+### Fixed
+- `local-llm`: default `EmbeddingConfig` filename corrected to `embeddinggemma-300M-Q8_0.gguf` (uppercase `M`) — the `unsloth/embeddinggemma-300m-GGUF` repo renamed the file, so `ensure_ready()` 404'd on every fresh machine and hf-hub cached a `.no_exist` marker that kept it failing on retry (#1221)
+
+### Changed
+- `mcp`: `rmcp` 2.2 → 3.0. The bearer-auth SSE client tracks `StreamableHttpClient::get_stream`, whose `session_id` is now `Option<Arc<str>>` (rmcp resumes a stateless response from `last_event_id` alone), and overrides the new `get_stream_with_max_sse_event_size` so the transport-wide SSE event-size limit still reaches the byte layer instead of silently falling back to the default (#1216)
+
+## [0.12.3] - 2026-07-29
+
+### Added
+- `tui`: `CustomCommandOutcome::Deferred` — host commands can queue async work (`CustomCommandOutcome::deferred` / `deferred_with_notice`) that the event loop awaits on its next flush pass and applies to the running `App` with `&mut` access, via the new `HostAction` (`ReplaceAgent`/`Feedback`/`Nothing`) and `AgentSwap`. `AgentSwap` installs a host-rebuilt `Agent` mid-session — keeping the session id, the on-screen transcript, and the context budget, carrying the conversation across unless `.without_history()` — which closes the downstream `/model <name>` gap (provider/endpoint/credential changes need a new `Agent`, not just `Agent::set_model`). Swaps are refused mid-turn and on an external transport. Also adds `App::available_models()` so a host picker can read the roster the TUI is cycling through (#1201)
+
 ## [0.12.2] - 2026-07-20
 
 ### Added
@@ -597,7 +610,9 @@ are folded in here rather than kept as a phantom release.
 
 Major additions: Gemma 4 local inference, `BlockAccumulator` for streaming event assembly, `schemars`-based proc-macro engine, multi-agent patterns and artifact service, MCP integration, plugin system, policy slots, credential management, TUI session management, and web browse plugin. 42 specs implemented across the 0.6 lifecycle.
 
-[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.2...HEAD
+[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.4...HEAD
+[0.12.4]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.3...v0.12.4
+[0.12.3]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.2...v0.12.3
 [0.12.2]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.1...v0.12.2
 [0.12.1]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.11.0...v0.12.0

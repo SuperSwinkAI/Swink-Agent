@@ -23,7 +23,7 @@ vulkan = ["llama-cpp-2/vulkan"]
 
 [dependencies]
 swink-agent = { path = "..", version = "0.12.1", default-features = false }
-llama-cpp-2 = "0.1.146"
+llama-cpp-2 = "0.1.154"
 # hf-hub 1.0 is async-first (no `tokio` feature gate; `blocking` is the
 # opt-in) and tracks reqwest 0.13, so this crate shares the workspace's
 # single reqwest/rustls stack — the 0.5-era "ACCEPTED DUPLICATION" of a
