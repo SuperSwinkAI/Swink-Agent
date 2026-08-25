@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.4] - 2026-08-25
+
 ### Fixed
 - `local-llm`: default `EmbeddingConfig` filename corrected to `embeddinggemma-300M-Q8_0.gguf` (uppercase `M`) — the `unsloth/embeddinggemma-300m-GGUF` repo renamed the file, so `ensure_ready()` 404'd on every fresh machine and hf-hub cached a `.no_exist` marker that kept it failing on retry (#1221)
 
@@ -608,7 +610,8 @@ are folded in here rather than kept as a phantom release.
 
 Major additions: Gemma 4 local inference, `BlockAccumulator` for streaming event assembly, `schemars`-based proc-macro engine, multi-agent patterns and artifact service, MCP integration, plugin system, policy slots, credential management, TUI session management, and web browse plugin. 42 specs implemented across the 0.6 lifecycle.
 
-[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.3...HEAD
+[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.4...HEAD
+[0.12.4]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.3...v0.12.4
 [0.12.3]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.2...v0.12.3
 [0.12.2]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.1...v0.12.2
 [0.12.1]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.0...v0.12.1
