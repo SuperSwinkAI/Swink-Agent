@@ -142,6 +142,19 @@ jobs:
       - name: Build TUI example (all features)
         run: cargo build -p swink-agent-tui --all-features --example custom_agent --locked
 
+      # All-features workspace test. Cheap (the workspace is already built
+      # all-features by the two example builds above) and the only pre-merge
+      # coverage for tests gated behind non-default features — they skip
+      # silently everywhere else. The expensive combinatorial sweep
+      # (cargo hack --each-feature, ~127 combos) deliberately stays
+      # post-merge in features-full.yml.
+      #
+      # Added after a minijinja 2.21 -> 2.23 bump broke an eval test that no
+      # required check ran: features-full went red on 10 consecutive
+      # integration pushes before anyone noticed.
+      - name: Test (all features)
+        run: cargo test --workspace --all-features --exclude swink-agent-local-llm --locked
+
   # ── Dependency policy ───────────────────────────────────────────────────
   deny:
     runs-on: ubuntu-latest
