@@ -282,7 +282,10 @@ async fn custom_prompt_override_uses_builder_supplied_render_context() {
     let rendered = &prompts[0];
     assert!(rendered.contains("SP=override system prompt"));
     assert!(rendered.contains("EX=few-shot input"));
-    assert!(rendered.contains("R=false"));
+    // minijinja renders booleans Jinja2/Python-style ("True"/"False"), not
+    // Rust-style. It switched to this in 2.23; the assertion was written
+    // against 2.21, which used Rust's `Display`.
+    assert!(rendered.contains("R=False"));
     assert!(rendered.contains("K=correctness_custom"));
     assert!(rendered.contains("T=object"));
     assert!(rendered.contains("A=4"));

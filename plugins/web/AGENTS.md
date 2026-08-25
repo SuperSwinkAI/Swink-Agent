@@ -1,5 +1,9 @@
 # AGENTS.md — plugins/web
 
+## Scope
+
+`plugins/web/` — web browsing plugin. Tools in `src/tools/`: `web_fetch`, `web_search`, `web_extract`, screenshot. Playwright bridge, `DomainFilter`, content sanitization.
+
 ## Key Invariants
 
 - Playwright bridge scripts must be unique per `start()` call (no shared temp filename).
