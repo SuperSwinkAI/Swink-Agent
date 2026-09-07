@@ -139,6 +139,11 @@ mod openai;
 #[cfg(feature = "openai")]
 pub use openai::OpenAiStreamFn;
 
+#[cfg(feature = "responses")]
+mod responses;
+#[cfg(feature = "responses")]
+pub use responses::ResponsesStreamFn;
+
 #[cfg(feature = "ollama")]
 mod ollama;
 #[cfg(feature = "ollama")]
