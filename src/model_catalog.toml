@@ -1103,3 +1103,78 @@ capabilities = ["text", "tools", "streaming"]
 status = "ga"
 context_window_tokens = 128000
 max_output_tokens = 8192
+
+[[providers]]
+key = "codex"
+display_name = "OpenAI Codex (ChatGPT subscription)"
+kind = "remote"
+auth_mode = "bearer"
+# No credential_env_var: authentication is an OAuth2 grant (PKCE) held in
+# the host CredentialStore, never an environment variable. The preset
+# factory must not demand an API key for this provider.
+base_url_env_var = "CODEX_BASE_URL"
+default_base_url = "https://chatgpt.com/backend-api/codex"
+
+# Subscription-backed: a turn has no marginal token cost, so every preset is
+# priced at 0.0. Quota (not dollars) is the scarce resource and is reported
+# separately through StreamOptions::on_rate_limit. Slugs verified live on a
+# `prolite` plan via GET /backend-api/codex/models; the same slugs stay
+# listed under `openai` at API pricing for metered use.
+
+[[providers.presets]]
+id = "gpt_5_6_sol"
+display_name = "Codex GPT-5.6 Sol"
+group = "gpt56"
+model_id = "gpt-5.6-sol"
+capabilities = ["text", "tools", "thinking", "images_in", "streaming", "structured_output"]
+status = "ga"
+context_window_tokens = 272000
+max_output_tokens = 131072
+cost_per_million_input = 0.0
+cost_per_million_output = 0.0
+
+[[providers.presets]]
+id = "gpt_5_6_terra"
+display_name = "Codex GPT-5.6 Terra"
+group = "gpt56"
+model_id = "gpt-5.6-terra"
+capabilities = ["text", "tools", "thinking", "images_in", "streaming", "structured_output"]
+status = "ga"
+context_window_tokens = 272000
+max_output_tokens = 131072
+cost_per_million_input = 0.0
+cost_per_million_output = 0.0
+
+[[providers.presets]]
+id = "gpt_5_6_luna"
+display_name = "Codex GPT-5.6 Luna"
+group = "gpt56"
+model_id = "gpt-5.6-luna"
+capabilities = ["text", "tools", "thinking", "images_in", "streaming", "structured_output"]
+status = "ga"
+context_window_tokens = 272000
+max_output_tokens = 131072
+cost_per_million_input = 0.0
+cost_per_million_output = 0.0
+
+# Context / output limits for the two non-5.6 slugs were not in the captured
+# catalog response; left unset rather than guessed.
+[[providers.presets]]
+id = "gpt_5_5"
+display_name = "Codex GPT-5.5"
+group = "gpt55"
+model_id = "gpt-5.5"
+capabilities = ["text", "tools", "thinking", "images_in", "streaming", "structured_output"]
+status = "ga"
+cost_per_million_input = 0.0
+cost_per_million_output = 0.0
+
+[[providers.presets]]
+id = "gpt_5_4_mini"
+display_name = "Codex GPT-5.4 Mini"
+group = "gpt54"
+model_id = "gpt-5.4-mini"
+capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
+status = "ga"
+cost_per_million_input = 0.0
+cost_per_million_output = 0.0
