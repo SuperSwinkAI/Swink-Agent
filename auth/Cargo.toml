@@ -36,10 +36,15 @@ futures.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+# PKCE (RFC 7636): verifier entropy, S256 challenge, base64url encoding.
+rand.workspace = true
+sha2.workspace = true
+base64 = "0.23.1"
 keyring = { workspace = true, optional = true }
 
 [dev-dependencies]
 wiremock.workspace = true
+url.workspace = true
 pretty_assertions.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
 tracing-subscriber = { workspace = true, features = ["fmt"] }
