@@ -32,8 +32,7 @@ fn xai_key() -> String {
 
 fn cheap_model() -> ModelSpec {
     dotenvy::dotenv().ok();
-    let model_id =
-        std::env::var("XAI_MODEL").unwrap_or_else(|_| "grok-4-1-fast-non-reasoning".to_string());
+    let model_id = std::env::var("XAI_MODEL").unwrap_or_else(|_| "grok-4.3".to_string());
     ModelSpec::new("xai", &model_id)
 }
 
