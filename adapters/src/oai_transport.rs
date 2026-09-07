@@ -132,32 +132,23 @@ impl OaiAdapterShell {
 
     /// Apply authentication plus the adapter's static headers.
     ///
-    /// The default `Authorization: Bearer` header is skipped when the static
-    /// map already carries one, so a provider can replace the scheme
-    /// wholesale. `reqwest`'s `RequestBuilder::headers` *replaces* the whole
-    /// map (it would drop the `Content-Type` that `json()` sets), so the
-    /// headers go on one at a time.
+    /// Static headers win over the defaults set here (one value per name).
     #[cfg(any(feature = "openai-compat", feature = "mistral"))]
     fn authorize(
         &self,
         request: reqwest::RequestBuilder,
         options: &StreamOptions,
     ) -> reqwest::RequestBuilder {
-        let mut request = request;
-        if !self
-            .base
-            .headers
-            .contains_key(reqwest::header::AUTHORIZATION)
-        {
-            request = request.header(
+        // `RequestBuilder::headers` goes through reqwest's `replace_headers`:
+        // it inserts per name and never clears what `json()` already set, so
+        // a static `Authorization` (or `Content-Type`) *replaces* the default
+        // instead of appending a second value the way `.header()` would.
+        request
+            .header(
                 reqwest::header::AUTHORIZATION,
                 format!("Bearer {}", self.api_key(options)),
-            );
-        }
-        for (name, value) in &self.base.headers {
-            request = request.header(name, value);
-        }
-        request
+            )
+            .headers(self.base.headers.clone())
     }
 
     #[cfg(feature = "mistral")]

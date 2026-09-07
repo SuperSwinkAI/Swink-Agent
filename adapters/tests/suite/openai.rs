@@ -1413,3 +1413,34 @@ async fn rate_limit_headers_without_callback_are_ignored() {
             .any(|e| matches!(e, AssistantMessageEvent::Done { .. }))
     );
 }
+
+/// `RequestBuilder::header` appends; a static `Content-Type` must replace
+/// the one `json()` sets, not sit beside it (a duplicate is a 400 on most
+/// gateways). Pins the replace semantics of the static header path.
+#[tokio::test]
+async fn static_content_type_replaces_instead_of_duplicating() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(sse_response(&done_body()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let stream_fn = OpenAiStreamFn::new(server.uri(), "test-key").with_header(
+        HeaderName::from_static("content-type"),
+        HeaderValue::from_static("application/json; charset=utf-8"),
+    );
+    collect_events(&stream_fn).await;
+
+    let requests = server.received_requests().await.unwrap();
+    let values: Vec<_> = requests[0].headers.get_all("content-type").iter().collect();
+    assert_eq!(values.len(), 1, "duplicate Content-Type: {values:?}");
+    assert_eq!(values[0], "application/json; charset=utf-8");
+    let auth: Vec<_> = requests[0]
+        .headers
+        .get_all("authorization")
+        .iter()
+        .collect();
+    assert_eq!(auth.len(), 1, "duplicate Authorization: {auth:?}");
+}
