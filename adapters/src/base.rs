@@ -273,7 +273,8 @@ pub(crate) fn adapter_http_client_with_timeouts(
     feature = "azure",
     feature = "proxy",
     feature = "gemini",
-    feature = "bedrock"
+    feature = "bedrock",
+    feature = "responses"
 ))]
 pub async fn race_pre_stream_cancellation<T, F>(
     cancellation_token: &CancellationToken,

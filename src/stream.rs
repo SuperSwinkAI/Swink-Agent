@@ -315,15 +315,16 @@ pub struct ServingOptions {
 /// Adapters map this onto their protocol's native structured-output knob and
 /// silently ignore it when the protocol has no equivalent:
 ///
-/// | Variant     | Ollama (top-level `format`) | OpenAI-compatible (`response_format`)                                     |
-/// |-------------|-----------------------------|---------------------------------------------------------------------------|
-/// | `Json`      | `"json"`                    | `{"type": "json_object"}`                                                 |
-/// | `Schema(s)` | `s` (the schema verbatim)   | `{"type": "json_schema", "json_schema": {"name": …, "schema": s, …}}`     |
+/// | Variant     | Ollama (top-level `format`) | Chat Completions (`response_format`)                                  | Responses (`text.format`)                                      |
+/// |-------------|-----------------------------|-----------------------------------------------------------------------|----------------------------------------------------------------|
+/// | `Json`      | `"json"`                    | `{"type": "json_object"}`                                             | `{"type": "json_object"}`                                      |
+/// | `Schema(s)` | `s` (the schema verbatim)   | `{"type": "json_schema", "json_schema": {"name": …, "schema": s, …}}` | `{"type": "json_schema", "name": …, "strict": true, "schema": s}` |
 ///
-/// In both variants `s` is a bare [JSON Schema] object. Ollama consumes it
-/// verbatim; the OpenAI-compatible adapter wraps it in the `json_schema`
-/// envelope that protocol requires. Callers therefore pass the same value
-/// regardless of backend.
+/// In every variant `s` is a bare [JSON Schema] object. Ollama consumes it
+/// verbatim; the OpenAI-protocol adapters wrap it in the envelope their
+/// protocol requires (Chat Completions nests it under `json_schema`,
+/// Responses keeps it flat under `text.format`). Callers therefore pass the
+/// same value regardless of backend.
 ///
 /// [JSON Schema]: https://json-schema.org/
 #[non_exhaustive]

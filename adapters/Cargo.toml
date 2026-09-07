@@ -20,7 +20,7 @@ full = ["all"]
 all = ["anthropic", "openai", "ollama", "gemini", "proxy", "azure", "bedrock", "mistral", "xai", "responses", "codex"]
 anthropic = []
 openai-compat = []
-openai = ["openai-compat"]
+openai = ["openai-compat", "responses"]
 # Generic OpenAI Responses-API adapter (`ResponsesStreamFn`); the shell the
 # `codex` provider builds on.
 responses = []
