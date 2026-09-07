@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-07
+
 ### Added
 - `adapters`: `codex` feature — `CodexStreamFn`, a ChatGPT-subscription provider over the Responses shell. Own PKCE login through the host `CredentialResolver` (never the Codex CLI's token file), per-request `chatgpt-account-id` / `session_id`, honest configurable `originator`, plan-entitlement failures surfaced as a typed non-retryable error. Personal-use, bring-your-own-login, undocumented endpoint — read the module docs before enabling (#1265)
 - `adapters`: `responses` feature — `ResponsesStreamFn`, a generic OpenAI Responses-API adapter and the shell the `codex` provider builds on: `input` items, flat tool schemas, `ThinkingLevel` → `reasoning.effort`, typed SSE events, cached-token-aware usage (#1261)
@@ -624,7 +626,8 @@ are folded in here rather than kept as a phantom release.
 
 Major additions: Gemma 4 local inference, `BlockAccumulator` for streaming event assembly, `schemars`-based proc-macro engine, multi-agent patterns and artifact service, MCP integration, plugin system, policy slots, credential management, TUI session management, and web browse plugin. 42 specs implemented across the 0.6 lifecycle.
 
-[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.4...HEAD
+[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.4...v0.13.0
 [0.12.4]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.3...v0.12.4
 [0.12.3]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.2...v0.12.3
 [0.12.2]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.1...v0.12.2
