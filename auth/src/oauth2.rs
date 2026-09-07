@@ -4,7 +4,9 @@ use std::fmt;
 use std::future::Future;
 use std::time::{Duration, Instant};
 
+use base64::Engine as _;
 use serde::Deserialize;
+use sha2::{Digest as _, Sha256};
 use swink_agent::CredentialError;
 use tracing::debug;
 
@@ -235,6 +237,12 @@ pub struct AuthorizationConfig {
     pub redirect_uri: String,
     /// Requested scopes.
     pub scopes: Vec<String>,
+    /// Send a PKCE `S256` challenge (RFC 7636) with the authorization
+    /// request and the matching verifier with the code exchange.
+    ///
+    /// Off by default so existing providers are byte-identical. Required
+    /// by every public-client flow under OAuth 2.1.
+    pub use_pkce: bool,
 }
 
 impl AuthorizationConfig {
@@ -259,7 +267,15 @@ impl AuthorizationConfig {
             client_secret: None,
             redirect_uri: redirect_uri.into(),
             scopes: Vec::new(),
+            use_pkce: false,
         }
+    }
+
+    /// Enable PKCE (`S256`) for the authorization-code flow.
+    #[must_use]
+    pub const fn with_pkce(mut self) -> Self {
+        self.use_pkce = true;
+        self
     }
 
     /// Set the `OAuth2` client secret (confidential clients).
@@ -277,14 +293,64 @@ impl AuthorizationConfig {
     }
 }
 
+// ─── PKCE (RFC 7636) ────────────────────────────────────────────────────────
+
+/// A single-use PKCE code verifier (RFC 7636 §4.1).
+///
+/// Generated per authorization attempt and consumed by the matching code
+/// exchange; it is never stored in an [`AuthorizationConfig`] because a
+/// config is long-lived and a verifier is not. The verifier is a secret:
+/// `Debug` redacts it and it never reaches a log line or error variant.
+pub struct PkceVerifier(String);
+
+impl PkceVerifier {
+    /// Generate a fresh verifier: 32 random octets, base64url-encoded
+    /// without padding, giving 43 characters drawn from the RFC 7636
+    /// unreserved set (`[A-Za-z0-9._~-]`).
+    #[must_use]
+    pub fn generate() -> Self {
+        let bytes: [u8; 32] = rand::random();
+        Self(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
+    }
+
+    /// The `S256` code challenge: `BASE64URL(SHA256(verifier))`.
+    #[must_use]
+    pub fn challenge(&self) -> String {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(self.0.as_bytes()))
+    }
+
+    /// The raw verifier, for the token request only.
+    fn secret(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for PkceVerifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("PkceVerifier([REDACTED])")
+    }
+}
+
 /// Build the authorization URL for the given config and CSRF `state` token.
 ///
 /// Appends `response_type=code`, `client_id`, `redirect_uri`, `scope`
 /// (space-joined, omitted if empty), and `state` as properly percent-encoded
-/// query parameters.
+/// query parameters. Never adds PKCE parameters; the resolver uses
+/// `authorization_url` with a per-attempt [`PkceVerifier`] when
+/// [`AuthorizationConfig::use_pkce`] is set.
 pub fn build_authorization_url(
     config: &AuthorizationConfig,
     state: &str,
+) -> Result<String, CredentialError> {
+    authorization_url(config, state, None)
+}
+
+/// [`build_authorization_url`], plus `code_challenge` and
+/// `code_challenge_method=S256` when a verifier is supplied.
+pub(crate) fn authorization_url(
+    config: &AuthorizationConfig,
+    state: &str,
+    pkce: Option<&PkceVerifier>,
 ) -> Result<String, CredentialError> {
     let mut url = reqwest::Url::parse(&config.authorization_endpoint).map_err(|_| {
         CredentialError::AuthorizationFailed {
@@ -301,6 +367,10 @@ pub fn build_authorization_url(
             pairs.append_pair("scope", &config.scopes.join(" "));
         }
         pairs.append_pair("state", state);
+        if let Some(verifier) = pkce {
+            pairs.append_pair("code_challenge", &verifier.challenge());
+            pairs.append_pair("code_challenge_method", "S256");
+        }
     }
     Ok(url.to_string())
 }
@@ -323,6 +393,29 @@ pub async fn exchange_code(
     client_secret: Option<&str>,
     redirect_uri: &str,
 ) -> Result<TokenResponse, CredentialError> {
+    exchange_code_with_pkce(
+        client,
+        token_url,
+        code,
+        client_id,
+        client_secret,
+        redirect_uri,
+        None,
+    )
+    .await
+}
+
+/// [`exchange_code`], plus `code_verifier` in the token request when the
+/// authorization URL was built with the same [`PkceVerifier`].
+pub(crate) async fn exchange_code_with_pkce(
+    client: &reqwest::Client,
+    token_url: &str,
+    code: &str,
+    client_id: &str,
+    client_secret: Option<&str>,
+    redirect_uri: &str,
+    pkce: Option<&PkceVerifier>,
+) -> Result<TokenResponse, CredentialError> {
     debug!(
         token_endpoint = %sanitize_token_endpoint(token_url),
         "exchanging OAuth2 authorization code for tokens"
@@ -336,6 +429,9 @@ pub async fn exchange_code(
     ];
     if let Some(secret) = client_secret {
         form.push(("client_secret", secret));
+    }
+    if let Some(verifier) = pkce {
+        form.push(("code_verifier", verifier.secret()));
     }
 
     let response = client
@@ -1183,6 +1279,131 @@ mod tests {
 
         let url = build_authorization_url(&config, "state").unwrap();
         assert!(!url.contains("scope="));
+    }
+
+    // ── PKCE (RFC 7636) ──────────────────────────────────────────────────
+
+    #[test]
+    fn pkce_verifier_conforms_to_rfc7636_section_4_1() {
+        // 32 octets → 43 base64url chars; the unreserved set is the RFC's
+        // only charset requirement. Sample many because the charset claim
+        // is over the alphabet, not one draw.
+        for _ in 0..256 {
+            let verifier = PkceVerifier::generate();
+            let s = verifier.secret();
+            assert_eq!(s.len(), 43, "verifier length: {s}");
+            assert!(
+                s.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
+                "verifier outside unreserved set: {s}"
+            );
+        }
+        assert_ne!(
+            PkceVerifier::generate().secret(),
+            PkceVerifier::generate().secret(),
+            "two verifiers must not collide"
+        );
+    }
+
+    #[test]
+    fn pkce_challenge_matches_rfc7636_appendix_b_vector() {
+        let verifier = PkceVerifier("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk".to_string());
+        assert_eq!(
+            verifier.challenge(),
+            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+        );
+    }
+
+    #[test]
+    fn pkce_verifier_debug_is_redacted() {
+        let verifier = PkceVerifier(LEAK_SENTINEL.to_string());
+        let rendered = format!("{verifier:?}");
+        assert!(
+            !rendered.contains(LEAK_SENTINEL),
+            "verifier leaked: {rendered}"
+        );
+        assert!(rendered.contains("REDACTED"));
+    }
+
+    #[test]
+    fn authorization_url_without_pkce_is_byte_identical_to_public_builder() {
+        let config = AuthorizationConfig::new(
+            "https://auth.example.com/o/authorize",
+            "https://auth.example.com/token",
+            "client-1",
+            "http://localhost:8080/callback",
+        )
+        .with_scopes(["read"]);
+        assert_eq!(
+            build_authorization_url(&config, "state").unwrap(),
+            authorization_url(&config, "state", None).unwrap()
+        );
+        assert!(
+            !build_authorization_url(&config, "state")
+                .unwrap()
+                .contains("code_challenge")
+        );
+    }
+
+    #[test]
+    fn authorization_url_with_pkce_carries_s256_challenge_not_verifier() {
+        let config = AuthorizationConfig::new(
+            "https://auth.example.com/o/authorize",
+            "https://auth.example.com/token",
+            "client-1",
+            "http://localhost:8080/callback",
+        )
+        .with_pkce();
+        let verifier = PkceVerifier::generate();
+        let url = authorization_url(&config, "state", Some(&verifier)).unwrap();
+        let parsed = reqwest::Url::parse(&url).unwrap();
+        let pairs: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
+
+        assert_eq!(
+            pairs.get("code_challenge").map(String::as_str),
+            Some(verifier.challenge().as_str())
+        );
+        assert_eq!(
+            pairs.get("code_challenge_method").map(String::as_str),
+            Some("S256")
+        );
+        assert!(
+            !url.contains(verifier.secret()),
+            "the verifier must never appear in the authorization URL"
+        );
+    }
+
+    #[tokio::test]
+    async fn exchange_code_with_pkce_sends_code_verifier() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .and(wiremock::matchers::body_string_contains("code_verifier="))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "tok",
+                "token_type": "Bearer"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let verifier = PkceVerifier::generate();
+        let response = exchange_code_with_pkce(
+            &test_client(),
+            &format!("{}/token", server.uri()),
+            "code",
+            "client-1",
+            None,
+            "http://localhost:8080/callback",
+            Some(&verifier),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.access_token, "tok");
+
+        let body =
+            String::from_utf8(server.received_requests().await.unwrap()[0].body.clone()).unwrap();
+        assert!(body.contains(&format!("code_verifier={}", verifier.secret())));
     }
 
     #[test]

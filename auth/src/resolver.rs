@@ -465,19 +465,24 @@ async fn perform_authorization(
     config: &AuthorizationConfig,
 ) -> Result<ResolvedCredential, CredentialError> {
     let state = uuid::Uuid::new_v4().to_string();
-    let auth_url = oauth2::build_authorization_url(config, &state)
+    // The verifier lives only for this attempt: built here, sent with the
+    // exchange below, dropped on return. It is deliberately not on the
+    // config (long-lived) and not returned to the handler.
+    let pkce = config.use_pkce.then(oauth2::PkceVerifier::generate);
+    let auth_url = oauth2::authorization_url(config, &state, pkce.as_ref())
         .map_err(|error| attach_authorization_key(error, key))?;
 
     info!(credential_key = %key, "initiating interactive OAuth2 authorization");
     let code = handler.authorize(&auth_url, &state).await?;
 
-    let mut response = oauth2::exchange_code(
+    let mut response = oauth2::exchange_code_with_pkce(
         client,
         &config.token_url,
         &code,
         &config.client_id,
         config.client_secret.as_deref(),
         &config.redirect_uri,
+        pkce.as_ref(),
     )
     .await
     .map_err(|error| attach_authorization_key(error, key))?;

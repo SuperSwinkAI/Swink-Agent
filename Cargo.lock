@@ -5555,19 +5555,23 @@ dependencies = [
 name = "swink-agent-auth"
 version = "0.12.4"
 dependencies = [
+ "base64 0.23.1",
  "chrono",
  "futures",
  "keyring",
  "pretty_assertions",
+ "rand 0.10.2",
  "reqwest",
  "rustls",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "swink-agent",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
  "wiremock",
 ]
