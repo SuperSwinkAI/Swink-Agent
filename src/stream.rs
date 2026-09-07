@@ -268,15 +268,15 @@ pub type OnRateLimit = Arc<dyn Fn(&RateLimitSnapshot) + Send + Sync>;
 /// Each adapter consumes only the fields its protocol can express and
 /// ignores the rest. The bundled adapters honor:
 ///
-/// | Adapter                                        | `context_length` | `top_p` | `keep_alive` | `format` | `extra` |
-/// |------------------------------------------------|------------------|---------|--------------|----------|---------|
-/// | Ollama                                         | ✓                | ✓       | ✓            | ✓        | ✓       |
-/// | OpenAI-protocol (OpenAI, compat, xAI, Azure)   | —                | ✓       | —            | ✓        | ✓       |
-/// | Anthropic                                      | —                | —       | —            | —        | ✓       |
-/// | Gemini                                         | —                | —       | —            | —        | ✓       |
-/// | Bedrock                                        | —                | —       | —            | —        | ✓       |
-/// | Mistral                                        | —                | —       | —            | —        | ✓       |
-/// | Proxy                                          | —                | —       | —            | —        | — (warns) |
+/// | Adapter                                        | `context_length` | `top_p` | `keep_alive` | `format` | `reasoning_effort` | `extra` |
+/// |------------------------------------------------|------------------|---------|--------------|----------|--------------------|---------|
+/// | Ollama                                         | ✓                | ✓       | ✓            | ✓        | —                  | ✓       |
+/// | OpenAI-protocol (OpenAI, compat, xAI, Azure)   | —                | ✓       | —            | ✓        | —                  | ✓       |
+/// | Anthropic                                      | —                | —       | —            | —        | —                  | ✓       |
+/// | Gemini                                         | —                | —       | —            | —        | —                  | ✓       |
+/// | Bedrock                                        | —                | —       | —            | —        | —                  | ✓       |
+/// | Mistral                                        | —                | —       | —            | —        | —                  | ✓       |
+/// | Proxy                                          | —                | —       | —            | —        | —                  | — (warns) |
 ///
 /// Query it programmatically via [`StreamFn::supported_serving_options`] and
 /// [`ServingOptions::unsupported_fields`] instead of hard-coding this table.
@@ -299,6 +299,12 @@ pub struct ServingOptions {
     /// [`ResponseFormat`] for the per-adapter wire mapping.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<ResponseFormat>,
+    /// How much reasoning effort the model should spend on this request.
+    ///
+    /// `None` (the default) leaves request bodies untouched. See
+    /// [`ReasoningEffort`] for the per-adapter wire mapping.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
     /// Additional provider-native options passed through verbatim.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub extra: std::collections::BTreeMap<String, Value>,
@@ -330,6 +336,55 @@ pub enum ResponseFormat {
     Schema(Value),
 }
 
+/// How much reasoning effort a model should spend on a request.
+///
+/// One concept, a different wire shape in every protocol — the same
+/// arrangement as [`ResponseFormat`]. Adapters map this onto their
+/// protocol's native knob and silently ignore it when the protocol has no
+/// equivalent:
+///
+/// | Variant     | OpenAI Responses (`reasoning.effort`) | Anthropic (`thinking`)      |
+/// |-------------|---------------------------------------|-----------------------------|
+/// | `Off`       | omitted                               | `{"type": "disabled"}`      |
+/// | `Minimal`   | `"minimal"`                           | smallest enabled budget     |
+/// | `Low`       | `"low"`                               | small budget                |
+/// | `Medium`    | `"medium"`                            | medium budget               |
+/// | `High`      | `"high"`                              | large budget                |
+/// | `XHigh`     | `"xhigh"`                             | largest budget              |
+/// | `Max`       | `"max"`                               | largest budget              |
+///
+/// The variant set is the union of what real providers accept: `off` through
+/// `extra_high` as SuperSwink-Core's tier config already validates, and
+/// `low`/`medium`/`high`/`xhigh`/`max` as the Codex model catalog reports per
+/// model. Nothing here is invented — an adapter that cannot express a variant
+/// maps it to its nearest neighbour or ignores it, and says so via
+/// [`ServingOptionSupport`].
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningEffort {
+    /// No reasoning; fastest.
+    Off,
+    /// The smallest amount of reasoning the provider offers.
+    Minimal,
+    /// Light reasoning.
+    Low,
+    /// The provider's balanced default.
+    Medium,
+    /// Deep reasoning.
+    High,
+    /// Deeper than `High`, where the provider offers a level above it.
+    ///
+    /// Three spellings exist in the wild — OpenAI's wire value is `xhigh`,
+    /// SuperSwink-Core's tier config validates `extra_high`, and serde's
+    /// default snake_case for this variant is `x_high`. All three
+    /// deserialize; the provider's spelling is what serializes.
+    #[serde(rename = "xhigh", alias = "x_high", alias = "extra_high")]
+    XHigh,
+    /// The most the provider offers.
+    Max,
+}
+
 impl ServingOptions {
     /// Set the model context window to serve this request with (Ollama `num_ctx`).
     #[must_use]
@@ -357,6 +412,13 @@ impl ServingOptions {
     #[must_use]
     pub fn with_format(mut self, format: ResponseFormat) -> Self {
         self.format = Some(format);
+        self
+    }
+
+    /// Set how much reasoning effort the model should spend.
+    #[must_use]
+    pub const fn with_reasoning_effort(mut self, reasoning_effort: ReasoningEffort) -> Self {
+        self.reasoning_effort = Some(reasoning_effort);
         self
     }
 
@@ -394,6 +456,9 @@ impl ServingOptions {
         if self.format.is_some() && !support.format {
             dropped.push("format");
         }
+        if self.reasoning_effort.is_some() && !support.reasoning_effort {
+            dropped.push("reasoning_effort");
+        }
         if !self.extra.is_empty() && !support.extra {
             dropped.push("extra");
         }
@@ -422,6 +487,8 @@ pub struct ServingOptionSupport {
     pub keep_alive: bool,
     /// `format` (structured output / JSON mode) reaches the request.
     pub format: bool,
+    /// `reasoning_effort` reaches the request.
+    pub reasoning_effort: bool,
     /// `extra` entries are merged into the request.
     pub extra: bool,
 }
@@ -435,6 +502,7 @@ impl ServingOptionSupport {
             top_p: true,
             keep_alive: true,
             format: true,
+            reasoning_effort: true,
             extra: true,
         }
     }
@@ -447,6 +515,7 @@ impl ServingOptionSupport {
             top_p: false,
             keep_alive: false,
             format: false,
+            reasoning_effort: false,
             extra: false,
         }
     }
@@ -476,6 +545,13 @@ impl ServingOptionSupport {
     #[must_use]
     pub const fn with_format(mut self, supported: bool) -> Self {
         self.format = supported;
+        self
+    }
+
+    /// Set whether `reasoning_effort` is honored.
+    #[must_use]
+    pub const fn with_reasoning_effort(mut self, supported: bool) -> Self {
+        self.reasoning_effort = supported;
         self
     }
 
@@ -2400,6 +2476,82 @@ mod tests {
                 assert!(partial_json.is_none());
             }
             other => panic!("expected ToolCall, got {other:?}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod reasoning_effort_tests {
+    use super::*;
+
+    #[test]
+    fn default_serving_options_leave_reasoning_effort_unset() {
+        let serving = ServingOptions::default();
+        assert!(serving.reasoning_effort.is_none());
+        assert!(serving.is_default());
+    }
+
+    #[test]
+    fn setting_reasoning_effort_is_no_longer_default() {
+        let serving = ServingOptions::default().with_reasoning_effort(ReasoningEffort::High);
+        assert_eq!(serving.reasoning_effort, Some(ReasoningEffort::High));
+        assert!(!serving.is_default());
+    }
+
+    #[test]
+    fn unsupported_reasoning_effort_is_reported() {
+        let serving = ServingOptions::default().with_reasoning_effort(ReasoningEffort::XHigh);
+        let dropped = serving.unsupported_fields(ServingOptionSupport::none());
+        assert_eq!(dropped, vec!["reasoning_effort"]);
+
+        let honored =
+            serving.unsupported_fields(ServingOptionSupport::none().with_reasoning_effort(true));
+        assert!(honored.is_empty());
+    }
+
+    #[test]
+    fn all_and_none_cover_reasoning_effort() {
+        assert!(ServingOptionSupport::all().reasoning_effort);
+        assert!(!ServingOptionSupport::none().reasoning_effort);
+    }
+
+    #[test]
+    fn reasoning_effort_round_trips_through_serde_as_snake_case() {
+        for (variant, wire) in [
+            (ReasoningEffort::Off, "\"off\""),
+            (ReasoningEffort::Minimal, "\"minimal\""),
+            (ReasoningEffort::Low, "\"low\""),
+            (ReasoningEffort::Medium, "\"medium\""),
+            (ReasoningEffort::High, "\"high\""),
+            (ReasoningEffort::XHigh, "\"xhigh\""),
+            (ReasoningEffort::Max, "\"max\""),
+        ] {
+            let encoded = serde_json::to_string(&variant).expect("serialize");
+            assert_eq!(encoded, wire, "wire form for {variant:?}");
+            let decoded: ReasoningEffort = serde_json::from_str(&encoded).expect("deserialize");
+            assert_eq!(decoded, variant);
+        }
+    }
+
+    #[test]
+    fn absent_reasoning_effort_is_omitted_from_the_wire() {
+        let json = serde_json::to_string(&ServingOptions::default()).expect("serialize");
+        assert!(
+            !json.contains("reasoning_effort"),
+            "default must stay byte-identical: {json}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod reasoning_effort_alias_tests {
+    use super::ReasoningEffort;
+
+    #[test]
+    fn every_xhigh_spelling_deserializes() {
+        for wire in ["\"xhigh\"", "\"x_high\"", "\"extra_high\""] {
+            let decoded: ReasoningEffort = serde_json::from_str(wire).expect(wire);
+            assert_eq!(decoded, ReasoningEffort::XHigh, "spelling {wire}");
         }
     }
 }
