@@ -137,7 +137,7 @@ pub use anthropic::AnthropicStreamFn;
 #[allow(clippy::doc_markdown)]
 mod openai;
 #[cfg(feature = "openai")]
-pub use openai::OpenAiStreamFn;
+pub use openai::{InvalidOpenAiWire, OPENAI_API_ENV, OpenAiStreamFn, OpenAiWire};
 
 #[cfg(feature = "responses")]
 mod responses;

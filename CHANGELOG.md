@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `model_catalog`: `codex` provider block priced at zero, plus `calculate_cost_for_provider` / `ModelCatalog::find_preset` so the same slug prices by the message's own provider (#1267)
 
 ### Changed
+- `adapters`: `OpenAiStreamFn::new` now speaks the **Responses API** (`/v1/responses`): `reasoning.effort` from `ServingOptions::reasoning_effort` / `ThinkingLevel`, `text.format` structured output, cached-token-aware usage. `OpenAiStreamFn::new_chat_completions` keeps the Chat Completions wire for OpenAI-*compatible* endpoints (vLLM, LM Studio, Groq, Together) — that path is supported, not deprecated, because those servers do not implement Responses. Pick the constructor by what the endpoint speaks; configuration-driven hosts (the preset factory, the TUI) pick via `OpenAiWire::from_env` — `OPENAI_API=responses` (default) or `chat_completions` — so an `OPENAI_BASE_URL` pointing at a compat server has a documented knob, and an unrecognised value is an error rather than a silent default (#1266)
 - `model_catalog.toml` re-verified against provider docs: dead ids marked deprecated with replacements, two unroutable Bedrock 4.6 ids corrected, Claude 5 / GPT-5.6 / Gemini 3.8 / Grok 4.6 generations added, pricing refreshed (#1251)
 
 ## [0.12.4] - 2026-08-25

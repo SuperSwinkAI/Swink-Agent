@@ -213,7 +213,21 @@ pub fn build_connection_from_preset(
         #[cfg(feature = "anthropic")]
         "anthropic" => Arc::new(AnthropicStreamFn::new(resolved_base_url()?, &api_key)),
         #[cfg(feature = "openai")]
-        "openai" => Arc::new(OpenAiStreamFn::new(resolved_base_url()?, &api_key)),
+        "openai" => {
+            // The catalog's `openai` provider is OpenAI proper (Responses), but
+            // OPENAI_BASE_URL may point at an OpenAI-compatible server that
+            // only speaks Chat Completions; OPENAI_API is the knob for that.
+            let wire = crate::OpenAiWire::from_env().map_err(|e| {
+                RemoteModelConnectionError::UnsupportedProvider {
+                    provider_key: format!("openai ({e})"),
+                }
+            })?;
+            Arc::new(OpenAiStreamFn::new_for_wire(
+                wire,
+                resolved_base_url()?,
+                &api_key,
+            ))
+        }
         #[cfg(feature = "gemini")]
         "google" => Arc::new(GeminiStreamFn::new(
             resolved_base_url()?,

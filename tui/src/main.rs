@@ -219,7 +219,17 @@ fn try_local() -> Option<ModelConnections> {
 /// Construct the appropriate `StreamFn` for a provider.
 fn build_stream_fn(provider_key: &str, base_url: &str, api_key: &str) -> Option<Arc<dyn StreamFn>> {
     match provider_key {
-        "openai" => Some(Arc::new(OpenAiStreamFn::new(base_url, api_key))),
+        // OPENAI_API=chat_completions selects the Chat Completions wire for
+        // OpenAI-compatible servers behind OPENAI_BASE_URL; default Responses.
+        "openai" => {
+            let wire = swink_agent_adapters::OpenAiWire::from_env().unwrap_or_else(|e| {
+                eprintln!("warning: {e}; using the Responses API");
+                swink_agent_adapters::OpenAiWire::Responses
+            });
+            Some(Arc::new(OpenAiStreamFn::new_for_wire(
+                wire, base_url, api_key,
+            )))
+        }
         "anthropic" => Some(Arc::new(AnthropicStreamFn::new(base_url, api_key))),
         _ => None,
     }
