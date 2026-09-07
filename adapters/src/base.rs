@@ -59,6 +59,17 @@ pub struct AdapterBase {
     pub base_url: String,
     pub api_key: String,
     pub client: reqwest::Client,
+    /// Static headers sent on every request this adapter issues.
+    ///
+    /// Empty by default, so an adapter that sets none produces a
+    /// byte-identical request to one built before this field existed. A
+    /// transport applies these *instead of* its own `Authorization` header
+    /// when the map carries one, which lets a provider use a non-Bearer
+    /// scheme without a bespoke transport.
+    ///
+    /// Static per-adapter values only — a per-request header is the
+    /// adapter's business to generate, not the caller's.
+    pub headers: reqwest::header::HeaderMap,
 }
 
 impl AdapterBase {
@@ -68,15 +79,44 @@ impl AdapterBase {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             api_key: api_key.into(),
             client: adapter_http_client(),
+            headers: reqwest::header::HeaderMap::new(),
         }
+    }
+
+    /// Add one static header, replacing any previous value for that name.
+    #[allow(dead_code)]
+    #[must_use]
+    pub fn with_header(
+        mut self,
+        name: reqwest::header::HeaderName,
+        value: reqwest::header::HeaderValue,
+    ) -> Self {
+        self.headers.insert(name, value);
+        self
+    }
+
+    /// Merge a header map in, replacing colliding names.
+    #[allow(dead_code)]
+    #[must_use]
+    pub fn with_headers(mut self, headers: reqwest::header::HeaderMap) -> Self {
+        self.headers.extend(headers);
+        self
     }
 }
 
 impl std::fmt::Debug for AdapterBase {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Header *values* can carry credentials (a caller-supplied
+        // `Authorization`, an account id), so only the names are printed.
+        let header_names: Vec<&str> = self
+            .headers
+            .keys()
+            .map(reqwest::header::HeaderName::as_str)
+            .collect();
         f.debug_struct("AdapterBase")
             .field("base_url", &self.base_url)
             .field("api_key", &"[REDACTED]")
+            .field("headers", &header_names)
             .finish_non_exhaustive()
     }
 }

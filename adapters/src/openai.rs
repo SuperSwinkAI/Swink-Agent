@@ -38,6 +38,29 @@ impl OpenAiStreamFn {
             shell: OaiAdapterShell::new("OpenAI", base_url, api_key),
         }
     }
+
+    /// Add one static header to every request.
+    ///
+    /// Useful for org-scoped accounts (`OpenAI-Organization`,
+    /// `OpenAI-Project`) and for gateway deployments that demand their own
+    /// headers. Supplying `Authorization` here replaces the default
+    /// `Bearer` header entirely.
+    #[must_use]
+    pub fn with_header(
+        mut self,
+        name: reqwest::header::HeaderName,
+        value: reqwest::header::HeaderValue,
+    ) -> Self {
+        self.shell = self.shell.with_header(name, value);
+        self
+    }
+
+    /// Merge a header map into every request, replacing colliding names.
+    #[must_use]
+    pub fn with_headers(mut self, headers: reqwest::header::HeaderMap) -> Self {
+        self.shell = self.shell.with_headers(headers);
+        self
+    }
 }
 
 impl std::fmt::Debug for OpenAiStreamFn {

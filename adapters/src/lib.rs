@@ -45,7 +45,11 @@
     allow(dead_code)
 )]
 mod base;
+
+// Header types surface on adapter builders (e.g. `OpenAiStreamFn::with_header`);
+// re-exported so callers need not depend on `reqwest` directly.
 pub use base::ensure_default_crypto_provider;
+pub use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 #[cfg_attr(
     not(any(
         feature = "anthropic",
