@@ -384,6 +384,23 @@ impl ModelCatalog {
         None
     }
 
+    /// Look up a preset by `model_id` under one specific provider.
+    ///
+    /// The same `model_id` can be listed under several providers at
+    /// different prices (`gpt-5.6-luna` is metered under `openai` and free
+    /// under the subscription-backed `codex`), so a provider-blind lookup
+    /// returns whichever block comes first. Use this when the provider is
+    /// known. Returns `None` if the provider has no such row — callers that
+    /// want a fallback chain with [`find_preset_by_model_id`] themselves.
+    ///
+    /// [`find_preset_by_model_id`]: Self::find_preset_by_model_id
+    #[must_use]
+    pub fn find_preset(&self, provider_key: &str, model_id: &str) -> Option<CatalogPreset> {
+        let provider = self.provider(provider_key)?;
+        let preset = provider.presets.iter().find(|p| p.model_id == model_id)?;
+        self.preset(&provider.key, &preset.id)
+    }
+
     #[must_use]
     pub fn preset(&self, provider_key: &str, preset_id: &str) -> Option<CatalogPreset> {
         let provider = self.provider(provider_key)?;
@@ -808,7 +825,24 @@ pub fn calculate_cost(model_id: &str, usage: &Usage) -> Cost {
         );
         return Cost::default();
     };
+    cost_from_preset(&preset, usage)
+}
 
+/// Like [`calculate_cost`], but prefers the rates listed under
+/// `provider_key` and only falls back to the provider-blind lookup when
+/// that provider has no row for `model_id`.
+///
+/// This is what keeps a subscription-backed provider (`codex`, priced at
+/// zero) from being billed at the metered `openai` rates for the same slug.
+#[must_use]
+pub fn calculate_cost_for_provider(provider_key: &str, model_id: &str, usage: &Usage) -> Cost {
+    match model_catalog().find_preset(provider_key, model_id) {
+        Some(preset) => cost_from_preset(&preset, usage),
+        None => calculate_cost(model_id, usage),
+    }
+}
+
+fn cost_from_preset(preset: &CatalogPreset, usage: &Usage) -> Cost {
     #[allow(clippy::cast_precision_loss)] // token counts fit comfortably in f64
     let per_m = |tokens: u64, rate: Option<f64>| -> f64 {
         rate.map_or(0.0, |r| tokens as f64 * r / 1_000_000.0)
@@ -911,7 +945,9 @@ pub fn price_assistant_message_with(
     let priced = calculator
         .and_then(|calculator| calculator.calculate(&message.model_id, &message.usage))
         .filter(|cost| !cost.is_zero())
-        .unwrap_or_else(|| calculate_cost(&message.model_id, &message.usage));
+        .unwrap_or_else(|| {
+            calculate_cost_for_provider(&message.provider, &message.model_id, &message.usage)
+        });
     if priced.is_zero() {
         return false;
     }
@@ -1473,6 +1509,83 @@ mod tests {
                 );
             }
         }
+    }
+
+    // --- Codex provider block (#1267) ---
+
+    #[test]
+    fn codex_provider_has_no_credential_env_var_and_zero_pricing() {
+        let catalog = model_catalog();
+        let codex = catalog.provider("codex").expect("codex provider present");
+        assert_eq!(codex.kind, ProviderKind::Remote);
+        assert_eq!(
+            codex.credential_env_var, None,
+            "auth is OAuth, not an env var"
+        );
+        assert_eq!(
+            codex.default_base_url.as_deref(),
+            Some("https://chatgpt.com/backend-api/codex")
+        );
+        assert!(!codex.presets.is_empty());
+        for preset in &codex.presets {
+            assert_eq!(preset.cost_per_million_input, Some(0.0), "{}", preset.id);
+            assert_eq!(preset.cost_per_million_output, Some(0.0), "{}", preset.id);
+        }
+    }
+
+    #[test]
+    fn same_slug_resolves_to_codex_or_openai_by_provider() {
+        let catalog = model_catalog();
+        let codex = catalog.find_preset("codex", "gpt-5.6-luna").unwrap();
+        assert_eq!(codex.provider_key, "codex");
+        let openai = catalog.find_preset("openai", "gpt-5.6-luna").unwrap();
+        assert_eq!(openai.provider_key, "openai");
+        assert!(openai.cost_per_million_input.unwrap() > 0.0);
+        // The provider-blind lookup keeps its historical answer: the metered row.
+        assert_eq!(
+            catalog
+                .find_preset_by_model_id("gpt-5.6-luna")
+                .unwrap()
+                .provider_key,
+            "openai"
+        );
+        assert!(catalog.find_preset("codex", "claude-opus-5").is_none());
+    }
+
+    #[test]
+    fn calculate_cost_for_provider_prices_codex_at_zero_and_openai_at_list() {
+        let usage = Usage::default()
+            .with_input(1_000_000)
+            .with_output(1_000_000);
+        assert!(calculate_cost_for_provider("codex", "gpt-5.6-luna", &usage).is_zero());
+        let openai = calculate_cost_for_provider("openai", "gpt-5.6-luna", &usage);
+        assert!((openai.total - 1.40).abs() < 1e-9, "{openai:?}");
+        // Provider-blind and unknown-provider both fall back to the first row.
+        assert!((calculate_cost("gpt-5.6-luna", &usage).total - 1.40).abs() < 1e-9);
+        assert!(
+            (calculate_cost_for_provider("nope", "gpt-5.6-luna", &usage).total - 1.40).abs() < 1e-9
+        );
+    }
+
+    #[test]
+    fn price_assistant_message_respects_the_message_provider() {
+        let usage = Usage::default().with_input(1_000_000);
+        let mut codex = AssistantMessage::new(vec![], "codex", "gpt-5.6-luna")
+            .with_usage(usage.clone())
+            .with_stop_reason(crate::types::StopReason::Stop)
+            .with_timestamp(0);
+        assert!(
+            !price_assistant_message(&mut codex),
+            "a $0 turn is not repriced"
+        );
+        assert!(codex.cost.is_zero());
+
+        let mut openai = AssistantMessage::new(vec![], "openai", "gpt-5.6-luna")
+            .with_usage(usage)
+            .with_stop_reason(crate::types::StopReason::Stop)
+            .with_timestamp(0);
+        assert!(price_assistant_message(&mut openai));
+        assert!((openai.cost.total - 0.20).abs() < 1e-9, "{:?}", openai.cost);
     }
 
     // --- Pricing staleness ---
