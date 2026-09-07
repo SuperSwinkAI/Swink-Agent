@@ -10,7 +10,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use swink_agent::{
     AssistantMessageEvent, ModelSpec, StopReason, StreamErrorKind, StreamFn, StreamOptions,
 };
-use swink_agent_adapters::OpenAiStreamFn;
+use swink_agent_adapters::{HeaderName, HeaderValue, OpenAiStreamFn};
 
 use crate::common::{
     event_name, find_error_kind, find_error_message, notify_on_request, sse_response, test_context,
@@ -1189,4 +1189,111 @@ async fn openai_format_none_body_is_byte_identical() {
         r#"{"model":"gpt-4","messages":[{"role":"system","content":"You are a test assistant."}],"stream":true,"stream_options":{"include_usage":true}}"#,
         "`format: None` must leave the request body byte-identical"
     );
+}
+
+// ── Static header injection (#1260) ──────────────────────────────────────────
+
+/// Minimal SSE body that terminates the stream cleanly.
+fn done_body() -> String {
+    [
+        r#"data: {"choices":[{"delta":{},"finish_reason":"stop","index":0}]}"#,
+        "",
+        "data: [DONE]",
+        "",
+        "",
+    ]
+    .join("\n")
+}
+
+#[tokio::test]
+async fn extra_headers_are_sent_on_every_request() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(header("chatgpt-account-id", "acct-123"))
+        .and(header("originator", "swink"))
+        // The default bearer auth must survive alongside the extras.
+        .and(header("authorization", "Bearer test-key"))
+        .respond_with(sse_response(&done_body()))
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    let stream_fn = OpenAiStreamFn::new(server.uri(), "test-key")
+        .with_header(
+            HeaderName::from_static("chatgpt-account-id"),
+            HeaderValue::from_static("acct-123"),
+        )
+        .with_header(
+            HeaderName::from_static("originator"),
+            HeaderValue::from_static("swink"),
+        );
+
+    // Twice, because "every request" is the claim under test.
+    collect_events(&stream_fn).await;
+    collect_events(&stream_fn).await;
+}
+
+#[tokio::test]
+async fn no_extra_headers_keeps_the_default_bearer_request() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(header("authorization", "Bearer test-key"))
+        .respond_with(sse_response(&done_body()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let stream_fn = OpenAiStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&stream_fn).await;
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::Done { .. })),
+        "expected a Done event, got {:?}",
+        events.iter().map(event_name).collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+async fn authorization_header_can_be_overridden() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(header("authorization", "Token opaque-value"))
+        .respond_with(sse_response(&done_body()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let stream_fn = OpenAiStreamFn::new(server.uri(), "test-key").with_header(
+        HeaderName::from_static("authorization"),
+        HeaderValue::from_static("Token opaque-value"),
+    );
+
+    let events = collect_events(&stream_fn).await;
+    // A duplicated `Authorization` would have produced two values and failed
+    // the matcher; reaching Done proves the default was replaced, not appended.
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::Done { .. })),
+        "expected a Done event, got {:?}",
+        events.iter().map(event_name).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn debug_redacts_header_values() {
+    let stream_fn = OpenAiStreamFn::new("https://example.test", "test-key").with_header(
+        HeaderName::from_static("chatgpt-account-id"),
+        HeaderValue::from_static("acct-secret"),
+    );
+    let rendered = format!("{stream_fn:?}");
+    assert!(
+        !rendered.contains("acct-secret"),
+        "header values must not appear in Debug: {rendered}"
+    );
+    assert!(!rendered.contains("test-key"), "api key leaked: {rendered}");
 }

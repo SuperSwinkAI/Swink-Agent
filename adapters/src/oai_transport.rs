@@ -110,6 +110,56 @@ impl OaiAdapterShell {
         options.api_key.as_deref().unwrap_or(&self.base.api_key)
     }
 
+    /// Add one static header to every request this shell issues.
+    #[cfg(any(test, feature = "openai-compat"))]
+    #[must_use]
+    pub(crate) fn with_header(
+        mut self,
+        name: reqwest::header::HeaderName,
+        value: reqwest::header::HeaderValue,
+    ) -> Self {
+        self.base = self.base.with_header(name, value);
+        self
+    }
+
+    /// Merge a header map into every request this shell issues.
+    #[cfg(any(test, feature = "openai-compat"))]
+    #[must_use]
+    pub(crate) fn with_headers(mut self, headers: reqwest::header::HeaderMap) -> Self {
+        self.base = self.base.with_headers(headers);
+        self
+    }
+
+    /// Apply authentication plus the adapter's static headers.
+    ///
+    /// The default `Authorization: Bearer` header is skipped when the static
+    /// map already carries one, so a provider can replace the scheme
+    /// wholesale. `reqwest`'s `RequestBuilder::headers` *replaces* the whole
+    /// map (it would drop the `Content-Type` that `json()` sets), so the
+    /// headers go on one at a time.
+    #[cfg(any(feature = "openai-compat", feature = "mistral"))]
+    fn authorize(
+        &self,
+        request: reqwest::RequestBuilder,
+        options: &StreamOptions,
+    ) -> reqwest::RequestBuilder {
+        let mut request = request;
+        if !self
+            .base
+            .headers
+            .contains_key(reqwest::header::AUTHORIZATION)
+        {
+            request = request.header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", self.api_key(options)),
+            );
+        }
+        for (name, value) in &self.base.headers {
+            request = request.header(name, value);
+        }
+        request
+    }
+
     #[cfg(feature = "mistral")]
     pub(crate) fn post_json_request<T: Serialize>(
         &self,
@@ -117,10 +167,7 @@ impl OaiAdapterShell {
         body: &T,
         options: &StreamOptions,
     ) -> reqwest::RequestBuilder {
-        self.base
-            .client
-            .post(url)
-            .header("Authorization", format!("Bearer {}", self.api_key(options)))
+        self.authorize(self.base.client.post(url), options)
             .json(body)
     }
 
@@ -142,8 +189,10 @@ impl OaiAdapterShell {
             "sending OAI-compatible request"
         );
 
-        let request = prepare_oai_request(&self.base.client, &url, model, context, options)
-            .header("Authorization", format!("Bearer {}", self.api_key(options)));
+        let request = self.authorize(
+            prepare_oai_request(&self.base.client, &url, model, context, options),
+            options,
+        );
 
         let provider = self.provider;
         Box::pin(oai_send_and_parse(
