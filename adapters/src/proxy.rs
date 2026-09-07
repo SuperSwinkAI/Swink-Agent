@@ -148,6 +148,7 @@ impl ProxyStreamFn {
                 AssistantMessageEvent::Error { error_message, .. } => error_message,
                 _ => "unknown error".to_owned(),
             })?;
+        crate::base::report_rate_limit(response.headers(), options.on_rate_limit.as_ref());
 
         let status = response.status();
         if !status.is_success() {

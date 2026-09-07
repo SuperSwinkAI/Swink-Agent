@@ -341,6 +341,7 @@ fn azure_stream<'a>(
             azure.shell.provider(),
             cancellation_token,
             options.on_raw_payload.clone(),
+            options.on_rate_limit.clone(),
             |status, body| {
                 if is_content_filter_error(body) {
                     Some(AssistantMessageEvent::error_content_filtered(format!(

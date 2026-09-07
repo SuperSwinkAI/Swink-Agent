@@ -146,9 +146,9 @@ pub use schemars::JsonSchema;
 pub use state::{SessionState, StateDelta};
 pub use stream::{
     AssistantMessageDelta, AssistantMessageEvent, CacheStrategy, MapOptionsStreamFn, MappedOptions,
-    OnRawPayload, ResponseFormat, ServingOptionSupport, ServingOptions, StreamErrorKind, StreamFn,
-    StreamOptions, StreamTransport, accumulate_message, sanitize_incomplete_tool_calls,
-    stream_owned,
+    OnRateLimit, OnRawPayload, RateLimitSnapshot, ResponseFormat, ServingOptionSupport,
+    ServingOptions, StreamErrorKind, StreamFn, StreamOptions, StreamTransport, accumulate_message,
+    sanitize_incomplete_tool_calls, stream_owned,
 };
 pub use stream_middleware::StreamMiddleware;
 pub use sub_agent::SubAgent;

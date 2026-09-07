@@ -155,6 +155,27 @@ pub(crate) fn merge_extra(
     }
 }
 
+/// Hand the response headers to `on_rate_limit`, if set.
+///
+/// Called exactly once per request, right after the response arrives and
+/// before the status check, so a 429's quota headers reach the caller too.
+/// Non-UTF-8 header values are skipped rather than failing the turn.
+#[allow(dead_code)]
+pub(crate) fn report_rate_limit(
+    headers: &reqwest::header::HeaderMap,
+    on_rate_limit: Option<&swink_agent::OnRateLimit>,
+) {
+    let Some(callback) = on_rate_limit else {
+        return;
+    };
+    let snapshot = swink_agent::RateLimitSnapshot::from_headers(
+        headers
+            .iter()
+            .filter_map(|(name, value)| value.to_str().ok().map(|v| (name.as_str(), v))),
+    );
+    callback(&snapshot);
+}
+
 /// Prefix a pre-stream terminal error with `Start` so the core accumulator
 /// still receives a valid stream envelope.
 #[must_use]

@@ -212,6 +212,7 @@ fn anthropic_stream<'a>(
                 return stream::iter(Vec::from(crate::base::pre_stream_error(event))).left_stream();
             }
         };
+        crate::base::report_rate_limit(response.headers(), options.on_rate_limit.as_ref());
 
         let status = response.status();
         if !status.is_success() {

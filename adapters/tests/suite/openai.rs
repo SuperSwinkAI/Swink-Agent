@@ -1297,3 +1297,119 @@ fn debug_redacts_header_values() {
     );
     assert!(!rendered.contains("test-key"), "api key leaked: {rendered}");
 }
+
+// ── Rate-limit headers (#1264) ───────────────────────────────────────────────
+
+/// Minimal SSE body that terminates the stream cleanly.
+fn rate_limit_done_body() -> String {
+    [
+        r#"data: {"choices":[{"delta":{},"finish_reason":"stop","index":0}]}"#,
+        "",
+        "data: [DONE]",
+        "",
+        "",
+    ]
+    .join("\n")
+}
+
+/// Codex-style quota headers on a 200 reach the caller intact, exactly once,
+/// before the first event.
+#[tokio::test]
+async fn on_rate_limit_fires_once_before_first_event() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            sse_response(&rate_limit_done_body())
+                .insert_header("x-codex-plan-type", "prolite")
+                .insert_header("x-codex-primary-used-percent", "98")
+                .insert_header("x-codex-primary-window-minutes", "10080")
+                .insert_header("x-codex-primary-reset-after-seconds", "288059"),
+        )
+        .mount(&server)
+        .await;
+
+    // One ordered log shared by the callback and the event loop.
+    let log: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let callback_log = Arc::clone(&log);
+    let options = StreamOptions::default().with_on_rate_limit(Arc::new(move |snapshot| {
+        callback_log.lock().unwrap().push(format!(
+            "rate_limit used={:?} plan={:?} resets={:?}",
+            snapshot.used_percent, snapshot.plan, snapshot.resets_in
+        ));
+    }));
+
+    let stream_fn = OpenAiStreamFn::new(server.uri(), "test-key");
+    let model = test_model();
+    let context = test_context();
+    let mut stream = stream_fn.stream(&model, &context, &options, CancellationToken::new());
+    while let Some(event) = stream.next().await {
+        log.lock().unwrap().push(event_name(&event).to_owned());
+    }
+
+    let log = log.lock().unwrap();
+    assert_eq!(
+        log[0], "rate_limit used=Some(98.0) plan=Some(\"prolite\") resets=Some(288059s)",
+        "callback must run before the first event: {log:?}"
+    );
+    assert_eq!(
+        log.iter().filter(|l| l.starts_with("rate_limit")).count(),
+        1,
+        "callback must fire exactly once: {log:?}"
+    );
+    assert_eq!(log[1], "Start");
+}
+
+/// A 429's headers are the most important ones; they must reach the caller
+/// even though the turn ends in an error.
+#[tokio::test]
+async fn on_rate_limit_fires_on_error_responses_too() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("x-ratelimit-remaining-requests", "0")
+                .insert_header("retry-after", "17")
+                .set_body_string(r#"{"error":{"message":"slow down","type":"rate_limit"}}"#),
+        )
+        .mount(&server)
+        .await;
+
+    let seen: Arc<Mutex<Option<swink_agent::RateLimitSnapshot>>> = Arc::new(Mutex::new(None));
+    let sink = Arc::clone(&seen);
+    let options = StreamOptions::default()
+        .with_on_rate_limit(Arc::new(move |s| *sink.lock().unwrap() = Some(s.clone())));
+
+    let stream_fn = OpenAiStreamFn::new(server.uri(), "test-key");
+    let events = collect_events_with_options(&stream_fn, options).await;
+    assert!(
+        find_error_message(&events).is_some(),
+        "expected the 429 to surface as an error"
+    );
+
+    let snapshot = seen.lock().unwrap().clone().expect("callback fired on 429");
+    assert_eq!(snapshot.remaining_requests, Some(0));
+    assert_eq!(snapshot.resets_in, Some(std::time::Duration::from_secs(17)));
+}
+
+/// No callback → nothing observes headers and nothing changes.
+#[tokio::test]
+async fn rate_limit_headers_without_callback_are_ignored() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            sse_response(&rate_limit_done_body())
+                .insert_header("x-codex-primary-used-percent", "98"),
+        )
+        .mount(&server)
+        .await;
+    let stream_fn = OpenAiStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&stream_fn).await;
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::Done { .. }))
+    );
+}
