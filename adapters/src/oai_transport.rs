@@ -111,7 +111,7 @@ impl OaiAdapterShell {
     }
 
     /// Add one static header to every request this shell issues.
-    #[cfg(any(test, feature = "openai-compat"))]
+    #[cfg(any(test, feature = "openai"))]
     #[must_use]
     pub(crate) fn with_header(
         mut self,
@@ -123,7 +123,7 @@ impl OaiAdapterShell {
     }
 
     /// Merge a header map into every request this shell issues.
-    #[cfg(any(test, feature = "openai-compat"))]
+    #[cfg(any(test, feature = "openai"))]
     #[must_use]
     pub(crate) fn with_headers(mut self, headers: reqwest::header::HeaderMap) -> Self {
         self.base = self.base.with_headers(headers);

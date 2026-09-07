@@ -79,6 +79,10 @@ impl OpenAiWire {
     /// is unset or empty. An unrecognised value is an error, never a silent
     /// default: a misspelt knob must not quietly route to the wrong protocol.
     ///
+    /// The environment read is process-global; a host that runs several
+    /// `openai` connections with different base URLs must pick the wire per
+    /// connection and pass it to [`OpenAiStreamFn::new_for_wire`] instead.
+    ///
     /// # Errors
     /// [`InvalidOpenAiWire`] when the variable is set to an unknown value.
     pub fn from_env() -> Result<Self, InvalidOpenAiWire> {
