@@ -143,13 +143,24 @@ mod tests {
     #[test]
     fn open_editor_with_noop_command_returns_none() {
         let noop_editor = TempNoopEditor::create();
-        let result = open_editor(
-            noop_editor
-                .path()
-                .to_str()
-                .expect("temp script path should be valid unicode"),
-        );
-        assert!(result.is_ok());
+        let command = noop_editor
+            .path()
+            .to_str()
+            .expect("temp script path should be valid unicode");
+        // The script was written moments ago; a sibling test that forks in
+        // between can still hold the write fd open in its child, and exec
+        // then fails with ETXTBSY. Retry until the fd is gone.
+        let mut result = open_editor(command);
+        for _ in 0..50 {
+            match &result {
+                Err(e) if e.kind() == io::ErrorKind::ExecutableFileBusy => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    result = open_editor(command);
+                }
+                _ => break,
+            }
+        }
+        assert!(result.is_ok(), "{result:?}");
         assert!(result.unwrap().is_none()); // empty file = cancellation
     }
 
