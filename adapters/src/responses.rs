@@ -32,9 +32,9 @@ use tracing::{debug, error, warn};
 
 use swink_agent::{
     AgentContext, AgentTool, AssistantMessage, AssistantMessageEvent, ContentBlock, Cost,
-    MessageConverter, ModelSpec, ResponseFormat, ServingOptionSupport, StopReason, StreamFn,
-    StreamOptions, ThinkingLevel, ToolResultMessage, Usage, UserMessage, convert_messages,
-    extract_tool_schemas,
+    MessageConverter, ModelSpec, ReasoningEffort, ResponseFormat, ServingOptionSupport, StopReason,
+    StreamFn, StreamOptions, ThinkingLevel, ToolResultMessage, Usage, UserMessage,
+    convert_messages, extract_tool_schemas,
 };
 
 use crate::base::AdapterBase;
@@ -206,6 +206,31 @@ fn build_tools(tools: &[Arc<dyn AgentTool>]) -> (Vec<ResponsesTool>, Option<&'st
     (tools, choice)
 }
 
+/// Map a per-request [`ReasoningEffort`] onto `reasoning.effort`. `Off`
+/// sends nothing.
+const fn effort_wire(effort: ReasoningEffort) -> Option<&'static str> {
+    match effort {
+        ReasoningEffort::Minimal => Some("minimal"),
+        ReasoningEffort::Low => Some("low"),
+        ReasoningEffort::Medium => Some("medium"),
+        ReasoningEffort::High => Some("high"),
+        ReasoningEffort::XHigh => Some("xhigh"),
+        ReasoningEffort::Max => Some("max"),
+        // `Off`, and any future variant with no known wire value: omit.
+        _ => None,
+    }
+}
+
+/// `reasoning.effort` for a request: the per-request
+/// [`ServingOptions::reasoning_effort`](swink_agent::ServingOptions) when
+/// set, else the model's [`ThinkingLevel`].
+fn resolve_effort(model: &ModelSpec, options: &StreamOptions) -> Option<&'static str> {
+    match options.serving.reasoning_effort {
+        Some(effort) => effort_wire(effort),
+        None => reasoning_effort(model.thinking_level),
+    }
+}
+
 /// Map [`ThinkingLevel`] onto `reasoning.effort`. `Off` sends nothing.
 const fn reasoning_effort(level: ThinkingLevel) -> Option<&'static str> {
     match level {
@@ -254,6 +279,7 @@ fn build_request(
         "tools",
         "tool_choice",
     ];
+    // (`reasoning_effort` is typed too — it leaves as `reasoning`.)
     let mut extra = serde_json::Map::new();
     crate::base::merge_extra(&mut extra, &options.serving.extra, TYPED_KEYS);
 
@@ -277,8 +303,7 @@ fn build_request(
         temperature: options.temperature,
         max_output_tokens: options.max_tokens,
         top_p: options.serving.top_p,
-        reasoning: reasoning_effort(model.thinking_level)
-            .map(|effort| ResponsesReasoning { effort }),
+        reasoning: resolve_effort(model, options).map(|effort| ResponsesReasoning { effort }),
         text: text_format(options),
         tools,
         tool_choice,
@@ -765,30 +790,25 @@ impl ResponsesAdapterShell {
         options.api_key.as_deref().unwrap_or(&self.base.api_key)
     }
 
-    /// Bearer auth unless the static header map overrides `Authorization`,
-    /// then the static headers — same contract as the Chat Completions shell.
+    /// Bearer auth, then static headers, then per-request headers; later
+    /// layers replace earlier ones by name.
     fn authorize(
         &self,
         request: reqwest::RequestBuilder,
         options: &StreamOptions,
         per_request: &reqwest::header::HeaderMap,
     ) -> reqwest::RequestBuilder {
-        let mut request = request;
-        let overrides_auth = self
-            .base
-            .headers
-            .contains_key(reqwest::header::AUTHORIZATION)
-            || per_request.contains_key(reqwest::header::AUTHORIZATION);
-        if !overrides_auth {
-            request = request.header(
+        // `RequestBuilder::headers` replaces per name (reqwest's
+        // `replace_headers`) and never clears what `json()` set, so static
+        // headers override the default `Authorization`, and per-request
+        // headers override static ones — one value per name throughout.
+        request
+            .header(
                 reqwest::header::AUTHORIZATION,
                 format!("Bearer {}", self.api_key(options)),
-            );
-        }
-        for (name, value) in self.base.headers.iter().chain(per_request.iter()) {
-            request = request.header(name, value);
-        }
-        request
+            )
+            .headers(self.base.headers.clone())
+            .headers(per_request.clone())
     }
 
     pub(crate) fn fmt_debug(
@@ -985,6 +1005,7 @@ impl StreamFn for ResponsesStreamFn {
         ServingOptionSupport::none()
             .with_top_p(true)
             .with_format(true)
+            .with_reasoning_effort(true)
             .with_extra(true)
     }
 
@@ -1042,6 +1063,26 @@ mod tests {
         assert_eq!(body["reasoning"]["effort"], "high");
         // The system prompt is `instructions`, never an input item.
         assert!(body["input"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn per_request_reasoning_effort_overrides_the_model_level() {
+        let context = AgentContext::new("", Vec::new(), Vec::new());
+        let max = StreamOptions::default().with_serving(
+            swink_agent::ServingOptions::default().with_reasoning_effort(ReasoningEffort::Max),
+        );
+        let body =
+            serde_json::to_value(build_request(&spec(ThinkingLevel::Low), &context, &max)).unwrap();
+        assert_eq!(body["reasoning"]["effort"], "max");
+        let off = StreamOptions::default().with_serving(
+            swink_agent::ServingOptions::default().with_reasoning_effort(ReasoningEffort::Off),
+        );
+        let body = serde_json::to_value(build_request(&spec(ThinkingLevel::High), &context, &off))
+            .unwrap();
+        assert!(
+            body.get("reasoning").is_none(),
+            "per-request Off silences the model level"
+        );
     }
 
     #[test]
