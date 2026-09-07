@@ -712,10 +712,15 @@ fn parse_responses_sse_stream(
 // ─── Shell ──────────────────────────────────────────────────────────────────
 
 /// Shared transport for Responses-speaking providers.
+/// HTTP 4xx body classifier: returns a structured event or `None` to fall
+/// through to status-based classification.
+pub(crate) type ErrorClassifier = fn(u16, &str, &str) -> Option<AssistantMessageEvent>;
+
 pub(crate) struct ResponsesAdapterShell {
     provider: &'static str,
     base: AdapterBase,
     responses_path: &'static str,
+    classify: ErrorClassifier,
 }
 
 impl ResponsesAdapterShell {
@@ -729,6 +734,7 @@ impl ResponsesAdapterShell {
             provider,
             base: AdapterBase::new(base_url, api_key),
             responses_path,
+            classify: crate::oai_transport::classify_oai_error_body,
         }
     }
 
@@ -765,19 +771,21 @@ impl ResponsesAdapterShell {
         &self,
         request: reqwest::RequestBuilder,
         options: &StreamOptions,
+        per_request: &reqwest::header::HeaderMap,
     ) -> reqwest::RequestBuilder {
         let mut request = request;
-        if !self
+        let overrides_auth = self
             .base
             .headers
             .contains_key(reqwest::header::AUTHORIZATION)
-        {
+            || per_request.contains_key(reqwest::header::AUTHORIZATION);
+        if !overrides_auth {
             request = request.header(
                 reqwest::header::AUTHORIZATION,
                 format!("Bearer {}", self.api_key(options)),
             );
         }
-        for (name, value) in &self.base.headers {
+        for (name, value) in self.base.headers.iter().chain(per_request.iter()) {
             request = request.header(name, value);
         }
         request
@@ -801,6 +809,30 @@ impl ResponsesAdapterShell {
         options: &'a StreamOptions,
         cancellation_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        self.stream_with_headers(
+            model,
+            context,
+            options,
+            cancellation_token,
+            &reqwest::header::HeaderMap::new(),
+        )
+    }
+
+    /// [`stream`](Self::stream) plus headers that exist only for this one
+    /// request (a per-request session id, a routing id derived from the
+    /// credential). Applied after the static map, so they win.
+    ///
+    /// Borrows are only needed while the request is built, so the returned
+    /// stream is `'static`: a caller can construct `options` locally (e.g.
+    /// after resolving a credential) and still hand the stream out.
+    pub(crate) fn stream_with_headers(
+        &self,
+        model: &ModelSpec,
+        context: &AgentContext,
+        options: &StreamOptions,
+        cancellation_token: CancellationToken,
+        per_request: &reqwest::header::HeaderMap,
+    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'static>> {
         let url = self.url();
         debug!(
             provider = self.provider,
@@ -810,8 +842,13 @@ impl ResponsesAdapterShell {
             "sending Responses request"
         );
         let body = build_request(model, context, options);
-        let request = self.authorize(self.base.client.post(&url).json(&body), options);
+        let request = self.authorize(
+            self.base.client.post(&url).json(&body),
+            options,
+            per_request,
+        );
         let provider = self.provider;
+        let classify = self.classify;
         let on_raw_payload = options.on_raw_payload.clone();
         let on_rate_limit = options.on_rate_limit.clone();
 
@@ -854,11 +891,9 @@ impl ResponsesAdapterShell {
                         }
                     };
                     warn!(status = code, "{provider} HTTP error");
-                    let event =
-                        crate::oai_transport::classify_oai_error_body(code, &body, provider)
-                            .unwrap_or_else(|| {
-                                crate::classify::error_event_from_status(code, &body, provider)
-                            });
+                    let event = classify(code, &body, provider).unwrap_or_else(|| {
+                        crate::classify::error_event_from_status(code, &body, provider)
+                    });
                     return stream::iter([AssistantMessageEvent::Start, event]).left_stream();
                 }
 
@@ -902,6 +937,19 @@ impl ResponsesStreamFn {
     #[must_use]
     pub const fn with_provider_label(mut self, label: &'static str) -> Self {
         self.shell.provider = label;
+        self
+    }
+
+    /// Replace the HTTP 4xx body classifier. Takes `(status, body,
+    /// provider_label)` and returns a structured event, or `None` to fall
+    /// through to status-based classification. Defaults to the shared
+    /// OpenAI error-envelope classifier.
+    #[must_use]
+    pub const fn with_error_classifier(
+        mut self,
+        classify: fn(u16, &str, &str) -> Option<AssistantMessageEvent>,
+    ) -> Self {
+        self.shell.classify = classify;
         self
     }
 

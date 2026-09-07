@@ -9,6 +9,8 @@ use thiserror::Error;
 use crate::AnthropicStreamFn;
 #[cfg(feature = "bedrock")]
 use crate::BedrockStreamFn;
+#[cfg(feature = "codex")]
+use crate::CodexStreamFn;
 #[cfg(feature = "gemini")]
 use crate::GeminiStreamFn;
 #[cfg(feature = "mistral")]
@@ -88,6 +90,7 @@ pub fn is_provider_compiled(provider_key: &str) -> bool {
         "xai" => cfg!(feature = "xai"),
         "mistral" => cfg!(feature = "mistral"),
         "bedrock" => cfg!(feature = "bedrock"),
+        "codex" => cfg!(feature = "codex"),
         _ => false,
     }
 }
@@ -157,6 +160,8 @@ pub fn build_remote_connection_with_credential(
 }
 
 #[allow(unreachable_code, unused_variables)]
+// One arm per provider; the length is the dispatch table, not logic.
+#[allow(clippy::too_many_lines)]
 pub fn build_connection_from_preset(
     preset: &CatalogPreset,
     api_key: Option<String>,
@@ -171,7 +176,9 @@ pub fn build_connection_from_preset(
 
     let provider_key = preset.provider_key.as_str();
 
-    let api_key = if provider_key == "bedrock" {
+    // Bedrock signs with SigV4 and codex resolves an OAuth grant per request:
+    // neither carries an API key, so neither may demand one here.
+    let api_key = if matches!(provider_key, "bedrock" | "codex") {
         String::new()
     } else {
         let env_var = preset.credential_env_var.clone().ok_or_else(|| {
@@ -224,6 +231,18 @@ pub fn build_connection_from_preset(
         "xai" => Arc::new(XAiStreamFn::new(resolved_base_url()?, &api_key)),
         #[cfg(feature = "mistral")]
         "mistral" => Arc::new(MistralStreamFn::new(resolved_base_url()?, &api_key)),
+        #[cfg(feature = "codex")]
+        "codex" => {
+            let mut codex = CodexStreamFn::from_env().map_err(|e| {
+                RemoteModelConnectionError::UnsupportedProvider {
+                    provider_key: format!("codex ({e})"),
+                }
+            })?;
+            if let Some(url) = base_url {
+                codex = codex.with_base_url(url);
+            }
+            Arc::new(codex)
+        }
         #[cfg(feature = "bedrock")]
         "bedrock" => {
             let region_env_var = preset

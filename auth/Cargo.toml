@@ -31,7 +31,7 @@ rustls.workspace = true
 chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["sync", "time"] }
+tokio = { workspace = true, features = ["sync", "time", "net", "io-util", "rt", "macros"] }
 futures.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
