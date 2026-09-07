@@ -200,6 +200,7 @@ impl OaiAdapterShell {
             provider,
             cancellation_token,
             options.on_raw_payload.clone(),
+            options.on_rate_limit.clone(),
             move |status, body| classify_oai_error_body(status, body, provider),
         ))
     }
@@ -371,6 +372,7 @@ pub fn oai_send_and_parse<'a>(
     provider: &'static str,
     cancellation_token: tokio_util::sync::CancellationToken,
     on_raw_payload: Option<swink_agent::OnRawPayload>,
+    on_rate_limit: Option<swink_agent::OnRateLimit>,
     classify_error: impl Fn(u16, &str) -> Option<AssistantMessageEvent> + Send + 'a,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
     oai_send_and_parse_with_options(
@@ -378,6 +380,7 @@ pub fn oai_send_and_parse<'a>(
         provider,
         cancellation_token,
         on_raw_payload,
+        on_rate_limit,
         classify_error,
         OaiParserOptions::default(),
     )
@@ -388,6 +391,7 @@ pub(crate) fn oai_send_and_parse_with_options<'a>(
     provider: &'static str,
     cancellation_token: tokio_util::sync::CancellationToken,
     on_raw_payload: Option<swink_agent::OnRawPayload>,
+    on_rate_limit: Option<swink_agent::OnRateLimit>,
     classify_error: impl Fn(u16, &str) -> Option<AssistantMessageEvent> + Send + 'a,
     parser_options: OaiParserOptions,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
@@ -412,6 +416,7 @@ pub(crate) fn oai_send_and_parse_with_options<'a>(
                 .left_stream();
             }
         };
+        crate::base::report_rate_limit(response.headers(), on_rate_limit.as_ref());
 
         let status = response.status();
         if !status.is_success() {

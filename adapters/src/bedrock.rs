@@ -400,6 +400,7 @@ impl BedrockStreamFn {
         let response = self.client.execute(request).await.map_err(|e| {
             AssistantMessageEvent::error_network(format!("Bedrock connection error: {e}"))
         })?;
+        crate::base::report_rate_limit(response.headers(), options.on_rate_limit.as_ref());
 
         let status = response.status();
         if !status.is_success() {

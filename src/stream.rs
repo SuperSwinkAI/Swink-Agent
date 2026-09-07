@@ -66,6 +66,141 @@ pub enum CacheStrategy {
 /// the streaming pipeline.
 pub type OnRawPayload = Arc<dyn Fn(&str) + Send + Sync>;
 
+// ─── Rate-limit snapshot ─────────────────────────────────────────────────────
+
+/// Provider quota state read from a response's headers, delivered once per
+/// request through [`StreamOptions::on_rate_limit`] before the first
+/// [`AssistantMessageEvent`].
+///
+/// The typed fields are a convenience over `raw`, not a gate: an adapter
+/// whose provider this crate has never heard of still fills `raw` with
+/// every rate-limit-shaped header, so a caller can act on it. Every typed
+/// field is `None` when the provider did not send it or sent something
+/// unparseable — a malformed header never fails the turn.
+///
+/// | Field | OpenAI | Anthropic | Codex (subscription) |
+/// |---|---|---|---|
+/// | `used_percent` | — | — | `x-codex-primary-used-percent` |
+/// | `remaining_requests` | `x-ratelimit-remaining-requests` | `anthropic-ratelimit-requests-remaining` | — |
+/// | `remaining_tokens` | `x-ratelimit-remaining-tokens` | `anthropic-ratelimit-tokens-remaining` | — |
+/// | `resets_in` | `x-ratelimit-reset-requests` (`6m0s`) | — (RFC 3339, `raw` only) | `x-codex-primary-reset-after-seconds` |
+/// | `window` | — | — | `x-codex-primary-window-minutes` |
+/// | `plan` | — | — | `x-codex-plan-type` |
+///
+/// `retry-after` (seconds form) fills `resets_in` when nothing more specific
+/// is present.
+#[non_exhaustive]
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RateLimitSnapshot {
+    /// Share of the primary quota window already consumed, 0–100.
+    pub used_percent: Option<f32>,
+    /// Requests left in the current window.
+    pub remaining_requests: Option<u64>,
+    /// Tokens left in the current window.
+    pub remaining_tokens: Option<u64>,
+    /// Time until the window resets.
+    pub resets_in: Option<Duration>,
+    /// Length of the quota window.
+    pub window: Option<Duration>,
+    /// Provider plan / tier label.
+    pub plan: Option<String>,
+    /// Every rate-limit-shaped header, lower-cased name → verbatim value.
+    pub raw: std::collections::BTreeMap<String, String>,
+}
+
+impl RateLimitSnapshot {
+    /// Build a snapshot from response headers.
+    ///
+    /// Header names are matched case-insensitively. A header is kept in
+    /// `raw` when its name contains `ratelimit` / `rate-limit`, starts with
+    /// `x-codex-`, or is `retry-after`; everything else is ignored.
+    pub fn from_headers<'a>(headers: impl IntoIterator<Item = (&'a str, &'a str)>) -> Self {
+        let mut snapshot = Self::default();
+        for (name, value) in headers {
+            let name = name.to_ascii_lowercase();
+            let value = value.trim();
+            if !is_rate_limit_header(&name) {
+                continue;
+            }
+            match name.as_str() {
+                "x-codex-primary-used-percent" => snapshot.used_percent = value.parse().ok(),
+                "x-ratelimit-remaining-requests" | "anthropic-ratelimit-requests-remaining" => {
+                    snapshot.remaining_requests = value.parse().ok();
+                }
+                "x-ratelimit-remaining-tokens" | "anthropic-ratelimit-tokens-remaining" => {
+                    snapshot.remaining_tokens = value.parse().ok();
+                }
+                "x-codex-primary-reset-after-seconds" | "x-ratelimit-reset-requests" => {
+                    snapshot.resets_in = parse_reset_duration(value);
+                }
+                // Weakest signal: only fills the gap.
+                "retry-after" if snapshot.resets_in.is_none() => {
+                    snapshot.resets_in = parse_reset_duration(value);
+                }
+                "x-codex-primary-window-minutes" => {
+                    snapshot.window = value
+                        .parse::<u64>()
+                        .ok()
+                        .map(|m| Duration::from_secs(m * 60));
+                }
+                "x-codex-plan-type" => snapshot.plan = Some(value.to_owned()),
+                _ => {}
+            }
+            snapshot.raw.insert(name, value.to_owned());
+        }
+        snapshot
+    }
+
+    /// `true` when the provider sent no rate-limit-shaped header at all.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.raw.is_empty()
+    }
+}
+
+fn is_rate_limit_header(name: &str) -> bool {
+    name.contains("ratelimit")
+        || name.contains("rate-limit")
+        || name.starts_with("x-codex-")
+        || name == "retry-after"
+}
+
+/// Parse a reset value as either plain seconds (`288059`, `1.5`) or the
+/// OpenAI `1h2m3s` / `250ms` shape. Anything else yields `None`.
+fn parse_reset_duration(value: &str) -> Option<Duration> {
+    if let Ok(secs) = value.parse::<f64>() {
+        return (secs.is_finite() && secs >= 0.0).then(|| Duration::from_secs_f64(secs));
+    }
+    let mut total = Duration::ZERO;
+    let mut number = String::new();
+    let mut saw_unit = false;
+    let mut chars = value.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c.is_ascii_digit() || c == '.' {
+            number.push(c);
+            continue;
+        }
+        let amount: f64 = number.parse().ok()?;
+        number.clear();
+        let unit = match c {
+            'm' if chars.peek() == Some(&'s') => {
+                chars.next();
+                0.001
+            }
+            'h' => 3600.0,
+            'm' => 60.0,
+            's' => 1.0,
+            _ => return None,
+        };
+        total += Duration::from_secs_f64(amount * unit);
+        saw_unit = true;
+    }
+    (saw_unit && number.is_empty()).then_some(total)
+}
+
+/// Callback invoked once per request with the provider's quota headers.
+pub type OnRateLimit = Arc<dyn Fn(&RateLimitSnapshot) + Send + Sync>;
+
 // ─── ServingOptions ──────────────────────────────────────────────────────────
 
 /// Provider-native serving options, primarily for self-hosted/local backends.
@@ -372,6 +507,9 @@ pub struct StreamOptions {
     pub cache_strategy: CacheStrategy,
     /// Optional callback for observing raw SSE data lines before parsing.
     pub on_raw_payload: Option<OnRawPayload>,
+    /// Optional callback receiving the provider's rate-limit headers, once
+    /// per request, before the first event. Absent = nothing changes.
+    pub on_rate_limit: Option<OnRateLimit>,
     /// Provider-native serving options (local backends). Default = none set.
     pub serving: ServingOptions,
 }
@@ -426,6 +564,13 @@ impl StreamOptions {
         self
     }
 
+    /// Set a callback receiving the provider's rate-limit headers.
+    #[must_use]
+    pub fn with_on_rate_limit(mut self, on_rate_limit: OnRateLimit) -> Self {
+        self.on_rate_limit = Some(on_rate_limit);
+        self
+    }
+
     /// Set the provider-native serving options (local backends).
     #[must_use]
     pub fn with_serving(mut self, serving: ServingOptions) -> Self {
@@ -446,6 +591,10 @@ impl std::fmt::Debug for StreamOptions {
             .field(
                 "on_raw_payload",
                 &self.on_raw_payload.as_ref().map(|_| "<callback>"),
+            )
+            .field(
+                "on_rate_limit",
+                &self.on_rate_limit.as_ref().map(|_| "<callback>"),
             )
             .field("serving", &self.serving)
             .finish()
@@ -1290,6 +1439,146 @@ const _: () = {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── RateLimitSnapshot ────────────────────────────────────────────────
+
+    #[test]
+    fn rate_limit_snapshot_parses_codex_subscription_headers() {
+        // Captured live from the Codex endpoint (issue #1264).
+        let snapshot = RateLimitSnapshot::from_headers([
+            ("x-codex-plan-type", "prolite"),
+            ("X-Codex-Primary-Used-Percent", "98"),
+            ("x-codex-primary-window-minutes", "10080"),
+            ("x-codex-primary-reset-after-seconds", "288059"),
+            ("x-codex-credits-balance", "0"),
+            ("content-type", "text/event-stream"),
+        ]);
+        assert_eq!(snapshot.used_percent, Some(98.0));
+        assert_eq!(snapshot.window, Some(Duration::from_secs(10080 * 60)));
+        assert_eq!(snapshot.resets_in, Some(Duration::from_secs(288_059)));
+        assert_eq!(snapshot.plan.as_deref(), Some("prolite"));
+        assert_eq!(snapshot.remaining_requests, None);
+        // Case-folded names; unknown codex header kept; unrelated header dropped.
+        assert_eq!(
+            snapshot
+                .raw
+                .get("x-codex-primary-used-percent")
+                .map(String::as_str),
+            Some("98")
+        );
+        assert_eq!(
+            snapshot
+                .raw
+                .get("x-codex-credits-balance")
+                .map(String::as_str),
+            Some("0")
+        );
+        assert!(!snapshot.raw.contains_key("content-type"));
+        assert!(!snapshot.is_empty());
+    }
+
+    #[test]
+    fn rate_limit_snapshot_parses_openai_and_anthropic_headers() {
+        let openai = RateLimitSnapshot::from_headers([
+            ("x-ratelimit-remaining-requests", "199"),
+            ("x-ratelimit-remaining-tokens", "39500"),
+            ("x-ratelimit-reset-requests", "6m0s"),
+            ("x-ratelimit-reset-tokens", "250ms"),
+        ]);
+        assert_eq!(openai.remaining_requests, Some(199));
+        assert_eq!(openai.remaining_tokens, Some(39_500));
+        assert_eq!(openai.resets_in, Some(Duration::from_secs(360)));
+        assert_eq!(openai.raw.len(), 4);
+
+        let anthropic = RateLimitSnapshot::from_headers([
+            ("anthropic-ratelimit-requests-remaining", "49"),
+            ("anthropic-ratelimit-tokens-remaining", "9000"),
+            ("anthropic-ratelimit-requests-reset", "2026-09-07T20:00:00Z"),
+        ]);
+        assert_eq!(anthropic.remaining_requests, Some(49));
+        assert_eq!(anthropic.remaining_tokens, Some(9000));
+        // RFC 3339 reset is not parsed into a duration but is still visible.
+        assert_eq!(anthropic.resets_in, None);
+        assert!(
+            anthropic
+                .raw
+                .contains_key("anthropic-ratelimit-requests-reset")
+        );
+    }
+
+    #[test]
+    fn rate_limit_snapshot_retry_after_only_fills_a_gap() {
+        let only_retry = RateLimitSnapshot::from_headers([("retry-after", "30")]);
+        assert_eq!(only_retry.resets_in, Some(Duration::from_secs(30)));
+
+        let both = RateLimitSnapshot::from_headers([
+            ("retry-after", "30"),
+            ("x-codex-primary-reset-after-seconds", "120"),
+        ]);
+        assert_eq!(both.resets_in, Some(Duration::from_secs(120)));
+    }
+
+    #[test]
+    fn rate_limit_snapshot_malformed_values_yield_none_but_stay_raw() {
+        let snapshot = RateLimitSnapshot::from_headers([
+            ("x-codex-primary-used-percent", "lots"),
+            ("x-ratelimit-remaining-requests", "-1"),
+            ("x-ratelimit-reset-requests", "soon"),
+            ("x-codex-primary-window-minutes", ""),
+        ]);
+        assert_eq!(snapshot.used_percent, None);
+        assert_eq!(snapshot.remaining_requests, None);
+        assert_eq!(snapshot.resets_in, None);
+        assert_eq!(snapshot.window, None);
+        assert_eq!(snapshot.raw.len(), 4);
+    }
+
+    #[test]
+    fn rate_limit_snapshot_with_no_rate_limit_headers_is_empty() {
+        let snapshot =
+            RateLimitSnapshot::from_headers([("content-type", "application/json"), ("date", "x")]);
+        assert!(snapshot.is_empty());
+        assert_eq!(snapshot, RateLimitSnapshot::default());
+    }
+
+    #[test]
+    fn parse_reset_duration_accepts_seconds_and_openai_shapes() {
+        assert_eq!(
+            parse_reset_duration("288059"),
+            Some(Duration::from_secs(288_059))
+        );
+        assert_eq!(
+            parse_reset_duration("1.5"),
+            Some(Duration::from_millis(1500))
+        );
+        assert_eq!(
+            parse_reset_duration("1h2m3s"),
+            Some(Duration::from_secs(3723))
+        );
+        assert_eq!(
+            parse_reset_duration("250ms"),
+            Some(Duration::from_millis(250))
+        );
+        assert_eq!(parse_reset_duration("6m0s"), Some(Duration::from_secs(360)));
+        assert_eq!(parse_reset_duration("-5"), None);
+        assert_eq!(parse_reset_duration("5x"), None);
+        assert_eq!(
+            parse_reset_duration("5m5"),
+            None,
+            "trailing bare number is malformed"
+        );
+        assert_eq!(parse_reset_duration(""), None);
+    }
+
+    #[test]
+    fn stream_options_debug_shows_rate_limit_callback_presence_only() {
+        let options = StreamOptions::default().with_on_rate_limit(Arc::new(|_| {}));
+        let rendered = format!("{options:?}");
+        assert!(
+            rendered.contains("on_rate_limit: Some(\"<callback>\")"),
+            "{rendered}"
+        );
+    }
 
     /// A `StreamFn` that records the `max_tokens` it was called with and
     /// yields a fixed terminal event.

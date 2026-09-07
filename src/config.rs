@@ -162,6 +162,7 @@ impl StreamOptionsConfig {
             transport: self.transport,
             cache_strategy: crate::stream::CacheStrategy::default(),
             on_raw_payload: None,
+            on_rate_limit: None,
             serving: self.serving.clone(),
         }
     }
@@ -789,6 +790,7 @@ mod tests {
             transport: StreamTransport::Sse,
             cache_strategy: crate::stream::CacheStrategy::default(),
             on_raw_payload: None,
+            on_rate_limit: None,
             serving: crate::stream::ServingOptions::default(),
         };
         let config = StreamOptionsConfig::from(&opts);
