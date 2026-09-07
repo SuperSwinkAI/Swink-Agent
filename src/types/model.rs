@@ -82,6 +82,18 @@ impl ModelCapabilities {
 // ─── Model Specification ────────────────────────────────────────────────────
 
 /// Reasoning depth for models that support configurable thinking.
+///
+/// One cross-provider knob, set per model with
+/// [`ModelSpec::with_thinking_level`]; each adapter maps it onto its own
+/// wire shape and ignores it where the protocol has none. `Off` (the
+/// default) leaves every request body untouched.
+///
+/// | Adapter | Wire shape |
+/// |---|---|
+/// | Anthropic | `thinking: { type: "enabled", budget_tokens }` — budget from [`ThinkingBudgets`] or a built-in per-level table |
+/// | OpenAI Responses / Codex | `reasoning: { effort }` — `minimal`, `low`, `medium`, `high`, `xhigh` |
+/// | Ollama | `think: true` for any level but `Off` |
+/// | Gemini, OpenAI Chat Completions, Azure, xAI, Mistral, Bedrock | — (not sent) |
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

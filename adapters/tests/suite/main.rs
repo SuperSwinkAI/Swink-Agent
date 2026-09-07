@@ -35,6 +35,8 @@ mod openai;
 mod openai_live;
 #[cfg(feature = "proxy")]
 mod proxy_http;
+#[cfg(feature = "responses")]
+mod responses;
 mod tls_smoke_live;
 #[cfg(feature = "xai")]
 mod xai;
