@@ -165,7 +165,7 @@ Thinking mode availability by provider:
 | Provider | Thinking support |
 |---|---|
 | Anthropic | Full (`/thinking` levels: minimal, low, medium, high, extra-high) |
-| Google Gemini | Supported on deep-think models |
+| Google Gemini | Supported via `thinking_level` on Gemini 3 models |
 | Ollama | Supported on models that emit `<think>` tags (e.g. DeepSeek) |
 | Local (SmolLM3) | Emits `<think>` tags, parsed into thinking events |
 | OpenAI, Azure, xAI, Mistral, Bedrock | Not supported |

@@ -11,7 +11,7 @@ use swink_agent_adapters::XAiStreamFn;
 use crate::common::{find_error_kind, find_error_message};
 
 fn test_model() -> ModelSpec {
-    ModelSpec::new("xai", "grok-4-1-fast-non-reasoning")
+    ModelSpec::new("xai", "grok-4.3")
 }
 
 async fn collect_events(stream_fn: &XAiStreamFn) -> Vec<AssistantMessageEvent> {

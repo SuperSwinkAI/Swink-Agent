@@ -941,7 +941,7 @@ mod tests {
 
         let google = catalog.provider("google").unwrap();
         assert_eq!(google.kind, ProviderKind::Remote);
-        assert_eq!(google.presets.len(), 4);
+        assert_eq!(google.presets.len(), 5);
 
         let bedrock = catalog.provider("bedrock").unwrap();
         assert_eq!(bedrock.auth_mode, Some(AuthMode::AwsSigv4));
@@ -1006,8 +1006,8 @@ mod tests {
         assert!(caps.supports_tool_use);
         assert!(caps.supports_streaming);
         assert!(caps.supports_structured_output);
-        assert_eq!(caps.max_context_window, Some(200_000));
-        assert_eq!(caps.max_output_tokens, Some(16384));
+        assert_eq!(caps.max_context_window, Some(1_000_000));
+        assert_eq!(caps.max_output_tokens, Some(65536));
     }
 
     #[test]
@@ -1018,8 +1018,8 @@ mod tests {
         assert!(caps.supports_thinking);
         assert!(caps.supports_vision);
         assert!(caps.supports_tool_use);
-        assert_eq!(caps.max_context_window, Some(200_000));
-        assert_eq!(caps.max_output_tokens, Some(32768));
+        assert_eq!(caps.max_context_window, Some(1_000_000));
+        assert_eq!(caps.max_output_tokens, Some(131_072));
     }
 
     #[test]
@@ -1441,18 +1441,33 @@ mod tests {
         assert_eq!(preset.status, Some(PresetStatus::Ga));
         assert!(!preset.is_deprecated());
         assert_eq!(preset.replacement_model_id(), None);
+    }
 
-        // The compiled catalog (string statuses only) must still parse and
-        // contain no deprecated entries today.
+    #[test]
+    fn compiled_catalog_replacements_name_a_live_model() {
+        // Every deprecated preset that records a successor must point at a
+        // model_id the same provider still lists as non-deprecated, so a
+        // stale replacement can't silently send callers to another dead id.
         let compiled = model_catalog();
         for provider in &compiled.providers {
             for preset in &provider.presets {
+                let Some(replacement) = preset.status.as_ref().and_then(|status| match status {
+                    PresetStatus::Deprecated {
+                        replacement_model_id,
+                    } => replacement_model_id.as_deref(),
+                    _ => None,
+                }) else {
+                    continue;
+                };
                 assert!(
-                    !preset
-                        .status
-                        .as_ref()
-                        .is_some_and(PresetStatus::is_deprecated),
-                    "unexpected deprecated preset {}.{}",
+                    provider.presets.iter().any(|candidate| {
+                        candidate.model_id == replacement
+                            && !candidate
+                                .status
+                                .as_ref()
+                                .is_some_and(PresetStatus::is_deprecated)
+                    }),
+                    "{}.{} points at unknown or deprecated replacement {replacement}",
                     provider.key,
                     preset.id
                 );
