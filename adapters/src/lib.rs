@@ -144,6 +144,15 @@ mod responses;
 #[cfg(feature = "responses")]
 pub use responses::ResponsesStreamFn;
 
+#[cfg(feature = "codex")]
+mod codex;
+#[cfg(feature = "codex")]
+pub use codex::{
+    CODEX_BASE_URL, CODEX_CLIENT_ID, CODEX_REDIRECT_URI, CodexError, CodexStreamFn,
+    DEFAULT_CREDENTIAL_KEY as CODEX_DEFAULT_CREDENTIAL_KEY, DEFAULT_ORIGINATOR,
+    codex_authorization_config,
+};
+
 #[cfg(feature = "ollama")]
 mod ollama;
 #[cfg(feature = "ollama")]

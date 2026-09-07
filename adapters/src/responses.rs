@@ -32,9 +32,9 @@ use tracing::{debug, error, warn};
 
 use swink_agent::{
     AgentContext, AgentTool, AssistantMessage, AssistantMessageEvent, ContentBlock, Cost,
-    MessageConverter, ModelSpec, ResponseFormat, ServingOptionSupport, StopReason, StreamFn,
-    StreamOptions, ThinkingLevel, ToolResultMessage, Usage, UserMessage, convert_messages,
-    extract_tool_schemas,
+    MessageConverter, ModelSpec, ReasoningEffort, ResponseFormat, ServingOptionSupport, StopReason,
+    StreamFn, StreamOptions, ThinkingLevel, ToolResultMessage, Usage, UserMessage,
+    convert_messages, extract_tool_schemas,
 };
 
 use crate::base::AdapterBase;
@@ -206,6 +206,31 @@ fn build_tools(tools: &[Arc<dyn AgentTool>]) -> (Vec<ResponsesTool>, Option<&'st
     (tools, choice)
 }
 
+/// Map a per-request [`ReasoningEffort`] onto `reasoning.effort`. `Off`
+/// sends nothing.
+const fn effort_wire(effort: ReasoningEffort) -> Option<&'static str> {
+    match effort {
+        ReasoningEffort::Minimal => Some("minimal"),
+        ReasoningEffort::Low => Some("low"),
+        ReasoningEffort::Medium => Some("medium"),
+        ReasoningEffort::High => Some("high"),
+        ReasoningEffort::XHigh => Some("xhigh"),
+        ReasoningEffort::Max => Some("max"),
+        // `Off`, and any future variant with no known wire value: omit.
+        _ => None,
+    }
+}
+
+/// `reasoning.effort` for a request: the per-request
+/// [`ServingOptions::reasoning_effort`](swink_agent::ServingOptions) when
+/// set, else the model's [`ThinkingLevel`].
+fn resolve_effort(model: &ModelSpec, options: &StreamOptions) -> Option<&'static str> {
+    match options.serving.reasoning_effort {
+        Some(effort) => effort_wire(effort),
+        None => reasoning_effort(model.thinking_level),
+    }
+}
+
 /// Map [`ThinkingLevel`] onto `reasoning.effort`. `Off` sends nothing.
 const fn reasoning_effort(level: ThinkingLevel) -> Option<&'static str> {
     match level {
@@ -254,6 +279,7 @@ fn build_request(
         "tools",
         "tool_choice",
     ];
+    // (`reasoning_effort` is typed too — it leaves as `reasoning`.)
     let mut extra = serde_json::Map::new();
     crate::base::merge_extra(&mut extra, &options.serving.extra, TYPED_KEYS);
 
@@ -277,8 +303,7 @@ fn build_request(
         temperature: options.temperature,
         max_output_tokens: options.max_tokens,
         top_p: options.serving.top_p,
-        reasoning: reasoning_effort(model.thinking_level)
-            .map(|effort| ResponsesReasoning { effort }),
+        reasoning: resolve_effort(model, options).map(|effort| ResponsesReasoning { effort }),
         text: text_format(options),
         tools,
         tool_choice,
@@ -712,10 +737,15 @@ fn parse_responses_sse_stream(
 // ─── Shell ──────────────────────────────────────────────────────────────────
 
 /// Shared transport for Responses-speaking providers.
+/// HTTP 4xx body classifier: returns a structured event or `None` to fall
+/// through to status-based classification.
+pub(crate) type ErrorClassifier = fn(u16, &str, &str) -> Option<AssistantMessageEvent>;
+
 pub(crate) struct ResponsesAdapterShell {
     provider: &'static str,
     base: AdapterBase,
     responses_path: &'static str,
+    classify: ErrorClassifier,
 }
 
 impl ResponsesAdapterShell {
@@ -729,6 +759,7 @@ impl ResponsesAdapterShell {
             provider,
             base: AdapterBase::new(base_url, api_key),
             responses_path,
+            classify: crate::oai_transport::classify_oai_error_body,
         }
     }
 
@@ -759,28 +790,25 @@ impl ResponsesAdapterShell {
         options.api_key.as_deref().unwrap_or(&self.base.api_key)
     }
 
-    /// Bearer auth unless the static header map overrides `Authorization`,
-    /// then the static headers — same contract as the Chat Completions shell.
+    /// Bearer auth, then static headers, then per-request headers; later
+    /// layers replace earlier ones by name.
     fn authorize(
         &self,
         request: reqwest::RequestBuilder,
         options: &StreamOptions,
+        per_request: &reqwest::header::HeaderMap,
     ) -> reqwest::RequestBuilder {
-        let mut request = request;
-        if !self
-            .base
-            .headers
-            .contains_key(reqwest::header::AUTHORIZATION)
-        {
-            request = request.header(
+        // `RequestBuilder::headers` replaces per name (reqwest's
+        // `replace_headers`) and never clears what `json()` set, so static
+        // headers override the default `Authorization`, and per-request
+        // headers override static ones — one value per name throughout.
+        request
+            .header(
                 reqwest::header::AUTHORIZATION,
                 format!("Bearer {}", self.api_key(options)),
-            );
-        }
-        for (name, value) in &self.base.headers {
-            request = request.header(name, value);
-        }
-        request
+            )
+            .headers(self.base.headers.clone())
+            .headers(per_request.clone())
     }
 
     pub(crate) fn fmt_debug(
@@ -801,6 +829,30 @@ impl ResponsesAdapterShell {
         options: &'a StreamOptions,
         cancellation_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        self.stream_with_headers(
+            model,
+            context,
+            options,
+            cancellation_token,
+            &reqwest::header::HeaderMap::new(),
+        )
+    }
+
+    /// [`stream`](Self::stream) plus headers that exist only for this one
+    /// request (a per-request session id, a routing id derived from the
+    /// credential). Applied after the static map, so they win.
+    ///
+    /// Borrows are only needed while the request is built, so the returned
+    /// stream is `'static`: a caller can construct `options` locally (e.g.
+    /// after resolving a credential) and still hand the stream out.
+    pub(crate) fn stream_with_headers(
+        &self,
+        model: &ModelSpec,
+        context: &AgentContext,
+        options: &StreamOptions,
+        cancellation_token: CancellationToken,
+        per_request: &reqwest::header::HeaderMap,
+    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'static>> {
         let url = self.url();
         debug!(
             provider = self.provider,
@@ -810,8 +862,13 @@ impl ResponsesAdapterShell {
             "sending Responses request"
         );
         let body = build_request(model, context, options);
-        let request = self.authorize(self.base.client.post(&url).json(&body), options);
+        let request = self.authorize(
+            self.base.client.post(&url).json(&body),
+            options,
+            per_request,
+        );
         let provider = self.provider;
+        let classify = self.classify;
         let on_raw_payload = options.on_raw_payload.clone();
         let on_rate_limit = options.on_rate_limit.clone();
 
@@ -854,11 +911,9 @@ impl ResponsesAdapterShell {
                         }
                     };
                     warn!(status = code, "{provider} HTTP error");
-                    let event =
-                        crate::oai_transport::classify_oai_error_body(code, &body, provider)
-                            .unwrap_or_else(|| {
-                                crate::classify::error_event_from_status(code, &body, provider)
-                            });
+                    let event = classify(code, &body, provider).unwrap_or_else(|| {
+                        crate::classify::error_event_from_status(code, &body, provider)
+                    });
                     return stream::iter([AssistantMessageEvent::Start, event]).left_stream();
                 }
 
@@ -905,6 +960,19 @@ impl ResponsesStreamFn {
         self
     }
 
+    /// Replace the HTTP 4xx body classifier. Takes `(status, body,
+    /// provider_label)` and returns a structured event, or `None` to fall
+    /// through to status-based classification. Defaults to the shared
+    /// OpenAI error-envelope classifier.
+    #[must_use]
+    pub const fn with_error_classifier(
+        mut self,
+        classify: fn(u16, &str, &str) -> Option<AssistantMessageEvent>,
+    ) -> Self {
+        self.shell.classify = classify;
+        self
+    }
+
     /// Add one static header to every request.
     #[must_use]
     pub fn with_header(
@@ -937,6 +1005,7 @@ impl StreamFn for ResponsesStreamFn {
         ServingOptionSupport::none()
             .with_top_p(true)
             .with_format(true)
+            .with_reasoning_effort(true)
             .with_extra(true)
     }
 
@@ -994,6 +1063,26 @@ mod tests {
         assert_eq!(body["reasoning"]["effort"], "high");
         // The system prompt is `instructions`, never an input item.
         assert!(body["input"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn per_request_reasoning_effort_overrides_the_model_level() {
+        let context = AgentContext::new("", Vec::new(), Vec::new());
+        let max = StreamOptions::default().with_serving(
+            swink_agent::ServingOptions::default().with_reasoning_effort(ReasoningEffort::Max),
+        );
+        let body =
+            serde_json::to_value(build_request(&spec(ThinkingLevel::Low), &context, &max)).unwrap();
+        assert_eq!(body["reasoning"]["effort"], "max");
+        let off = StreamOptions::default().with_serving(
+            swink_agent::ServingOptions::default().with_reasoning_effort(ReasoningEffort::Off),
+        );
+        let body = serde_json::to_value(build_request(&spec(ThinkingLevel::High), &context, &off))
+            .unwrap();
+        assert!(
+            body.get("reasoning").is_none(),
+            "per-request Off silences the model level"
+        );
     }
 
     #[test]

@@ -17,6 +17,8 @@ mod bedrock;
 #[cfg(feature = "bedrock")]
 mod bedrock_live;
 mod cargo_manifest;
+#[cfg(feature = "codex")]
+mod codex;
 #[cfg(feature = "gemini")]
 mod google;
 #[cfg(feature = "gemini")]

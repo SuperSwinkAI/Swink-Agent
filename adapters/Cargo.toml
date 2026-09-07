@@ -17,13 +17,16 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = []
 full = ["all"]
-all = ["anthropic", "openai", "ollama", "gemini", "proxy", "azure", "bedrock", "mistral", "xai", "responses"]
+all = ["anthropic", "openai", "ollama", "gemini", "proxy", "azure", "bedrock", "mistral", "xai", "responses", "codex"]
 anthropic = []
 openai-compat = []
 openai = ["openai-compat"]
 # Generic OpenAI Responses-API adapter (`ResponsesStreamFn`); the shell the
 # `codex` provider builds on.
 responses = []
+# ChatGPT-subscription Codex provider over the Responses shell. Off by
+# default on purpose: read the `codex` module docs before enabling.
+codex = ["responses", "dep:swink-agent-auth", "dep:base64"]
 ollama = []
 gemini = []
 proxy = []
@@ -36,6 +39,7 @@ __no_default_features_sentinel = []
 [dependencies]
 swink-agent = { path = "..", version = "0.12.1", default-features = false }
 swink-agent-auth = { path = "../auth", version = "0.12.1", optional = true }
+base64 = { version = "0.23.1", optional = true }
 chrono.workspace = true
 reqwest.workspace = true
 # Supplies the `ring` crypto provider, installed as the process default
