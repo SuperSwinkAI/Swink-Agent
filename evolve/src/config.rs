@@ -7,7 +7,8 @@ use swink_agent::{Cost, ToolSchema};
 use swink_agent_eval::EvalSet;
 
 /// A named region within a system prompt, identified by section header.
-#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromptSection {
     pub name: Option<String>,
     pub content: String,
@@ -53,6 +54,7 @@ impl OptimizationTarget {
     }
 
     /// Override the section delimiter regex (default: markdown `## ` headers).
+    #[must_use]
     pub fn with_section_delimiter(mut self, delimiter: Regex) -> Self {
         self.sections = Self::parse_sections(&self.system_prompt, Some(&delimiter));
         self.section_delimiter = Some(delimiter);
@@ -72,6 +74,7 @@ impl OptimizationTarget {
     }
 
     /// Produce a new target with the system prompt replaced entirely.
+    #[must_use]
     pub fn with_system_prompt(&self, new_prompt: impl Into<String>) -> Self {
         let system_prompt = new_prompt.into();
         let new_delim = self.section_delimiter.clone();
@@ -91,6 +94,7 @@ impl OptimizationTarget {
     }
 
     /// Produce a new target with section at `index` replaced by `new_content`.
+    #[must_use]
     pub fn with_replaced_section(&self, index: usize, new_content: &str) -> Self {
         let old = &self.sections[index];
         let new_prompt = format!(
@@ -116,6 +120,7 @@ impl OptimizationTarget {
     }
 
     /// Produce a new target with the named tool schema replaced.
+    #[must_use]
     pub fn with_replaced_tool(&self, tool_name: &str, schema: ToolSchema) -> Self {
         let mut replacement = Some(schema);
         let tool_schemas = self
@@ -166,7 +171,7 @@ impl OptimizationTarget {
             .iter()
             .enumerate()
             .map(|(i, (start, name))| {
-                let end = positions.get(i + 1).map(|(s, _)| *s).unwrap_or(text.len());
+                let end = positions.get(i + 1).map_or(text.len(), |(s, _)| *s);
                 PromptSection {
                     name: name.clone(),
                     content: text[*start..end].to_string(),
@@ -228,6 +233,7 @@ impl CycleBudget {
 }
 
 /// Configuration for an optimization run.
+#[non_exhaustive]
 pub struct OptimizationConfig {
     pub eval_set: EvalSet,
     pub strategies: Vec<Box<dyn MutationStrategy>>,
@@ -256,36 +262,43 @@ impl OptimizationConfig {
         }
     }
 
+    #[must_use]
     pub fn with_strategies(mut self, strategies: Vec<Box<dyn MutationStrategy>>) -> Self {
         self.strategies = strategies;
         self
     }
 
+    #[must_use]
     pub fn with_acceptance_threshold(mut self, threshold: f64) -> Self {
         self.acceptance_threshold = threshold;
         self
     }
 
+    #[must_use]
     pub fn with_budget(mut self, budget: CycleBudget) -> Self {
         self.budget = budget;
         self
     }
 
+    #[must_use]
     pub fn with_parallelism(mut self, parallelism: usize) -> Self {
         self.parallelism = parallelism;
         self
     }
 
+    #[must_use]
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.seed = Some(seed);
         self
     }
 
+    #[must_use]
     pub fn with_max_weak_points(mut self, max: usize) -> Self {
         self.max_weak_points = max;
         self
     }
 
+    #[must_use]
     pub fn with_max_candidates_per_strategy(mut self, max: usize) -> Self {
         self.max_candidates_per_strategy = max;
         self

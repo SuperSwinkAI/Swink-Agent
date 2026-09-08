@@ -6,7 +6,8 @@ use swink_agent_eval::Score;
 use tracing::debug;
 
 /// Identifies which part of an agent config is being targeted for mutation.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TargetComponent {
     PromptSection { index: usize, name: Option<String> },
     ToolDescription { tool_name: String },
@@ -14,6 +15,9 @@ pub enum TargetComponent {
 }
 
 /// A single failing eval case record associated with a weak point.
+// Deliberately exhaustive: built by struct literal in this crate's own test
+// fixtures, not only returned from a constructor.
+#[allow(clippy::exhaustive_structs)]
 #[derive(Debug, Clone)]
 pub struct CaseFailure {
     pub case_id: String,
@@ -23,6 +27,9 @@ pub struct CaseFailure {
 }
 
 /// A ranked improvement opportunity: one mutable component with aggregated failure data.
+// Deliberately exhaustive: built by struct literal in this crate's own test
+// fixtures, not only returned from a constructor.
+#[allow(clippy::exhaustive_structs)]
 #[derive(Debug, Clone)]
 pub struct WeakPoint {
     pub component: TargetComponent,
@@ -34,6 +41,7 @@ pub struct WeakPoint {
 }
 
 /// Analyzes a baseline and produces ranked improvement opportunities.
+#[non_exhaustive]
 pub struct Diagnoser {
     pub max_weak_points: usize,
 }
@@ -78,6 +86,7 @@ impl Diagnoser {
         let mut weak_points: Vec<WeakPoint> = groups
             .into_values()
             .map(|(component, failures)| {
+                #[allow(clippy::cast_precision_loss)]
                 let n = failures.len() as f64;
                 let mean_score_gap = failures
                     .iter()

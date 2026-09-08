@@ -6,6 +6,10 @@ use swink_agent::Cost;
 use swink_agent_eval::EvalCaseResult;
 
 /// Scored snapshot of the current agent config before any mutations.
+// Deliberately exhaustive: a plain result value built by struct literal in
+// this crate's own test fixtures (and by consumers assembling synthetic
+// baselines), not only returned from a constructor.
+#[allow(clippy::exhaustive_structs)]
 pub struct BaselineSnapshot {
     pub target: OptimizationTarget,
     pub results: Vec<EvalCaseResult>,
@@ -27,16 +31,21 @@ impl BaselineSnapshot {
                 if metrics.is_empty() {
                     0.0
                 } else {
-                    metrics.iter().map(|m| m.score.value).sum::<f64>() / metrics.len() as f64
+                    #[allow(clippy::cast_precision_loss)]
+                    let mean = metrics.iter().map(|m| m.score.value).sum::<f64>() / metrics.len() as f64;
+                    mean
                 }
             })
             .sum();
-        sum / results.len() as f64
+        #[allow(clippy::cast_precision_loss)]
+        let mean = sum / results.len() as f64;
+        mean
     }
 }
 
 /// Summary status of a completed optimization cycle.
-#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CycleStatus {
     /// All phases completed normally.
     Complete,
@@ -49,6 +58,7 @@ pub enum CycleStatus {
 }
 
 /// Full result of one optimization cycle.
+#[non_exhaustive]
 pub struct CycleResult {
     pub cycle_number: u32,
     pub baseline: BaselineSnapshot,

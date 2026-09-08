@@ -3,10 +3,14 @@ use crate::diagnose::TargetComponent;
 use crate::diagnose::WeakPoint;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::fmt::Write as _;
 use swink_agent_eval::Invocation;
 use thiserror::Error;
 
 /// Context passed to each mutation strategy.
+// Deliberately exhaustive: built by struct literal in this crate's own test
+// fixtures (and by strategy implementations outside this crate).
+#[allow(clippy::exhaustive_structs)]
 #[derive(Debug, Clone)]
 pub struct MutationContext<'a> {
     pub weak_point: WeakPoint,
@@ -24,6 +28,7 @@ pub struct MutationContext<'a> {
 }
 
 /// Errors that a mutation strategy can return.
+#[non_exhaustive]
 #[derive(Debug, Clone, Error)]
 pub enum MutationError {
     #[error("judge unavailable: {0}")]
@@ -39,6 +44,7 @@ pub enum MutationError {
 }
 
 /// A candidate mutation: original → mutated text, tagged with its component and strategy.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Candidate {
     /// SHA-256 of `mutated_value` (hex string) — used for deduplication.
@@ -58,7 +64,10 @@ impl Candidate {
     ) -> Self {
         let hash = Sha256::digest(mutated_value.as_bytes());
         let hash_bytes: &[u8] = hash.as_ref();
-        let id: String = hash_bytes.iter().map(|b| format!("{:02x}", b)).collect();
+        let id = hash_bytes.iter().fold(String::new(), |mut acc, b| {
+            let _ = write!(acc, "{b:02x}");
+            acc
+        });
         Self {
             id,
             component,

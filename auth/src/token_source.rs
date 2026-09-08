@@ -158,7 +158,7 @@ impl<T, E> std::fmt::Debug for SingleFlightTokenSource<T, E> {
         f.debug_struct("SingleFlightTokenSource")
             .field("has_cached", &has_cached)
             .field("refresh_margin", &self.refresh_margin)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

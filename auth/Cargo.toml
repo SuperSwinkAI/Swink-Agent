@@ -48,3 +48,6 @@ url.workspace = true
 pretty_assertions.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
 tracing-subscriber = { workspace = true, features = ["fmt"] }
+
+[lints]
+workspace = true

@@ -32,3 +32,6 @@ pretty_assertions = { workspace = true }
 default = []
 otel    = ["dep:opentelemetry"]
 all     = ["otel"]
+
+[lints]
+workspace = true

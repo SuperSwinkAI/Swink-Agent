@@ -10,6 +10,7 @@ const MAX_SIMPLIFIED_WORDS: usize = 50;
 /// 1. Full removal — replaces the section with an empty string.
 /// 2. Simplification — keeps only the first sentence, or the first 50 words
 ///    (FR-011), whichever is shorter.
+#[non_exhaustive]
 pub struct Ablation;
 
 impl Ablation {

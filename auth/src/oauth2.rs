@@ -11,6 +11,7 @@ use swink_agent::CredentialError;
 use tracing::debug;
 
 /// Response from an OAuth2 token endpoint.
+#[non_exhaustive]
 #[derive(Deserialize)]
 pub struct TokenResponse {
     /// The new access token.
@@ -208,10 +209,10 @@ pub async fn refresh_token(
         })
 }
 
-/// `OAuth2` client configuration needed to construct an authorization URL and
-/// exchange the resulting code for tokens, for a credential key that has no
-/// stored credential yet (US4: initial authorization flow).
+/// `OAuth2` client configuration for a credential key with no stored
+/// credential yet (US4: initial authorization flow).
 ///
+/// Builds an authorization URL and exchanges the resulting code for tokens.
 /// This is distinct from [`Credential::OAuth2`](swink_agent::Credential::OAuth2)
 /// (which describes an *already-issued* token set): a credential key must be
 /// paired with an `AuthorizationConfig` via
@@ -559,6 +560,7 @@ impl DeviceAuthorizationConfig {
 }
 
 /// A successful device authorization response (RFC 8628 §3.2).
+#[non_exhaustive]
 #[derive(Deserialize)]
 pub struct DeviceAuthorizationResponse {
     /// The secret the client polls the token endpoint with. Never shown to
