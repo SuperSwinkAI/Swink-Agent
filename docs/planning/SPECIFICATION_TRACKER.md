@@ -527,7 +527,7 @@ graph TD
     style L fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style M fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style N fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
-    style O fill:#eab308,color:#000,stroke:#ca8a04,stroke-width:2px
+    style O fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style P fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style Q fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style R fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px

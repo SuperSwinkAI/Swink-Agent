@@ -1,10 +1,5 @@
 [advisories]
-ignore = [
-    # RUSTSEC-2024-0384 — `instant` is unmaintained (replaced by `web_time`).
-    # Transitive via notify-types → instant. No direct action available until
-    # the `notify` crate drops this dependency upstream.
-    "RUSTSEC-2024-0384",
-]
+ignore = []
 
 [licenses]
 # `unlicensed = "deny"` was removed in cargo-deny 0.16 (see PR #611);
