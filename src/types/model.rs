@@ -27,6 +27,15 @@ pub struct ModelCapabilities {
     pub max_context_window: Option<u64>,
     /// Maximum output tokens per response, if known.
     pub max_output_tokens: Option<u64>,
+    /// Reasoning levels this model accepts, when the catalog records them.
+    ///
+    /// `None` means the catalog has no data for this model — fall back to
+    /// [`supports_thinking`](Self::supports_thinking). `Some(&[])` means the
+    /// model has no reasoning-level control at all (it may still emit
+    /// thinking blocks — `supports_thinking` and this field are independent;
+    /// see [`ModelCapabilities::accepts_reasoning_level`]). A non-empty list
+    /// is ordered ascending, `Off` first.
+    pub reasoning_levels: Option<Vec<ThinkingLevel>>,
 }
 
 impl ModelCapabilities {
@@ -77,6 +86,36 @@ impl ModelCapabilities {
         self.max_output_tokens = Some(tokens);
         self
     }
+
+    /// Set the reasoning levels this model accepts.
+    #[must_use]
+    pub fn with_reasoning_levels(mut self, levels: Vec<ThinkingLevel>) -> Self {
+        self.reasoning_levels = Some(levels);
+        self
+    }
+
+    /// The reasoning levels the catalog records for this model, if any.
+    #[must_use]
+    pub fn reasoning_levels(&self) -> Option<&[ThinkingLevel]> {
+        self.reasoning_levels.as_deref()
+    }
+
+    /// Whether `level` is accepted by this model.
+    ///
+    /// `Off` is always accepted — every model can decline to reason.
+    /// Otherwise: an unannotated catalog entry (`None`) falls back to
+    /// [`supports_thinking`](Self::supports_thinking); an annotated one
+    /// checks list membership.
+    #[must_use]
+    pub fn accepts_reasoning_level(&self, level: ThinkingLevel) -> bool {
+        if level == ThinkingLevel::Off {
+            return true;
+        }
+        match &self.reasoning_levels {
+            Some(levels) => levels.contains(&level),
+            None => self.supports_thinking,
+        }
+    }
 }
 
 // ─── Model Specification ────────────────────────────────────────────────────
@@ -94,6 +133,10 @@ impl ModelCapabilities {
 /// | OpenAI Responses / Codex | `reasoning: { effort }` — `minimal`, `low`, `medium`, `high`, `xhigh` |
 /// | Ollama | `think: true` for any level but `Off` |
 /// | Gemini, OpenAI Chat Completions, Azure, xAI, Mistral, Bedrock | — (not sent) |
+///
+/// Which of these variants a given model actually accepts is recorded per
+/// preset in the model catalog — see
+/// [`ModelCapabilities::reasoning_levels`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -105,6 +148,27 @@ pub enum ThinkingLevel {
     Medium,
     High,
     ExtraHigh,
+}
+
+impl ThinkingLevel {
+    /// The wire spelling used by serde (`snake_case`), e.g. `"extra_high"`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Minimal => "minimal",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::ExtraHigh => "extra_high",
+        }
+    }
+}
+
+impl std::fmt::Display for ThinkingLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// Optional per-level token budget overrides for providers that support
@@ -179,7 +243,7 @@ impl ModelSpec {
     }
 
     #[must_use]
-    pub const fn with_capabilities(mut self, capabilities: ModelCapabilities) -> Self {
+    pub fn with_capabilities(mut self, capabilities: ModelCapabilities) -> Self {
         self.capabilities = Some(capabilities);
         self
     }

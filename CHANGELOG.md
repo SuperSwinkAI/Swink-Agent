@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `ModelCapabilities::reasoning_levels: Option<Vec<ThinkingLevel>>` — per-model reasoning-level list from the catalog, independent of `supports_thinking` (a model can emit thinking blocks without exposing a level knob, e.g. Gemini, Bedrock). `None` = unannotated, `Some(&[])` = no reasoning-level control. Published on `ModelSpec.capabilities` over JSON-RPC with no rpc-crate changes. New `ModelCapabilities::accepts_reasoning_level()` and `ThinkingLevel::as_str()`/`Display`. All 93 `model_catalog.toml` presets now annotate the field, recording adapter truth (what this workspace currently honors) rather than provider truth (#1287)
+
+### Changed
+- `ModelSpec::with_capabilities` is no longer `const fn` — `ModelCapabilities` now holds a `Vec`, which has drop glue (#1287)
+
 ## [0.13.2] - 2026-09-07
 
 ### Fixed

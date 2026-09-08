@@ -595,6 +595,85 @@ fn thinking_level_all_variants() {
     }
 }
 
+#[test]
+fn thinking_level_as_str_matches_serde_spelling() {
+    let levels = [
+        ThinkingLevel::Off,
+        ThinkingLevel::Minimal,
+        ThinkingLevel::Low,
+        ThinkingLevel::Medium,
+        ThinkingLevel::High,
+        ThinkingLevel::ExtraHigh,
+    ];
+    for level in levels {
+        let json = serde_json::to_string(&level).unwrap();
+        assert_eq!(json, format!("\"{}\"", level.as_str()));
+        assert_eq!(level.to_string(), level.as_str());
+    }
+    assert_eq!(ThinkingLevel::ExtraHigh.as_str(), "extra_high");
+}
+
+#[test]
+fn model_capabilities_reasoning_levels_json_round_trip() {
+    let caps = ModelCapabilities::none()
+        .with_thinking(true)
+        .with_reasoning_levels(vec![ThinkingLevel::Off, ThinkingLevel::High]);
+    let json = serde_json::to_value(&caps).unwrap();
+    assert_eq!(json["reasoning_levels"], serde_json::json!(["off", "high"]));
+
+    let parsed: ModelCapabilities = serde_json::from_value(json).unwrap();
+    assert_eq!(parsed, caps);
+}
+
+#[test]
+fn model_capabilities_deserialize_without_reasoning_levels() {
+    // Legacy payload predating this field must still deserialize, with the
+    // field defaulting to None (unannotated), not an empty list.
+    let legacy = serde_json::json!({
+        "supports_thinking": true,
+        "supports_vision": false,
+        "supports_tool_use": false,
+        "supports_streaming": true,
+        "supports_structured_output": false,
+        "max_context_window": null,
+        "max_output_tokens": null,
+    });
+    let caps: ModelCapabilities = serde_json::from_value(legacy).unwrap();
+    assert_eq!(caps.reasoning_levels, None);
+}
+
+#[test]
+fn accepts_reasoning_level_unannotated_falls_back_to_supports_thinking() {
+    let thinking = ModelCapabilities::none().with_thinking(true);
+    assert!(thinking.accepts_reasoning_level(ThinkingLevel::High));
+    assert!(thinking.accepts_reasoning_level(ThinkingLevel::Off));
+
+    let non_thinking = ModelCapabilities::none();
+    assert!(!non_thinking.accepts_reasoning_level(ThinkingLevel::High));
+    assert!(non_thinking.accepts_reasoning_level(ThinkingLevel::Off));
+}
+
+#[test]
+fn accepts_reasoning_level_empty_list_still_allows_off() {
+    let caps = ModelCapabilities::none()
+        .with_thinking(true)
+        .with_reasoning_levels(vec![]);
+    assert!(caps.accepts_reasoning_level(ThinkingLevel::Off));
+    assert!(!caps.accepts_reasoning_level(ThinkingLevel::Medium));
+}
+
+#[test]
+fn accepts_reasoning_level_checks_list_membership() {
+    let caps = ModelCapabilities::none()
+        .with_thinking(true)
+        .with_reasoning_levels(vec![ThinkingLevel::Low, ThinkingLevel::High]);
+    assert!(caps.accepts_reasoning_level(ThinkingLevel::Off));
+    assert!(caps.accepts_reasoning_level(ThinkingLevel::Low));
+    assert!(caps.accepts_reasoning_level(ThinkingLevel::High));
+    assert!(!caps.accepts_reasoning_level(ThinkingLevel::Medium));
+    assert!(!caps.accepts_reasoning_level(ThinkingLevel::Minimal));
+}
+
 // T052
 #[test]
 fn model_spec_construction_and_builder() {
