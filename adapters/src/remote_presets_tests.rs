@@ -1,0 +1,415 @@
+//! Tests for `remote_presets`.
+#![cfg(test)]
+
+use super::*;
+
+// ── all_remote_presets (unfiltered) ──────────────────────────────────
+
+#[test]
+fn all_remote_presets_are_loaded_from_catalog() {
+    let all = all_remote_presets(None);
+    assert!(!all.is_empty(), "catalog should have remote presets");
+}
+
+#[test]
+fn every_remote_provider_has_at_least_one_unfiltered_preset() {
+    let catalog = model_catalog();
+    for provider in &catalog.providers {
+        if provider.kind == ProviderKind::Remote {
+            let presets = all_remote_presets(Some(&provider.key));
+            assert!(
+                !presets.is_empty(),
+                "remote provider '{}' should have presets in the catalog",
+                provider.key
+            );
+        }
+    }
+}
+
+#[test]
+fn all_catalog_remote_presets_resolvable_by_provider_and_preset_id() {
+    let catalog = model_catalog();
+    for p in all_remote_presets(None) {
+        let found = catalog
+            .preset(&p.provider_key, &p.preset_id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "catalog.preset('{}', '{}') must resolve for model_id '{}'",
+                    p.provider_key, p.preset_id, p.model_id
+                )
+            });
+        assert_eq!(found.model_id, p.model_id);
+    }
+}
+
+// ── is_provider_compiled ────────────────────────────────────────────
+
+#[test]
+fn is_provider_compiled_returns_false_for_unknown_provider() {
+    assert!(!is_provider_compiled("nonexistent"));
+    assert!(!is_provider_compiled("local"));
+    assert!(!is_provider_compiled(""));
+}
+
+#[test]
+fn is_provider_compiled_matches_feature_gates() {
+    // Each assertion matches the compile-time cfg for the corresponding feature.
+    assert_eq!(
+        is_provider_compiled("anthropic"),
+        cfg!(feature = "anthropic")
+    );
+    assert_eq!(is_provider_compiled("openai"), cfg!(feature = "openai"));
+    assert_eq!(is_provider_compiled("google"), cfg!(feature = "gemini"));
+    assert_eq!(is_provider_compiled("azure"), cfg!(feature = "azure"));
+    assert_eq!(is_provider_compiled("xai"), cfg!(feature = "xai"));
+    assert_eq!(is_provider_compiled("mistral"), cfg!(feature = "mistral"));
+    assert_eq!(is_provider_compiled("bedrock"), cfg!(feature = "bedrock"));
+}
+
+// ── remote_presets (filtered) ───────────────────────────────────────
+
+#[test]
+fn remote_presets_only_contains_compiled_providers() {
+    for p in remote_presets(None) {
+        assert!(
+            is_provider_compiled(&p.provider_key),
+            "remote_presets() returned preset '{}' for provider '{}' which is not compiled",
+            p.preset_id,
+            p.provider_key
+        );
+    }
+}
+
+#[test]
+fn remote_presets_subset_of_all_remote_presets() {
+    let filtered = remote_presets(None);
+    let all = all_remote_presets(None);
+    assert!(
+        filtered.len() <= all.len(),
+        "filtered ({}) must be <= all ({})",
+        filtered.len(),
+        all.len()
+    );
+    // Every filtered preset must also appear in the unfiltered list.
+    for p in &filtered {
+        assert!(
+            all.iter()
+                .any(|a| a.model_id == p.model_id && a.provider_key == p.provider_key),
+            "filtered preset '{}.{}' not found in all_remote_presets",
+            p.provider_key,
+            p.preset_id
+        );
+    }
+}
+
+#[cfg(not(any(
+    feature = "anthropic",
+    feature = "openai",
+    feature = "gemini",
+    feature = "azure",
+    feature = "xai",
+    feature = "mistral",
+    feature = "bedrock",
+)))]
+#[test]
+fn remote_presets_empty_when_no_adapters_compiled() {
+    let presets = remote_presets(None);
+    assert!(
+        presets.is_empty(),
+        "remote_presets() should be empty with no adapter features, got {} presets",
+        presets.len()
+    );
+}
+
+#[cfg(all(feature = "xai", not(feature = "openai")))]
+#[test]
+fn xai_feature_does_not_mark_openai_as_compiled() {
+    assert!(is_provider_compiled("xai"));
+    assert!(!is_provider_compiled("openai"));
+    assert!(
+        remote_presets(None)
+            .into_iter()
+            .all(|preset| preset.provider_key != "openai"),
+        "xai-only builds must not expose OpenAI presets as compiled",
+    );
+}
+
+// ── preset() (filtered) ────────────────────────────────────────────
+
+#[test]
+fn preset_only_finds_compiled_providers() {
+    // Take every model_id from the full catalog and verify that preset()
+    // only returns it when the provider is compiled.
+    for p in all_remote_presets(None) {
+        let result = preset(&p.model_id);
+        if is_provider_compiled(&p.provider_key) {
+            // May still be None if an earlier provider claimed this model_id.
+            // That's fine — we just verify it doesn't return an uncompiled one.
+            if let Some(found) = &result {
+                assert!(
+                    is_provider_compiled(&found.provider_key),
+                    "preset('{}') returned uncompiled provider '{}'",
+                    p.model_id,
+                    found.provider_key
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn preset_returns_none_for_nonexistent_model() {
+    assert!(preset("nonexistent-model-xyz").is_none());
+}
+
+// ── preset key resolution ──────────────────────────────────────────
+
+#[test]
+fn preset_key_resolves_via_catalog() {
+    let key = RemotePresetKey::new("anthropic", "sonnet_46");
+    let catalog_preset = required_catalog_preset(key).unwrap();
+    assert_eq!(catalog_preset.model_id, "claude-sonnet-4-6");
+}
+
+// ── feature-gated connection tests ──────────────────────────────────
+
+#[cfg(feature = "anthropic")]
+#[test]
+fn preset_finds_anthropic_when_compiled() {
+    let sonnet = preset("claude-sonnet-4-6").expect("sonnet preset should exist");
+    assert_eq!(sonnet.provider_key, "anthropic");
+    assert_eq!(sonnet.preset_id, "sonnet_46");
+}
+
+#[cfg(feature = "openai")]
+#[test]
+fn preset_finds_openai_when_compiled() {
+    let gpt = preset("gpt-5.4").expect("gpt-5.4 preset should exist");
+    assert_eq!(gpt.provider_key, "openai");
+}
+
+#[cfg(feature = "anthropic")]
+#[test]
+fn remote_connection_uses_catalog_model_spec() {
+    let key = RemotePresetKey::new("anthropic", "sonnet_46");
+    let preset = required_catalog_preset(key).unwrap();
+    let connection =
+        build_connection_from_preset(&preset, Some("test-key".to_string()), None).unwrap();
+    assert_eq!(connection.model_spec(), &preset.model_spec());
+}
+
+#[cfg(feature = "openai")]
+#[test]
+fn remote_preset_requires_key() {
+    let preset = preset("gpt-5.4").unwrap();
+    let err = match build_connection_from_preset(&preset, None, None) {
+        Ok(_) => panic!("expected missing credential error"),
+        Err(err) => err,
+    };
+    assert_eq!(
+        err,
+        RemoteModelConnectionError::MissingCredential {
+            preset: "OpenAI GPT-5.4".to_string(),
+            env_var: "OPENAI_API_KEY".to_string(),
+        }
+    );
+}
+
+/// Nothing else asserts which wire the factory actually picks — an
+/// explicit key gets past the `MissingCredential` short-circuit that
+/// stops `remote_preset_requires_key` from ever reaching `new_for_wire`.
+#[cfg(feature = "openai")]
+#[test]
+fn openai_factory_builds_the_wire_named_by_env() {
+    let preset = preset("gpt-5.4").unwrap();
+    if let Ok(wire) = crate::OpenAiWire::from_env() {
+        let connection =
+            build_connection_from_preset(&preset, Some("test-key".to_string()), None).unwrap();
+        let expects_responses = wire == crate::OpenAiWire::Responses;
+        assert_eq!(
+            connection
+                .stream_fn()
+                .supported_serving_options()
+                .reasoning_effort,
+            expects_responses,
+            "factory-built connection's wire should match OpenAiWire::from_env()"
+        );
+    } else {
+        let err = match build_connection_from_preset(&preset, Some("test-key".to_string()), None) {
+            Ok(_) => panic!("expected a ProviderConfigError given the invalid OPENAI_API"),
+            Err(err) => err,
+        };
+        assert!(matches!(
+            err,
+            RemoteModelConnectionError::ProviderConfigError { .. }
+        ));
+    }
+}
+
+#[test]
+fn provider_config_error_names_the_provider_and_the_cause() {
+    let err = RemoteModelConnectionError::ProviderConfigError {
+        provider_key: "openai".to_string(),
+        detail: "OPENAI_API=\"chatcompletions\" is not a wire protocol".to_string(),
+    };
+    let rendered = err.to_string();
+    assert!(rendered.contains("openai"), "{rendered}");
+    assert!(rendered.contains("chatcompletions"), "{rendered}");
+    assert!(
+        !rendered.contains("no adapter feature enabled"),
+        "a config error must not blame a missing cargo feature: {rendered}"
+    );
+}
+
+#[cfg(feature = "anthropic")]
+#[test]
+fn explicit_credential_builds_remote_connection_without_env_lookup() {
+    let key = RemotePresetKey::new("anthropic", "sonnet_46");
+    let connection =
+        build_remote_connection_with_credential(key, Some("test-key".to_string()), None).unwrap();
+    assert_eq!(connection.model_spec().provider, "anthropic");
+    assert_eq!(connection.model_spec().model_id, "claude-sonnet-4-6");
+}
+
+#[cfg(feature = "anthropic")]
+#[test]
+fn explicit_credential_reports_missing_key() {
+    let key = RemotePresetKey::new("anthropic", "sonnet_46");
+    let err = match build_remote_connection_with_credential(key, None, None) {
+        Ok(_) => panic!("expected missing credential error"),
+        Err(err) => err,
+    };
+    assert_eq!(
+        err,
+        RemoteModelConnectionError::MissingCredential {
+            preset: "Anthropic Sonnet 4.6".to_string(),
+            env_var: "ANTHROPIC_API_KEY".to_string(),
+        }
+    );
+}
+
+#[cfg(feature = "bedrock")]
+#[test]
+fn bedrock_explicit_credential_path_does_not_require_api_key() {
+    let key = RemotePresetKey::new("bedrock", "anthropic_claude_sonnet_45");
+    let err = match build_remote_connection_with_credential(key, None, None) {
+        Ok(_) => panic!("expected missing region or AWS credentials"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(
+            err,
+            RemoteModelConnectionError::MissingRegion { .. }
+                | RemoteModelConnectionError::MissingAwsCredentials { .. }
+        ),
+        "bedrock should skip API-key validation, got {err:?}",
+    );
+}
+
+// Explicit-but-empty credential must be rejected the same way `None` is.
+// `Some("")` and `Some("   ")` can sneak past a naive `is_some()` check,
+// so pin the contract: trimmed-empty explicit keys error as MissingCredential.
+#[cfg(feature = "anthropic")]
+#[test]
+fn build_with_credential_rejects_explicit_empty_string() {
+    let key = RemotePresetKey::new("anthropic", "sonnet_46");
+    for candidate in [String::new(), "   ".to_string(), "\t\n".to_string()] {
+        let err = match build_remote_connection_with_credential(key, Some(candidate), None) {
+            Ok(_) => panic!("empty/whitespace explicit credential must error"),
+            Err(err) => err,
+        };
+        assert!(
+            matches!(err, RemoteModelConnectionError::MissingCredential { .. }),
+            "expected MissingCredential, got {err:?}"
+        );
+    }
+}
+
+// Unknown preset must short-circuit with UnknownPreset before any credential
+// or env-var work happens — protects callers from misleading MissingCredential
+// errors when the real problem is a bad preset key.
+#[test]
+fn build_with_credential_rejects_unknown_preset() {
+    let key = RemotePresetKey::new("anthropic", "nonexistent_preset_xyz");
+    let err = match build_remote_connection_with_credential(key, Some("irrelevant".into()), None) {
+        Ok(_) => panic!("unknown preset must error"),
+        Err(err) => err,
+    };
+    assert_eq!(
+        err,
+        RemoteModelConnectionError::UnknownPreset {
+            provider_key: "anthropic",
+            preset_id: "nonexistent_preset_xyz",
+        }
+    );
+}
+
+// Bedrock uses SigV4, not a bearer token — `Some("")` must still route
+// through the bedrock branch (which reads AWS env) and never return
+// MissingCredential. Complements the `None` test above.
+#[cfg(feature = "bedrock")]
+#[test]
+fn bedrock_ignores_explicit_empty_api_key() {
+    let key = RemotePresetKey::new("bedrock", "anthropic_claude_sonnet_45");
+    if let Err(err) = build_remote_connection_with_credential(key, Some(String::new()), None) {
+        assert!(
+            !matches!(err, RemoteModelConnectionError::MissingCredential { .. }),
+            "bedrock must not surface MissingCredential when api_key is Some(\"\"); got {err:?}"
+        );
+    }
+}
+
+#[test]
+fn build_remote_connection_for_model_rejects_unknown() {
+    let result = build_remote_connection_for_model("nonexistent-xyz");
+    assert!(result.is_err());
+    let err = result.err().unwrap();
+    assert_eq!(
+        err,
+        RemoteModelConnectionError::UnknownModelId {
+            model_id: "nonexistent-xyz".to_string(),
+        }
+    );
+}
+
+#[test]
+fn preset_by_model_id_returns_a_match_for_every_filtered_model_id() {
+    let mut seen = std::collections::HashSet::new();
+    for p in remote_presets(None) {
+        if seen.insert(p.model_id.clone()) {
+            assert!(
+                preset(&p.model_id).is_some(),
+                "preset('{}') must return Some for a compiled catalog model_id",
+                p.model_id
+            );
+        }
+    }
+}
+
+#[cfg(feature = "anthropic")]
+#[test]
+fn preset_finds_representative_anthropic_model() {
+    let p = preset("claude-sonnet-4-6").expect("anthropic preset should exist");
+    assert_eq!(p.provider_key, "anthropic");
+}
+
+#[cfg(feature = "openai")]
+#[test]
+fn preset_finds_representative_openai_model() {
+    let p = preset("gpt-5.4").expect("openai preset should exist");
+    assert_eq!(p.provider_key, "openai");
+}
+
+#[cfg(feature = "gemini")]
+#[test]
+fn preset_finds_representative_gemini_model() {
+    let p = preset("gemini-3-flash-preview").expect("gemini preset should exist");
+    assert_eq!(p.provider_key, "google");
+}
+
+#[cfg(feature = "mistral")]
+#[test]
+fn preset_finds_representative_mistral_model() {
+    let p = preset("mistral-large-latest").expect("mistral preset should exist");
+    assert_eq!(p.provider_key, "mistral");
+}
