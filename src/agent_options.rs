@@ -821,95 +821,10 @@ impl AgentOptions {
     }
 }
 
-#[cfg(test)]
-#[cfg(feature = "plugins")]
-mod tests {
-    use super::*;
-    use crate::testing::{MockPlugin, SimpleMockStreamFn};
-    use crate::types::ModelSpec;
-
-    fn test_options() -> AgentOptions {
-        AgentOptions::new_simple(
-            "test",
-            ModelSpec::new("test-model", "test-model"),
-            Arc::new(SimpleMockStreamFn::from_text("hello")),
-        )
-    }
-
-    #[test]
-    fn with_plugin_deduplicates_by_name() {
-        let opts = test_options()
-            .with_plugin(Arc::new(MockPlugin::new("alpha").with_priority(1)))
-            .with_plugin(Arc::new(MockPlugin::new("alpha").with_priority(5)));
-
-        assert_eq!(opts.plugins.len(), 1);
-        assert_eq!(opts.plugins[0].priority(), 5);
-    }
-
-    #[test]
-    fn with_plugin_keeps_distinct_names() {
-        let opts = test_options()
-            .with_plugin(Arc::new(MockPlugin::new("alpha")))
-            .with_plugin(Arc::new(MockPlugin::new("beta")));
-
-        assert_eq!(opts.plugins.len(), 2);
-    }
-
-    #[test]
-    fn with_plugins_deduplicates_within_batch() {
-        let opts = test_options().with_plugins(vec![
-            Arc::new(MockPlugin::new("alpha").with_priority(1)),
-            Arc::new(MockPlugin::new("beta")),
-            Arc::new(MockPlugin::new("alpha").with_priority(9)),
-        ]);
-
-        assert_eq!(opts.plugins.len(), 2);
-        // Last "alpha" wins
-        let alpha = opts.plugins.iter().find(|p| p.name() == "alpha").unwrap();
-        assert_eq!(alpha.priority(), 9);
-    }
-
-    #[test]
-    fn with_plugins_deduplicates_against_existing() {
-        let opts = test_options()
-            .with_plugin(Arc::new(MockPlugin::new("alpha").with_priority(1)))
-            .with_plugins(vec![
-                Arc::new(MockPlugin::new("alpha").with_priority(7)),
-                Arc::new(MockPlugin::new("beta")),
-            ]);
-
-        assert_eq!(opts.plugins.len(), 2);
-        let alpha = opts.plugins.iter().find(|p| p.name() == "alpha").unwrap();
-        assert_eq!(alpha.priority(), 7);
-    }
-}
+#[cfg(all(test, feature = "plugins"))]
+#[path = "agent_options_tests.rs"]
+mod tests;
 
 #[cfg(all(test, feature = "testkit"))]
-mod credential_timeout_tests {
-    use super::*;
-    use crate::testing::SimpleMockStreamFn;
-    use crate::types::ModelSpec;
-
-    fn test_options() -> AgentOptions {
-        AgentOptions::new_simple(
-            "test",
-            ModelSpec::new("test-model", "test-model"),
-            Arc::new(SimpleMockStreamFn::from_text("hello")),
-        )
-    }
-
-    #[test]
-    fn credential_timeout_defaults_to_30_seconds() {
-        let opts = test_options();
-        assert_eq!(opts.credential_timeout, std::time::Duration::from_secs(30));
-    }
-
-    #[test]
-    fn with_credential_timeout_overrides_default() {
-        let opts = test_options().with_credential_timeout(std::time::Duration::from_millis(250));
-        assert_eq!(
-            opts.credential_timeout,
-            std::time::Duration::from_millis(250)
-        );
-    }
-}
+#[path = "agent_options_credential_timeout_tests.rs"]
+mod credential_timeout_tests;
