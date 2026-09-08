@@ -131,13 +131,5 @@ const fn _assert_send_sync() {
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn otel_init_config_defaults() {
-        let config = OtelInitConfig::default();
-        assert_eq!(config.service_name, "swink-agent");
-        assert!(config.endpoint.is_none());
-    }
-}
+#[path = "otel_tests.rs"]
+mod tests;
