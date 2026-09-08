@@ -138,7 +138,7 @@ fn p1_regression_rejected() {
     assert_eq!(result.rejected.len(), 1);
     match &result.rejected[0].2 {
         AcceptanceVerdict::P1Regression { case_id } => assert_eq!(case_id, "c1"),
-        other => panic!("expected P1Regression, got {:?}", other),
+        other => panic!("expected P1Regression, got {other:?}"),
     }
 }
 
@@ -163,7 +163,7 @@ fn missing_p1_candidate_result_is_rejected() {
     assert_eq!(result.rejected.len(), 1);
     match &result.rejected[0].2 {
         AcceptanceVerdict::P1Regression { case_id } => assert_eq!(case_id, "kept"),
-        other => panic!("expected P1Regression, got {:?}", other),
+        other => panic!("expected P1Regression, got {other:?}"),
     }
 }
 
@@ -174,10 +174,10 @@ fn top_ranked_per_component() {
     let baseline = build_baseline(vec![("c1", 0.5, Verdict::Pass)], 0.5);
     let ca = make_candidate(TargetComponent::FullPrompt, "v2");
     let cb = make_candidate(TargetComponent::FullPrompt, "v3");
-    let ca_result = build_candidate_result(ca, vec![("c1", 0.9, Verdict::Pass)], 0.55); // +0.05
-    let cb_result = build_candidate_result(cb, vec![("c1", 0.8, Verdict::Pass)], 0.53); // +0.03
+    let result_a = build_candidate_result(ca, vec![("c1", 0.9, Verdict::Pass)], 0.55); // +0.05
+    let result_b = build_candidate_result(cb, vec![("c1", 0.8, Verdict::Pass)], 0.53); // +0.03
     let gate = AcceptanceGate::new(0.01);
-    let result = gate.evaluate(&baseline, &[ca_result, cb_result]);
+    let result = gate.evaluate(&baseline, &[result_a, result_b]);
     assert_eq!(result.applied.len(), 1);
     assert_eq!(result.accepted_not_applied.len(), 1);
     assert!(result.rejected.is_empty());

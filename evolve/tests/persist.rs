@@ -51,14 +51,14 @@ fn manifest_contains_all_fields() {
     let baseline = make_baseline(0.6);
 
     let ca = make_candidate("v2");
-    let ca_result = make_candidate_result(ca.clone(), 0.7);
+    let result_a = make_candidate_result(ca.clone(), 0.7);
 
     let cb = make_candidate("v3");
-    let cb_result = make_candidate_result(cb.clone(), 0.55);
+    let result_b = make_candidate_result(cb.clone(), 0.55);
 
     let acceptance = make_acceptance(
-        vec![(ca, ca_result)],
-        vec![(cb, cb_result, AcceptanceVerdict::NoImprovement)],
+        vec![(ca, result_a)],
+        vec![(cb, result_b, AcceptanceVerdict::NoImprovement)],
     );
 
     let persister = CyclePersister::new(tmp.path());
@@ -112,13 +112,11 @@ fn output_directory_versioned() {
 
     assert!(
         dirs.iter().any(|d| d.starts_with("cycle-0001-")),
-        "cycle-0001-* directory not found; dirs: {:?}",
-        dirs
+        "cycle-0001-* directory not found; dirs: {dirs:?}"
     );
     assert!(
         dirs.iter().any(|d| d.starts_with("cycle-0002-")),
-        "cycle-0002-* directory not found; dirs: {:?}",
-        dirs
+        "cycle-0002-* directory not found; dirs: {dirs:?}"
     );
 }
 
@@ -222,7 +220,7 @@ fn load_manifests_ordered_by_cycle() {
     // Write 3 cycles in reverse order to ensure sort is working
     for cycle in [3u32, 1, 2] {
         let c = make_candidate(&format!("v{cycle}"));
-        let cr = make_candidate_result(c.clone(), 0.5 + cycle as f64 * 0.05);
+        let cr = make_candidate_result(c.clone(), f64::from(cycle).mul_add(0.05, 0.5));
         let acceptance = make_acceptance(vec![(c, cr)], vec![]);
         persister
             .persist(cycle, &acceptance, &baseline, &[])
