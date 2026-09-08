@@ -59,7 +59,13 @@ Ollama handles tool calling, thinking mode, and streaming natively for Gemma 4.
 
 ## llama.cpp Server
 
-llama.cpp's built-in HTTP server exposes an OpenAI-compatible `/v1/chat/completions` endpoint, so it works with `OpenAiStreamFn`.
+llama.cpp's built-in HTTP server exposes an OpenAI-compatible `/v1/chat/completions` endpoint, so it works with `OpenAiStreamFn::new_chat_completions`.
+
+> Since 0.13.0, `OpenAiStreamFn::new` speaks the Responses API (`/v1/responses`), which
+> none of the servers in this section implement — they return 404. Use
+> `OpenAiStreamFn::new_chat_completions` for all of them, or set
+> `OPENAI_API=chat_completions` when the adapter is built from configuration rather than
+> code (the TUI, `build_connection_from_preset`).
 
 ### Setup
 
@@ -92,7 +98,7 @@ llama.cpp's built-in HTTP server exposes an OpenAI-compatible `/v1/chat/completi
 use swink_agent_adapters::OpenAiStreamFn;
 
 // llama.cpp server requires no API key; pass an empty string
-let stream_fn = OpenAiStreamFn::new("http://localhost:8080", "");
+let stream_fn = OpenAiStreamFn::new_chat_completions("http://localhost:8080", "");
 ```
 
 Point the `ModelSpec` at whatever model name llama.cpp reports (usually the filename stem). Tool calling support depends on the llama.cpp version and model; check llama.cpp docs for `--jinja` flag requirements.
@@ -101,7 +107,7 @@ Point the `ModelSpec` at whatever model name llama.cpp reports (usually the file
 
 ## vLLM
 
-vLLM provides an OpenAI-compatible API server with high-throughput batched inference. It works with `OpenAiStreamFn`.
+vLLM provides an OpenAI-compatible API server with high-throughput batched inference. It works with `OpenAiStreamFn::new_chat_completions`.
 
 ### Setup
 
@@ -129,10 +135,27 @@ vLLM provides an OpenAI-compatible API server with high-throughput batched infer
 use swink_agent_adapters::OpenAiStreamFn;
 
 // vLLM does not require authentication by default
-let stream_fn = OpenAiStreamFn::new("http://localhost:8000", "");
+let stream_fn = OpenAiStreamFn::new_chat_completions("http://localhost:8000", "");
 ```
 
 Set the `model_id` in your `ModelSpec` to `"google/gemma-4-E2B-it"` (the HuggingFace repo ID you passed to `vllm serve`).
+
+### Using it from the TUI
+
+The TUI builds adapters from the model catalog, not from code, so pick the wire with
+`OPENAI_API` instead of a constructor call:
+
+```
+OPENAI_API_KEY=not-needed
+OPENAI_BASE_URL=http://localhost:8000
+OPENAI_API=chat_completions
+OPENAI_MODEL=google/gemma-4-E2B-it
+```
+
+`OPENAI_API_KEY` must still be non-empty — the preset factory rejects a blank credential
+before the adapter is ever constructed — even though vLLM ignores its value by default.
+`OPENAI_MODEL` must match the model name the server actually serves (here, the HuggingFace
+repo ID passed to `vllm serve`).
 
 ### Known Limitation: `reasoning_content` Not Parsed
 
@@ -142,7 +165,7 @@ vLLM surfaces model thinking output via an extended OpenAI field (`delta.reasoni
 
 ## LM Studio
 
-LM Studio provides a GUI for downloading and running models, with a built-in OpenAI-compatible server. It works with `OpenAiStreamFn`.
+LM Studio provides a GUI for downloading and running models, with a built-in OpenAI-compatible server. It works with `OpenAiStreamFn::new_chat_completions`.
 
 ### Setup
 
@@ -163,7 +186,7 @@ LM Studio provides a GUI for downloading and running models, with a built-in Ope
 ```rust
 use swink_agent_adapters::OpenAiStreamFn;
 
-let stream_fn = OpenAiStreamFn::new("http://localhost:1234", "lm-studio");
+let stream_fn = OpenAiStreamFn::new_chat_completions("http://localhost:1234", "lm-studio");
 ```
 
 LM Studio accepts any non-empty string as the API key. Set `model_id` in your `ModelSpec` to the model identifier shown in LM Studio's server panel (typically the filename or a short alias).

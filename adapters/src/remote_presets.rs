@@ -72,6 +72,11 @@ pub enum RemoteModelConnectionError {
     MissingAwsCredentials { preset: String },
     #[error("Unsupported provider \"{provider_key}\" — no adapter feature enabled")]
     UnsupportedProvider { provider_key: String },
+    #[error("{provider_key} is misconfigured: {detail}")]
+    ProviderConfigError {
+        provider_key: String,
+        detail: String,
+    },
 }
 
 /// Returns `true` if the adapter for the given provider key is compiled in.
@@ -218,8 +223,9 @@ pub fn build_connection_from_preset(
             // OPENAI_BASE_URL may point at an OpenAI-compatible server that
             // only speaks Chat Completions; OPENAI_API is the knob for that.
             let wire = crate::OpenAiWire::from_env().map_err(|e| {
-                RemoteModelConnectionError::UnsupportedProvider {
-                    provider_key: format!("openai ({e})"),
+                RemoteModelConnectionError::ProviderConfigError {
+                    provider_key: "openai".to_string(),
+                    detail: e.to_string(),
                 }
             })?;
             Arc::new(OpenAiStreamFn::new_for_wire(
@@ -248,8 +254,9 @@ pub fn build_connection_from_preset(
         #[cfg(feature = "codex")]
         "codex" => {
             let mut codex = CodexStreamFn::from_env().map_err(|e| {
-                RemoteModelConnectionError::UnsupportedProvider {
-                    provider_key: format!("codex ({e})"),
+                RemoteModelConnectionError::ProviderConfigError {
+                    provider_key: "codex".to_string(),
+                    detail: e.to_string(),
                 }
             })?;
             if let Some(url) = base_url {
@@ -564,6 +571,53 @@ mod tests {
                 preset: "OpenAI GPT-5.4".to_string(),
                 env_var: "OPENAI_API_KEY".to_string(),
             }
+        );
+    }
+
+    /// Nothing else asserts which wire the factory actually picks — an
+    /// explicit key gets past the `MissingCredential` short-circuit that
+    /// stops `remote_preset_requires_key` from ever reaching `new_for_wire`.
+    #[cfg(feature = "openai")]
+    #[test]
+    fn openai_factory_builds_the_wire_named_by_env() {
+        let preset = preset("gpt-5.4").unwrap();
+        if let Ok(wire) = crate::OpenAiWire::from_env() {
+            let connection =
+                build_connection_from_preset(&preset, Some("test-key".to_string()), None).unwrap();
+            let expects_responses = wire == crate::OpenAiWire::Responses;
+            assert_eq!(
+                connection
+                    .stream_fn()
+                    .supported_serving_options()
+                    .reasoning_effort,
+                expects_responses,
+                "factory-built connection's wire should match OpenAiWire::from_env()"
+            );
+        } else {
+            let err =
+                match build_connection_from_preset(&preset, Some("test-key".to_string()), None) {
+                    Ok(_) => panic!("expected a ProviderConfigError given the invalid OPENAI_API"),
+                    Err(err) => err,
+                };
+            assert!(matches!(
+                err,
+                RemoteModelConnectionError::ProviderConfigError { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn provider_config_error_names_the_provider_and_the_cause() {
+        let err = RemoteModelConnectionError::ProviderConfigError {
+            provider_key: "openai".to_string(),
+            detail: "OPENAI_API=\"chatcompletions\" is not a wire protocol".to_string(),
+        };
+        let rendered = err.to_string();
+        assert!(rendered.contains("openai"), "{rendered}");
+        assert!(rendered.contains("chatcompletions"), "{rendered}");
+        assert!(
+            !rendered.contains("no adapter feature enabled"),
+            "a config error must not blame a missing cargo feature: {rendered}"
         );
     }
 

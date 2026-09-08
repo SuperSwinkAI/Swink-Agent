@@ -50,20 +50,20 @@ let agent = Agent::builder()
 ## Alternative Provider Example
 
 ```rust
-// Local vLLM server
-let stream_fn = OpenAiStreamFn::new(
+// Local vLLM server -- Chat Completions, not Responses
+let stream_fn = OpenAiStreamFn::new_chat_completions(
     "http://localhost:8000",
     "not-needed",  // Most local servers ignore the key
 );
 
-// Groq
-let stream_fn = OpenAiStreamFn::new(
+// Groq -- Chat Completions, not Responses
+let stream_fn = OpenAiStreamFn::new_chat_completions(
     "https://api.groq.com/openai",
     std::env::var("GROQ_API_KEY").unwrap(),
 );
 
-// Together AI
-let stream_fn = OpenAiStreamFn::new(
+// Together AI -- Chat Completions, not Responses
+let stream_fn = OpenAiStreamFn::new_chat_completions(
     "https://api.together.xyz",
     std::env::var("TOGETHER_API_KEY").unwrap(),
 );

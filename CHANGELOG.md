@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-09-07
+
+### Fixed
+- `docs/local-models.md` and the `013-adapter-openai` quickstart pointed llama.cpp/vLLM/LM Studio/Groq/Together at `OpenAiStreamFn::new`, which speaks the Responses API since 0.13.0 and 404s on those servers; corrected to `new_chat_completions`, and `OPENAI_API` (the config-driven equivalent) is now documented in `.env.example` and `docs/getting_started.md`
+- `adapters`: an invalid `OPENAI_API` value (or a Codex construction failure) reported `Unsupported provider "... — no adapter feature enabled"`, blaming a missing cargo feature for a config error; both now report `RemoteModelConnectionError::ProviderConfigError`
+
+### Changed
+- `tui`: an invalid `OPENAI_API` now refuses to start (before the alternate screen goes up) instead of printing an unreadable warning and silently falling back to the Responses wire
+
 ## [0.13.0] - 2026-09-07
 
 ### Added
@@ -626,7 +635,8 @@ are folded in here rather than kept as a phantom release.
 
 Major additions: Gemma 4 local inference, `BlockAccumulator` for streaming event assembly, `schemars`-based proc-macro engine, multi-agent patterns and artifact service, MCP integration, plugin system, policy slots, credential management, TUI session management, and web browse plugin. 42 specs implemented across the 0.6 lifecycle.
 
-[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.4...v0.13.0
 [0.12.4]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.3...v0.12.4
 [0.12.3]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.2...v0.12.3

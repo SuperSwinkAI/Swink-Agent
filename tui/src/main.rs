@@ -30,6 +30,14 @@ fn main() -> AppResult<()> {
 
     dotenvy::dotenv().ok();
 
+    // Validate OPENAI_API before the alternate screen goes up: a misspelt
+    // value must not quietly route to the wrong wire (see OpenAiWire::from_env),
+    // and the alternate screen would erase a warning printed after this point.
+    if let Err(e) = swink_agent_adapters::OpenAiWire::from_env() {
+        eprintln!("Error: {e}");
+        std::process::exit(1);
+    }
+
     // Initialize file-based tracing (TUI owns stdout, so we log to a file).
     let log_dir = dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -221,11 +229,10 @@ fn build_stream_fn(provider_key: &str, base_url: &str, api_key: &str) -> Option<
     match provider_key {
         // OPENAI_API=chat_completions selects the Chat Completions wire for
         // OpenAI-compatible servers behind OPENAI_BASE_URL; default Responses.
+        // An invalid value is already rejected at startup in `main`, before
+        // the alternate screen goes up, so this can't observe `Err` here.
         "openai" => {
-            let wire = swink_agent_adapters::OpenAiWire::from_env().unwrap_or_else(|e| {
-                eprintln!("warning: {e}; using the Responses API");
-                swink_agent_adapters::OpenAiWire::Responses
-            });
+            let wire = swink_agent_adapters::OpenAiWire::from_env().unwrap_or_default();
             Some(Arc::new(OpenAiStreamFn::new_for_wire(
                 wire, base_url, api_key,
             )))
@@ -256,6 +263,14 @@ mod tests {
     fn build_stream_fn_returns_openai_for_openai_key() {
         let sfn = build_stream_fn("openai", "https://api.openai.com", "test-key");
         assert!(sfn.is_some(), "openai provider should produce a StreamFn");
+        // Pins that the TUI and the preset factory agree on which wire
+        // OPENAI_API names — `reasoning_effort` is only supported on Responses.
+        let expected_responses = swink_agent_adapters::OpenAiWire::from_env().unwrap_or_default()
+            == swink_agent_adapters::OpenAiWire::Responses;
+        assert_eq!(
+            sfn.unwrap().supported_serving_options().reasoning_effort,
+            expected_responses
+        );
     }
 
     #[test]
