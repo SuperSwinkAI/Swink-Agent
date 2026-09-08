@@ -292,6 +292,16 @@ mod tests {
     }
 
     #[test]
+    fn from_env_defaults_to_responses_when_unset() {
+        // Read-only: this workspace forbids unsafe code, and set_var is unsafe
+        // as of edition 2024, so no test may mutate OPENAI_API. Skip rather
+        // than assert if a developer's shell happens to export it.
+        if std::env::var_os(OPENAI_API_ENV).is_none() {
+            assert_eq!(OpenAiWire::from_env(), Ok(OpenAiWire::Responses));
+        }
+    }
+
+    #[test]
     fn new_for_wire_selects_the_backend() {
         assert!(OpenAiWire::default() == OpenAiWire::Responses);
         assert!(OpenAiStreamFn::new_for_wire(OpenAiWire::Responses, "u", "k").uses_responses_api());

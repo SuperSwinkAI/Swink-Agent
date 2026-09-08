@@ -70,6 +70,7 @@ Keys can also be stored in the OS keychain instead of env vars — the first-run
 | `OPENAI_API_KEY` | — |
 | `OPENAI_BASE_URL` | `https://api.openai.com` |
 | `OPENAI_MODEL` | catalog default (resolved at runtime) |
+| `OPENAI_API` | `responses` (use `chat_completions` for OpenAI-compatible servers — see [Local Models](local-models.md)) |
 
 **Custom SSE Proxy**
 
