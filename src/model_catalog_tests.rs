@@ -681,3 +681,140 @@ fn compiled_catalog_carries_parseable_pricing_as_of() {
         "src/model_catalog.toml must set a valid pricing_as_of date"
     );
 }
+
+// ─── reasoning_levels (#1287) ───────────────────────────────────────────────
+
+#[test]
+fn anthropic_preset_lists_all_reasoning_levels() {
+    let preset = model_catalog().preset("anthropic", "sonnet_46").unwrap();
+    assert_eq!(
+        preset.reasoning_levels,
+        Some(ThinkingLevelSet::from_levels([
+            ThinkingLevel::Off,
+            ThinkingLevel::Minimal,
+            ThinkingLevel::Low,
+            ThinkingLevel::Medium,
+            ThinkingLevel::High,
+            ThinkingLevel::ExtraHigh,
+        ]))
+    );
+    assert_eq!(
+        preset.model_capabilities().reasoning_levels(),
+        preset.reasoning_levels
+    );
+}
+
+#[test]
+fn google_preset_declares_empty_reasoning_levels_despite_thinking_capability() {
+    // adapters/src/google.rs never reads ThinkingLevel — the model emits
+    // thinking blocks (supports_thinking stays true) but this workspace has
+    // no level knob wired to it, so the two fields diverge on purpose.
+    let preset = model_catalog().preset("google", "gemini_3_flash").unwrap();
+    assert_eq!(preset.reasoning_levels, Some(ThinkingLevelSet::empty()));
+    assert!(preset.model_capabilities().supports_thinking);
+}
+
+#[test]
+fn non_thinking_preset_has_empty_not_absent_reasoning_levels() {
+    let preset = model_catalog().preset("mistral", "mistral_large").unwrap();
+    assert_eq!(preset.reasoning_levels, Some(ThinkingLevelSet::empty()));
+}
+
+#[test]
+fn every_preset_declares_reasoning_levels() {
+    let catalog = model_catalog();
+    for provider in &catalog.providers {
+        for preset in &provider.presets {
+            assert!(
+                preset.reasoning_levels.is_some(),
+                "{}/{} has no reasoning_levels annotation",
+                provider.key,
+                preset.id
+            );
+        }
+    }
+}
+
+#[test]
+fn non_empty_reasoning_levels_only_on_thinking_presets() {
+    let catalog = model_catalog();
+    for provider in &catalog.providers {
+        for preset in &provider.presets {
+            let Some(levels) = &preset.reasoning_levels else {
+                continue;
+            };
+            if levels.is_empty() {
+                continue;
+            }
+            assert!(
+                preset.capabilities.contains(&PresetCapability::Thinking),
+                "{}/{} lists reasoning levels but doesn't declare `thinking`",
+                provider.key,
+                preset.id
+            );
+            assert!(
+                levels.contains(ThinkingLevel::Off),
+                "{}/{} non-empty reasoning_levels should include Off",
+                provider.key,
+                preset.id
+            );
+        }
+    }
+}
+
+#[test]
+fn local_thinking_presets_reasoning_levels_include_model_spec_default() {
+    // model_spec() defaults local thinking-capable presets to
+    // ThinkingLevel::Medium; if a local preset's list ever drops Medium,
+    // model_spec()'s pick would no longer be one the catalog claims to
+    // accept.
+    let catalog = model_catalog();
+    let local = catalog.provider("local").unwrap();
+    for preset in &local.presets {
+        if !preset.capabilities.contains(&PresetCapability::Thinking) {
+            continue;
+        }
+        let levels = preset.reasoning_levels.unwrap();
+        assert!(
+            levels.contains(ThinkingLevel::Medium),
+            "local/{} must accept Medium, model_spec() defaults to it",
+            preset.id
+        );
+    }
+}
+
+#[test]
+fn model_capabilities_carry_reasoning_levels_through_model_spec() {
+    let preset = model_catalog().preset("anthropic", "opus_46").unwrap();
+    let spec = preset.model_spec();
+    assert_eq!(
+        spec.capabilities().reasoning_levels,
+        preset.reasoning_levels
+    );
+}
+
+#[test]
+fn reasoning_levels_parse_from_toml() {
+    const CATALOG: &str = r#"
+        [[providers]]
+        key = "test"
+        display_name = "Test"
+        kind = "remote"
+
+        [[providers.presets]]
+        id = "p"
+        display_name = "P"
+        model_id = "p-1"
+        capabilities = ["text", "thinking"]
+        reasoning_levels = ["off", "extra_high"]
+    "#;
+    let catalog: ModelCatalog = toml::from_str(CATALOG).unwrap();
+    let preset = catalog.preset("test", "p").unwrap();
+    assert_eq!(
+        preset.reasoning_levels,
+        Some(ThinkingLevelSet::from_levels([
+            ThinkingLevel::Off,
+            ThinkingLevel::ExtraHigh
+        ]))
+    );
+}

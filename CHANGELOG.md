@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.13.2] - 2026-09-07
 
+### Added
+- `ModelCapabilities::reasoning_levels: Option<ThinkingLevelSet>` — per-model reasoning-level set from the catalog, independent of `supports_thinking` (a model can emit thinking blocks without exposing a level knob, e.g. Gemini, Bedrock). `None` = unannotated, `Some(&empty)` = no reasoning-level control. `ThinkingLevelSet` is a `Copy` bitset (no heap allocation) so `ModelCapabilities` and its builders stay `const`-friendly. Published on `ModelSpec.capabilities` over JSON-RPC with no rpc-crate changes (serializes as the same `["off", "high", ...]` array shape a `Vec` would). New `ModelCapabilities::accepts_reasoning_level()` and `ThinkingLevel::as_str()`/`Display`. All 93 `model_catalog.toml` presets now annotate the field, recording adapter truth (what this workspace currently honors) rather than provider truth (#1287)
+
 ### Fixed
 - `just test-plugins` targeted removed standalone test binaries (`plugin_integration`/`plugin_registry`), breaking `just validate` outright; repointed at the `suite` binary the tests now live in
 - `Cargo.lock`: `chacha20 0.10.1` (transitive via `rand`) was yanked; bumped to `0.10.2`

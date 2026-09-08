@@ -174,7 +174,7 @@ pub use types::{
     AgentContext, AgentMessage, AgentResult, AssistantMessage, ContentBlock, Cost, CustomMessage,
     CustomMessageRegistry, ImageSource, LlmMessage, MessageSlot, ModelCapabilities, ModelSpec,
     SerializedCustomMessage, SerializedMessages, StopReason, ThinkingBudgets, ThinkingLevel,
-    ToolResultMessage, TurnSnapshot, Usage, UserMessage, clone_messages_for_send,
+    ThinkingLevelSet, ToolResultMessage, TurnSnapshot, Usage, UserMessage, clone_messages_for_send,
     deserialize_custom_message, restore_messages, restore_single_custom, serialize_custom_message,
     serialize_messages,
 };

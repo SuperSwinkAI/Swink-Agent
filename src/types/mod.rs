@@ -824,6 +824,7 @@ const _: () = {
     assert_send_sync::<Cost>();
     assert_send_sync::<StopReason>();
     assert_send_sync::<ThinkingLevel>();
+    assert_send_sync::<ThinkingLevelSet>();
     assert_send_sync::<ThinkingBudgets>();
     assert_send_sync::<ModelCapabilities>();
     assert_send_sync::<ModelSpec>();

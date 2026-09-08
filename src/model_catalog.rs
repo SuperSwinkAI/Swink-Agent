@@ -5,7 +5,9 @@ use serde::Deserialize;
 
 use crate::ModelSpec;
 use crate::pricing::CostCalculator;
-use crate::types::{AssistantMessage, Cost, ModelCapabilities, ThinkingLevel, Usage};
+use crate::types::{
+    AssistantMessage, Cost, ModelCapabilities, ThinkingLevel, ThinkingLevelSet, Usage,
+};
 
 /// Whether a provider's models run on a remote API or on local hardware.
 #[non_exhaustive]
@@ -108,6 +110,10 @@ pub struct PresetCatalog {
     pub cost_per_million_cache_read: Option<f64>,
     #[serde(default)]
     pub cost_per_million_cache_write: Option<f64>,
+    /// Reasoning levels this model accepts. `None` = unannotated (falls back
+    /// to `capabilities.contains(&PresetCapability::Thinking)`); `Some(&[])`
+    /// = no reasoning-level control.
+    pub reasoning_levels: Option<ThinkingLevelSet>,
 }
 
 impl PresetCatalog {
@@ -136,6 +142,7 @@ impl PresetCatalog {
             cost_per_million_output: None,
             cost_per_million_cache_read: None,
             cost_per_million_cache_write: None,
+            reasoning_levels: None,
         }
     }
 
@@ -157,6 +164,13 @@ impl PresetCatalog {
     #[must_use]
     pub fn with_capabilities(mut self, capabilities: Vec<PresetCapability>) -> Self {
         self.capabilities = capabilities;
+        self
+    }
+
+    /// Set the reasoning levels this model accepts.
+    #[must_use]
+    pub const fn with_reasoning_levels(mut self, levels: ThinkingLevelSet) -> Self {
+        self.reasoning_levels = Some(levels);
         self
     }
 
@@ -431,6 +445,7 @@ impl ModelCatalog {
             cost_per_million_output: preset.cost_per_million_output,
             cost_per_million_cache_read: preset.cost_per_million_cache_read,
             cost_per_million_cache_write: preset.cost_per_million_cache_write,
+            reasoning_levels: preset.reasoning_levels,
         })
     }
 }
@@ -471,6 +486,10 @@ pub struct CatalogPreset {
     pub cost_per_million_output: Option<f64>,
     pub cost_per_million_cache_read: Option<f64>,
     pub cost_per_million_cache_write: Option<f64>,
+    /// Reasoning levels this model accepts. `None` = unannotated (falls back
+    /// to `capabilities.contains(&PresetCapability::Thinking)`); `Some(&[])`
+    /// = no reasoning-level control.
+    pub reasoning_levels: Option<ThinkingLevelSet>,
 }
 
 impl CatalogPreset {
@@ -513,6 +532,7 @@ impl CatalogPreset {
             cost_per_million_output: None,
             cost_per_million_cache_read: None,
             cost_per_million_cache_write: None,
+            reasoning_levels: None,
         }
     }
 
@@ -534,6 +554,13 @@ impl CatalogPreset {
     #[must_use]
     pub fn with_capabilities(mut self, capabilities: Vec<PresetCapability>) -> Self {
         self.capabilities = capabilities;
+        self
+    }
+
+    /// Set the reasoning levels this model accepts.
+    #[must_use]
+    pub const fn with_reasoning_levels(mut self, levels: ThinkingLevelSet) -> Self {
+        self.reasoning_levels = Some(levels);
         self
     }
 
@@ -662,6 +689,7 @@ impl CatalogPreset {
             supports_structured_output: has(&PresetCapability::StructuredOutput),
             max_context_window: self.context_window_tokens,
             max_output_tokens: self.max_output_tokens,
+            reasoning_levels: self.reasoning_levels,
         }
     }
 
