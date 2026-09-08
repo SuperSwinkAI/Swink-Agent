@@ -32,7 +32,8 @@ impl BaselineSnapshot {
                     0.0
                 } else {
                     #[allow(clippy::cast_precision_loss)]
-                    let mean = metrics.iter().map(|m| m.score.value).sum::<f64>() / metrics.len() as f64;
+                    let mean =
+                        metrics.iter().map(|m| m.score.value).sum::<f64>() / metrics.len() as f64;
                     mean
                 }
             })
