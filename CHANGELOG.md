@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-09-07
+
+### Fixed
+- `just test-plugins` targeted removed standalone test binaries (`plugin_integration`/`plugin_registry`), breaking `just validate` outright; repointed at the `suite` binary the tests now live in
+- `Cargo.lock`: `chacha20 0.10.1` (transitive via `rand`) was yanked; bumped to `0.10.2`
+- `deny.toml`: dropped the `RUSTSEC-2024-0384` (`instant`) ignore entry — `instant` no longer appears in the lockfile at all
+- `scripts/cargo-with-sccache.sh`: honors `SCCACHE_DISABLE` so sandboxed/offline shells can opt out of the sccache daemon instead of failing on its IPC
+- `docs/planning/SPECIFICATION_TRACKER.md`: spec 023's tracker node was still yellow (in-progress) after closing at 108/108 tasks
+
+### Changed
+- `auth`, `evolve`: enabled `[lints] workspace = true` (both previously omitted it, compiling without the workspace's pedantic/nursery clippy set) and cleared the resulting warnings
+- All crates: unit tests moved from an inline `#[cfg(test)] mod tests { ... }` at end-of-file to a sibling `<module>_tests.rs` (or `tests.rs` in a directory module), workspace-wide — no production code or test logic changed, verified by identical `cargo nextest list --workspace` output before and after (3,364 tests)
+
 ## [0.13.1] - 2026-09-07
 
 ### Fixed
@@ -635,7 +648,8 @@ are folded in here rather than kept as a phantom release.
 
 Major additions: Gemma 4 local inference, `BlockAccumulator` for streaming event assembly, `schemars`-based proc-macro engine, multi-agent patterns and artifact service, MCP integration, plugin system, policy slots, credential management, TUI session management, and web browse plugin. 42 specs implemented across the 0.6 lifecycle.
 
-[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.13.1...HEAD
+[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.13.2...HEAD
+[0.13.2]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.4...v0.13.0
 [0.12.4]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.3...v0.12.4
