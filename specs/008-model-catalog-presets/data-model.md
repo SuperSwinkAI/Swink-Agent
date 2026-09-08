@@ -56,7 +56,7 @@ Metadata for a specific model preset within a provider.
 | `model_id` | `String` | Model identifier sent to the provider API |
 | `api_version` | `Option<ApiVersion>` | API version override (e.g., `v1beta` for Google) |
 | `capabilities` | `Vec<PresetCapability>` | List of model capabilities (default: empty) |
-| `reasoning_levels` | `Option<Vec<ThinkingLevel>>` | Reasoning levels this model accepts (#1287); `None` = unannotated, `Some(&[])` = no reasoning-level control |
+| `reasoning_levels` | `Option<ThinkingLevelSet>` | Reasoning levels this model accepts (#1287); `None` = unannotated, `Some(&[])` = no reasoning-level control |
 | `status` | `Option<PresetStatus>` | Release status (GA, preview) |
 | `context_window_tokens` | `Option<u64>` | Maximum context window size in tokens |
 | `max_output_tokens` | `Option<u64>` | Maximum output tokens per response |
@@ -87,7 +87,7 @@ Flattened, denormalized view combining provider and preset metadata. Not deseria
 | `model_id` | `String` | Model identifier for API calls |
 | `api_version` | `Option<ApiVersion>` | API version override |
 | `capabilities` | `Vec<PresetCapability>` | Model capabilities |
-| `reasoning_levels` | `Option<Vec<ThinkingLevel>>` | Reasoning levels this model accepts (#1287) |
+| `reasoning_levels` | `Option<ThinkingLevelSet>` | Reasoning levels this model accepts (#1287) |
 | `status` | `Option<PresetStatus>` | Release status |
 | `context_window_tokens` | `Option<u64>` | Context window size |
 | `max_output_tokens` | `Option<u64>` | Max output tokens |

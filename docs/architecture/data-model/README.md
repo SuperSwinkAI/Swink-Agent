@@ -270,7 +270,7 @@ Delta entries collapse: set-then-set keeps the last value, set-then-remove yield
 
 ## Model Capabilities
 
-`ModelCapabilities` (`src/types/model.rs`) describes what a model supports, attached to `ModelSpec` via `with_capabilities()` (defaults to all-false/`None` when unset): boolean flags `supports_thinking`, `supports_vision`, `supports_tool_use`, `supports_streaming`, `supports_structured_output`, plus `max_context_window: Option<u64>`, `max_output_tokens: Option<u64>`, and `reasoning_levels: Option<Vec<ThinkingLevel>>`. Built with chainable `with_*` methods starting from `ModelCapabilities::none()`.
+`ModelCapabilities` (`src/types/model.rs`) describes what a model supports, attached to `ModelSpec` via `with_capabilities()` (defaults to all-false/`None` when unset): boolean flags `supports_thinking`, `supports_vision`, `supports_tool_use`, `supports_streaming`, `supports_structured_output`, plus `max_context_window: Option<u64>`, `max_output_tokens: Option<u64>`, and `reasoning_levels: Option<ThinkingLevelSet>`. Built with chainable `with_*` methods starting from `ModelCapabilities::none()`.
 
 `reasoning_levels` records which `ThinkingLevel` values the model actually accepts, independently of `supports_thinking`: `None` means the catalog has no data for this model (fall back to `supports_thinking`); `Some(&[])` means the model has no reasoning-level control at all — which can be true even when `supports_thinking` is `true` (a model can emit thinking blocks without exposing a level knob). Use `accepts_reasoning_level()` rather than reimplementing that fallback.
 

@@ -5,7 +5,9 @@ use serde::Deserialize;
 
 use crate::ModelSpec;
 use crate::pricing::CostCalculator;
-use crate::types::{AssistantMessage, Cost, ModelCapabilities, ThinkingLevel, Usage};
+use crate::types::{
+    AssistantMessage, Cost, ModelCapabilities, ThinkingLevel, ThinkingLevelSet, Usage,
+};
 
 /// Whether a provider's models run on a remote API or on local hardware.
 #[non_exhaustive]
@@ -111,7 +113,7 @@ pub struct PresetCatalog {
     /// Reasoning levels this model accepts. `None` = unannotated (falls back
     /// to `capabilities.contains(&PresetCapability::Thinking)`); `Some(&[])`
     /// = no reasoning-level control.
-    pub reasoning_levels: Option<Vec<ThinkingLevel>>,
+    pub reasoning_levels: Option<ThinkingLevelSet>,
 }
 
 impl PresetCatalog {
@@ -167,7 +169,7 @@ impl PresetCatalog {
 
     /// Set the reasoning levels this model accepts.
     #[must_use]
-    pub fn with_reasoning_levels(mut self, levels: Vec<ThinkingLevel>) -> Self {
+    pub const fn with_reasoning_levels(mut self, levels: ThinkingLevelSet) -> Self {
         self.reasoning_levels = Some(levels);
         self
     }
@@ -443,7 +445,7 @@ impl ModelCatalog {
             cost_per_million_output: preset.cost_per_million_output,
             cost_per_million_cache_read: preset.cost_per_million_cache_read,
             cost_per_million_cache_write: preset.cost_per_million_cache_write,
-            reasoning_levels: preset.reasoning_levels.clone(),
+            reasoning_levels: preset.reasoning_levels,
         })
     }
 }
@@ -487,7 +489,7 @@ pub struct CatalogPreset {
     /// Reasoning levels this model accepts. `None` = unannotated (falls back
     /// to `capabilities.contains(&PresetCapability::Thinking)`); `Some(&[])`
     /// = no reasoning-level control.
-    pub reasoning_levels: Option<Vec<ThinkingLevel>>,
+    pub reasoning_levels: Option<ThinkingLevelSet>,
 }
 
 impl CatalogPreset {
@@ -557,7 +559,7 @@ impl CatalogPreset {
 
     /// Set the reasoning levels this model accepts.
     #[must_use]
-    pub fn with_reasoning_levels(mut self, levels: Vec<ThinkingLevel>) -> Self {
+    pub const fn with_reasoning_levels(mut self, levels: ThinkingLevelSet) -> Self {
         self.reasoning_levels = Some(levels);
         self
     }
@@ -687,7 +689,7 @@ impl CatalogPreset {
             supports_structured_output: has(&PresetCapability::StructuredOutput),
             max_context_window: self.context_window_tokens,
             max_output_tokens: self.max_output_tokens,
-            reasoning_levels: self.reasoning_levels.clone(),
+            reasoning_levels: self.reasoning_levels,
         }
     }
 

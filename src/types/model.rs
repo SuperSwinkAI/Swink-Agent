@@ -30,12 +30,12 @@ pub struct ModelCapabilities {
     /// Reasoning levels this model accepts, when the catalog records them.
     ///
     /// `None` means the catalog has no data for this model — fall back to
-    /// [`supports_thinking`](Self::supports_thinking). `Some(&[])` means the
-    /// model has no reasoning-level control at all (it may still emit
-    /// thinking blocks — `supports_thinking` and this field are independent;
-    /// see [`ModelCapabilities::accepts_reasoning_level`]). A non-empty list
-    /// is ordered ascending, `Off` first.
-    pub reasoning_levels: Option<Vec<ThinkingLevel>>,
+    /// [`supports_thinking`](Self::supports_thinking). `Some(&[])`-equivalent
+    /// (an empty [`ThinkingLevelSet`]) means the model has no reasoning-level
+    /// control at all (it may still emit thinking blocks — `supports_thinking`
+    /// and this field are independent; see
+    /// [`ModelCapabilities::accepts_reasoning_level`]).
+    pub reasoning_levels: Option<ThinkingLevelSet>,
 }
 
 impl ModelCapabilities {
@@ -89,15 +89,15 @@ impl ModelCapabilities {
 
     /// Set the reasoning levels this model accepts.
     #[must_use]
-    pub fn with_reasoning_levels(mut self, levels: Vec<ThinkingLevel>) -> Self {
+    pub const fn with_reasoning_levels(mut self, levels: ThinkingLevelSet) -> Self {
         self.reasoning_levels = Some(levels);
         self
     }
 
     /// The reasoning levels the catalog records for this model, if any.
     #[must_use]
-    pub fn reasoning_levels(&self) -> Option<&[ThinkingLevel]> {
-        self.reasoning_levels.as_deref()
+    pub const fn reasoning_levels(&self) -> Option<ThinkingLevelSet> {
+        self.reasoning_levels
     }
 
     /// Whether `level` is accepted by this model.
@@ -105,14 +105,14 @@ impl ModelCapabilities {
     /// `Off` is always accepted — every model can decline to reason.
     /// Otherwise: an unannotated catalog entry (`None`) falls back to
     /// [`supports_thinking`](Self::supports_thinking); an annotated one
-    /// checks list membership.
+    /// checks set membership.
     #[must_use]
-    pub fn accepts_reasoning_level(&self, level: ThinkingLevel) -> bool {
-        if level == ThinkingLevel::Off {
+    pub const fn accepts_reasoning_level(&self, level: ThinkingLevel) -> bool {
+        if matches!(level, ThinkingLevel::Off) {
             return true;
         }
-        match &self.reasoning_levels {
-            Some(levels) => levels.contains(&level),
+        match self.reasoning_levels {
+            Some(levels) => levels.contains(level),
             None => self.supports_thinking,
         }
     }
@@ -168,6 +168,109 @@ impl ThinkingLevel {
 impl std::fmt::Display for ThinkingLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+/// A small, `Copy` set of [`ThinkingLevel`] values.
+///
+/// `ThinkingLevel` has a handful of variants, so a bitset avoids heap
+/// allocation entirely — unlike `Vec<ThinkingLevel>`, this keeps
+/// [`ModelCapabilities`] free of drop glue, so its `with_*` builders (and
+/// [`ModelSpec::with_capabilities`]) stay `const fn`. Iterates and
+/// serializes in ascending order (`Off` first) regardless of insertion
+/// order.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ThinkingLevelSet(u8);
+
+/// Every `ThinkingLevel` variant, in ascending order. Kept in sync with the
+/// enum by `thinking_level_set_round_trips_every_known_level` in the test suite.
+const ALL_THINKING_LEVELS: [ThinkingLevel; 6] = [
+    ThinkingLevel::Off,
+    ThinkingLevel::Minimal,
+    ThinkingLevel::Low,
+    ThinkingLevel::Medium,
+    ThinkingLevel::High,
+    ThinkingLevel::ExtraHigh,
+];
+
+impl ThinkingLevelSet {
+    /// The empty set — no reasoning-level control.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+
+    /// Build a set from an iterator of levels.
+    #[must_use]
+    pub fn from_levels(levels: impl IntoIterator<Item = ThinkingLevel>) -> Self {
+        let mut set = Self::empty();
+        for level in levels {
+            set = set.insert(level);
+        }
+        set
+    }
+
+    /// Add `level` to the set.
+    #[must_use]
+    pub const fn insert(self, level: ThinkingLevel) -> Self {
+        Self(self.0 | Self::bit(level))
+    }
+
+    /// Whether `level` is a member of the set.
+    #[must_use]
+    pub const fn contains(self, level: ThinkingLevel) -> bool {
+        self.0 & Self::bit(level) != 0
+    }
+
+    /// Whether the set has no members.
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// Iterate over the set's members in ascending order (`Off` first).
+    pub fn iter(self) -> impl Iterator<Item = ThinkingLevel> {
+        ALL_THINKING_LEVELS
+            .into_iter()
+            .filter(move |level| self.contains(*level))
+    }
+
+    /// Collect the set's members into a `Vec`, in ascending order.
+    #[must_use]
+    pub fn to_vec(self) -> Vec<ThinkingLevel> {
+        self.iter().collect()
+    }
+
+    const fn bit(level: ThinkingLevel) -> u8 {
+        match level {
+            ThinkingLevel::Off => 1 << 0,
+            ThinkingLevel::Minimal => 1 << 1,
+            ThinkingLevel::Low => 1 << 2,
+            ThinkingLevel::Medium => 1 << 3,
+            ThinkingLevel::High => 1 << 4,
+            ThinkingLevel::ExtraHigh => 1 << 5,
+        }
+    }
+}
+
+impl FromIterator<ThinkingLevel> for ThinkingLevelSet {
+    fn from_iter<T: IntoIterator<Item = ThinkingLevel>>(iter: T) -> Self {
+        Self::from_levels(iter)
+    }
+}
+
+impl Serialize for ThinkingLevelSet {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.to_vec().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ThinkingLevelSet {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self::from_levels(Vec::<ThinkingLevel>::deserialize(
+            deserializer,
+        )?))
     }
 }
 
@@ -243,7 +346,7 @@ impl ModelSpec {
     }
 
     #[must_use]
-    pub fn with_capabilities(mut self, capabilities: ModelCapabilities) -> Self {
+    pub const fn with_capabilities(mut self, capabilities: ModelCapabilities) -> Self {
         self.capabilities = Some(capabilities);
         self
     }

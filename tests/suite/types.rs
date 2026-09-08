@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use swink_agent::{
     AgentContext, AgentMessage, AgentResult, AssistantMessage, ContentBlock, Cost, CustomMessage,
     DowncastError, ImageSource, LlmMessage, ModelCapabilities, ModelSpec, StopReason,
-    ThinkingBudgets, ThinkingLevel, ToolResultMessage, Usage, UserMessage,
+    ThinkingBudgets, ThinkingLevel, ThinkingLevelSet, ToolResultMessage, Usage, UserMessage,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -614,10 +614,39 @@ fn thinking_level_as_str_matches_serde_spelling() {
 }
 
 #[test]
+fn thinking_level_set_round_trips_every_known_level() {
+    let levels = [
+        ThinkingLevel::Off,
+        ThinkingLevel::Minimal,
+        ThinkingLevel::Low,
+        ThinkingLevel::Medium,
+        ThinkingLevel::High,
+        ThinkingLevel::ExtraHigh,
+    ];
+    let full = ThinkingLevelSet::from_levels(levels);
+    assert!(!full.is_empty());
+    for level in levels {
+        assert!(full.contains(level));
+    }
+    assert_eq!(full.to_vec(), levels.to_vec());
+
+    // Insertion order doesn't affect the canonical ascending iteration order.
+    let reversed = ThinkingLevelSet::from_levels(levels.into_iter().rev());
+    assert_eq!(reversed, full);
+    assert_eq!(reversed.to_vec(), levels.to_vec());
+
+    assert!(ThinkingLevelSet::empty().is_empty());
+    assert!(!ThinkingLevelSet::empty().contains(ThinkingLevel::Off));
+}
+
+#[test]
 fn model_capabilities_reasoning_levels_json_round_trip() {
     let caps = ModelCapabilities::none()
         .with_thinking(true)
-        .with_reasoning_levels(vec![ThinkingLevel::Off, ThinkingLevel::High]);
+        .with_reasoning_levels(ThinkingLevelSet::from_levels([
+            ThinkingLevel::Off,
+            ThinkingLevel::High,
+        ]));
     let json = serde_json::to_value(&caps).unwrap();
     assert_eq!(json["reasoning_levels"], serde_json::json!(["off", "high"]));
 
@@ -657,7 +686,7 @@ fn accepts_reasoning_level_unannotated_falls_back_to_supports_thinking() {
 fn accepts_reasoning_level_empty_list_still_allows_off() {
     let caps = ModelCapabilities::none()
         .with_thinking(true)
-        .with_reasoning_levels(vec![]);
+        .with_reasoning_levels(ThinkingLevelSet::empty());
     assert!(caps.accepts_reasoning_level(ThinkingLevel::Off));
     assert!(!caps.accepts_reasoning_level(ThinkingLevel::Medium));
 }
@@ -666,7 +695,10 @@ fn accepts_reasoning_level_empty_list_still_allows_off() {
 fn accepts_reasoning_level_checks_list_membership() {
     let caps = ModelCapabilities::none()
         .with_thinking(true)
-        .with_reasoning_levels(vec![ThinkingLevel::Low, ThinkingLevel::High]);
+        .with_reasoning_levels(ThinkingLevelSet::from_levels([
+            ThinkingLevel::Low,
+            ThinkingLevel::High,
+        ]));
     assert!(caps.accepts_reasoning_level(ThinkingLevel::Off));
     assert!(caps.accepts_reasoning_level(ThinkingLevel::Low));
     assert!(caps.accepts_reasoning_level(ThinkingLevel::High));

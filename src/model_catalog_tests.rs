@@ -689,18 +689,18 @@ fn anthropic_preset_lists_all_reasoning_levels() {
     let preset = model_catalog().preset("anthropic", "sonnet_46").unwrap();
     assert_eq!(
         preset.reasoning_levels,
-        Some(vec![
+        Some(ThinkingLevelSet::from_levels([
             ThinkingLevel::Off,
             ThinkingLevel::Minimal,
             ThinkingLevel::Low,
             ThinkingLevel::Medium,
             ThinkingLevel::High,
             ThinkingLevel::ExtraHigh,
-        ])
+        ]))
     );
     assert_eq!(
         preset.model_capabilities().reasoning_levels(),
-        preset.reasoning_levels.as_deref()
+        preset.reasoning_levels
     );
 }
 
@@ -710,14 +710,14 @@ fn google_preset_declares_empty_reasoning_levels_despite_thinking_capability() {
     // thinking blocks (supports_thinking stays true) but this workspace has
     // no level knob wired to it, so the two fields diverge on purpose.
     let preset = model_catalog().preset("google", "gemini_3_flash").unwrap();
-    assert_eq!(preset.reasoning_levels, Some(vec![]));
+    assert_eq!(preset.reasoning_levels, Some(ThinkingLevelSet::empty()));
     assert!(preset.model_capabilities().supports_thinking);
 }
 
 #[test]
 fn non_thinking_preset_has_empty_not_absent_reasoning_levels() {
     let preset = model_catalog().preset("mistral", "mistral_large").unwrap();
-    assert_eq!(preset.reasoning_levels, Some(vec![]));
+    assert_eq!(preset.reasoning_levels, Some(ThinkingLevelSet::empty()));
 }
 
 #[test]
@@ -752,10 +752,9 @@ fn non_empty_reasoning_levels_only_on_thinking_presets() {
                 provider.key,
                 preset.id
             );
-            assert_eq!(
-                levels.first(),
-                Some(&ThinkingLevel::Off),
-                "{}/{} reasoning_levels should list Off first",
+            assert!(
+                levels.contains(ThinkingLevel::Off),
+                "{}/{} non-empty reasoning_levels should include Off",
                 provider.key,
                 preset.id
             );
@@ -775,9 +774,9 @@ fn local_thinking_presets_reasoning_levels_include_model_spec_default() {
         if !preset.capabilities.contains(&PresetCapability::Thinking) {
             continue;
         }
-        let levels = preset.reasoning_levels.as_ref().unwrap();
+        let levels = preset.reasoning_levels.unwrap();
         assert!(
-            levels.contains(&ThinkingLevel::Medium),
+            levels.contains(ThinkingLevel::Medium),
             "local/{} must accept Medium, model_spec() defaults to it",
             preset.id
         );
@@ -813,6 +812,9 @@ fn reasoning_levels_parse_from_toml() {
     let preset = catalog.preset("test", "p").unwrap();
     assert_eq!(
         preset.reasoning_levels,
-        Some(vec![ThinkingLevel::Off, ThinkingLevel::ExtraHigh])
+        Some(ThinkingLevelSet::from_levels([
+            ThinkingLevel::Off,
+            ThinkingLevel::ExtraHigh
+        ]))
     );
 }

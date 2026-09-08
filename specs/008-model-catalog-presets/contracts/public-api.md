@@ -61,7 +61,7 @@ pub struct PresetCatalog {
     pub model_id: String,
     pub api_version: Option<ApiVersion>,
     pub capabilities: Vec<PresetCapability>,       // #[serde(default)]
-    pub reasoning_levels: Option<Vec<ThinkingLevel>>, // #1287
+    pub reasoning_levels: Option<ThinkingLevelSet>, // #1287
     pub status: Option<PresetStatus>,
     pub context_window_tokens: Option<u64>,
     pub max_output_tokens: Option<u64>,
@@ -116,7 +116,7 @@ pub struct CatalogPreset {
     pub model_id: String,
     pub api_version: Option<ApiVersion>,
     pub capabilities: Vec<PresetCapability>,
-    pub reasoning_levels: Option<Vec<ThinkingLevel>>, // #1287
+    pub reasoning_levels: Option<ThinkingLevelSet>, // #1287
     pub status: Option<PresetStatus>,
     pub context_window_tokens: Option<u64>,
     pub max_output_tokens: Option<u64>,
