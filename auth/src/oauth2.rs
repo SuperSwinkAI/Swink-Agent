@@ -11,7 +11,9 @@ use swink_agent::CredentialError;
 use tracing::debug;
 
 /// Response from an OAuth2 token endpoint.
-#[non_exhaustive]
+// Deliberately exhaustive: already published exhaustive in 0.13.x; adding
+// #[non_exhaustive] now would itself be a semver break, not a hygiene fix.
+#[allow(clippy::exhaustive_structs)]
 #[derive(Deserialize)]
 pub struct TokenResponse {
     /// The new access token.
@@ -560,7 +562,9 @@ impl DeviceAuthorizationConfig {
 }
 
 /// A successful device authorization response (RFC 8628 §3.2).
-#[non_exhaustive]
+// Deliberately exhaustive: already published exhaustive in 0.13.x; adding
+// #[non_exhaustive] now would itself be a semver break, not a hygiene fix.
+#[allow(clippy::exhaustive_structs)]
 #[derive(Deserialize)]
 pub struct DeviceAuthorizationResponse {
     /// The secret the client polls the token endpoint with. Never shown to

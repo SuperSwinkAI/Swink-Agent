@@ -41,7 +41,9 @@ pub const DEFAULT_SERVICE: &str = "swink-agent-auth";
 /// Failure from a [`KeychainBackend`] operation.
 ///
 /// Messages are sanitized: they never contain credential values (FR-016).
-#[non_exhaustive]
+// Deliberately exhaustive: already published exhaustive in 0.13.x; adding
+// #[non_exhaustive] now would itself be a semver break, not a hygiene fix.
+#[allow(clippy::exhaustive_enums)]
 #[derive(Debug, thiserror::Error)]
 pub enum KeychainError {
     /// The backing keychain could not be reached or opened — no default store
@@ -97,7 +99,9 @@ pub trait KeychainBackend: Send + Sync + 'static {
 // ─── SystemKeychain ─────────────────────────────────────────────────────────
 
 /// [`KeychainBackend`] backed by the real OS keychain via [`keyring`].
-#[non_exhaustive]
+// Deliberately exhaustive: already published exhaustive in 0.13.x; adding
+// #[non_exhaustive] now would itself be a semver break, not a hygiene fix.
+#[allow(clippy::exhaustive_structs)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SystemKeychain;
 
