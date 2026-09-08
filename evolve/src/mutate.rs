@@ -3,10 +3,14 @@ use crate::diagnose::TargetComponent;
 use crate::diagnose::WeakPoint;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::fmt::Write as _;
 use swink_agent_eval::Invocation;
 use thiserror::Error;
 
 /// Context passed to each mutation strategy.
+// Deliberately exhaustive: built by struct literal in this crate's own test
+// fixtures (and by strategy implementations outside this crate).
+#[allow(clippy::exhaustive_structs)]
 #[derive(Debug, Clone)]
 pub struct MutationContext<'a> {
     pub weak_point: WeakPoint,
@@ -24,6 +28,7 @@ pub struct MutationContext<'a> {
 }
 
 /// Errors that a mutation strategy can return.
+#[non_exhaustive]
 #[derive(Debug, Clone, Error)]
 pub enum MutationError {
     #[error("judge unavailable: {0}")]
@@ -39,6 +44,7 @@ pub enum MutationError {
 }
 
 /// A candidate mutation: original → mutated text, tagged with its component and strategy.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Candidate {
     /// SHA-256 of `mutated_value` (hex string) — used for deduplication.
@@ -58,7 +64,10 @@ impl Candidate {
     ) -> Self {
         let hash = Sha256::digest(mutated_value.as_bytes());
         let hash_bytes: &[u8] = hash.as_ref();
-        let id: String = hash_bytes.iter().map(|b| format!("{:02x}", b)).collect();
+        let id = hash_bytes.iter().fold(String::new(), |mut acc, b| {
+            let _ = write!(acc, "{b:02x}");
+            acc
+        });
         Self {
             id,
             component,
@@ -89,60 +98,5 @@ pub fn deduplicate(candidates: Vec<Candidate>, original: &str) -> Vec<Candidate>
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn candidate_id_is_deterministic() {
-        let c1 = Candidate::new(
-            TargetComponent::FullPrompt,
-            "original".to_string(),
-            "mutated text".to_string(),
-            "test".to_string(),
-        );
-        let c2 = Candidate::new(
-            TargetComponent::FullPrompt,
-            "different original".to_string(),
-            "mutated text".to_string(),
-            "other".to_string(),
-        );
-        // Same mutated value → same id regardless of original or strategy
-        assert_eq!(c1.id, c2.id);
-
-        let c3 = Candidate::new(
-            TargetComponent::FullPrompt,
-            "original".to_string(),
-            "different text".to_string(),
-            "test".to_string(),
-        );
-        assert_ne!(c1.id, c3.id);
-    }
-
-    #[test]
-    fn deduplicate_removes_identity_and_duplicates() {
-        let original = "original text";
-        let candidates = vec![
-            Candidate::new(
-                TargetComponent::FullPrompt,
-                original.into(),
-                "mutated".into(),
-                "a".into(),
-            ),
-            Candidate::new(
-                TargetComponent::FullPrompt,
-                original.into(),
-                "mutated".into(),
-                "b".into(),
-            ),
-            Candidate::new(
-                TargetComponent::FullPrompt,
-                original.into(),
-                original.into(),
-                "c".into(),
-            ),
-        ];
-        let result = deduplicate(candidates, original);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].mutated_value, "mutated");
-    }
-}
+#[path = "mutate_tests.rs"]
+mod tests;

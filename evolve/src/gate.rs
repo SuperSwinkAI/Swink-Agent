@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 use swink_agent_eval::Verdict;
 
 /// The outcome of evaluating a single candidate against the acceptance criteria.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AcceptanceVerdict {
     /// Meets threshold, no P1 regressions, top-ranked for its component.
@@ -22,6 +23,9 @@ pub enum AcceptanceVerdict {
 }
 
 /// The full output of running the acceptance gate over all evaluated candidates.
+// Deliberately exhaustive: built by struct literal in this crate's own test
+// fixtures, not only via `empty()`.
+#[allow(clippy::exhaustive_structs)]
 #[derive(Debug)]
 pub struct AcceptanceResult {
     /// Top-ranked accepted candidate per component — persisted.
@@ -58,6 +62,7 @@ impl AcceptanceGate {
     }
 
     /// Inject per-case metadata (used to distinguish P1 from P2/P3 cases).
+    #[must_use]
     pub fn with_case_metadata(mut self, metadata: HashMap<String, JsonValue>) -> Self {
         self.case_metadata = metadata;
         self

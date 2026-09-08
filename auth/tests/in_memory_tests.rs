@@ -139,7 +139,7 @@ fn debug_impl_shows_count_not_values() {
 
     let debug = format!("{store:?}");
     assert!(debug.contains("credential_count"));
-    assert!(debug.contains("2"));
+    assert!(debug.contains('2'));
     assert!(!debug.contains("secret-value"));
     assert!(!debug.contains("another-secret"));
 }

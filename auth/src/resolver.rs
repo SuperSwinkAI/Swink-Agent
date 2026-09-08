@@ -263,9 +263,6 @@ impl DefaultCredentialResolver {
             Some(Credential::Bearer { .. }) => {
                 return Err(CredentialError::Expired { key });
             }
-            None => {
-                return Err(CredentialError::NotFound { key });
-            }
             Some(Credential::OAuth2 { refresh_token, .. }) => {
                 if refresh_token.is_none() {
                     return Err(CredentialError::Expired { key });
@@ -275,8 +272,9 @@ impl DefaultCredentialResolver {
             // build doesn't recognise can't be fast-pathed or refreshed, so
             // treat it the same as "nothing usable in the store" and let the
             // caller fall through to interactive (re-)authorization, which
-            // will overwrite it with a credential type we understand.
-            Some(_) => {
+            // will overwrite it with a credential type we understand. Same
+            // handling as "nothing in the store at all".
+            None | Some(_) => {
                 return Err(CredentialError::NotFound { key });
             }
         }
@@ -647,7 +645,8 @@ impl InnerResolver {
                     let new_expires_at = response
                         .expires_in
                         .map(|secs| Utc::now() + chrono::Duration::seconds(secs));
-                    let new_refresh_token = response.refresh_token.take().or(Some(rt.clone()));
+                    let new_refresh_token =
+                        response.refresh_token.take().or_else(|| Some(rt.clone()));
 
                     let new_credential = Credential::OAuth2 {
                         access_token: response.access_token.clone(),
@@ -671,18 +670,15 @@ impl InnerResolver {
                 }
             }
 
-            None => Err(CredentialError::NotFound {
-                key: key.to_string(),
-            }),
-
             // `Credential` is `#[non_exhaustive]`: an unrecognised variant
             // reaching this refresh path can't be resolved or refreshed by
             // this build. Reporting `NotFound` (rather than `Expired`)
             // matters here — `resolve_stored`'s caller only retries via
             // interactive authorization on `NotFound`, so this is what lets
             // the resolver recover by obtaining a credential type it does
-            // understand, instead of surfacing a dead-end error.
-            Some(_) => Err(CredentialError::NotFound {
+            // understand, instead of surfacing a dead-end error. Same
+            // handling as "nothing in the store at all".
+            None | Some(_) => Err(CredentialError::NotFound {
                 key: key.to_string(),
             }),
         }

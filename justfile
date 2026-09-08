@@ -27,7 +27,7 @@ coverage:
 
 # Run core plugin tests with the feature combination required by all plugin regressions
 test-plugins:
-    {{cargo}} test -p swink-agent --features plugins,testkit --test plugin_integration --test plugin_registry
+    {{cargo}} test -p swink-agent --features plugins,testkit --test suite plugin_
 
 # Run core crate tests with no default features (verifies builtin-tools disabled)
 test-no-features:
@@ -68,6 +68,8 @@ tui:
 
 # Run publish-surface packaging checks for every publishable workspace crate
 # Intentionally does not load .env; packaging should not inherit provider secrets.
+# Online gate: downloads the crates.io index to verify dependencies. Fails on
+# air-gapped / network-restricted runners.
 package-preflight:
     {{cargo}} publish --workspace --dry-run --locked --allow-dirty
 

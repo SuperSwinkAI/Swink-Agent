@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// One line of the cycle JSONL manifest, covering a single evaluated candidate.
+// Deliberately exhaustive: built by struct literal in this crate's own test
+// fixtures, not only assembled internally.
+#[allow(clippy::exhaustive_structs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManifestEntry {
     pub cycle_id: u32,
@@ -52,7 +55,7 @@ impl CyclePersister {
         let ts = now.format("%Y-%m-%dT%H-%M-%SZ").to_string();
         let dir = self
             .output_root
-            .join(format!("cycle-{:04}-{}", cycle_number, ts));
+            .join(format!("cycle-{cycle_number:04}-{ts}"));
         std::fs::create_dir_all(&dir)?;
 
         let now_iso = now.format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -181,7 +184,7 @@ fn write_config(dir: &Path, candidate: &Candidate) -> std::io::Result<()> {
         }
         TargetComponent::ToolDescription { tool_name } => {
             std::fs::write(
-                dir.join(format!("tool-{}.json", tool_name)),
+                dir.join(format!("tool-{tool_name}.json")),
                 &candidate.mutated_value,
             )?;
         }
@@ -196,7 +199,7 @@ fn component_str(c: &TargetComponent) -> String {
             format!("PromptSection({})", name.as_deref().unwrap_or("unnamed"))
         }
         TargetComponent::ToolDescription { tool_name } => {
-            format!("ToolDescription({})", tool_name)
+            format!("ToolDescription({tool_name})")
         }
     }
 }
@@ -217,28 +220,5 @@ fn rejection_reason_string(verdict: &AcceptanceVerdict) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn manifest_entry_jsonl_roundtrip() {
-        let entry = ManifestEntry {
-            cycle_id: 1,
-            timestamp: "2026-01-01T00:00:00Z".to_string(),
-            target_component: "PromptSection(Persona)".to_string(),
-            original_value: "You are a helpful assistant.".to_string(),
-            mutated_value: "You must be a helpful assistant.".to_string(),
-            strategy: "template".to_string(),
-            baseline_score: 0.7,
-            candidate_score: 0.82,
-            verdict: "Accepted".to_string(),
-            rejection_reason: None,
-        };
-        let json = serde_json::to_string(&entry).unwrap();
-        let restored: ManifestEntry = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored.cycle_id, entry.cycle_id);
-        assert_eq!(restored.verdict, entry.verdict);
-        assert_eq!(restored.candidate_score, entry.candidate_score);
-        assert_eq!(restored.rejection_reason, entry.rejection_reason);
-    }
-}
+#[path = "persist_tests.rs"]
+mod tests;

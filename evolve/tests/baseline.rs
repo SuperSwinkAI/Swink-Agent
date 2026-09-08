@@ -95,5 +95,9 @@ async fn baseline_records_failures_with_details() {
         metric.details.is_some(),
         "failure details should be propagated from evaluator"
     );
-    assert_eq!(metric.score.value, 0.0, "response mismatch should score 0");
+    // The evaluator returns an exact 0.0 on total mismatch, not a computed value.
+    #[allow(clippy::float_cmp)]
+    {
+        assert_eq!(metric.score.value, 0.0, "response mismatch should score 0");
+    }
 }

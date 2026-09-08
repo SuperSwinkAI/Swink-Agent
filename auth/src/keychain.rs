@@ -41,6 +41,9 @@ pub const DEFAULT_SERVICE: &str = "swink-agent-auth";
 /// Failure from a [`KeychainBackend`] operation.
 ///
 /// Messages are sanitized: they never contain credential values (FR-016).
+// Deliberately exhaustive: already published exhaustive in 0.13.x; adding
+// #[non_exhaustive] now would itself be a semver break, not a hygiene fix.
+#[allow(clippy::exhaustive_enums)]
 #[derive(Debug, thiserror::Error)]
 pub enum KeychainError {
     /// The backing keychain could not be reached or opened — no default store
@@ -96,6 +99,9 @@ pub trait KeychainBackend: Send + Sync + 'static {
 // ─── SystemKeychain ─────────────────────────────────────────────────────────
 
 /// [`KeychainBackend`] backed by the real OS keychain via [`keyring`].
+// Deliberately exhaustive: already published exhaustive in 0.13.x; adding
+// #[non_exhaustive] now would itself be a semver break, not a hygiene fix.
+#[allow(clippy::exhaustive_structs)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SystemKeychain;
 
@@ -243,7 +249,7 @@ impl std::fmt::Debug for KeychainCredentialStore {
         // values are never read here (FR-016).
         f.debug_struct("KeychainCredentialStore")
             .field("service", &self.service)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
