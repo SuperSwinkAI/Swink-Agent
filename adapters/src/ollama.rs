@@ -251,6 +251,7 @@ fn ollama_stream<'a>(
             Ok(resp) => resp,
             Err(event) => return stream::iter(crate::base::pre_stream_error(event)).left_stream(),
         };
+        crate::base::report_rate_limit(response.headers(), options.on_rate_limit.as_ref());
 
         if !response.status().is_success() {
             let code = response.status().as_u16();

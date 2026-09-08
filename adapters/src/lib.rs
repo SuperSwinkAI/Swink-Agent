@@ -45,7 +45,11 @@
     allow(dead_code)
 )]
 mod base;
+
+// Header types surface on adapter builders (e.g. `OpenAiStreamFn::with_header`);
+// re-exported so callers need not depend on `reqwest` directly.
 pub use base::ensure_default_crypto_provider;
+pub use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 #[cfg_attr(
     not(any(
         feature = "anthropic",
@@ -133,7 +137,21 @@ pub use anthropic::AnthropicStreamFn;
 #[allow(clippy::doc_markdown)]
 mod openai;
 #[cfg(feature = "openai")]
-pub use openai::OpenAiStreamFn;
+pub use openai::{InvalidOpenAiWire, OPENAI_API_ENV, OpenAiStreamFn, OpenAiWire};
+
+#[cfg(feature = "responses")]
+mod responses;
+#[cfg(feature = "responses")]
+pub use responses::ResponsesStreamFn;
+
+#[cfg(feature = "codex")]
+mod codex;
+#[cfg(feature = "codex")]
+pub use codex::{
+    CODEX_BASE_URL, CODEX_CLIENT_ID, CODEX_REDIRECT_URI, CodexError, CodexStreamFn,
+    DEFAULT_CREDENTIAL_KEY as CODEX_DEFAULT_CREDENTIAL_KEY, DEFAULT_ORIGINATOR,
+    codex_authorization_config,
+};
 
 #[cfg(feature = "ollama")]
 mod ollama;

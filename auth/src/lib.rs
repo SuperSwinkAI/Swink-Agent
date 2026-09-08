@@ -31,6 +31,7 @@ pub(crate) fn ensure_default_crypto_provider() {
 }
 #[cfg(feature = "keychain")]
 mod keychain;
+pub mod loopback;
 pub mod oauth2;
 mod resolver;
 mod token_source;
@@ -40,6 +41,7 @@ pub use in_memory::InMemoryCredentialStore;
 pub use keychain::{
     DEFAULT_SERVICE, KeychainBackend, KeychainCredentialStore, KeychainError, SystemKeychain,
 };
-pub use oauth2::{AuthorizationConfig, DeviceAuthorizationConfig};
+pub use loopback::LoopbackAuthorizationHandler;
+pub use oauth2::{AuthorizationConfig, DeviceAuthorizationConfig, PkceVerifier};
 pub use resolver::DefaultCredentialResolver;
 pub use token_source::{ExpiringValue, SingleFlightTokenSource};

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-07
+
+### Added
+- `adapters`: `codex` feature — `CodexStreamFn`, a ChatGPT-subscription provider over the Responses shell. Own PKCE login through the host `CredentialResolver` (never the Codex CLI's token file), per-request `chatgpt-account-id` / `session_id`, honest configurable `originator`, plan-entitlement failures surfaced as a typed non-retryable error. Personal-use, bring-your-own-login, undocumented endpoint — read the module docs before enabling (#1265)
+- `adapters`: `responses` feature — `ResponsesStreamFn`, a generic OpenAI Responses-API adapter and the shell the `codex` provider builds on: `input` items, flat tool schemas, `ThinkingLevel` → `reasoning.effort`, typed SSE events, cached-token-aware usage (#1261)
+- `auth`: `LoopbackAuthorizationHandler` — catches the OAuth2 redirect on a loopback port with a manual-paste fallback for headless hosts (#1265)
+- `ServingOptions::reasoning_effort` + `ReasoningEffort` — per-request reasoning depth (`off`…`xhigh`/`max`, with `x_high`/`extra_high` aliases) overriding the model's `ThinkingLevel`; honoured by the Responses shell and reported via `ServingOptionSupport` (#1262)
+- `auth`: PKCE `S256` for the authorization-code flow via `AuthorizationConfig::with_pkce()`; default off (#1263)
+- `StreamOptions::on_rate_limit` + `RateLimitSnapshot` — provider quota headers (OpenAI, Anthropic, Codex families typed; everything rate-limit-shaped in `raw`) delivered once per request before the first event, on every adapter (#1264)
+- `adapters`: static header injection on `AdapterBase` (`OpenAiStreamFn::with_header` / `with_headers`); supplying `Authorization` replaces the default `Bearer` (#1260)
+- `model_catalog`: `codex` provider block priced at zero, plus `calculate_cost_for_provider` / `ModelCatalog::find_preset` so the same slug prices by the message's own provider (#1267)
+
+### Changed
+- `adapters`: `OpenAiStreamFn::new` now speaks the **Responses API** (`/v1/responses`): `reasoning.effort` from `ServingOptions::reasoning_effort` / `ThinkingLevel`, `text.format` structured output, cached-token-aware usage. `OpenAiStreamFn::new_chat_completions` keeps the Chat Completions wire for OpenAI-*compatible* endpoints (vLLM, LM Studio, Groq, Together) — that path is supported, not deprecated, because those servers do not implement Responses. Pick the constructor by what the endpoint speaks; configuration-driven hosts (the preset factory, the TUI) pick via `OpenAiWire::from_env` — `OPENAI_API=responses` (default) or `chat_completions` — so an `OPENAI_BASE_URL` pointing at a compat server has a documented knob, and an unrecognised value is an error rather than a silent default (#1266)
+- `model_catalog.toml` re-verified against provider docs: dead ids marked deprecated with replacements, two unroutable Bedrock 4.6 ids corrected, Claude 5 / GPT-5.6 / Gemini 3.8 / Grok 4.6 generations added, pricing refreshed (#1251)
+
 ## [0.12.4] - 2026-08-25
 
 ### Fixed
@@ -610,7 +626,8 @@ are folded in here rather than kept as a phantom release.
 
 Major additions: Gemma 4 local inference, `BlockAccumulator` for streaming event assembly, `schemars`-based proc-macro engine, multi-agent patterns and artifact service, MCP integration, plugin system, policy slots, credential management, TUI session management, and web browse plugin. 42 specs implemented across the 0.6 lifecycle.
 
-[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.4...HEAD
+[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.4...v0.13.0
 [0.12.4]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.3...v0.12.4
 [0.12.3]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.2...v0.12.3
 [0.12.2]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.1...v0.12.2

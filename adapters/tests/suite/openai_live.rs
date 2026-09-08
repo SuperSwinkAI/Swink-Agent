@@ -1,4 +1,4 @@
-//! Live API tests for `OpenAiStreamFn`.
+//! Live API tests for `OpenAiStreamFn` (Responses API path).
 //!
 //! These tests hit the real `OpenAI` API and are skipped by default.
 //! Run with: `cargo test -p swink-agent-adapters --test openai_live -- --ignored`

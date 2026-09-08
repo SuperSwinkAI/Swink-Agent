@@ -127,8 +127,8 @@ pub use metrics::{MetricsCollector, MetricsFuture, ToolExecMetrics, TurnMetrics}
 pub use model_catalog::{
     ApiVersion, AuthMode, CatalogPreset, DEFAULT_PRICING_STALENESS_DAYS, ModelCatalog,
     PRICING_STALENESS_ENV_VAR, PresetCapability, PresetCatalog, PresetStatus, PricingStaleness,
-    ProviderCatalog, ProviderKind, calculate_cost, model_catalog, price_assistant_message,
-    price_assistant_message_with, pricing_staleness,
+    ProviderCatalog, ProviderKind, calculate_cost, calculate_cost_for_provider, model_catalog,
+    price_assistant_message, price_assistant_message_with, pricing_staleness,
 };
 pub use model_presets::{ModelConnection, ModelConnections, ModelConnectionsBuilder};
 pub use noop_tool::NoopTool;
@@ -146,9 +146,9 @@ pub use schemars::JsonSchema;
 pub use state::{SessionState, StateDelta};
 pub use stream::{
     AssistantMessageDelta, AssistantMessageEvent, CacheStrategy, MapOptionsStreamFn, MappedOptions,
-    OnRawPayload, ResponseFormat, ServingOptionSupport, ServingOptions, StreamErrorKind, StreamFn,
-    StreamOptions, StreamTransport, accumulate_message, sanitize_incomplete_tool_calls,
-    stream_owned,
+    OnRateLimit, OnRawPayload, RateLimitSnapshot, ReasoningEffort, ResponseFormat,
+    ServingOptionSupport, ServingOptions, StreamErrorKind, StreamFn, StreamOptions,
+    StreamTransport, accumulate_message, sanitize_incomplete_tool_calls, stream_owned,
 };
 pub use stream_middleware::StreamMiddleware;
 pub use sub_agent::SubAgent;

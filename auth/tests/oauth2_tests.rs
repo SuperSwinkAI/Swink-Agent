@@ -619,6 +619,127 @@ async fn authorization_code_is_exchanged_and_tokens_are_stored() {
     }
 }
 
+/// PKCE end to end (#1263): the challenge the handler sees in the URL must
+/// be S256 of the verifier the token endpoint receives, and the verifier
+/// must appear nowhere but that one form field.
+#[tokio::test]
+async fn pkce_challenge_in_url_matches_verifier_sent_to_token_endpoint() {
+    use base64::Engine as _;
+    use sha2::{Digest as _, Sha256};
+
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "pkce-access",
+            "expires_in": 3600,
+            "token_type": "Bearer"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let captured_url = Arc::new(std::sync::Mutex::new(None));
+    let handler = Arc::new(RecordingHandler {
+        captured_url: Arc::clone(&captured_url),
+        code: "auth-code-pkce".to_string(),
+    });
+
+    let token_url = format!("{}/token", mock_server.uri());
+    let config = AuthorizationConfig::new(
+        "https://accounts.example.com/o/authorize",
+        &token_url,
+        "public-client",
+        "http://localhost:8080/callback",
+    )
+    .with_pkce();
+
+    let resolver = DefaultCredentialResolver::new(store(InMemoryCredentialStore::empty()))
+        .with_authorization_handler(handler)
+        .with_authorization_config("codex", config);
+    resolver.resolve("codex").await.unwrap();
+
+    let url = captured_url
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("handler saw a URL");
+    let pairs: std::collections::HashMap<_, _> = reqwest::Url::parse(&url)
+        .unwrap()
+        .query_pairs()
+        .into_owned()
+        .collect();
+    let challenge = pairs.get("code_challenge").expect("code_challenge present");
+    assert_eq!(
+        pairs.get("code_challenge_method").map(String::as_str),
+        Some("S256")
+    );
+
+    let body = String::from_utf8(
+        mock_server.received_requests().await.unwrap()[0]
+            .body
+            .clone(),
+    )
+    .unwrap();
+    let form: std::collections::HashMap<String, String> =
+        url::form_urlencoded::parse(body.as_bytes())
+            .into_owned()
+            .collect();
+    let verifier = form.get("code_verifier").expect("code_verifier sent");
+    assert_eq!(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(Sha256::digest(verifier.as_bytes())),
+        challenge,
+        "challenge is not S256 of the verifier that was sent"
+    );
+    assert!(
+        !url.contains(verifier),
+        "verifier leaked into the authorization URL"
+    );
+}
+
+/// `use_pkce` off must leave the flow byte-identical: no challenge, no verifier.
+#[tokio::test]
+async fn authorization_flow_without_pkce_sends_no_pkce_parameters() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "plain-access",
+            "token_type": "Bearer"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let captured_url = Arc::new(std::sync::Mutex::new(None));
+    let handler = Arc::new(RecordingHandler {
+        captured_url: Arc::clone(&captured_url),
+        code: "auth-code-plain".to_string(),
+    });
+    let token_url = format!("{}/token", mock_server.uri());
+    let resolver = DefaultCredentialResolver::new(store(InMemoryCredentialStore::empty()))
+        .with_authorization_handler(handler)
+        .with_authorization_config("google-calendar", authorization_config(&token_url));
+    resolver.resolve("google-calendar").await.unwrap();
+
+    let url = captured_url.lock().unwrap().clone().unwrap();
+    assert!(
+        !url.contains("code_challenge"),
+        "unexpected PKCE in URL: {url}"
+    );
+    let body = String::from_utf8(
+        mock_server.received_requests().await.unwrap()[0]
+            .body
+            .clone(),
+    )
+    .unwrap();
+    assert!(
+        !body.contains("code_verifier"),
+        "unexpected verifier in body: {body}"
+    );
+}
+
 // T057: authorization handler returns an error -> AuthorizationFailed.
 #[tokio::test]
 async fn handler_error_returns_authorization_failed() {

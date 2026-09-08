@@ -110,6 +110,47 @@ impl OaiAdapterShell {
         options.api_key.as_deref().unwrap_or(&self.base.api_key)
     }
 
+    /// Add one static header to every request this shell issues.
+    #[cfg(any(test, feature = "openai"))]
+    #[must_use]
+    pub(crate) fn with_header(
+        mut self,
+        name: reqwest::header::HeaderName,
+        value: reqwest::header::HeaderValue,
+    ) -> Self {
+        self.base = self.base.with_header(name, value);
+        self
+    }
+
+    /// Merge a header map into every request this shell issues.
+    #[cfg(any(test, feature = "openai"))]
+    #[must_use]
+    pub(crate) fn with_headers(mut self, headers: reqwest::header::HeaderMap) -> Self {
+        self.base = self.base.with_headers(headers);
+        self
+    }
+
+    /// Apply authentication plus the adapter's static headers.
+    ///
+    /// Static headers win over the defaults set here (one value per name).
+    #[cfg(any(feature = "openai-compat", feature = "mistral"))]
+    fn authorize(
+        &self,
+        request: reqwest::RequestBuilder,
+        options: &StreamOptions,
+    ) -> reqwest::RequestBuilder {
+        // `RequestBuilder::headers` goes through reqwest's `replace_headers`:
+        // it inserts per name and never clears what `json()` already set, so
+        // a static `Authorization` (or `Content-Type`) *replaces* the default
+        // instead of appending a second value the way `.header()` would.
+        request
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", self.api_key(options)),
+            )
+            .headers(self.base.headers.clone())
+    }
+
     #[cfg(feature = "mistral")]
     pub(crate) fn post_json_request<T: Serialize>(
         &self,
@@ -117,10 +158,7 @@ impl OaiAdapterShell {
         body: &T,
         options: &StreamOptions,
     ) -> reqwest::RequestBuilder {
-        self.base
-            .client
-            .post(url)
-            .header("Authorization", format!("Bearer {}", self.api_key(options)))
+        self.authorize(self.base.client.post(url), options)
             .json(body)
     }
 
@@ -142,8 +180,10 @@ impl OaiAdapterShell {
             "sending OAI-compatible request"
         );
 
-        let request = prepare_oai_request(&self.base.client, &url, model, context, options)
-            .header("Authorization", format!("Bearer {}", self.api_key(options)));
+        let request = self.authorize(
+            prepare_oai_request(&self.base.client, &url, model, context, options),
+            options,
+        );
 
         let provider = self.provider;
         Box::pin(oai_send_and_parse(
@@ -151,6 +191,7 @@ impl OaiAdapterShell {
             provider,
             cancellation_token,
             options.on_raw_payload.clone(),
+            options.on_rate_limit.clone(),
             move |status, body| classify_oai_error_body(status, body, provider),
         ))
     }
@@ -322,6 +363,7 @@ pub fn oai_send_and_parse<'a>(
     provider: &'static str,
     cancellation_token: tokio_util::sync::CancellationToken,
     on_raw_payload: Option<swink_agent::OnRawPayload>,
+    on_rate_limit: Option<swink_agent::OnRateLimit>,
     classify_error: impl Fn(u16, &str) -> Option<AssistantMessageEvent> + Send + 'a,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
     oai_send_and_parse_with_options(
@@ -329,6 +371,7 @@ pub fn oai_send_and_parse<'a>(
         provider,
         cancellation_token,
         on_raw_payload,
+        on_rate_limit,
         classify_error,
         OaiParserOptions::default(),
     )
@@ -339,6 +382,7 @@ pub(crate) fn oai_send_and_parse_with_options<'a>(
     provider: &'static str,
     cancellation_token: tokio_util::sync::CancellationToken,
     on_raw_payload: Option<swink_agent::OnRawPayload>,
+    on_rate_limit: Option<swink_agent::OnRateLimit>,
     classify_error: impl Fn(u16, &str) -> Option<AssistantMessageEvent> + Send + 'a,
     parser_options: OaiParserOptions,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
@@ -363,6 +407,7 @@ pub(crate) fn oai_send_and_parse_with_options<'a>(
                 .left_stream();
             }
         };
+        crate::base::report_rate_limit(response.headers(), on_rate_limit.as_ref());
 
         let status = response.status();
         if !status.is_success() {

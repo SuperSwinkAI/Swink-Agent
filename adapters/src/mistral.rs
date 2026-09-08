@@ -238,6 +238,7 @@ fn mistral_stream<'a>(
             mistral.shell.provider(),
             cancellation_token,
             options.on_raw_payload.clone(),
+            options.on_rate_limit.clone(),
             |status, body| classify_oai_error_body(status, body, mistral.shell.provider()),
             OaiParserOptions {
                 error_finish_reason_is_error: true,

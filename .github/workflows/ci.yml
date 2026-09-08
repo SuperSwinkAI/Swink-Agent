@@ -32,7 +32,7 @@ jobs:
       - run: cargo fmt --check
 
       - name: Spell check
-        uses: crate-ci/typos@8a48f81b6c64dcfea44b3633223084c4be58ac5f # v1
+        uses: crate-ci/typos@d43b6c087ac471e2ea7b8af622ff15f05c0c365b # v1
 
       # --all-features so feature-gated modules are linted too: lints like
       # exhaustive_structs/exhaustive_enums can't flag code that never
@@ -42,7 +42,7 @@ jobs:
       # on hosted runners.
       - run: cargo clippy --workspace --all-features --exclude swink-agent-local-llm --all-targets --locked -- -D warnings
 
-      - uses: cargo-bins/cargo-binstall@e00d2c94cc0067b77737821097a62d91c0301baa # v1.21.1
+      - uses: cargo-bins/cargo-binstall@75b4bfae1b2c753a6806bbce6e6cb89b602de33c # v1.22.0
 
       - run: cargo binstall --no-confirm --force --locked cargo-nextest
 
@@ -75,7 +75,7 @@ jobs:
         with:
           cache-key: check-macos
 
-      - uses: cargo-bins/cargo-binstall@e00d2c94cc0067b77737821097a62d91c0301baa # v1.21.1
+      - uses: cargo-bins/cargo-binstall@75b4bfae1b2c753a6806bbce6e6cb89b602de33c # v1.22.0
 
       - run: cargo binstall --no-confirm --force --locked cargo-nextest
 
@@ -142,6 +142,19 @@ jobs:
       - name: Build TUI example (all features)
         run: cargo build -p swink-agent-tui --all-features --example custom_agent --locked
 
+      # All-features workspace test. Cheap (the workspace is already built
+      # all-features by the two example builds above) and the only pre-merge
+      # coverage for tests gated behind non-default features — they skip
+      # silently everywhere else. The expensive combinatorial sweep
+      # (cargo hack --each-feature, ~127 combos) deliberately stays
+      # post-merge in features-full.yml.
+      #
+      # Added after a minijinja 2.21 -> 2.23 bump broke an eval test that no
+      # required check ran: features-full went red on 10 consecutive
+      # integration pushes before anyone noticed.
+      - name: Test (all features)
+        run: cargo test --workspace --all-features --exclude swink-agent-local-llm --locked
+
   # ── Dependency policy ───────────────────────────────────────────────────
   deny:
     runs-on: ubuntu-latest
@@ -166,7 +179,7 @@ jobs:
       # pure overhead.
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
-      - uses: cargo-bins/cargo-binstall@e00d2c94cc0067b77737821097a62d91c0301baa # v1.21.1
+      - uses: cargo-bins/cargo-binstall@75b4bfae1b2c753a6806bbce6e6cb89b602de33c # v1.22.0
 
       - run: cargo binstall --no-confirm --force cargo-audit
 
@@ -208,7 +221,7 @@ jobs:
 
       - run: cargo clippy --workspace --locked -- -D warnings
 
-      - uses: cargo-bins/cargo-binstall@e00d2c94cc0067b77737821097a62d91c0301baa # v1.21.1
+      - uses: cargo-bins/cargo-binstall@75b4bfae1b2c753a6806bbce6e6cb89b602de33c # v1.22.0
 
       - run: cargo binstall --no-confirm --force cargo-nextest
 
@@ -243,7 +256,7 @@ jobs:
         with:
           cache-key: semver
 
-      - uses: cargo-bins/cargo-binstall@e00d2c94cc0067b77737821097a62d91c0301baa # v1.21.1
+      - uses: cargo-bins/cargo-binstall@75b4bfae1b2c753a6806bbce6e6cb89b602de33c # v1.22.0
 
       - run: cargo binstall --no-confirm --force cargo-semver-checks
 

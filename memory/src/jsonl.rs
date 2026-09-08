@@ -1673,6 +1673,7 @@ fn classified_lines_to_messages(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Timelike;
 
     #[test]
     fn new_session_id_format() {
@@ -3094,6 +3095,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut meta = fresh_meta("append-atomic");
         meta.sequence = 9;
+        // Pin updated_at to a whole second so the metadata line on disk is the
+        // shortest form chrono emits (SecondsFormat::AutoSi drops the fractional
+        // part entirely when nanos == 0). append_records_with_rewrite refreshes
+        // updated_at to now_utc(), whose fractional part is 0/3/6/9 digits wide,
+        // so the refreshed line can only be the same width or wider — and
+        // sequence 9 -> 10 adds one more character. That makes the line
+        // guaranteed to outgrow meta_line_len and take the rewrite path.
+        //
+        // Without the pin this test was ~1-in-10 flaky: when now_utc() happened
+        // to serialize shorter than the original timestamp, the new metadata
+        // still fit in place, append_records_in_place returned true, and
+        // rewrite_fn never ran.
+        meta.updated_at = meta.updated_at.with_nanosecond(0).unwrap();
         let path = session_path(dir.path(), "append-atomic");
         let first_line =
             SessionRecord::from_message(&user_msg("first", 1), "append-atomic").unwrap();

@@ -13,6 +13,14 @@ test:
 test-testkit:
     {{cargo}} test --workspace --features testkit
 
+# Run full workspace tests with every feature enabled.
+# Mirrors the "Test (all features)" leg of .github/workflows/features-full.yml,
+# which is the ONLY place several tests run at all — they skip silently in the
+# default gate. local-llm is excluded because its metal/cuda/vulkan features
+# need GPU toolchains.
+test-all-features:
+    {{cargo}} test --workspace --all-features --exclude swink-agent-local-llm
+
 # Generate local coverage reports with the root tarpaulin.toml config
 coverage:
     {{cargo}} tarpaulin --config tarpaulin.toml
@@ -71,6 +79,7 @@ validate:
     {{cargo}} test --workspace
     {{cargo}} build --workspace
     {{cargo}} test --workspace --features testkit
+    just test-all-features
     just test-plugins
     just no-default-sentinels
     just package-preflight
