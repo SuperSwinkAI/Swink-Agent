@@ -7,13 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-09-07
+
 ### Added
 - `ModelCapabilities::reasoning_levels: Option<Vec<ThinkingLevel>>` — per-model reasoning-level list from the catalog, independent of `supports_thinking` (a model can emit thinking blocks without exposing a level knob, e.g. Gemini, Bedrock). `None` = unannotated, `Some(&[])` = no reasoning-level control. Published on `ModelSpec.capabilities` over JSON-RPC with no rpc-crate changes. New `ModelCapabilities::accepts_reasoning_level()` and `ThinkingLevel::as_str()`/`Display`. All 93 `model_catalog.toml` presets now annotate the field, recording adapter truth (what this workspace currently honors) rather than provider truth (#1287)
-
-### Changed
-- `ModelSpec::with_capabilities` is no longer `const fn` — `ModelCapabilities` now holds a `Vec`, which has drop glue (#1287)
-
-## [0.13.2] - 2026-09-07
 
 ### Fixed
 - `just test-plugins` targeted removed standalone test binaries (`plugin_integration`/`plugin_registry`), breaking `just validate` outright; repointed at the `suite` binary the tests now live in
@@ -23,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/planning/SPECIFICATION_TRACKER.md`: spec 023's tracker node was still yellow (in-progress) after closing at 108/108 tasks
 
 ### Changed
+- `ModelSpec::with_capabilities` is no longer `const fn` — `ModelCapabilities` now holds a `Vec`, which has drop glue (#1287)
 - `auth`, `evolve`: enabled `[lints] workspace = true` (both previously omitted it, compiling without the workspace's pedantic/nursery clippy set) and cleared the resulting warnings
 - All crates: unit tests moved from an inline `#[cfg(test)] mod tests { ... }` at end-of-file to a sibling `<module>_tests.rs` (or `tests.rs` in a directory module), workspace-wide — no production code or test logic changed, verified by identical `cargo nextest list --workspace` output before and after (3,364 tests)
 
