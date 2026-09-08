@@ -645,7 +645,8 @@ impl InnerResolver {
                     let new_expires_at = response
                         .expires_in
                         .map(|secs| Utc::now() + chrono::Duration::seconds(secs));
-                    let new_refresh_token = response.refresh_token.take().or_else(|| Some(rt.clone()));
+                    let new_refresh_token =
+                        response.refresh_token.take().or_else(|| Some(rt.clone()));
 
                     let new_credential = Credential::OAuth2 {
                         access_token: response.access_token.clone(),
