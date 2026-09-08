@@ -907,9 +907,9 @@ async fn missing_credential_with_device_handler_completes_flow_and_stores_creden
             device_authorization_config(&mock_server.uri()),
         );
 
-    let resolved = resolver.resolve("device-key").await.unwrap();
+    let outcome = resolver.resolve("device-key").await.unwrap();
     assert!(matches!(
-        resolved,
+        outcome,
         ResolvedCredential::OAuth2AccessToken(ref t) if t == "device-access"
     ));
 
@@ -1088,10 +1088,10 @@ async fn authorization_code_flow_takes_precedence_over_device_flow() {
             device_authorization_config(&mock_server.uri()),
         );
 
-    let resolved = resolver.resolve("both-key").await.unwrap();
+    let outcome = resolver.resolve("both-key").await.unwrap();
 
     assert!(matches!(
-        resolved,
+        outcome,
         ResolvedCredential::OAuth2AccessToken(ref t) if t == "code-flow-access"
     ));
     assert!(

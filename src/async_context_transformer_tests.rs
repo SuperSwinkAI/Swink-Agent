@@ -1,0 +1,92 @@
+//! Tests for `async_context_transformer`.
+#![cfg(test)]
+
+use super::*;
+use crate::types::{ContentBlock, LlmMessage, UserMessage};
+
+fn text_message(text: &str) -> AgentMessage {
+    AgentMessage::Llm(LlmMessage::User(UserMessage {
+        content: vec![ContentBlock::Text {
+            text: text.to_owned(),
+        }],
+        timestamp: 0,
+        cache_hint: None,
+    }))
+}
+
+#[tokio::test]
+async fn async_transformer_struct_impl() {
+    struct OverflowTruncator;
+
+    impl AsyncContextTransformer for OverflowTruncator {
+        fn transform<'a>(
+            &'a self,
+            messages: &'a mut Vec<AgentMessage>,
+            overflow: bool,
+        ) -> AsyncTransformFuture<'a> {
+            Box::pin(async move {
+                if overflow && messages.len() > 2 {
+                    let before = messages.len();
+                    messages.truncate(2);
+                    Some(CompactionReport {
+                        dropped_count: before - 2,
+                        tokens_before: 0,
+                        tokens_after: 0,
+                        overflow: true,
+                        dropped_messages: Vec::new(),
+                    })
+                } else {
+                    None
+                }
+            })
+        }
+    }
+
+    let transformer = OverflowTruncator;
+
+    // No overflow — no change
+    let mut messages = vec![text_message("a"), text_message("b"), text_message("c")];
+    let report = transformer.transform(&mut messages, false).await;
+    assert!(report.is_none());
+    assert_eq!(messages.len(), 3);
+
+    // Overflow — truncate
+    let report = transformer.transform(&mut messages, true).await;
+    assert!(report.is_some());
+    let report = report.unwrap();
+    assert_eq!(report.dropped_count, 1);
+    assert!(report.overflow);
+    assert_eq!(messages.len(), 2);
+}
+
+#[tokio::test]
+async fn async_transformer_trait_object() {
+    struct SummaryInjector;
+
+    impl AsyncContextTransformer for SummaryInjector {
+        fn transform<'a>(
+            &'a self,
+            messages: &'a mut Vec<AgentMessage>,
+            _overflow: bool,
+        ) -> AsyncTransformFuture<'a> {
+            Box::pin(async move {
+                // Simulate injecting a summary at the start
+                messages.insert(0, text_message("[summary of prior context]"));
+                None // not compaction, just injection
+            })
+        }
+    }
+
+    let transformer: Box<dyn AsyncContextTransformer> = Box::new(SummaryInjector);
+    let mut messages = vec![text_message("hello")];
+    transformer.transform(&mut messages, false).await;
+    assert_eq!(messages.len(), 2);
+    if let AgentMessage::Llm(LlmMessage::User(u)) = &messages[0] {
+        assert_eq!(
+            ContentBlock::extract_text(&u.content),
+            "[summary of prior context]"
+        );
+    } else {
+        panic!("expected user message");
+    }
+}

@@ -7,7 +7,8 @@ use swink_agent::{Cost, ToolSchema};
 use swink_agent_eval::EvalSet;
 
 /// A named region within a system prompt, identified by section header.
-#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromptSection {
     pub name: Option<String>,
     pub content: String,
@@ -53,6 +54,7 @@ impl OptimizationTarget {
     }
 
     /// Override the section delimiter regex (default: markdown `## ` headers).
+    #[must_use]
     pub fn with_section_delimiter(mut self, delimiter: Regex) -> Self {
         self.sections = Self::parse_sections(&self.system_prompt, Some(&delimiter));
         self.section_delimiter = Some(delimiter);
@@ -72,6 +74,7 @@ impl OptimizationTarget {
     }
 
     /// Produce a new target with the system prompt replaced entirely.
+    #[must_use]
     pub fn with_system_prompt(&self, new_prompt: impl Into<String>) -> Self {
         let system_prompt = new_prompt.into();
         let new_delim = self.section_delimiter.clone();
@@ -91,6 +94,7 @@ impl OptimizationTarget {
     }
 
     /// Produce a new target with section at `index` replaced by `new_content`.
+    #[must_use]
     pub fn with_replaced_section(&self, index: usize, new_content: &str) -> Self {
         let old = &self.sections[index];
         let new_prompt = format!(
@@ -116,6 +120,7 @@ impl OptimizationTarget {
     }
 
     /// Produce a new target with the named tool schema replaced.
+    #[must_use]
     pub fn with_replaced_tool(&self, tool_name: &str, schema: ToolSchema) -> Self {
         let mut replacement = Some(schema);
         let tool_schemas = self
@@ -166,7 +171,7 @@ impl OptimizationTarget {
             .iter()
             .enumerate()
             .map(|(i, (start, name))| {
-                let end = positions.get(i + 1).map(|(s, _)| *s).unwrap_or(text.len());
+                let end = positions.get(i + 1).map_or(text.len(), |(s, _)| *s);
                 PromptSection {
                     name: name.clone(),
                     content: text[*start..end].to_string(),
@@ -228,6 +233,7 @@ impl CycleBudget {
 }
 
 /// Configuration for an optimization run.
+#[non_exhaustive]
 pub struct OptimizationConfig {
     pub eval_set: EvalSet,
     pub strategies: Vec<Box<dyn MutationStrategy>>,
@@ -256,36 +262,43 @@ impl OptimizationConfig {
         }
     }
 
+    #[must_use]
     pub fn with_strategies(mut self, strategies: Vec<Box<dyn MutationStrategy>>) -> Self {
         self.strategies = strategies;
         self
     }
 
+    #[must_use]
     pub fn with_acceptance_threshold(mut self, threshold: f64) -> Self {
         self.acceptance_threshold = threshold;
         self
     }
 
+    #[must_use]
     pub fn with_budget(mut self, budget: CycleBudget) -> Self {
         self.budget = budget;
         self
     }
 
+    #[must_use]
     pub fn with_parallelism(mut self, parallelism: usize) -> Self {
         self.parallelism = parallelism;
         self
     }
 
+    #[must_use]
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.seed = Some(seed);
         self
     }
 
+    #[must_use]
     pub fn with_max_weak_points(mut self, max: usize) -> Self {
         self.max_weak_points = max;
         self
     }
 
+    #[must_use]
     pub fn with_max_candidates_per_strategy(mut self, max: usize) -> Self {
         self.max_candidates_per_strategy = max;
         self
@@ -293,54 +306,5 @@ impl OptimizationConfig {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn structured_prompt_parsed_into_sections() {
-        let prompt =
-            "## Persona\nYou are helpful.\n\n## Rules\nBe concise.\n\n## Constraints\nNo markdown.";
-        let target = OptimizationTarget::new(prompt, vec![]);
-        assert_eq!(target.sections().len(), 3);
-        assert_eq!(target.sections()[0].name.as_deref(), Some("Persona"));
-        assert_eq!(target.sections()[1].name.as_deref(), Some("Rules"));
-        assert_eq!(target.sections()[2].name.as_deref(), Some("Constraints"));
-    }
-
-    #[test]
-    fn unstructured_prompt_is_one_unnamed_section() {
-        let prompt = "You are a helpful assistant that answers questions.";
-        let target = OptimizationTarget::new(prompt, vec![]);
-        assert_eq!(target.sections().len(), 1);
-        assert_eq!(target.sections()[0].name, None);
-        assert_eq!(target.sections()[0].content, prompt);
-        assert_eq!(target.sections()[0].byte_range, 0..prompt.len());
-    }
-
-    #[test]
-    fn custom_delimiter_overrides_default() {
-        let prompt = "### Alpha\nFirst content\n### Beta\nSecond content";
-        let delim = Regex::new(r"(?m)^### (.+)$").unwrap();
-        let target = OptimizationTarget::new(prompt, vec![]).with_section_delimiter(delim);
-        assert_eq!(target.sections().len(), 2);
-        assert_eq!(target.sections()[0].name.as_deref(), Some("Alpha"));
-        assert_eq!(target.sections()[1].name.as_deref(), Some("Beta"));
-    }
-
-    #[test]
-    fn budget_tracks_spending() {
-        let budget = CycleBudget::new(Cost::default().with_total(1.0));
-        budget.record(Cost::default().with_total(0.3));
-        budget.record(Cost::default().with_total(0.3));
-        assert!(!budget.is_exhausted());
-        budget.record(Cost::default().with_total(0.5));
-        assert!(budget.is_exhausted());
-    }
-
-    #[test]
-    fn budget_exhausted_at_max() {
-        let budget = CycleBudget::new(Cost::default().with_total(1.0));
-        budget.record(Cost::default().with_total(1.0));
-        assert!(budget.is_exhausted());
-    }
-}
+#[path = "config_tests.rs"]
+mod tests;

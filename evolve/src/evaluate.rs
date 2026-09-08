@@ -11,6 +11,9 @@ use swink_agent_eval::{AgentFactory, EvalCase, EvalError};
 use tokio_util::sync::CancellationToken;
 
 /// Evaluation result for a single candidate mutation.
+// Deliberately exhaustive: a plain result value built by struct literal in
+// this crate's own test fixtures, not only returned from a constructor.
+#[allow(clippy::exhaustive_structs)]
 #[derive(Debug, Clone)]
 pub struct CandidateResult {
     pub candidate: Candidate,
@@ -36,7 +39,10 @@ pub const TOOL_DESCRIPTION_OVERRIDE_KEY: &str = "__evolve_tool_description_overr
 /// reusing a fixed list) should call [`Self::from_case`] and, when present,
 /// wrap the matching tool with [`apply_tool_description_override`] before
 /// constructing the `Agent`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+// Deliberately exhaustive: built by struct literal in this crate's own test
+// fixtures, not only returned from `from_case`.
+#[allow(clippy::exhaustive_structs)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolDescriptionOverride {
     pub tool_name: String,
     pub description: String,
@@ -231,7 +237,7 @@ impl AgentFactory for MutatingAgentFactory {
 
         let mut modified = case.clone();
         if let Some(ref prompt) = self.override_prompt {
-            modified.system_prompt = prompt.clone();
+            modified.system_prompt.clone_from(prompt);
         }
         if let Some(ref tool_override) = self.tool_override {
             tool_override.write_into(&mut modified.metadata);

@@ -42,6 +42,7 @@ fn build_baseline(results: Vec<EvalCaseResult>) -> BaselineSnapshot {
 /// failing tool's name in `evaluator_name` (it's always the evaluator's own
 /// static name) — the real signal is the `details` string, formatted by both
 /// evaluators as `"{tool}: {pass|fail} (...)"` segments joined by `"; "`.
+#[allow(clippy::unnecessary_wraps)]
 fn tool_selection_details(tool_name: &str, failed: bool) -> Option<String> {
     let status = if failed { "fail" } else { "pass" };
     Some(format!("{tool_name}: {status} (reason)"))

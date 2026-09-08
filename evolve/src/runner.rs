@@ -10,6 +10,7 @@ use swink_agent::{Cost, ToolSchema};
 use swink_agent_eval::{AgentFactory, EvalError, EvalRunner, EvaluatorRegistry, JudgeClient};
 use thiserror::Error;
 
+#[non_exhaustive]
 #[derive(Debug, Error)]
 pub enum EvolveError {
     #[error("eval error: {0}")]
@@ -55,6 +56,7 @@ impl EvolutionRunner {
     }
 
     /// Override the internal `EvalRunner` (useful for testing with custom evaluators).
+    #[must_use]
     pub fn with_eval_runner(mut self, runner: EvalRunner) -> Self {
         self.eval_runner = runner;
         self
@@ -76,6 +78,7 @@ impl EvolutionRunner {
     }
 
     /// Execute one complete optimization cycle: baseline → diagnose → mutate → evaluate → gate → persist.
+    #[allow(clippy::too_many_lines)]
     pub async fn run_cycle(&mut self) -> Result<CycleResult, EvolveError> {
         self.cycle_number += 1;
         let cycle_number = self.cycle_number;
@@ -95,7 +98,7 @@ impl EvolutionRunner {
         self.config.budget.record(baseline.cost.clone());
 
         if self.config.budget.is_exhausted() {
-            return Ok(self.early_exit_with_baseline(
+            return Ok(Self::early_exit_with_baseline(
                 cycle_number,
                 baseline,
                 CycleStatus::BudgetExhausted {
@@ -109,7 +112,7 @@ impl EvolutionRunner {
         let weak_points = diagnoser.diagnose(&baseline, &self.target);
 
         if weak_points.is_empty() {
-            return Ok(self.cycle_result(
+            return Ok(Self::cycle_result(
                 cycle_number,
                 baseline,
                 vec![],
@@ -158,7 +161,7 @@ impl EvolutionRunner {
         }
 
         if all_candidates.is_empty() {
-            return Ok(self.cycle_result(
+            return Ok(Self::cycle_result(
                 cycle_number,
                 baseline,
                 weak_points,
@@ -222,8 +225,7 @@ impl EvolutionRunner {
         let persister = CyclePersister::new(&self.config.output_root);
         let output_dir = persister
             .persist(cycle_number, &acceptance, &baseline, &mutation_errors)
-            .map(Some)
-            .unwrap_or(None);
+            .ok();
 
         let total_cost = baseline.cost.clone() + eval_cost;
 
@@ -234,7 +236,7 @@ impl EvolutionRunner {
             CycleStatus::Complete
         };
 
-        Ok(self.cycle_result(
+        Ok(Self::cycle_result(
             cycle_number,
             baseline,
             weak_points,
@@ -297,7 +299,6 @@ impl EvolutionRunner {
     }
 
     fn early_exit_with_baseline(
-        &self,
         cycle_number: u32,
         baseline: BaselineSnapshot,
         status: CycleStatus,
@@ -317,7 +318,6 @@ impl EvolutionRunner {
 
     #[allow(clippy::too_many_arguments)]
     fn cycle_result(
-        &self,
         cycle_number: u32,
         baseline: BaselineSnapshot,
         weak_points: Vec<crate::diagnose::WeakPoint>,

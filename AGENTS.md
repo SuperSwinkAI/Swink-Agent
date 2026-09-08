@@ -21,6 +21,15 @@ Pure-Rust library for LLM-powered agentic loops. Provider-agnostic core with plu
 - Closure type aliases suffixed `Fn`. `new()` primary; `with_*()` builder chain. Named error constructors.
 - No `get_` prefix. `is_*`/`has_*` predicates. `lib.rs` re-exports public API.
 - One concern per file; split at ~1500 lines. Imports: `std` → external → `crate::`/`super::`.
+- Unit tests live in a sibling `<module>_tests.rs` (or `tests.rs` in a directory
+  module), never inline: `foo.rs` declares `#[cfg(test)] #[path = "foo_tests.rs"] mod tests;`
+  and `foo_tests.rs` opens with `#![cfg(test)]` then `use super::*;`. `#[path]` is required —
+  without it a plain (non-`mod.rs`) file's `mod tests;` resolves to `foo/tests.rs`, not a
+  same-directory sibling. For a `mod` nested inside another inline `mod` (rare), `#[path]`
+  resolves relative to the *parent* module's conventional directory, not the file's own
+  directory. For a file directly in `src/bin/`, keep the sibling out of that directory
+  entirely (Cargo auto-registers every top-level `.rs` file there as its own binary) — nest
+  it under a same-named subdirectory instead.
 - Test names: descriptive `snake_case` without `test_` prefix. Mocks prefixed `Mock`.
 - Shared test helpers in `src/testing.rs` (`testkit` feature). Runtime host detection via `TestRuntime`/`should_run_test()`.
 
