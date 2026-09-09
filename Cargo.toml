@@ -77,7 +77,7 @@ syn = { version = "3.0.3", features = ["full", "extra-traits"] }
 quote = "1.0.47"
 proc-macro2 = "1.0.107"
 bytes = "1.12.1"
-dirs = "6.0.0"
+dirs = "7.0.0"
 regex = "1.13.1"
 keyring = "4.1.6"
 aws-smithy-eventstream = "0.61.1"
