@@ -122,14 +122,6 @@ impl OaiAdapterShell {
         self
     }
 
-    /// Merge a header map into every request this shell issues.
-    #[cfg(any(test, feature = "openai"))]
-    #[must_use]
-    pub(crate) fn with_headers(mut self, headers: reqwest::header::HeaderMap) -> Self {
-        self.base = self.base.with_headers(headers);
-        self
-    }
-
     /// Apply authentication plus the adapter's static headers.
     ///
     /// Static headers win over the defaults set here (one value per name).

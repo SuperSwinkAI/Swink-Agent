@@ -7,11 +7,11 @@ use super::*;
 fn trailing_slash_stripped_on_both_backends() {
     let responses = OpenAiStreamFn::new("https://api.openai.com/", "key");
     assert_eq!(responses.base_url(), "https://api.openai.com");
-    assert!(responses.uses_responses_api());
+    assert!(format!("{responses:?}").contains("responses"));
 
     let chat = OpenAiStreamFn::new_chat_completions("https://api.openai.com/", "key");
     assert_eq!(chat.base_url(), "https://api.openai.com");
-    assert!(!chat.uses_responses_api());
+    assert!(format!("{chat:?}").contains("chat_completions"));
 }
 
 #[test]
@@ -59,10 +59,10 @@ fn from_env_defaults_to_responses_when_unset() {
 #[test]
 fn new_for_wire_selects_the_backend() {
     assert!(OpenAiWire::default() == OpenAiWire::Responses);
-    assert!(OpenAiStreamFn::new_for_wire(OpenAiWire::Responses, "u", "k").uses_responses_api());
-    assert!(
-        !OpenAiStreamFn::new_for_wire(OpenAiWire::ChatCompletions, "u", "k").uses_responses_api()
-    );
+    let responses = OpenAiStreamFn::new_for_wire(OpenAiWire::Responses, "u", "k");
+    assert!(format!("{responses:?}").contains("responses"));
+    let chat = OpenAiStreamFn::new_for_wire(OpenAiWire::ChatCompletions, "u", "k");
+    assert!(format!("{chat:?}").contains("chat_completions"));
 }
 
 #[test]

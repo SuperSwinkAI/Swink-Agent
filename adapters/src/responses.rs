@@ -33,8 +33,8 @@ use tracing::{debug, error, warn};
 use swink_agent::{
     AgentContext, AgentTool, AssistantMessage, AssistantMessageEvent, ContentBlock, Cost,
     MessageConverter, ModelSpec, ReasoningEffort, ResponseFormat, ServingOptionSupport, StopReason,
-    StreamFn, StreamOptions, ThinkingLevel, ToolResultMessage, Usage, UserMessage,
-    convert_messages, extract_tool_schemas,
+    StreamFn, StreamOptions, ToolResultMessage, Usage, UserMessage, convert_messages,
+    extract_tool_schemas,
 };
 
 use crate::base::AdapterBase;
@@ -223,25 +223,14 @@ const fn effort_wire(effort: ReasoningEffort) -> Option<&'static str> {
 
 /// `reasoning.effort` for a request: the per-request
 /// [`ServingOptions::reasoning_effort`](swink_agent::ServingOptions) when
-/// set, else the model's [`ThinkingLevel`].
+/// set, else the model's `ThinkingLevel` read as an effort.
 fn resolve_effort(model: &ModelSpec, options: &StreamOptions) -> Option<&'static str> {
-    match options.serving.reasoning_effort {
-        Some(effort) => effort_wire(effort),
-        None => reasoning_effort(model.thinking_level),
-    }
-}
-
-/// Map [`ThinkingLevel`] onto `reasoning.effort`. `Off` sends nothing.
-const fn reasoning_effort(level: ThinkingLevel) -> Option<&'static str> {
-    match level {
-        ThinkingLevel::Minimal => Some("minimal"),
-        ThinkingLevel::Low => Some("low"),
-        ThinkingLevel::Medium => Some("medium"),
-        ThinkingLevel::High => Some("high"),
-        ThinkingLevel::ExtraHigh => Some("xhigh"),
-        // `Off`, and any future variant with no known wire value: omit.
-        _ => None,
-    }
+    effort_wire(
+        options
+            .serving
+            .reasoning_effort
+            .unwrap_or_else(|| model.thinking_level.into()),
+    )
 }
 
 /// Map [`ResponseFormat`] onto `text.format`.
@@ -772,11 +761,6 @@ impl ResponsesAdapterShell {
         self
     }
 
-    pub(crate) fn with_headers(mut self, headers: reqwest::header::HeaderMap) -> Self {
-        self.base = self.base.with_headers(headers);
-        self
-    }
-
     #[cfg(test)]
     pub(crate) fn base_url(&self) -> &str {
         &self.base.base_url
@@ -981,13 +965,6 @@ impl ResponsesStreamFn {
         value: reqwest::header::HeaderValue,
     ) -> Self {
         self.shell = self.shell.with_header(name, value);
-        self
-    }
-
-    /// Merge a header map into every request, replacing colliding names.
-    #[must_use]
-    pub fn with_headers(mut self, headers: reqwest::header::HeaderMap) -> Self {
-        self.shell = self.shell.with_headers(headers);
         self
     }
 }

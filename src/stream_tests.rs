@@ -37,7 +37,7 @@ fn rate_limit_snapshot_parses_codex_subscription_headers() {
         Some("0")
     );
     assert!(!snapshot.raw.contains_key("content-type"));
-    assert!(!snapshot.is_empty());
+    assert!(!snapshot.raw.is_empty());
 }
 
 #[test]
@@ -100,7 +100,7 @@ fn rate_limit_snapshot_malformed_values_yield_none_but_stay_raw() {
 fn rate_limit_snapshot_with_no_rate_limit_headers_is_empty() {
     let snapshot =
         RateLimitSnapshot::from_headers([("content-type", "application/json"), ("date", "x")]);
-    assert!(snapshot.is_empty());
+    assert!(snapshot.raw.is_empty());
     assert_eq!(snapshot, RateLimitSnapshot::default());
 }
 

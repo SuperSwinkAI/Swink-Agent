@@ -1553,7 +1553,6 @@ async fn responses_text_stream_and_request_shape() {
         .await;
 
     let sf = OpenAiStreamFn::new(server.uri(), "test-key");
-    assert!(sf.uses_responses_api());
     let events = r_collect(&sf, &test_context(), StreamOptions::default()).await;
     assert_eq!(
         events.iter().map(event_name).collect::<Vec<_>>(),

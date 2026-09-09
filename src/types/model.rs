@@ -236,12 +236,6 @@ impl ThinkingLevelSet {
             .filter(move |level| self.contains(*level))
     }
 
-    /// Collect the set's members into a `Vec`, in ascending order.
-    #[must_use]
-    pub fn to_vec(self) -> Vec<ThinkingLevel> {
-        self.iter().collect()
-    }
-
     const fn bit(level: ThinkingLevel) -> u8 {
         match level {
             ThinkingLevel::Off => 1 << 0,
@@ -254,15 +248,9 @@ impl ThinkingLevelSet {
     }
 }
 
-impl FromIterator<ThinkingLevel> for ThinkingLevelSet {
-    fn from_iter<T: IntoIterator<Item = ThinkingLevel>>(iter: T) -> Self {
-        Self::from_levels(iter)
-    }
-}
-
 impl Serialize for ThinkingLevelSet {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.to_vec().serialize(serializer)
+        self.iter().collect::<Vec<_>>().serialize(serializer)
     }
 }
 

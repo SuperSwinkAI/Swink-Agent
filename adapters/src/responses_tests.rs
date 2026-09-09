@@ -2,7 +2,7 @@
 #![cfg(test)]
 
 use super::*;
-use swink_agent::{AgentMessage, LlmMessage};
+use swink_agent::{AgentMessage, LlmMessage, ThinkingLevel};
 
 fn spec(level: ThinkingLevel) -> ModelSpec {
     ModelSpec::new("openai", "gpt-5.6-luna").with_thinking_level(level)
@@ -60,12 +60,13 @@ fn per_request_reasoning_effort_overrides_the_model_level() {
 
 #[test]
 fn reasoning_effort_covers_every_level() {
-    assert_eq!(reasoning_effort(ThinkingLevel::Minimal), Some("minimal"));
-    assert_eq!(reasoning_effort(ThinkingLevel::Low), Some("low"));
-    assert_eq!(reasoning_effort(ThinkingLevel::Medium), Some("medium"));
-    assert_eq!(reasoning_effort(ThinkingLevel::High), Some("high"));
-    assert_eq!(reasoning_effort(ThinkingLevel::ExtraHigh), Some("xhigh"));
-    assert_eq!(reasoning_effort(ThinkingLevel::Off), None);
+    let wire = |level: ThinkingLevel| effort_wire(level.into());
+    assert_eq!(wire(ThinkingLevel::Minimal), Some("minimal"));
+    assert_eq!(wire(ThinkingLevel::Low), Some("low"));
+    assert_eq!(wire(ThinkingLevel::Medium), Some("medium"));
+    assert_eq!(wire(ThinkingLevel::High), Some("high"));
+    assert_eq!(wire(ThinkingLevel::ExtraHigh), Some("xhigh"));
+    assert_eq!(wire(ThinkingLevel::Off), None);
 }
 
 #[test]

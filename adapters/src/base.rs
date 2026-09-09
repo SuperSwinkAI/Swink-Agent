@@ -94,14 +94,6 @@ impl AdapterBase {
         self.headers.insert(name, value);
         self
     }
-
-    /// Merge a header map in, replacing colliding names.
-    #[allow(dead_code)]
-    #[must_use]
-    pub fn with_headers(mut self, headers: reqwest::header::HeaderMap) -> Self {
-        self.headers.extend(headers);
-        self
-    }
 }
 
 impl std::fmt::Debug for AdapterBase {

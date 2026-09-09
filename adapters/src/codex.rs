@@ -90,8 +90,7 @@ const OPENAI_CLIENT_ORIGINATORS: [&str; 5] = [
 ];
 
 /// The PKCE public-client configuration for ChatGPT sign-in. Register it on
-/// the resolver under [`DEFAULT_CREDENTIAL_KEY`] (or the key you pass to
-/// [`CodexStreamFn::with_credential_key`]).
+/// the resolver under [`DEFAULT_CREDENTIAL_KEY`].
 #[must_use]
 pub fn codex_authorization_config() -> AuthorizationConfig {
     AuthorizationConfig::new(
@@ -181,15 +180,13 @@ impl CodexStreamFn {
     ) -> Result<Self, CodexError> {
         let originator = originator.into();
         validate_originator(&originator)?;
-        let mut this = Self {
-            inner: Arc::new(ResponsesStreamFn::new(CODEX_BASE_URL, "")),
+        Ok(Self {
+            inner: build_inner(CODEX_BASE_URL, &originator),
             resolver,
             credential_key: DEFAULT_CREDENTIAL_KEY.to_owned(),
             originator,
             base_url: CODEX_BASE_URL.to_owned(),
-        };
-        this.rebuild_inner();
-        Ok(this)
+        })
     }
 
     /// A ready-to-run adapter for CLI-style hosts: in-memory credential
@@ -228,14 +225,7 @@ impl CodexStreamFn {
     #[must_use]
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
-        self.rebuild_inner();
-        self
-    }
-
-    /// Resolve the credential under a different store key.
-    #[must_use]
-    pub fn with_credential_key(mut self, key: impl Into<String>) -> Self {
-        self.credential_key = key.into();
+        self.inner = build_inner(&self.base_url, &self.originator);
         self
     }
 
@@ -244,24 +234,24 @@ impl CodexStreamFn {
     pub fn originator(&self) -> &str {
         &self.originator
     }
+}
 
-    fn rebuild_inner(&mut self) {
-        // The bearer token is per request (`StreamOptions::api_key`), so the
-        // static key is empty; static headers are the two fixed ones.
-        let originator = HeaderValue::from_str(&self.originator)
-            .expect("validate_originator guarantees a printable ASCII value");
-        self.inner = Arc::new(
-            ResponsesStreamFn::new(self.base_url.clone(), "")
-                .with_responses_path("/responses")
-                .with_provider_label("Codex")
-                .with_error_classifier(classify_codex_error)
-                .with_header(
-                    HeaderName::from_static("openai-beta"),
-                    HeaderValue::from_static("responses=experimental"),
-                )
-                .with_header(HeaderName::from_static("originator"), originator),
-        );
-    }
+/// The bearer token is per request (`StreamOptions::api_key`), so the static
+/// key is empty; static headers are the two fixed ones.
+fn build_inner(base_url: &str, originator: &str) -> Arc<ResponsesStreamFn> {
+    let originator = HeaderValue::from_str(originator)
+        .expect("validate_originator guarantees a printable ASCII value");
+    Arc::new(
+        ResponsesStreamFn::new(base_url, "")
+            .with_responses_path("/responses")
+            .with_provider_label("Codex")
+            .with_error_classifier(classify_codex_error)
+            .with_header(
+                HeaderName::from_static("openai-beta"),
+                HeaderValue::from_static("responses=experimental"),
+            )
+            .with_header(HeaderName::from_static("originator"), originator),
+    )
 }
 
 impl std::fmt::Debug for CodexStreamFn {
