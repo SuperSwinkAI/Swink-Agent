@@ -71,7 +71,7 @@ hmac = "0.13.0"
 toml = "1.1.4"
 chrono = { version = "0.4.45", features = ["serde"] }
 proptest = { version = "1.11.0", default-features = false, features = ["std"] }
-rstest = "0.26.1"
+rstest = "0.27.0"
 insta = { version = "1.48.0", features = ["json"] }
 syn = { version = "3.0.3", features = ["full", "extra-traits"] }
 quote = "1.0.47"
