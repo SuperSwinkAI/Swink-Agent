@@ -202,16 +202,10 @@ async fn read_request_target(stream: &mut TcpStream) -> Option<String> {
 }
 
 async fn respond(stream: &mut TcpStream, status: u16, body: &str) -> std::io::Result<()> {
-    let reason = match status {
-        200 => "OK",
-        404 => "Not Found",
-        _ => "Bad Request",
-    };
-    let html =
-        format!("<!doctype html><meta charset=\"utf-8\"><title>swink-agent</title><p>{body}</p>");
+    // The reason phrase is advisory and browsers render the body, not it.
     let response = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{html}",
-        html.len()
+        "HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
     );
     stream.write_all(response.as_bytes()).await?;
     stream.shutdown().await
@@ -251,11 +245,11 @@ fn parse_manual_input(input: &str, expected_state: &str) -> Result<String, Strin
     if input.is_empty() {
         return Err("no authorization code was entered".to_owned());
     }
-    if let Some((_, query)) = input.split_once('?') {
+    // A pasted URL or bare query string carries `code=`; anything else is
+    // the code itself.
+    let query = input.split_once('?').map_or(input, |(_, query)| query);
+    if query.contains("code=") {
         return parse_callback_query(query, expected_state);
-    }
-    if input.contains("code=") {
-        return parse_callback_query(input, expected_state);
     }
     Ok(input.to_owned())
 }

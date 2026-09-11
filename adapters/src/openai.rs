@@ -148,12 +148,6 @@ impl OpenAiStreamFn {
         }
     }
 
-    /// `true` when this adapter speaks the Responses API.
-    #[must_use]
-    pub const fn uses_responses_api(&self) -> bool {
-        matches!(self.backend, Backend::Responses(_))
-    }
-
     /// Add one static header to every request.
     ///
     /// Useful for org-scoped accounts (`OpenAI-Organization`,
@@ -170,18 +164,6 @@ impl OpenAiStreamFn {
             Backend::Responses(inner) => Backend::Responses(inner.with_header(name, value)),
             Backend::ChatCompletions(shell) => {
                 Backend::ChatCompletions(shell.with_header(name, value))
-            }
-        };
-        self
-    }
-
-    /// Merge a header map into every request, replacing colliding names.
-    #[must_use]
-    pub fn with_headers(mut self, headers: reqwest::header::HeaderMap) -> Self {
-        self.backend = match self.backend {
-            Backend::Responses(inner) => Backend::Responses(inner.with_headers(headers)),
-            Backend::ChatCompletions(shell) => {
-                Backend::ChatCompletions(shell.with_headers(headers))
             }
         };
         self

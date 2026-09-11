@@ -139,3 +139,4 @@ Runnable examples are in [SuperSwinkAI/Swink-Agent-Examples](https://github.com/
 See [docs/getting_started.md](docs/getting_started.md) for setup and configuration.
 See [docs/architecture/HLD.md](docs/architecture/HLD.md) for system design.
 See [docs/planning/PRD.md](docs/planning/PRD.md) for product requirements.
+See [docs/platform-support.md](docs/platform-support.md) for the per-platform feature matrix.

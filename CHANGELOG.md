@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+
+## [0.14.0] - 2026-09-11
+
+### Removed
+- `adapters`: `with_headers` (the plural, map-merging builder) from `AdapterBase`, `OaiAdapterShell`, `ResponsesStreamFn` and `OpenAiStreamFn` — four stacked layers with no caller at any of them. The singular `with_header` is unchanged and still the way to add a static header
+- `adapters`: `OpenAiStreamFn::uses_responses_api()` — the `Debug` rendering already names the backend (`OpenAiStreamFn(responses)` / `OpenAiStreamFn(chat_completions)`)
+- `adapters`: `CodexStreamFn::with_credential_key()` — no callers; the key is `DEFAULT_CREDENTIAL_KEY`
+- `core`: `RateLimitSnapshot::is_empty()` — read `snapshot.raw.is_empty()`
+- `core`: `ThinkingLevelSet::to_vec()` and its `FromIterator` impl — `set.iter().collect()` and `ThinkingLevelSet::from_levels()` cover both
+
+### Added
+- `core`: `From<ThinkingLevel> for ReasoningEffort`, so an adapter maps one enum onto its wire values instead of keeping two near-identical tables
+
+### Fixed
+- `core`: the script tool spawned `sh -c`, absent from a default Windows install, so every script tool failed there with "program not found" before the command ran; Windows now uses `cmd /C`
+- `tui`: the external-editor fallback was `vi`, absent from a clean Windows install; Windows now falls back to `notepad`
+- `plugins/web`: the `node` PATH probe shelled out to `which`, which does not exist on Windows, so resolution silently degraded to the bare `"node"` string; Windows now uses `where` and takes its first match
+
+### Changed
+- `auth`: the loopback sign-in callback replies with `text/plain` instead of a one-line HTML document
+- `rpc`: documented that the crate is Unix-only — the Unix-domain-socket transport rests on `SO_PEERCRED`/`getpeereid`, which have no drop-in Windows equivalent. The crate still compiles on Windows, where `serve`/`connect` return an `Unsupported` error. See `docs/platform-support.md`
+- dependencies: `dirs` 6 → 7, `jsonschema` 0.53 → 0.55, `rstest` 0.26 → 0.27, plus grouped patch updates
+
+
 ## [0.13.2] - 2026-09-08
 
 ### Added
@@ -651,7 +675,8 @@ are folded in here rather than kept as a phantom release.
 
 Major additions: Gemma 4 local inference, `BlockAccumulator` for streaming event assembly, `schemars`-based proc-macro engine, multi-agent patterns and artifact service, MCP integration, plugin system, policy slots, credential management, TUI session management, and web browse plugin. 42 specs implemented across the 0.6 lifecycle.
 
-[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.13.2...HEAD
+[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.13.2...v0.14.0
 [0.13.2]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.12.4...v0.13.0

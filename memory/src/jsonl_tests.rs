@@ -1483,7 +1483,12 @@ fn delete_waits_for_append_lock_and_does_not_allow_resurrection() {
         .unwrap();
 
     let path = session_path(dir.path(), "delete-race");
-    rewrite_meta_without_padding(&path, "delete-race", |meta| meta.sequence = 9);
+    rewrite_meta_without_padding(&path, "delete-race", |meta| {
+        meta.sequence = 9;
+        // Pin updated_at to a whole second matching append_rewrite_failure_preserves_existing_file
+        // so sequence 9 -> 10 guarantees taking the rewrite path rather than in-place append.
+        meta.updated_at = meta.updated_at.with_nanosecond(0).unwrap();
+    });
     let append_ready = Arc::new(Barrier::new(2));
     let allow_rewrite = Arc::new(Barrier::new(2));
 

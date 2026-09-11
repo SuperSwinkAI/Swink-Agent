@@ -213,12 +213,8 @@ impl AgentTool for ScriptTool {
                 return AgentToolResult::error("cancelled before execution");
             }
 
-            match tokio::process::Command::new("sh")
-                .arg("-c")
-                .arg(&command)
-                .output()
-                .await
-            {
+            let mut cmd = shell_command(&command);
+            match cmd.output().await {
                 Ok(output) => {
                     let stdout = String::from_utf8_lossy(&output.stdout);
                     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -232,6 +228,30 @@ impl AgentTool for ScriptTool {
             }
         })
     }
+}
+
+/// The shell used to run a script tool's command line, and the flag that makes
+/// it read that command from an argument.
+///
+/// `sh` is absent from a default Windows install, so spawning it there fails
+/// with "program not found" before the command ever runs. Windows uses the
+/// `cmd` built-in shell instead.
+#[cfg(windows)]
+const SHELL: (&str, &str) = ("cmd", "/C");
+
+/// The shell used to run a script tool's command line, and the flag that makes
+/// it read that command from an argument.
+#[cfg(not(windows))]
+const SHELL: (&str, &str) = ("sh", "-c");
+
+/// Build a platform-appropriate shell `Command` that executes `command`.
+///
+/// Unix: `sh -c <command>`. Windows: `cmd /C <command>`.
+fn shell_command(command: &str) -> tokio::process::Command {
+    let (program, flag) = SHELL;
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.arg(flag).arg(command);
+    cmd
 }
 
 // ─── ToolWatcher ────────────────────────────────────────────────────────────

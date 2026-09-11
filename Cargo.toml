@@ -3,7 +3,7 @@ members = [".", "adapters", "artifacts", "auth", "eval", "eval-judges", "evolve"
 resolver = "2"
 
 [workspace.package]
-version = "0.13.2"
+version = "0.14.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
@@ -59,7 +59,7 @@ strsim = "0.11.1"
 # resolution, which this workspace never does — every schema we compile is
 # inline. External `$ref`s now fail at validator build instead of touching
 # the network or filesystem.
-jsonschema = { version = "0.53.0", default-features = false }
+jsonschema = { version = "0.55.0", default-features = false }
 opentelemetry = "0.32.0"
 opentelemetry_sdk = "0.32.1"
 opentelemetry-otlp = "0.32.0"
@@ -71,13 +71,13 @@ hmac = "0.13.0"
 toml = "1.1.4"
 chrono = { version = "0.4.45", features = ["serde"] }
 proptest = { version = "1.11.0", default-features = false, features = ["std"] }
-rstest = "0.26.1"
+rstest = "0.27.0"
 insta = { version = "1.48.0", features = ["json"] }
 syn = { version = "3.0.3", features = ["full", "extra-traits"] }
 quote = "1.0.47"
 proc-macro2 = "1.0.107"
 bytes = "1.12.1"
-dirs = "6.0.0"
+dirs = "7.0.0"
 regex = "1.13.1"
 keyring = "4.1.6"
 aws-smithy-eventstream = "0.61.1"

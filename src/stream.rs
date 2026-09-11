@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 
 pub use crate::stream_error_kind::StreamErrorKind;
 use crate::types::{
-    AgentContext, AssistantMessage, ContentBlock, Cost, ModelSpec, StopReason, Usage,
+    AgentContext, AssistantMessage, ContentBlock, Cost, ModelSpec, StopReason, ThinkingLevel, Usage,
 };
 
 // ─── StreamTransport ─────────────────────────────────────────────────────────
@@ -149,12 +149,6 @@ impl RateLimitSnapshot {
             snapshot.raw.insert(name, value.to_owned());
         }
         snapshot
-    }
-
-    /// `true` when the provider sent no rate-limit-shaped header at all.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.raw.is_empty()
     }
 }
 
@@ -384,6 +378,22 @@ pub enum ReasoningEffort {
     XHigh,
     /// The most the provider offers.
     Max,
+}
+
+impl From<ThinkingLevel> for ReasoningEffort {
+    /// The per-model [`ThinkingLevel`] read as a per-request effort, so an
+    /// adapter maps one enum to its wire values instead of two.
+    fn from(level: ThinkingLevel) -> Self {
+        match level {
+            ThinkingLevel::Minimal => Self::Minimal,
+            ThinkingLevel::Low => Self::Low,
+            ThinkingLevel::Medium => Self::Medium,
+            ThinkingLevel::High => Self::High,
+            ThinkingLevel::ExtraHigh => Self::XHigh,
+            // `Off`, and any future variant with no effort equivalent.
+            _ => Self::Off,
+        }
+    }
 }
 
 impl ServingOptions {

@@ -628,12 +628,12 @@ fn thinking_level_set_round_trips_every_known_level() {
     for level in levels {
         assert!(full.contains(level));
     }
-    assert_eq!(full.to_vec(), levels.to_vec());
+    assert_eq!(full.iter().collect::<Vec<_>>(), levels.to_vec());
 
     // Insertion order doesn't affect the canonical ascending iteration order.
     let reversed = ThinkingLevelSet::from_levels(levels.into_iter().rev());
     assert_eq!(reversed, full);
-    assert_eq!(reversed.to_vec(), levels.to_vec());
+    assert_eq!(reversed.iter().collect::<Vec<_>>(), levels.to_vec());
 
     assert!(ThinkingLevelSet::empty().is_empty());
     assert!(!ThinkingLevelSet::empty().contains(ThinkingLevel::Off));

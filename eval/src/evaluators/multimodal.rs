@@ -2,7 +2,7 @@
 //!
 //! Only `ImageSafetyEvaluator` ships in this spec — audio multimodal is
 //! deferred per FR-019. The evaluator consumes `case.attachments` via the
-//! shared [`materialize_case_attachments`](crate::materialize_case_attachments)
+//! shared [`crate::materialize_case_attachments`]
 //! helper (T086) and dispatches through `dispatch_judge` with the
 //! `image_safety_v0` template registered on PR #818.
 
