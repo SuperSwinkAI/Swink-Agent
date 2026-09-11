@@ -23,7 +23,7 @@
 //!
 //! Per FR-049, unsafe is denied workspace-wide and narrowed further at the
 //! `swink-agent-eval` crate root. The single authorised carve-out is the
-//! `cfg(target_family = "unix")` [`posix`] submodule, which relaxes to
+//! `cfg(target_family = "unix")` `posix` submodule, which relaxes to
 //! `#![allow(unsafe_code)]` — every `unsafe` block inside it carries a
 //! `// SAFETY:` comment explaining the invariant being upheld. Nothing in this
 //! parent module uses `unsafe`.
@@ -208,7 +208,7 @@ impl SandboxOutcome {
 /// Execute `command` under the configured [`SandboxLimits`] (T081).
 ///
 /// On Unix this installs `rlimit`s via a `pre_exec` hook inside the
-/// [`posix`] submodule and enforces wall-clock by SIGKILL-ing the child after
+/// `posix` submodule and enforces wall-clock by SIGKILL-ing the child after
 /// the deadline. On Windows this returns
 /// [`EvaluatorError::UnsupportedPlatform`] (T082) without spawning.
 ///

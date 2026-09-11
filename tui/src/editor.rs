@@ -1,17 +1,31 @@
 //! External editor integration for composing prompts.
 //!
-//! Opens the user's preferred editor (`$EDITOR`, `$VISUAL`, or `vi`) with a
-//! temporary file. The TUI suspends while the editor is open and submits the
-//! file contents as a user prompt when the editor closes.
+//! Opens the user's preferred editor (`$EDITOR`, `$VISUAL`, or a
+//! platform-appropriate default) with a temporary file. The TUI suspends while
+//! the editor is open and submits the file contents as a user prompt when the
+//! editor closes.
 
 use std::io;
 use std::process::Command;
 
 use tempfile::NamedTempFile;
 
+/// The editor used when neither a config override nor `$EDITOR`/`$VISUAL` is
+/// set.
+///
+/// `vi` is not present on a clean Windows install, so Windows falls back to
+/// `notepad`, which ships with every edition.
+#[cfg(windows)]
+pub const DEFAULT_EDITOR: &str = "notepad";
+
+/// The editor used when neither a config override nor `$EDITOR`/`$VISUAL` is
+/// set.
+#[cfg(not(windows))]
+pub const DEFAULT_EDITOR: &str = "vi";
+
 /// Resolve the editor command from environment or fallback.
 ///
-/// Priority: config override > `$EDITOR` > `$VISUAL` > `vi`.
+/// Priority: config override > `$EDITOR` > `$VISUAL` > [`DEFAULT_EDITOR`].
 #[must_use]
 pub fn resolve_editor(config_override: Option<&str>) -> String {
     if let Some(editor) = config_override {
@@ -23,7 +37,7 @@ pub fn resolve_editor(config_override: Option<&str>) -> String {
     if let Ok(editor) = std::env::var("VISUAL") {
         return editor;
     }
-    "vi".to_string()
+    DEFAULT_EDITOR.to_string()
 }
 
 /// Open the editor with a temporary file and return the file contents on close.

@@ -8,9 +8,36 @@ use std::process::Command as StdCommand;
 use serde_json::json;
 
 use super::{
-    BRIDGE_SCRIPT, parse_extract_data, parse_screenshot_data, resolve_node_path,
-    write_bridge_script_temp_file,
+    BRIDGE_SCRIPT, PATH_LOOKUP_PROGRAM, parse_extract_data, parse_screenshot_data,
+    resolve_node_path, write_bridge_script_temp_file,
 };
+
+#[test]
+fn path_lookup_program_exists_on_the_host_platform() {
+    // Windows ships `where.exe`, not `which`; probing with `which` there always
+    // failed and silently degraded to the bare "node" command string.
+    if cfg!(windows) {
+        assert_eq!(PATH_LOOKUP_PROGRAM, "where");
+    } else {
+        assert_eq!(PATH_LOOKUP_PROGRAM, "which");
+    }
+}
+
+#[test]
+fn resolve_node_path_prefers_explicit_path() {
+    let explicit = Path::new("/custom/bin/node");
+    assert_eq!(resolve_node_path(Some(explicit)), explicit);
+}
+
+#[test]
+fn resolve_node_path_returns_a_single_line() {
+    // `where` prints one line per match; a multi-line path would be unusable as
+    // a program name.
+    let resolved = resolve_node_path(None);
+    let resolved = resolved.to_string_lossy();
+    assert!(!resolved.is_empty());
+    assert_eq!(resolved.lines().count(), 1);
+}
 
 #[tokio::test]
 async fn writes_unique_bridge_scripts_for_concurrent_startups() {
