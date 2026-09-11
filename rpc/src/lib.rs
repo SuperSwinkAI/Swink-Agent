@@ -66,6 +66,20 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! # Platform support
+//!
+//! Unix only. The transport is a Unix domain socket whose security model rests
+//! on two POSIX mechanisms: the socket file is created with mode `0600`, and
+//! every accepted connection is checked against the peer's user id via
+//! `SO_PEERCRED` (Linux) or `getpeereid` (macOS and the BSDs). Neither has a
+//! drop-in Windows equivalent, so a named-pipe port would be a second
+//! transport rather than a conditional branch.
+//!
+//! The crate still compiles on Windows. `AgentServer::serve` returns
+//! [`std::io::ErrorKind::Unsupported`] and `AgentClient::connect` returns the
+//! matching [`RpcError`](jsonrpc::RpcError); both carry the message "Unix
+//! socket transport requires a Unix host". See `docs/platform-support.md`.
 
 #![forbid(unsafe_code)]
 

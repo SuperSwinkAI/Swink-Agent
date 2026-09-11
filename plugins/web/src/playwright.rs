@@ -401,19 +401,35 @@ async fn write_bridge_script_temp_file() -> Result<PathBuf, PlaywrightError> {
     Ok(script_path)
 }
 
+/// Name of the `PATH` lookup utility for the host platform.
+///
+/// Windows has no `which`; the equivalent is `where.exe`, which is why probing
+/// with `which` always failed there and silently fell back to bare `"node"`.
+#[cfg(windows)]
+const PATH_LOOKUP_PROGRAM: &str = "where";
+
+/// Name of the `PATH` lookup utility for the host platform.
+#[cfg(not(windows))]
+const PATH_LOOKUP_PROGRAM: &str = "which";
+
 /// Resolve the path to the `node` binary.
 ///
-/// Priority: explicit path > `which node` > bare `"node"`.
+/// Priority: explicit path > [`PATH_LOOKUP_PROGRAM`] lookup > bare `"node"`.
 fn resolve_node_path(explicit: Option<&Path>) -> PathBuf {
     if let Some(p) = explicit {
         return p.to_path_buf();
     }
 
-    // Try `which node` synchronously (called once at startup, acceptable).
-    if let Ok(output) = std::process::Command::new("which").arg("node").output()
+    // Probe `PATH` synchronously (called once at startup, acceptable).
+    if let Ok(output) = std::process::Command::new(PATH_LOOKUP_PROGRAM)
+        .arg("node")
+        .output()
         && output.status.success()
     {
-        let path_str = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        // `where` prints every match, one per line; take the first, which is
+        // the one the shell itself would run.
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let path_str = stdout.lines().next().unwrap_or_default().trim();
         if !path_str.is_empty() {
             return PathBuf::from(path_str);
         }

@@ -1,6 +1,6 @@
 //! Judge-backed code quality evaluator (T079).
 //!
-//! Dispatches through the shared [`dispatch_judge`](crate::dispatch_judge)
+//! Dispatches through the shared [`crate::dispatch_judge`]
 //! helper using the `code_llm_judge_v0` template registered on PR #818.
 
 use std::sync::Arc;

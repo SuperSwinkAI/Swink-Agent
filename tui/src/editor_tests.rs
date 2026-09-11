@@ -66,11 +66,23 @@ fn resolve_editor_with_config_override() {
 }
 
 #[test]
-fn resolve_editor_falls_back_to_vi() {
-    // When no env vars are set and no config override
-    // We can't fully control env in tests, but test that the function returns something
+fn resolve_editor_falls_back_to_platform_default() {
+    // Env vars are process-global, so this test cannot clear $EDITOR/$VISUAL
+    // without racing every other test in the binary; assert only that a
+    // non-empty command comes back.
     let result = resolve_editor(None);
     assert!(!result.is_empty());
+}
+
+#[test]
+fn default_editor_is_available_on_the_host_platform() {
+    // `vi` is absent from a clean Windows install, so the fallback must differ
+    // per platform or the external editor fails with "file not found".
+    if cfg!(windows) {
+        assert_eq!(DEFAULT_EDITOR, "notepad");
+    } else {
+        assert_eq!(DEFAULT_EDITOR, "vi");
+    }
 }
 
 #[test]

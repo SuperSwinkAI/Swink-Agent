@@ -94,6 +94,17 @@ command = "echo hello"
 }
 
 #[test]
+fn shell_is_available_on_the_host_platform() {
+    // `sh` is absent from a default Windows install; spawning it there fails
+    // with "program not found" before the command line is ever run.
+    if cfg!(windows) {
+        assert_eq!(SHELL, ("cmd", "/C"));
+    } else {
+        assert_eq!(SHELL, ("sh", "-c"));
+    }
+}
+
+#[test]
 fn duplicate_tool_names_last_write_wins() {
     let tool1 = ScriptTool::from_toml(
         r#"
