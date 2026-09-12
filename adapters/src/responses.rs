@@ -628,17 +628,21 @@ impl ResponsesState {
                 };
             }
             "response.failed" => {
-                let detail = payload
+                let (code, message) = payload
                     .response
                     .as_ref()
                     .and_then(|r| r.error.as_ref())
-                    .map_or_else(
-                        || "response failed".to_owned(),
-                        |e| error_detail(e.code.as_deref(), e.message.as_deref()),
-                    );
-                return SseAction::Done(
-                    self.terminal(AssistantMessageEvent::error(format!("{provider} {detail}"))),
-                );
+                    .map_or((None, None), |e| (e.code.as_deref(), e.message.as_deref()));
+                let detail = if code.is_none() && message.is_none() {
+                    "response failed".to_owned()
+                } else {
+                    error_detail(code, message)
+                };
+                let event = crate::oai_transport::classify_oai_error_fields(
+                    code, message, provider, "", &detail,
+                )
+                .unwrap_or_else(|| AssistantMessageEvent::error(format!("{provider} {detail}")));
+                return SseAction::Done(self.terminal(event));
             }
             "error" => {
                 let (code, message) = match &payload.error {
@@ -646,11 +650,10 @@ impl ResponsesState {
                     None => (payload.code.as_deref(), payload.message.as_deref()),
                 };
                 let detail = error_detail(code, message);
-                let event = if code == Some("rate_limit_exceeded") {
-                    AssistantMessageEvent::error_throttled(format!("{provider} {detail}"))
-                } else {
-                    AssistantMessageEvent::error(format!("{provider} {detail}"))
-                };
+                let event = crate::oai_transport::classify_oai_error_fields(
+                    code, message, provider, "", &detail,
+                )
+                .unwrap_or_else(|| AssistantMessageEvent::error(format!("{provider} {detail}")));
                 return SseAction::Done(self.terminal(event));
             }
             _ => {}

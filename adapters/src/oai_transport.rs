@@ -237,17 +237,57 @@ pub(crate) fn classify_oai_error_body(
         ),
     };
     let message = message.unwrap_or(body);
+    let source = format!(" (HTTP {status})");
 
-    if code == Some("context_length_exceeded")
-        || crate::classify::is_context_overflow_message(message)
-    {
+    classify_oai_error_fields(code, Some(message), provider, &source, message)
+}
+
+/// Classify OpenAI-compatible error code/message fields carried inside a
+/// provider response body or terminal stream event.
+pub(crate) fn classify_oai_error_fields(
+    code: Option<&str>,
+    message: Option<&str>,
+    provider: &str,
+    source: &str,
+    detail: &str,
+) -> Option<AssistantMessageEvent> {
+    let code = code.unwrap_or_default().to_ascii_lowercase();
+    let message = message.unwrap_or(detail);
+
+    if code == "context_length_exceeded" || crate::classify::is_context_overflow_message(message) {
         return Some(AssistantMessageEvent::error_context_overflow(format!(
-            "{provider} context window exceeded (HTTP {status}): {message}"
+            "{provider} context window exceeded{source}: {detail}"
         )));
     }
-    if code == Some("content_filter") {
+    if code == "content_filter" {
         return Some(AssistantMessageEvent::error_content_filtered(format!(
-            "{provider} content filter (HTTP {status}): {message}"
+            "{provider} content filter{source}: {detail}"
+        )));
+    }
+    if matches!(code.as_str(), "rate_limit_exceeded" | "rate_limit_error") {
+        return Some(AssistantMessageEvent::error_throttled(format!(
+            "{provider} rate limit{source}: {detail}"
+        )));
+    }
+    if matches!(
+        code.as_str(),
+        "authentication_error" | "invalid_api_key" | "permission_error" | "permission_denied"
+    ) {
+        return Some(AssistantMessageEvent::error_auth(format!(
+            "{provider} auth error{source}: {detail}"
+        )));
+    }
+    if matches!(
+        code.as_str(),
+        "server_error" | "api_error" | "internal_error"
+    ) {
+        return Some(AssistantMessageEvent::error_network(format!(
+            "{provider} server error{source}: {detail}"
+        )));
+    }
+    if matches!(code.as_str(), "model_not_found" | "model_decommissioned") {
+        return Some(AssistantMessageEvent::error_model_retired(format!(
+            "{provider} model retired or unavailable{source}: {detail}"
         )));
     }
     None

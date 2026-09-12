@@ -415,6 +415,10 @@ async fn mid_stream_error_event_closes_open_blocks_then_errors() {
         message.contains("server_error") && message.contains("boom"),
         "{message}"
     );
+    assert_eq!(
+        find_error_kind(&events),
+        Some(Some(StreamErrorKind::Network))
+    );
 }
 
 #[tokio::test]
@@ -437,6 +441,72 @@ async fn rate_limit_error_event_is_throttled() {
     assert_eq!(
         find_error_kind(&events),
         Some(Some(StreamErrorKind::Throttled))
+    );
+}
+
+#[tokio::test]
+async fn response_failed_context_length_is_context_overflow() {
+    let body = sse(&[(
+        "response.failed",
+        serde_json::json!({
+            "type": "response.failed",
+            "response": {
+                "status": "failed",
+                "error": {
+                    "code": "context_length_exceeded",
+                    "message": "This model's maximum context length is 128000 tokens."
+                }
+            }
+        }),
+    )]);
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+    let events = collect(
+        &ResponsesStreamFn::new(server.uri(), "k"),
+        &test_context(),
+        StreamOptions::default(),
+    )
+    .await;
+    assert_eq!(
+        find_error_kind(&events),
+        Some(Some(StreamErrorKind::ContextWindowExceeded)),
+        "{events:?}"
+    );
+}
+
+#[tokio::test]
+async fn response_failed_content_filter_is_content_filtered() {
+    let body = sse(&[(
+        "response.failed",
+        serde_json::json!({
+            "type": "response.failed",
+            "response": {
+                "status": "failed",
+                "error": {
+                    "code": "content_filter",
+                    "message": "The response was filtered due to policy."
+                }
+            }
+        }),
+    )]);
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+    let events = collect(
+        &ResponsesStreamFn::new(server.uri(), "k"),
+        &test_context(),
+        StreamOptions::default(),
+    )
+    .await;
+    assert_eq!(
+        find_error_kind(&events),
+        Some(Some(StreamErrorKind::ContentFiltered)),
+        "{events:?}"
     );
 }
 

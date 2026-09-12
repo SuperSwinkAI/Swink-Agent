@@ -72,14 +72,23 @@ fn oai_body_classification_only_applies_to_4xx() {
 #[test]
 fn unrecognized_oai_body_falls_through() {
     assert!(classify_oai_error_body(400, "not json", "OpenAI").is_none());
-    assert!(
-        classify_oai_error_body(
-            400,
-            r#"{"error":{"message":"invalid api key","code":"invalid_api_key"}}"#,
-            "OpenAI"
-        )
-        .is_none()
-    );
+    assert!(classify_oai_error_body(400, r#"{"error":{"message":"nope"}}"#, "OpenAI").is_none());
+}
+
+#[test]
+fn oai_body_invalid_api_key_is_auth() {
+    let event = classify_oai_error_body(
+        400,
+        r#"{"error":{"message":"invalid api key","code":"invalid_api_key"}}"#,
+        "OpenAI",
+    )
+    .expect("expected classification");
+    match event {
+        AssistantMessageEvent::Error { error_kind, .. } => {
+            assert_eq!(error_kind, Some(swink_agent::StreamErrorKind::Auth));
+        }
+        other => panic!("expected Error, got {other:?}"),
+    }
 }
 
 #[test]
