@@ -120,17 +120,21 @@ fn credential_error_display_no_secrets() {
 }
 
 #[test]
-fn credential_store_error_display_redacts_backend_details() {
+fn credential_store_error_display_and_source_chain_redact_backend_details() {
     let err = CredentialError::StoreError(Box::new(std::io::Error::other(
         "backend exploded with token=secret-value",
     )));
 
     assert_eq!(err.to_string(), "credential store error");
-
-    let source = err.source().expect("store errors should retain the source");
     assert!(
-        source.to_string().contains("token=secret-value"),
-        "store error source should keep the backend detail for internal diagnostics"
+        err.source().is_none(),
+        "store errors must not expose raw backend details through Error::source"
+    );
+
+    let chain = error_chain_string(&err);
+    assert!(
+        !chain.contains("token=secret-value"),
+        "source-chain formatting leaks backend secret"
     );
 }
 
@@ -177,6 +181,22 @@ fn oauth2_debug_redacts_token_url() {
     }
     assert!(debug.contains("token_url"));
     assert!(debug.contains("[REDACTED]"));
+}
+
+fn error_chain_string(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+
+    while let Some(err) = source {
+        let source_message = err.to_string();
+        if !source_message.is_empty() {
+            message.push_str(": ");
+            message.push_str(&source_message);
+        }
+        source = err.source();
+    }
+
+    message
 }
 
 // T011: credential_type helper

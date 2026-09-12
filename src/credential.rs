@@ -334,10 +334,9 @@ impl std::fmt::Display for CredentialError {
 
 impl std::error::Error for CredentialError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::StoreError(error) => Some(&**error),
-            _ => None,
-        }
+        // Backend store errors are arbitrary and can contain credential values;
+        // exposing them here would leak through generic error-chain logging.
+        None
     }
 }
 
