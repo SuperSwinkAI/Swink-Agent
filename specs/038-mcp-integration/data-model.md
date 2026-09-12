@@ -34,8 +34,8 @@ Configuration for a single MCP server connection.
 | tool_prefix | Option\<String\> | No | If set, all tool names from this server are prefixed with `{prefix}_`. |
 | tool_filter | Option\<ToolFilter\> | No | Controls which discovered tools are exposed to the agent. |
 | requires_approval | bool | No (default: true) | Whether tools from this server require user approval before execution. |
-| connect_timeout_ms | Option\<u64\> | No | Optional timeout (in milliseconds) for the initial transport handshake. |
-| discovery_timeout_ms | Option\<u64\> | No | Optional timeout (in milliseconds) for the initial tool discovery request. |
+| connect_timeout_ms | Option\<u64\> | No | Optional timeout (in milliseconds) for the initial transport handshake. Defaults to `Some(5_000)`; set `None` to opt out. |
+| discovery_timeout_ms | Option\<u64\> | No | Optional timeout (in milliseconds) for the initial tool discovery request. Defaults to `Some(5_000)`; set `None` to opt out. |
 
 **Identity**: Unique by `name`. No two configs may share the same name.
 

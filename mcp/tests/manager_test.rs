@@ -535,3 +535,56 @@ async fn discovery_timeout_skips_hung_server_and_keeps_healthy_tools() {
     let _ = hanging_task.await;
     let _ = healthy_task.await;
 }
+
+#[tokio::test]
+async fn default_discovery_timeout_skips_hung_server_and_keeps_healthy_tools() {
+    let (hanging_shutdown, hanging_task, hanging_url) = spawn_hanging_discovery_server().await;
+    let healthy_session_manager = Arc::new(LocalSessionManager::default());
+    let (healthy_shutdown, healthy_task, healthy_url) =
+        spawn_mock_sse_server(Arc::clone(&healthy_session_manager)).await;
+
+    let mut manager = McpManager::new(vec![
+        McpServerConfig::new(
+            "hung-discovery-default",
+            McpTransport::StreamableHttp {
+                url: hanging_url,
+                bearer_token: None,
+                bearer_auth: None,
+                headers: HashMap::default(),
+            },
+        )
+        .with_tool_prefix("hung")
+        .with_requires_approval(false),
+        McpServerConfig::new(
+            "healthy-default",
+            McpTransport::StreamableHttp {
+                url: healthy_url,
+                bearer_token: None,
+                bearer_auth: None,
+                headers: HashMap::default(),
+            },
+        )
+        .with_tool_prefix("healthy")
+        .with_requires_approval(false),
+    ]);
+
+    tokio::time::timeout(Duration::from_secs(10), manager.connect_all())
+        .await
+        .expect("default discovery timeout should keep bootstrap bounded")
+        .expect("healthy server should still connect");
+
+    let names: Vec<String> = manager
+        .tools()
+        .iter()
+        .map(|tool| tool.name().into())
+        .collect();
+    assert_eq!(names, vec!["healthy_echo".to_string()]);
+
+    manager.shutdown().await;
+    wait_for_session_cleanup(&healthy_session_manager).await;
+
+    hanging_shutdown.cancel();
+    healthy_shutdown.cancel();
+    let _ = hanging_task.await;
+    let _ = healthy_task.await;
+}

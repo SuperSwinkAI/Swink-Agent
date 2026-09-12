@@ -7,6 +7,11 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use swink_agent::CredentialType;
 
+/// Default timeout for the initial MCP transport handshake.
+pub const DEFAULT_CONNECT_TIMEOUT_MS: u64 = 5_000;
+/// Default timeout for the initial MCP tool discovery request.
+pub const DEFAULT_DISCOVERY_TIMEOUT_MS: u64 = 5_000;
+
 /// Resolver-backed bearer auth for SSE MCP transports.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,10 +172,14 @@ pub struct McpServerConfig {
     #[serde(default = "default_requires_approval")]
     pub requires_approval: bool,
     /// Optional timeout for the initial transport handshake.
-    #[serde(default)]
+    ///
+    /// Defaults to [`DEFAULT_CONNECT_TIMEOUT_MS`]. Set to `None` to opt out.
+    #[serde(default = "default_connect_timeout_ms")]
     pub connect_timeout_ms: Option<u64>,
     /// Optional timeout for the initial tool discovery request.
-    #[serde(default)]
+    ///
+    /// Defaults to [`DEFAULT_DISCOVERY_TIMEOUT_MS`]. Set to `None` to opt out.
+    #[serde(default = "default_discovery_timeout_ms")]
     pub discovery_timeout_ms: Option<u64>,
 }
 
@@ -178,12 +187,22 @@ const fn default_requires_approval() -> bool {
     true
 }
 
+#[allow(clippy::unnecessary_wraps)]
+const fn default_connect_timeout_ms() -> Option<u64> {
+    Some(DEFAULT_CONNECT_TIMEOUT_MS)
+}
+
+#[allow(clippy::unnecessary_wraps)]
+const fn default_discovery_timeout_ms() -> Option<u64> {
+    Some(DEFAULT_DISCOVERY_TIMEOUT_MS)
+}
+
 impl McpServerConfig {
     /// Create a server config with the given name and transport.
     ///
     /// Optional fields default to: no tool prefix, no tool filter, approval
-    /// required, and no connect/discovery timeouts. Use the `with_*` methods
-    /// to override them.
+    /// required, and bounded connect/discovery timeouts. Use the `with_*`
+    /// methods to override them.
     #[must_use]
     pub fn new(name: impl Into<String>, transport: McpTransport) -> Self {
         Self {
@@ -192,8 +211,8 @@ impl McpServerConfig {
             tool_prefix: None,
             tool_filter: None,
             requires_approval: default_requires_approval(),
-            connect_timeout_ms: None,
-            discovery_timeout_ms: None,
+            connect_timeout_ms: default_connect_timeout_ms(),
+            discovery_timeout_ms: default_discovery_timeout_ms(),
         }
     }
 

@@ -8,7 +8,10 @@
 
 ```rust
 // Configuration
-pub use config::{McpServerConfig, McpTransport, SseBearerAuth, ToolFilter};
+pub use config::{
+    DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_DISCOVERY_TIMEOUT_MS, McpServerConfig,
+    McpTransport, SseBearerAuth, ToolFilter,
+};
 
 // Manager (main entry point)
 pub use manager::McpManager;
@@ -59,10 +62,13 @@ pub struct McpServerConfig {
     pub tool_prefix: Option<String>,
     pub tool_filter: Option<ToolFilter>,
     pub requires_approval: bool,  // default: true
-    pub connect_timeout_ms: Option<u64>,
-    pub discovery_timeout_ms: Option<u64>,
+    pub connect_timeout_ms: Option<u64>,     // default: Some(5_000)
+    pub discovery_timeout_ms: Option<u64>,   // default: Some(5_000)
 }
 ```
+
+`None` disables a startup timeout for callers that intentionally manage
+unbounded bootstrap behavior outside the MCP manager.
 
 ### McpTransport
 
