@@ -318,7 +318,8 @@ pub async fn run_single_turn(
         stream_result
     };
 
-    let Some(mut assistant_message) = handle_stream_result(stream_result, config, state, tx).await
+    let Some(mut assistant_message) =
+        handle_stream_result(stream_result, config, state, system_prompt, tx).await
     else {
         return TurnOutcome::Return;
     };
@@ -725,6 +726,7 @@ async fn handle_stream_result(
     result: StreamResult,
     config: &Arc<AgentLoopConfig>,
     state: &mut LoopState,
+    system_prompt: &str,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> Option<AssistantMessage> {
     match result {
@@ -738,11 +740,20 @@ async fn handle_stream_result(
         }
         StreamResult::Aborted => {
             let abort_msg = build_abort_message(&config.model);
-            let msg_for_event = abort_msg.clone();
+            let assistant_ctx_index = state.context_messages.len();
             state
                 .context_messages
-                .push(AgentMessage::Llm(LlmMessage::Assistant(abort_msg)));
+                .push(AgentMessage::Llm(LlmMessage::Assistant(abort_msg.clone())));
+            let (msg_for_event, policy_stop) =
+                run_post_turn_policy_check(&abort_msg, &[], state, config, system_prompt);
+            state.context_messages.set(
+                assistant_ctx_index,
+                AgentMessage::Llm(LlmMessage::Assistant(msg_for_event.clone())),
+            );
             let snapshot = build_snapshot(state, StopReason::Aborted, None);
+            if let Some(reason) = policy_stop {
+                tracing::info!("post-turn policy stopped agent: {reason}");
+            }
             emit_turn_end_and_agent_end(
                 msg_for_event,
                 vec![],
