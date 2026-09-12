@@ -138,6 +138,18 @@ if (!bridge.isBlockedPrivateHost('127.0.0.1') || !bridge.isBlockedPrivateHost('l
 if (await bridge.blockedByFilter('https://evil.com/path', {{ allowlist: [], denylist: ['evil.com'], blockPrivateIps: true }}) === null) {{
   throw new Error('denylist filter failed');
 }}
+if (await bridge.blockedByFilter('https://sub.evil.com/path', {{ allowlist: [], denylist: ['evil.com'], blockPrivateIps: true }}) === null) {{
+  throw new Error('bare denylist domain should block subdomains');
+}}
+if (await bridge.blockedByFilter('https://deep.docs.example.com/path', {{ allowlist: ['*.example.com'], denylist: [], blockPrivateIps: false }}) !== null) {{
+  throw new Error('wildcard allowlist should allow subdomains');
+}}
+if (await bridge.blockedByFilter('https://example.com/path', {{ allowlist: ['*.example.com'], denylist: [], blockPrivateIps: false }}) === null) {{
+  throw new Error('wildcard allowlist should not allow the apex domain');
+}}
+if (await bridge.blockedByFilter('https://api.blocked.example.com/path', {{ allowlist: ['example.com'], denylist: ['*.blocked.example.com'], blockPrivateIps: false }}) === null) {{
+  throw new Error('denylist wildcard should take precedence over allowlist parent domain');
+}}
 if (await bridge.blockedByFilter('http://127.0.0.1/admin', {{ allowlist: [], denylist: [], blockPrivateIps: true }}) === null) {{
   throw new Error('private IP filter failed');
 }}

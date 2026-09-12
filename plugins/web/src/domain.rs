@@ -76,14 +76,12 @@ impl DomainFilter {
             .ok_or_else(|| DomainFilterError::InvalidUrl("URL has no host".to_string()))?;
 
         // 3. Allowlist check.
-        if !self.allowlist.is_empty()
-            && !self.allowlist.iter().any(|a| a.eq_ignore_ascii_case(host))
-        {
+        if !self.allowlist.is_empty() && !host_matches_any(&self.allowlist, host) {
             return Err(DomainFilterError::NotAllowlisted(host.to_string()));
         }
 
         // 4. Denylist check.
-        if self.denylist.iter().any(|d| d.eq_ignore_ascii_case(host)) {
+        if host_matches_any(&self.denylist, host) {
             return Err(DomainFilterError::DeniedDomain(host.to_string()));
         }
 
@@ -140,6 +138,36 @@ impl DomainFilter {
 
         Ok(None)
     }
+}
+
+fn host_matches_any(entries: &[String], host: &str) -> bool {
+    entries
+        .iter()
+        .any(|entry| host_matches_entry(host, entry.as_str()))
+}
+
+fn host_matches_entry(host: &str, entry: &str) -> bool {
+    let host = normalize_domain(host);
+    let entry = normalize_domain(entry);
+    if host.is_empty() || entry.is_empty() {
+        return false;
+    }
+
+    if let Some(suffix) = entry.strip_prefix("*.") {
+        return !suffix.is_empty() && is_subdomain_of(&host, suffix);
+    }
+
+    host == entry || is_subdomain_of(&host, &entry)
+}
+
+fn normalize_domain(value: &str) -> String {
+    value.trim().trim_end_matches('.').to_ascii_lowercase()
+}
+
+fn is_subdomain_of(host: &str, suffix: &str) -> bool {
+    host.len() > suffix.len()
+        && host.ends_with(suffix)
+        && host.as_bytes()[host.len() - suffix.len() - 1] == b'.'
 }
 
 /// Returns `true` if the IP address belongs to a private, loopback,

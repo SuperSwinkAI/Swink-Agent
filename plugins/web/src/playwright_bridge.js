@@ -35,9 +35,35 @@ function normalizeHost(host) {
   return rawHost;
 }
 
+function normalizeDomain(value) {
+  return String(value || '').trim().replace(/\.+$/, '').toLowerCase();
+}
+
+function hostMatchesEntry(host, entry) {
+  const lowerHost = normalizeDomain(host);
+  const lowerEntry = normalizeDomain(entry);
+  if (!lowerHost || !lowerEntry) {
+    return false;
+  }
+
+  if (lowerEntry.startsWith('*.')) {
+    const suffix = lowerEntry.slice(2);
+    return (
+      suffix.length > 0 &&
+      lowerHost.length > suffix.length &&
+      lowerHost.endsWith(suffix) &&
+      lowerHost[lowerHost.length - suffix.length - 1] === '.'
+    );
+  }
+
+  return (
+    lowerHost === lowerEntry ||
+    (lowerHost.length > lowerEntry.length && lowerHost.endsWith(`.${lowerEntry}`))
+  );
+}
+
 function hostMatches(list, host) {
-  const lowerHost = (host || '').toLowerCase();
-  return (list || []).some((entry) => lowerHost === String(entry).toLowerCase());
+  return (list || []).some((entry) => hostMatchesEntry(host, entry));
 }
 
 function parseIpv4Bytes(host) {
@@ -614,6 +640,7 @@ module.exports = {
   createFilteringProxy,
   extractElementData,
   filterNeedsProxy,
+  hostMatches,
   installNavigationFilter,
   isBlockedPrivateHost,
   newContextOptions,

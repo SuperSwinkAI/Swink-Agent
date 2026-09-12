@@ -51,6 +51,99 @@ fn allowlist_and_denylist_are_enforced() {
 }
 
 #[test]
+fn bare_domain_entries_match_apex_and_subdomains_case_insensitively() {
+    let allow_filter = DomainFilter {
+        allowlist: vec!["Example.COM".to_string()],
+        ..Default::default()
+    };
+    let deny_filter = DomainFilter {
+        denylist: vec!["evil.com".to_string()],
+        ..Default::default()
+    };
+
+    assert!(
+        allow_filter
+            .is_allowed(&Url::parse("https://example.com/page").unwrap())
+            .is_ok()
+    );
+    assert!(
+        allow_filter
+            .is_allowed(&Url::parse("https://docs.example.com/page").unwrap())
+            .is_ok()
+    );
+    assert!(
+        allow_filter
+            .is_allowed(&Url::parse("https://deep.docs.example.com/page").unwrap())
+            .is_ok()
+    );
+    assert!(matches!(
+        allow_filter
+            .is_allowed(&Url::parse("https://notexample.com").unwrap())
+            .unwrap_err(),
+        DomainFilterError::NotAllowlisted(_)
+    ));
+
+    assert!(matches!(
+        deny_filter
+            .is_allowed(&Url::parse("https://sub.evil.com/malware").unwrap())
+            .unwrap_err(),
+        DomainFilterError::DeniedDomain(_)
+    ));
+}
+
+#[test]
+fn wildcard_domain_entries_match_subdomains_but_not_apex() {
+    let filter = DomainFilter {
+        allowlist: vec!["*.example.com".to_string()],
+        ..Default::default()
+    };
+
+    assert!(
+        filter
+            .is_allowed(&Url::parse("https://docs.example.com/page").unwrap())
+            .is_ok()
+    );
+    assert!(
+        filter
+            .is_allowed(&Url::parse("https://deep.docs.example.com/page").unwrap())
+            .is_ok()
+    );
+    assert!(matches!(
+        filter
+            .is_allowed(&Url::parse("https://example.com/page").unwrap())
+            .unwrap_err(),
+        DomainFilterError::NotAllowlisted(_)
+    ));
+    assert!(matches!(
+        filter
+            .is_allowed(&Url::parse("https://badexample.com/page").unwrap())
+            .unwrap_err(),
+        DomainFilterError::NotAllowlisted(_)
+    ));
+}
+
+#[test]
+fn denylist_takes_precedence_over_allowlist_wildcards() {
+    let filter = DomainFilter {
+        allowlist: vec!["example.com".to_string()],
+        denylist: vec!["*.blocked.example.com".to_string()],
+        ..Default::default()
+    };
+
+    assert!(
+        filter
+            .is_allowed(&Url::parse("https://docs.example.com/page").unwrap())
+            .is_ok()
+    );
+    assert!(matches!(
+        filter
+            .is_allowed(&Url::parse("https://api.blocked.example.com/page").unwrap())
+            .unwrap_err(),
+        DomainFilterError::DeniedDomain(_)
+    ));
+}
+
+#[test]
 fn private_ip_ranges_are_blocked() {
     let filter = DomainFilter::blocking_private_ips();
 
