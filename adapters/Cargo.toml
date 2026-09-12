@@ -37,8 +37,8 @@ xai = ["openai-compat"]
 __no_default_features_sentinel = []
 
 [dependencies]
-swink-agent = { path = "..", version = "0.14.0", default-features = false }
-swink-agent-auth = { path = "../auth", version = "0.14.0", optional = true }
+swink-agent = { path = "..", version = "0.14.1", default-features = false }
+swink-agent-auth = { path = "../auth", version = "0.14.1", optional = true }
 base64 = { version = "0.23.1", optional = true }
 chrono.workspace = true
 reqwest.workspace = true

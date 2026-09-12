@@ -5012,7 +5012,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "swink-agent"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "bytes",
  "chrono",
@@ -5050,7 +5050,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-adapters"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "aws-credential-types",
  "aws-sigv4",
@@ -5081,7 +5081,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-artifacts"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "bytes",
  "chrono",
@@ -5097,7 +5097,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-auth"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -5122,7 +5122,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-eval"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "askama",
  "backon",
@@ -5157,7 +5157,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-eval-judges"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "backon",
  "reqwest",
@@ -5174,7 +5174,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-evolve"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "opentelemetry",
@@ -5195,7 +5195,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-local-llm"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "futures",
  "llama-cpp-2",
@@ -5217,7 +5217,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-macros"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5233,7 +5233,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-mcp"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "axum",
  "futures",
@@ -5253,7 +5253,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-memory"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "dirs",
@@ -5271,7 +5271,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-patterns"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "futures",
  "regex",
@@ -5288,7 +5288,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-plugin-web"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "base64 0.23.1",
  "pretty_assertions",
@@ -5311,7 +5311,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-policies"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "futures",
@@ -5329,7 +5329,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-rpc"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "clap",
  "dotenvy",
@@ -5350,7 +5350,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-tui"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "arboard",
  "crossterm",
@@ -5379,7 +5379,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-tui-remote"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "clap",
  "dirs",
@@ -7018,7 +7018,7 @@ checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
 
 [[package]]
 name = "xtask"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "clap",
  "futures",

@@ -23,7 +23,7 @@ cudnn = ["cuda"]
 vulkan = ["llama-cpp-2/vulkan"]
 
 [dependencies]
-swink-agent = { path = "..", version = "0.14.0", default-features = false }
+swink-agent = { path = "..", version = "0.14.1", default-features = false }
 llama-cpp-2 = "0.1.154"
 # Model downloads talk to the Hugging Face Hub directly (src/download.rs) on
 # the workspace reqwest + rustls(ring) stack. hf-hub 1.0 was dropped: it
