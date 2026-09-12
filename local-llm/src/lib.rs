@@ -24,6 +24,7 @@
 //! can use the loaded models concurrently.
 
 mod convert;
+pub(crate) mod download;
 pub mod embedding;
 pub mod error;
 pub(crate) mod loader;

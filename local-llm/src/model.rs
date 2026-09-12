@@ -1,7 +1,7 @@
 //! Local model management with lazy download and loading.
 //!
 //! `LocalModel` is a thin typed wrapper over the shared lazy-loader,
-//! providing the chat-model–specific download (via `hf-hub`) and build
+//! providing the chat-model–specific download and build
 //! (via `llama-cpp-2`) logic as a `LoaderBackend` implementation.
 
 use std::future::Future;
@@ -10,10 +10,11 @@ use std::sync::Arc;
 
 use tracing::{debug, error, info};
 
+use crate::download::resolve_model_path;
 use crate::error::LocalModelError;
 use crate::loader::{LazyLoader, LoaderBackend, LoaderState, PublicLoaderState};
 use crate::preset::{ModelPreset, default_chat_model_config};
-use crate::progress::{ProgressCallbackFn, resolve_model_path};
+use crate::progress::ProgressCallbackFn;
 use crate::runner::{LlamaRunner, RunnerConfig};
 
 // ─── ModelConfig ────────────────────────────────────────────────────────────
@@ -118,7 +119,7 @@ impl From<PublicLoaderState> for ModelState {
 
 // ─── ChatBackend ───────────────────────────────────────────────────────────
 
-/// [`LoaderBackend`] for chat models: downloads via `hf-hub`, builds via
+/// [`LoaderBackend`] for chat models: downloads from the Hub, builds via
 /// `llama-cpp-2`.
 pub(crate) struct ChatBackend;
 

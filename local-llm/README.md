@@ -11,7 +11,7 @@ On-device LLM inference for [`swink-agent`](https://crates.io/crates/swink-agent
 - **SmolLM3-3B** (default, GGUF `Q4_K_M`, ~1.92 GB) — text generation, tool use, and reasoning on CPU-only hardware
 - **Gemma 4 E2B** (`gemma4` feature, ~3.5 GB) — 128K context with native thinking mode and tool calling
 - **EmbeddingGemma-300M** (<200 MB) — text embeddings for semantic search and RAG
-- GGUF weights are lazily downloaded from HuggingFace on first use (`hf-hub`)
+- GGUF weights are lazily downloaded from HuggingFace on first use into the standard `huggingface_hub` cache
 - GPU acceleration: `metal` (Apple), `cuda` (NVIDIA), `vulkan` (cross-platform) — CPU-only works by default
 - `default_local_connection()` returns a ready `ModelConnection` — drop it into `ModelConnections` alongside remote adapters
 - Models are designed for `Arc<>` sharing across concurrent tasks

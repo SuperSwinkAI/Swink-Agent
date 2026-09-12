@@ -6,7 +6,7 @@
 
 ## Key Facts
 
-- Models lazily downloaded from HuggingFace on first `ensure_ready()`. Cached in `~/.cache/huggingface/hub/`.
+- Models lazily downloaded from HuggingFace on first `ensure_ready()` by `src/download.rs` (direct `resolve` endpoint on the workspace reqwest stack, no hf-hub). Cached in the `huggingface_hub` layout under `~/.cache/huggingface/hub/` (`HF_HOME`/`HF_HUB_CACHE`/`HF_TOKEN` honored), so caches are shared with other tools.
 - `ModelState` lifecycle: `Unloaded → Downloading → Loading → Ready | Failed`.
 - `LlamaContext` is `!Send` — inference uses dedicated thread + channel pattern.
 - Per-request overrides (`max_tokens`, `temperature`) go in `GenerateOptions`, not `RunnerConfig`.
@@ -21,7 +21,7 @@
 - **Gemma 4 tool calls** — `ToolCallParser` handles `<|tool_call>call:{name}{args}<tool_call|>`. IDs are UUIDs.
 - **Partial delimiter matching must be UTF-8 safe** — only slice at character boundaries.
 - **`LazyLoader` waiters** — `wait_until_ready()` returns on `Unloaded`/`Failed`/`Ready`; `ensure_ready()` re-checks after every wakeup.
-- **`hf-hub` 1.0 shares one progress handler** (`on_progress(&self)`) — aggregate through interior mutability; `DownloadEvent::Progress` carries per-file *deltas* with cumulative per-file byte counts.
+- **No hf-hub.** It hard-depends on hf-xet, whose default feature forces aws-lc-rs (C build) into every consumer. `download.rs` is ~300 lines and wiremock-tested; extend it before reaching for a hub client crate.
 
 ## Build & Test
 
