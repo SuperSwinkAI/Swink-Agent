@@ -31,6 +31,13 @@ use crate::openai_compat::{
     parse_oai_sse_stream_with_options,
 };
 
+pub(crate) struct OaiTransportOptions<'a> {
+    pub(crate) model_id: Option<&'a str>,
+    pub(crate) on_raw_payload: Option<swink_agent::OnRawPayload>,
+    pub(crate) on_rate_limit: Option<swink_agent::OnRateLimit>,
+    pub(crate) parser_options: OaiParserOptions,
+}
+
 /// Shared shell for Bearer-auth OpenAI-compatible adapters.
 ///
 /// Fully standard adapters can delegate their entire `stream()` implementation
@@ -181,6 +188,7 @@ impl OaiAdapterShell {
         Box::pin(oai_send_and_parse(
             request,
             provider,
+            Some(model.model_id.as_str()),
             cancellation_token,
             options.on_raw_payload.clone(),
             options.on_rate_limit.clone(),
@@ -353,6 +361,7 @@ pub fn prepare_oai_request(
 pub fn oai_send_and_parse<'a>(
     request: reqwest::RequestBuilder,
     provider: &'static str,
+    model_id: Option<&'a str>,
     cancellation_token: tokio_util::sync::CancellationToken,
     on_raw_payload: Option<swink_agent::OnRawPayload>,
     on_rate_limit: Option<swink_agent::OnRateLimit>,
@@ -362,10 +371,13 @@ pub fn oai_send_and_parse<'a>(
         request,
         provider,
         cancellation_token,
-        on_raw_payload,
-        on_rate_limit,
         classify_error,
-        OaiParserOptions::default(),
+        OaiTransportOptions {
+            model_id,
+            on_raw_payload,
+            on_rate_limit,
+            parser_options: OaiParserOptions::default(),
+        },
     )
 }
 
@@ -373,10 +385,8 @@ pub(crate) fn oai_send_and_parse_with_options<'a>(
     request: reqwest::RequestBuilder,
     provider: &'static str,
     cancellation_token: tokio_util::sync::CancellationToken,
-    on_raw_payload: Option<swink_agent::OnRawPayload>,
-    on_rate_limit: Option<swink_agent::OnRateLimit>,
     classify_error: impl Fn(u16, &str) -> Option<AssistantMessageEvent> + Send + 'a,
-    parser_options: OaiParserOptions,
+    options: OaiTransportOptions<'a>,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
     stream::once(async move {
         let response = match tokio::select! {
@@ -399,11 +409,13 @@ pub(crate) fn oai_send_and_parse_with_options<'a>(
                 .left_stream();
             }
         };
-        crate::base::report_rate_limit(response.headers(), on_rate_limit.as_ref());
+        crate::base::report_rate_limit(response.headers(), options.on_rate_limit.as_ref());
 
         let status = response.status();
         if !status.is_success() {
             let code = status.as_u16();
+            let zero_rate_limit_allowance =
+                code == 429 && crate::classify::has_zero_rate_limit_allowance(response.headers());
             let body = match crate::base::read_error_body_or_cancelled(
                 response,
                 &cancellation_token,
@@ -423,6 +435,14 @@ pub(crate) fn oai_send_and_parse_with_options<'a>(
                 return stream::iter(vec![AssistantMessageEvent::Start, event]).left_stream();
             }
 
+            if zero_rate_limit_allowance {
+                let model = options.model_id.unwrap_or("requested model");
+                let event = AssistantMessageEvent::error_model_retired(format!(
+                    "{provider} model unavailable for current plan (HTTP {code}, zero rate-limit allowance for {model}): {body}"
+                ));
+                return stream::iter(vec![AssistantMessageEvent::Start, event]).left_stream();
+            }
+
             let event = crate::classify::error_event_from_status(code, &body, provider);
             return stream::iter(vec![AssistantMessageEvent::Start, event]).left_stream();
         }
@@ -431,8 +451,8 @@ pub(crate) fn oai_send_and_parse_with_options<'a>(
             response,
             cancellation_token,
             provider,
-            on_raw_payload,
-            parser_options,
+            options.on_raw_payload,
+            options.parser_options,
         )
         .right_stream()
     })

@@ -31,7 +31,7 @@ use swink_agent::{
 
 use crate::convert;
 use crate::oai_transport::{
-    OaiAdapterShell, classify_oai_error_body, oai_send_and_parse_with_options,
+    OaiAdapterShell, OaiTransportOptions, classify_oai_error_body, oai_send_and_parse_with_options,
 };
 use crate::openai_compat::{OaiConverter, OaiMessage, OaiParserOptions, build_oai_tools};
 
@@ -237,12 +237,15 @@ fn mistral_stream<'a>(
             request,
             mistral.shell.provider(),
             cancellation_token,
-            options.on_raw_payload.clone(),
-            options.on_rate_limit.clone(),
             |status, body| classify_oai_error_body(status, body, mistral.shell.provider()),
-            OaiParserOptions {
-                error_finish_reason_is_error: true,
-                ..OaiParserOptions::default()
+            OaiTransportOptions {
+                model_id: Some(model.model_id.as_str()),
+                on_raw_payload: options.on_raw_payload.clone(),
+                on_rate_limit: options.on_rate_limit.clone(),
+                parser_options: OaiParserOptions {
+                    error_finish_reason_is_error: true,
+                    ..OaiParserOptions::default()
+                },
             },
         );
         normalize_response_stream(raw_stream, id_map)

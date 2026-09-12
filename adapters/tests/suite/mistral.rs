@@ -776,6 +776,41 @@ async fn http_429_rate_limit() {
 }
 
 #[tokio::test]
+async fn http_429_with_zero_rate_limit_is_model_unavailable() {
+    let error_body =
+        r#"{"object":"error","message":"Rate limit exceeded","type":"rate_limited","code":"1300"}"#;
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("x-ratelimit-limit-req-minute", "0")
+                .insert_header("x-ratelimit-remaining-req-minute", "0")
+                .set_body_string(error_body),
+        )
+        .mount(&server)
+        .await;
+
+    let sf = MistralStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    assert_eq!(
+        find_error_kind(&events),
+        Some(Some(StreamErrorKind::ModelRetired)),
+        "zero request allowance must be terminal, got: {events:?}"
+    );
+    let err = find_error_message(&events).expect("expected error event");
+    assert!(
+        err.contains("mistral-small-latest"),
+        "expected model name in error, got: {err}"
+    );
+    assert!(
+        err.contains("zero rate-limit allowance"),
+        "expected zero-allowance context, got: {err}"
+    );
+}
+
+#[tokio::test]
 async fn http_401_auth_error() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))

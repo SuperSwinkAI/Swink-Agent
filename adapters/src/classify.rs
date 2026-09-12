@@ -136,6 +136,37 @@ pub fn is_model_retired_response(status: u16, body: &str) -> bool {
             || body.contains("does not exist"))
 }
 
+/// Detect provider quota headers that advertise a hard zero request allowance.
+///
+/// Some providers report "not entitled to this model" as HTTP 429 with a
+/// rate-limit *limit* of zero. That is not transient throttling: retrying the
+/// same model cannot succeed until the user changes model or plan.
+#[must_use]
+pub fn has_zero_rate_limit_allowance(headers: &reqwest::header::HeaderMap) -> bool {
+    headers.iter().any(|(name, value)| {
+        let name = name.as_str().to_ascii_lowercase();
+        is_rate_limit_limit_header(&name)
+            && value
+                .to_str()
+                .ok()
+                .is_some_and(rate_limit_header_value_is_zero)
+    })
+}
+
+fn is_rate_limit_limit_header(name: &str) -> bool {
+    (name.contains("ratelimit") || name.contains("rate-limit"))
+        && name.contains("limit")
+        && !name.contains("remaining")
+        && !name.contains("reset")
+}
+
+fn rate_limit_header_value_is_zero(value: &str) -> bool {
+    value
+        .trim()
+        .parse::<f64>()
+        .is_ok_and(|n| n.is_finite() && n == 0.0)
+}
+
 /// Convert an HTTP error response into an [`AssistantMessageEvent::Error`].
 ///
 /// Uses the default [`classify_http_status`] mapping. The `provider` label

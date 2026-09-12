@@ -19,7 +19,8 @@ use swink_agent_auth::{ExpiringValue, SingleFlightTokenSource};
 
 use crate::classify::{HttpErrorKind, classify_with_overrides};
 use crate::oai_transport::{
-    OaiAdapterShell, classify_oai_error_body, oai_send_and_parse_with_options, prepare_oai_request,
+    OaiAdapterShell, OaiTransportOptions, classify_oai_error_body, oai_send_and_parse_with_options,
+    prepare_oai_request,
 };
 use crate::openai_compat::OaiParserOptions;
 
@@ -340,8 +341,6 @@ fn azure_stream<'a>(
             request,
             azure.shell.provider(),
             cancellation_token,
-            options.on_raw_payload.clone(),
-            options.on_rate_limit.clone(),
             |status, body| {
                 if is_content_filter_error(body) {
                     Some(AssistantMessageEvent::error_content_filtered(format!(
@@ -351,9 +350,14 @@ fn azure_stream<'a>(
                     classify_oai_error_body(status, body, azure.shell.provider())
                 }
             },
-            OaiParserOptions {
-                detect_content_filter_results: true,
-                ..OaiParserOptions::default()
+            OaiTransportOptions {
+                model_id: Some(model.model_id.as_str()),
+                on_raw_payload: options.on_raw_payload.clone(),
+                on_rate_limit: options.on_rate_limit.clone(),
+                parser_options: OaiParserOptions {
+                    detect_content_filter_results: true,
+                    ..OaiParserOptions::default()
+                },
             },
         )
         .right_stream()
