@@ -4,7 +4,7 @@
 //! The model (`google/gemma-embedding-300m`) is gated and requires `HF_TOKEN`.
 //! Tests skip gracefully when the token is missing or invalid.
 //!
-//! Run with: `cargo test -p swink-agent-local-llm --test embedding_live -- --ignored`
+//! Run with: `cargo test -p swink-agent-local-llm --test integration -- embedding_live --ignored`
 
 use std::sync::Arc;
 

@@ -1,4 +1,5 @@
 [package]
+autotests = false
 name = "swink-agent-artifacts"
 version.workspace = true
 edition.workspace = true
@@ -27,3 +28,7 @@ tempfile.workspace = true
 
 [lints]
 workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"

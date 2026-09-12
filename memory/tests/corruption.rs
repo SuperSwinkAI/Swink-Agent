@@ -1,6 +1,6 @@
 //! Integration tests for JSONL format and corruption recovery (US5).
 
-mod common;
+use crate::common;
 
 use swink_agent_memory::{JsonlSessionStore, SessionStore};
 

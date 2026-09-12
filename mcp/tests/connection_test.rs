@@ -1,6 +1,6 @@
 //! Connection tests for MCP integration (T010, T013).
 
-mod common;
+use crate::common;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};

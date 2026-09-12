@@ -4,7 +4,7 @@
 //! through real `Agent::prompt_text` runs against a real
 //! [`FileCheckpointStore`].
 
-mod common;
+use crate::common;
 
 use std::path::Path;
 use std::sync::Arc;

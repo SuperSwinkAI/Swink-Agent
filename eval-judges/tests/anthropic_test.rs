@@ -25,7 +25,7 @@ use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
-mod common;
+use crate::common;
 use common::{anthropic_success_body, happy_verdict_json};
 
 fn test_policy(max_attempts: u32) -> RetryPolicy {

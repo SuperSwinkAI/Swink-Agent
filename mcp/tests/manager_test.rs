@@ -1,6 +1,6 @@
 //! Manager tests for MCP integration (T019, T020, T021).
 
-mod common;
+use crate::common;
 
 use std::collections::HashMap;
 use std::sync::Arc;

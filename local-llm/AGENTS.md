@@ -30,6 +30,6 @@ cargo build -p swink-agent-local-llm
 cargo build -p swink-agent-local-llm --features gemma4
 ```
 
-Live tests: `cargo test -p swink-agent-local-llm --test local_live -- --ignored` (SmolLM3 ~1.9GB, Gemma4 ~3.5GB first run). Gemma 4 tests auto-skip on unsupported hosts. Metal builds need Apple's Metal toolchain.
+Live tests: `cargo test -p swink-agent-local-llm --test integration -- local_live --ignored` (SmolLM3 ~1.9GB, Gemma4 ~3.5GB first run). Gemma 4 tests auto-skip on unsupported hosts. Metal builds need Apple's Metal toolchain.
 
 Intentional duplication between `model.rs` and `embedding.rs`: both follow `Arc<Inner>` + state-machine pattern but have different runner types and public APIs. Only two implementations — not worth a generic.

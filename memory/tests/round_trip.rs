@@ -1,6 +1,6 @@
 //! Integration tests for session save/load round-trips (US1, US4, US6, US7, US8, US9).
 
-mod common;
+use crate::common;
 
 use std::io;
 

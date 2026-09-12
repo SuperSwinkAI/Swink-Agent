@@ -1,4 +1,5 @@
 [package]
+autotests = false
 name = "swink-agent-local-llm"
 version.workspace = true
 edition.workspace = true
@@ -49,3 +50,11 @@ tempfile.workspace = true
 
 [lints]
 workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"
+
+[[test]]
+name = "no_default_features"
+path = "tests/no_default_features.rs"

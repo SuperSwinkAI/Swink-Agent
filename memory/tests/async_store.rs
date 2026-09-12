@@ -1,6 +1,6 @@
 //! Async integration tests for session store operations (US3).
 
-mod common;
+use crate::common;
 
 use swink_agent_memory::{BlockingSessionStore, JsonlSessionStore};
 

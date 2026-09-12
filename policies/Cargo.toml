@@ -1,4 +1,5 @@
 [package]
+autotests = false
 name = "swink-agent-policies"
 version.workspace = true
 edition.workspace = true
@@ -52,3 +53,7 @@ required-features = ["budget", "max-turns", "deny-list", "loop-detection", "reco
 
 [lints]
 workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"

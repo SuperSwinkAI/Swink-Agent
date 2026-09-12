@@ -18,8 +18,6 @@ use swink_agent_auth::{
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-mod common;
-
 /// Helper to create an `Arc<dyn CredentialStore>` from an `InMemoryCredentialStore`.
 fn store(s: InMemoryCredentialStore) -> Arc<dyn CredentialStore> {
     Arc::new(s)
