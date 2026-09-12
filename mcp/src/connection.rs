@@ -320,11 +320,6 @@ impl McpConnection {
         let service = service.into_inner();
         let peer = service.peer().clone();
 
-        // Handshake already completed before we were given the service.
-        emit_event(event_tx.as_ref(), || {
-            crate::event::server_connected(&config.name)
-        });
-
         let discovered_tools: Vec<McpToolInfo> = peer
             .list_all_tools()
             .await
@@ -343,10 +338,6 @@ impl McpConnection {
             "MCP server connected via provided service, tools discovered"
         );
 
-        emit_event(event_tx.as_ref(), || {
-            crate::event::tools_discovered(&config.name, discovered_tools.len())
-        });
-
         let state = Arc::new(Mutex::new(McpConnectionState {
             status: McpConnectionStatus::Connected,
             peer: Some(peer),
@@ -359,6 +350,13 @@ impl McpConnection {
             event_tx.clone(),
         );
         state.lock().unwrap_or_else(PoisonError::into_inner).monitor = Some(monitor);
+
+        emit_event(event_tx.as_ref(), || {
+            crate::event::server_connected(&config.name)
+        });
+        emit_event(event_tx.as_ref(), || {
+            crate::event::tools_discovered(&config.name, discovered_tools.len())
+        });
 
         Ok(Self {
             config,
@@ -409,11 +407,6 @@ impl McpConnection {
             None => Self::connect_transport(&config, credential_resolver.clone()).await?,
         };
 
-        // Handshake succeeded, transport is live.
-        emit_event(event_tx.as_ref(), || {
-            crate::event::server_connected(&config.name)
-        });
-
         let peer = service.peer().clone();
 
         // Discover tools from the server.
@@ -450,10 +443,6 @@ impl McpConnection {
             "MCP server connected, tools discovered"
         );
 
-        emit_event(event_tx.as_ref(), || {
-            crate::event::tools_discovered(&config.name, discovered_tools.len())
-        });
-
         let state = Arc::new(Mutex::new(McpConnectionState {
             status: McpConnectionStatus::Connected,
             peer: Some(peer),
@@ -466,6 +455,13 @@ impl McpConnection {
             event_tx.clone(),
         );
         state.lock().unwrap_or_else(PoisonError::into_inner).monitor = Some(monitor);
+
+        emit_event(event_tx.as_ref(), || {
+            crate::event::server_connected(&config.name)
+        });
+        emit_event(event_tx.as_ref(), || {
+            crate::event::tools_discovered(&config.name, discovered_tools.len())
+        });
 
         Ok(Self {
             config,
