@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use futures::stream::{FuturesUnordered, StreamExt};
 use swink_agent::{AgentEvent, AgentTool, CredentialResolver};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::warn;
@@ -125,31 +126,47 @@ impl McpManager {
             self.shutdown().await;
         }
 
-        let mut all_tools: Vec<(String, String, Arc<dyn AgentTool>)> = Vec::new();
-        let mut connections = Vec::new();
-
-        for config in self.configs.clone() {
-            match McpConnection::connect_with_resolver(
-                config.clone(),
-                self.credential_resolver.clone(),
-                self.event_tx.clone(),
-            )
-            .await
-            {
-                Ok(connection) => {
-                    let conn = Arc::new(connection);
-                    all_tools.extend(build_tools_for_connection(&conn));
-                    connections.push(conn);
+        let mut pending = self
+            .configs
+            .clone()
+            .into_iter()
+            .enumerate()
+            .map(|(index, config)| {
+                let credential_resolver = self.credential_resolver.clone();
+                let event_tx = self.event_tx.clone();
+                async move {
+                    let server_name = config.name.clone();
+                    let result =
+                        McpConnection::connect_with_resolver(config, credential_resolver, event_tx)
+                            .await;
+                    (index, server_name, result)
                 }
+            })
+            .collect::<FuturesUnordered<_>>();
+
+        let mut connections = Vec::new();
+        while let Some((index, server_name, result)) = pending.next().await {
+            match result {
+                Ok(connection) => connections.push((index, Arc::new(connection))),
                 Err(e) => {
                     warn!(
-                        server = %config.name,
+                        server = %server_name,
                         error = %e,
                         "MCP server connection failed, continuing without this server"
                     );
                 }
             }
         }
+
+        connections.sort_by_key(|(index, _)| *index);
+        let all_tools = connections
+            .iter()
+            .flat_map(|(_, conn)| build_tools_for_connection(conn))
+            .collect();
+        let connections = connections
+            .into_iter()
+            .map(|(_, conn)| conn)
+            .collect::<Vec<_>>();
 
         let tools = match detect_collisions_and_collect(all_tools) {
             Ok(tools) => tools,
