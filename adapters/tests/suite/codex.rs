@@ -12,7 +12,7 @@ use swink_agent::{
     AssistantMessageEvent, CredentialError, CredentialFuture, CredentialResolver, ModelSpec,
     ResolvedCredential, StreamErrorKind, StreamFn, StreamOptions,
 };
-use swink_agent_adapters::{CodexError, CodexStreamFn};
+use swink_agent_adapters::{CODEX_DEFAULT_CREDENTIAL_KEY, CodexError, CodexStreamFn};
 
 use crate::common::{event_name, find_error_kind, find_error_message, sse_response, test_context};
 
@@ -29,30 +29,33 @@ fn jwt_with_account(account_id: &str) -> String {
     )
 }
 
-/// Returns a fixed credential, counting calls.
+/// Returns a fixed credential, recording every key it was asked for.
 struct StaticResolver {
     credential: Result<String, ()>,
-    calls: Mutex<usize>,
+    keys: Mutex<Vec<String>>,
 }
 
 impl StaticResolver {
     fn token(token: &str) -> Arc<Self> {
         Arc::new(Self {
             credential: Ok(token.to_owned()),
-            calls: Mutex::new(0),
+            keys: Mutex::new(Vec::new()),
         })
     }
     fn failing() -> Arc<Self> {
         Arc::new(Self {
             credential: Err(()),
-            calls: Mutex::new(0),
+            keys: Mutex::new(Vec::new()),
         })
+    }
+    fn calls(&self) -> usize {
+        self.keys.lock().unwrap().len()
     }
 }
 
 impl CredentialResolver for StaticResolver {
     fn resolve(&self, key: &str) -> CredentialFuture<'_, ResolvedCredential> {
-        *self.calls.lock().unwrap() += 1;
+        self.keys.lock().unwrap().push(key.to_owned());
         let key = key.to_owned();
         Box::pin(async move {
             match &self.credential {
@@ -106,11 +109,7 @@ async fn sends_bearer_account_id_beta_originator_and_a_fresh_session_id() {
             "{events:?}"
         );
     }
-    assert_eq!(
-        *resolver.calls.lock().unwrap(),
-        2,
-        "credential resolved once per request"
-    );
+    assert_eq!(resolver.calls(), 2, "credential resolved once per request");
 
     let requests = server.received_requests().await.unwrap();
     let session_ids: Vec<String> = requests
@@ -138,6 +137,44 @@ async fn sends_bearer_account_id_beta_originator_and_a_fresh_session_id() {
     let body: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
     assert_eq!(body["store"], false);
     assert!(!body["instructions"].as_str().unwrap().is_empty());
+}
+
+/// The host owns the credential namespace: the key it names is the key the
+/// resolver is asked for, verbatim, and the default is the documented
+/// constant. Removing `with_credential_key` broke SuperSwink-Core (#1300).
+#[tokio::test]
+async fn resolves_under_the_host_named_credential_key() {
+    let token = jwt_with_account("acct-ns");
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/responses"))
+        .respond_with(sse_response(&completed_body()))
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    let resolver = StaticResolver::token(&token);
+    let default_fn = CodexStreamFn::new(resolver.clone(), "superswink")
+        .unwrap()
+        .with_base_url(server.uri());
+    assert_eq!(default_fn.credential_key(), CODEX_DEFAULT_CREDENTIAL_KEY);
+    collect(&default_fn, StreamOptions::default()).await;
+
+    let namespaced_fn = CodexStreamFn::new(resolver.clone(), "superswink")
+        .unwrap()
+        .with_base_url(server.uri())
+        .with_credential_key("superswink.codex.default.oauth");
+    assert_eq!(
+        namespaced_fn.credential_key(),
+        "superswink.codex.default.oauth"
+    );
+    collect(&namespaced_fn, StreamOptions::default()).await;
+
+    assert_eq!(
+        *resolver.keys.lock().unwrap(),
+        ["codex", "superswink.codex.default.oauth"],
+        "the adapter asks the resolver for exactly the configured key"
+    );
 }
 
 #[tokio::test]

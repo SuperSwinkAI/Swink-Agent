@@ -13,6 +13,7 @@ Pure-Rust library for LLM-powered agentic loops. Provider-agnostic core with plu
 - **Context7 first.** Query context7 MCP before web search for any crate/library docs.
 - **No parallel builds in agents.** Never have subagents run `cargo build`/`test`/`clippy` concurrently.
 - **Check specs and docs first.** Read `specs/NNN-*/` and `docs/` before large changes.
+- **Public API removals need a downstream check.** "No callers" means no callers in this repo *and* in SuperSwink-Core (the primary consumer, a sibling checkout at `../SuperSwink-Core`). Grep it before deleting anything `pub`; 0.14.0 removed `CodexStreamFn::with_credential_key` on an in-repo grep alone and broke Core's keychain lookup (#1300).
 - **No GitHub Actions triggers.** Do not create/modify/use workflows that run GitHub Actions.
 
 ## Style

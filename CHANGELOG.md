@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `adapters`: `CodexStreamFn::with_credential_key()` and `credential_key()` are back. 0.14.0 removed the builder as "no callers", but SuperSwink-Core called it to point the adapter at its namespaced keychain key; without it the adapter only ever resolves the literal `"codex"` and an existing sign-in is invisible. A resolver-key test now pins the contract (#1300)
+
 
 ## [0.14.0] - 2026-09-11
 
