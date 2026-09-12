@@ -24,10 +24,10 @@ required-features = ["cli"]
 default = ["client", "server"]
 client = []
 server = []
-cli = ["server", "dep:clap", "dep:swink-agent-adapters", "dep:dotenvy", "dep:tracing-subscriber"]
+cli = ["server", "swink-agent/builtin-tools", "dep:clap", "dep:swink-agent-adapters", "dep:dotenvy", "dep:tracing-subscriber"]
 
 [dependencies]
-swink-agent = { path = "..", version = "0.14.1" }
+swink-agent = { path = "..", version = "0.14.1", default-features = false }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "io-util", "net", "signal", "time"] }
 serde.workspace = true
 serde_json.workspace = true
@@ -49,6 +49,7 @@ swink-agent-adapters = { path = "../adapters" }
 tokio = { workspace = true, features = ["full", "test-util"] }
 tempfile.workspace = true
 pretty_assertions.workspace = true
+toml.workspace = true
 
 [lints]
 workspace = true

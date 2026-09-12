@@ -6,4 +6,5 @@
 //! New test files must be added as a `mod` line below (autotests is off).
 
 mod end_to_end;
+mod feature_graph;
 mod peer;
