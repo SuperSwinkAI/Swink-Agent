@@ -124,8 +124,8 @@ default test matrix. Run one provider at a time or validate the full crate
 surface:
 
 ```bash
-cargo test -p swink-agent-eval-judges --features openai --test openai_test
-cargo test -p swink-agent-eval-judges --features anthropic --test anthropic_test
+cargo test -p swink-agent-eval-judges --features openai --test integration -- openai_test
+cargo test -p swink-agent-eval-judges --features anthropic --test integration -- anthropic_test
 cargo build -p swink-agent-eval-judges --features all-judges
 ```
 

@@ -1,4 +1,5 @@
 [package]
+autotests = false
 name = "swink-agent-eval-judges"
 version.workspace = true
 edition.workspace = true
@@ -60,3 +61,7 @@ wiremock.workspace = true
 
 [lints]
 workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"

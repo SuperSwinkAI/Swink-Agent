@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 
+## [0.14.1] - 2026-09-12
+
+### Changed
+- `local-llm`: model downloads no longer go through `hf-hub`. A ~300-line in-crate client speaks the Hub's `resolve` endpoint on the workspace reqwest + rustls(ring) stack and reads/writes the same `huggingface_hub` cache layout (existing caches are reused; `HF_ENDPOINT`/`HF_HOME`/`HF_HUB_CACHE`/`HF_TOKEN` still honored). hf-hub 1.0 hard-depends on hf-xet, whose default feature forces `aws-lc-rs` — the last cmake C build in the graph — into every consumer; that and the xet crate tree are gone from the lockfile (#1300)
+
+### Added
+- `adapters`: `CodexStreamFn::with_credential_key()` and `credential_key()` are back. 0.14.0 removed the builder as "no callers", but SuperSwink-Core called it to point the adapter at its namespaced keychain key; without it the adapter only ever resolves the literal `"codex"` and an existing sign-in is invisible. A resolver-key test now pins the contract (#1300)
+
+
 ## [0.14.0] - 2026-09-11
 
 ### Removed
@@ -676,6 +685,7 @@ are folded in here rather than kept as a phantom release.
 Major additions: Gemma 4 local inference, `BlockAccumulator` for streaming event assembly, `schemars`-based proc-macro engine, multi-agent patterns and artifact service, MCP integration, plugin system, policy slots, credential management, TUI session management, and web browse plugin. 42 specs implemented across the 0.6 lifecycle.
 
 [Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.14.0...HEAD
+[0.14.1]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.13.2...v0.14.0
 [0.13.2]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.13.0...v0.13.1

@@ -89,8 +89,11 @@ const OPENAI_CLIENT_ORIGINATORS: [&str; 5] = [
     "codex_exec",
 ];
 
-/// The PKCE public-client configuration for ChatGPT sign-in. Register it on
-/// the resolver under [`DEFAULT_CREDENTIAL_KEY`].
+/// The PKCE public-client configuration for ChatGPT sign-in.
+///
+/// Register it on the resolver under the key the adapter resolves:
+/// [`DEFAULT_CREDENTIAL_KEY`], or the one passed to
+/// [`CodexStreamFn::with_credential_key`].
 #[must_use]
 pub fn codex_authorization_config() -> AuthorizationConfig {
     AuthorizationConfig::new(
@@ -169,7 +172,9 @@ pub struct CodexStreamFn {
 
 impl CodexStreamFn {
     /// Build against [`CODEX_BASE_URL`], resolving the OAuth credential under
-    /// [`DEFAULT_CREDENTIAL_KEY`] through `resolver` on every request.
+    /// [`DEFAULT_CREDENTIAL_KEY`] through `resolver` on every request. Hosts
+    /// that own a credential namespace rename the key with
+    /// [`with_credential_key`](Self::with_credential_key).
     ///
     /// # Errors
     /// [`CodexError::InvalidOriginator`] when `originator` is empty,
@@ -227,6 +232,27 @@ impl CodexStreamFn {
         self.base_url = base_url.into();
         self.inner = build_inner(&self.base_url, &self.originator);
         self
+    }
+
+    /// Resolve the credential under `key` instead of [`DEFAULT_CREDENTIAL_KEY`].
+    ///
+    /// The adapter owns no store: `key` is whatever the host registered its
+    /// Codex OAuth bundle under, and it must match the key given to the
+    /// resolver's authorization config (for example
+    /// `DefaultCredentialResolver::with_authorization_config`). A host that
+    /// keeps every provider's bundle under a namespaced key (SuperSwink-Core
+    /// uses `superswink.codex.default.oauth`) names it here; the adapter never
+    /// rewrites or prefixes it.
+    #[must_use]
+    pub fn with_credential_key(mut self, key: impl Into<String>) -> Self {
+        self.credential_key = key.into();
+        self
+    }
+
+    /// The store key the credential is resolved under.
+    #[must_use]
+    pub fn credential_key(&self) -> &str {
+        &self.credential_key
     }
 
     /// The validated `originator` sent on every request.

@@ -3,10 +3,10 @@
 //! All tests are `#[ignore]` — they download large model artifacts on first run.
 //! Tests skip gracefully when the model cannot be downloaded (e.g. 404, network error).
 //!
-//! Run with: `cargo test -p swink-agent-local-llm --test local_live -- --ignored`
-//! Gemma 4: `cargo test -p swink-agent-local-llm --features gemma4 --test local_live -- --ignored`
+//! Run with: `cargo test -p swink-agent-local-llm --test integration -- local_live --ignored`
+//! Gemma 4: `cargo test -p swink-agent-local-llm --features gemma4 --test integration -- local_live --ignored`
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

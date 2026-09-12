@@ -4,7 +4,7 @@
 //! Tests without the gate exercise the baseline behaviour (empty default impl
 //! on the trait, or the linear scan in `JsonlSessionStore`).
 
-mod common;
+use crate::common;
 
 use swink_agent_memory::{JsonlSessionStore, SessionEntry, SessionSearchOptions, SessionStore};
 

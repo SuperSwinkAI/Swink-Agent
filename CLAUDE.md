@@ -32,4 +32,5 @@ Pure-Rust workspace for LLM-powered agentic loops: provider-agnostic core (`swin
 - **TLS is rustls+ring** — call `ensure_default_crypto_provider()` before constructing any reqwest client.
 - **API stability lints**: exported structs/enums need `#[non_exhaustive]` unless deliberately frozen with an explicit allow plus a comment (`clippy::exhaustive_structs` / `exhaustive_enums`).
 - **Specs**: `specs/NNN-name/` with `.specify/` templates; `specs/spec-status.md` is generated — read the relevant spec before large changes, and drop the file on merge conflicts.
+- **One integration-test binary per crate**: `autotests = false`, `tests/main.rs` lists each file as a `mod`; a new `tests/foo.rs` runs only once listed there. Run one file with `cargo test -p <crate> --test integration -- <module_name>`.
 - **Project skills** in `.claude/skills/` (`issue_pickup`, `prune`, `qa`, `speckit-status-report-show`) — prefer them over ad-hoc equivalents.

@@ -1,6 +1,6 @@
 //! Stress tests for JSONL append performance and correctness.
 
-mod common;
+use crate::common;
 
 use swink_agent::{AgentMessage, LlmMessage};
 use swink_agent_memory::{JsonlSessionStore, SessionStore};

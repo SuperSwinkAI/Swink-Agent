@@ -141,6 +141,12 @@ categories = ["development-tools", "api-bindings", "asynchronous"]
 # Faster incremental builds for contributors (especially on macOS).
 split-debuginfo = "unpacked"
 
+# Dependencies carry no debug info. Nearly every package in the graph is
+# third-party and never stepped into, but their DWARF dominated `target/`.
+# Workspace crates keep full debug info, so debugging our own code is unchanged.
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

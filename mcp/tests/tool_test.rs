@@ -1,6 +1,6 @@
 //! Tool tests for MCP integration (T011, T012).
 
-mod common;
+use crate::common;
 
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -1,6 +1,6 @@
 //! Tool filter tests for MCP integration (T030-T034).
 //!
-mod common;
+use crate::common;
 
 use std::collections::HashMap;
 

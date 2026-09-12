@@ -1,6 +1,6 @@
 //! Lifecycle management tests for MCP integration (T039, T040, T041, T042, T043).
 
-mod common;
+use crate::common;
 
 use std::collections::HashMap;
 use std::sync::Arc;

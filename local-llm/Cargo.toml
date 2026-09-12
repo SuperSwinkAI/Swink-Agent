@@ -1,4 +1,5 @@
 [package]
+autotests = false
 name = "swink-agent-local-llm"
 version.workspace = true
 edition.workspace = true
@@ -24,14 +25,13 @@ vulkan = ["llama-cpp-2/vulkan"]
 [dependencies]
 swink-agent = { path = "..", version = "0.14.0", default-features = false }
 llama-cpp-2 = "0.1.154"
-# hf-hub 1.0 is async-first (no `tokio` feature gate; `blocking` is the
-# opt-in) and tracks reqwest 0.13, so this crate shares the workspace's
-# single reqwest/rustls stack — the 0.5-era "ACCEPTED DUPLICATION" of a
-# second reqwest 0.12 tree is gone. rustls-tls keeps TLS on the same
-# ring/rustls stack as the rest of the workspace instead of native-tls
-# (→ OpenSSL) — no C toolchain for `local` builds (#1110's goal).
-hf-hub = { version = "1.0.0", features = ["rustls-tls"] }
-tokio = { workspace = true, features = ["rt", "sync"] }
+# Model downloads talk to the Hugging Face Hub directly (src/download.rs) on
+# the workspace reqwest + rustls(ring) stack. hf-hub 1.0 was dropped: it
+# hard-depends on hf-xet, whose default feature hardwires aws-lc-rs — a
+# cmake C build — and no feature flag on our side can turn that off.
+reqwest.workspace = true
+rustls.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "fs", "io-util"] }
 tokio-util.workspace = true
 tokio-stream.workspace = true
 futures.workspace = true
@@ -46,6 +46,15 @@ swink-agent = { path = "..", default-features = false, features = ["testkit"] }
 tokio = { workspace = true, features = ["full", "test-util"] }
 pretty_assertions.workspace = true
 tempfile.workspace = true
+wiremock.workspace = true
 
 [lints]
 workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"
+
+[[test]]
+name = "no_default_features"
+path = "tests/no_default_features.rs"

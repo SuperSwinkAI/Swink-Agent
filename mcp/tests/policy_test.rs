@@ -1,6 +1,6 @@
 //! Policy and approval tests for MCP tools (T026-T029).
 
-mod common;
+use crate::common;
 
 use std::collections::HashMap;
 use std::pin::Pin;

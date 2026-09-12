@@ -1,7 +1,5 @@
 //! Tests for the config module.
 
-mod common;
-
 use std::collections::HashMap;
 
 use swink_agent::CredentialType;

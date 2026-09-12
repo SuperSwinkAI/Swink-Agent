@@ -1,6 +1,6 @@
 //! Integration tests for policy slots — moved from swink-agent core.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

@@ -10,10 +10,11 @@ use std::sync::Arc;
 
 use tracing::{debug, error, info};
 
+use crate::download::resolve_model_path;
 use crate::error::LocalModelError;
 use crate::loader::{LazyLoader, LoaderBackend, LoaderState};
 use crate::preset::{ModelPreset, default_embedding_config};
-use crate::progress::{ProgressCallbackFn, resolve_model_path};
+use crate::progress::ProgressCallbackFn;
 use crate::runner::{LlamaRunner, RunnerConfig};
 
 // ─── EmbeddingConfig ────────────────────────────────────────────────────────
