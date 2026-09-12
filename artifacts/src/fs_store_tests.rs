@@ -2,12 +2,16 @@
 #![cfg(test)]
 
 use std::collections::HashMap;
+use std::fs::{File, OpenOptions};
 use std::io::ErrorKind;
+use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::Utc;
 use tokio::sync::oneshot;
 use tokio::task::yield_now;
+use tokio::time::timeout;
 
 use super::{FileArtifactStore, VersionRecord};
 use swink_agent::{ArtifactData, ArtifactError, ArtifactStore};
@@ -33,6 +37,53 @@ fn assert_invalid_data_storage_error(err: ArtifactError, expected_snippet: &str)
 async fn assert_delete_waits_for_lock<T>(delete_task: &tokio::task::JoinHandle<T>, reason: &str) {
     yield_now().await;
     assert!(!delete_task.is_finished(), "{reason}");
+}
+
+fn hold_process_lock(path: &Path) -> File {
+    std::fs::create_dir_all(path.parent().expect("lock path should have a parent"))
+        .expect("process lock parent should be creatable");
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .expect("process lock file should be openable");
+    file.lock().expect("process lock should be acquirable");
+    file
+}
+
+#[tokio::test]
+async fn save_waits_for_interprocess_artifact_lock() {
+    let tmpdir = tempfile::TempDir::new().expect("tempdir");
+    let store = Arc::new(FileArtifactStore::new(tmpdir.path()));
+    let lock_path = store
+        .process_lock_path("s1", "report.md")
+        .expect("lock path should be valid");
+    let process_lock = hold_process_lock(&lock_path);
+
+    let mut save_task = tokio::spawn({
+        let store = Arc::clone(&store);
+        async move { store.save("s1", "report.md", text_data("v1")).await }
+    });
+
+    assert!(
+        timeout(Duration::from_millis(100), &mut save_task)
+            .await
+            .is_err(),
+        "save should wait while another process holds the artifact lock"
+    );
+
+    process_lock
+        .unlock()
+        .expect("process lock should be releasable");
+    drop(process_lock);
+
+    let version = save_task
+        .await
+        .expect("save task should join")
+        .expect("save should succeed after process lock release");
+    assert_eq!(version.version, 1);
 }
 
 #[tokio::test]

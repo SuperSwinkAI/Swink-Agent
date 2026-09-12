@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::ffi::OsStr;
+use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, Weak};
 
@@ -149,9 +150,34 @@ struct ArtifactLockKey {
 
 type LockMap = HashMap<ArtifactLockKey, Weak<Mutex<()>>>;
 
+const PROCESS_LOCK_DIR_NAME: &str = "swink-agent-artifact-locks";
+const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+pub(crate) struct ProcessArtifactLock {
+    _file: File,
+}
+
 fn global_artifact_locks() -> &'static Mutex<LockMap> {
     static LOCKS: OnceLock<Mutex<LockMap>> = OnceLock::new();
     LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn hash_process_lock_part(hash: &mut u64, bytes: &[u8]) {
+    for byte in bytes {
+        *hash ^= u64::from(*byte);
+        *hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    *hash ^= 0xff;
+    *hash = hash.wrapping_mul(FNV_PRIME);
+}
+
+fn process_lock_id(root: &Path, session_id: &str, name: &str) -> u64 {
+    let mut hash = FNV_OFFSET_BASIS;
+    hash_process_lock_part(&mut hash, root.to_string_lossy().as_bytes());
+    hash_process_lock_part(&mut hash, session_id.as_bytes());
+    hash_process_lock_part(&mut hash, name.as_bytes());
+    hash
 }
 
 pub struct FileArtifactStore {
@@ -197,6 +223,43 @@ impl FileArtifactStore {
         let lock = Arc::new(Mutex::new(()));
         locks.insert(key, Arc::downgrade(&lock));
         lock
+    }
+
+    fn process_lock_path(&self, session_id: &str, name: &str) -> Result<PathBuf, ArtifactError> {
+        validate_session_id(session_id)?;
+        validate_artifact_name(name)?;
+        let id = process_lock_id(&self.root, session_id, name);
+        Ok(std::env::temp_dir()
+            .join(PROCESS_LOCK_DIR_NAME)
+            .join(format!("{id:016x}.lock")))
+    }
+
+    pub(crate) async fn process_artifact_lock(
+        &self,
+        session_id: &str,
+        name: &str,
+    ) -> Result<ProcessArtifactLock, ArtifactError> {
+        let lock_path = self.process_lock_path(session_id, name)?;
+        tokio::task::spawn_blocking(move || {
+            let parent = lock_path.parent().ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "artifact process lock path has no parent directory",
+                )
+            })?;
+            std::fs::create_dir_all(parent)?;
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&lock_path)?;
+            file.lock()?;
+            Ok::<_, std::io::Error>(ProcessArtifactLock { _file: file })
+        })
+        .await
+        .map_err(|e| storage_err(std::io::Error::other(e)))?
+        .map_err(storage_err)
     }
 
     /// Path to the artifact directory: `{root}/{session_id}/{artifact_name}/`
@@ -525,6 +588,7 @@ impl ArtifactStore for FileArtifactStore {
 
             let lock = self.artifact_lock(session_id, name).await;
             let _guard = lock.lock().await;
+            let _process_guard = self.process_artifact_lock(session_id, name).await?;
 
             tokio::fs::create_dir_all(&dir).await.map_err(storage_err)?;
 
@@ -590,6 +654,7 @@ impl ArtifactStore for FileArtifactStore {
 
             let lock = self.artifact_lock(session_id, name).await;
             let _guard = lock.lock().await;
+            let _process_guard = self.process_artifact_lock(session_id, name).await?;
 
             let meta = self.read_meta(session_id, name).await?;
             self.reject_metadata_content_mismatch(session_id, name, &meta)
@@ -650,6 +715,7 @@ impl ArtifactStore for FileArtifactStore {
 
             let lock = self.artifact_lock(session_id, name).await;
             let _guard = lock.lock().await;
+            let _process_guard = self.process_artifact_lock(session_id, name).await?;
 
             let meta = self.read_meta(session_id, name).await?;
             self.reject_metadata_content_mismatch(session_id, name, &meta)
@@ -707,6 +773,7 @@ impl ArtifactStore for FileArtifactStore {
             for name in &names {
                 let lock = self.artifact_lock(session_id, name).await;
                 let _guard = lock.lock().await;
+                let _process_guard = self.process_artifact_lock(session_id, name).await?;
 
                 let meta = self.read_meta(session_id, name).await?;
                 self.reject_metadata_content_mismatch(session_id, name, &meta)
@@ -736,6 +803,7 @@ impl ArtifactStore for FileArtifactStore {
             let dir = self.resolve_artifact_dir(session_id, name)?;
             let lock = self.artifact_lock(session_id, name).await;
             let _guard = lock.lock().await;
+            let _process_guard = self.process_artifact_lock(session_id, name).await?;
 
             self.delete_artifact_files(&dir).await?;
             self.prune_empty_artifact_dirs(session_id, name).await?;
