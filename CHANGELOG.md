@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `local-llm`: local model output now streams token events incrementally instead of buffering the whole generation before consumers see text, thinking, or tool-call deltas (#1302).
+- `adapters`: Responses SSE terminal failures now share HTTP-path structured error classification, preserving retry, auth, content-filter, model-retired, and context-overflow handling (#1303).
+- `core`: provider-originated abort turns now run PostTurn policies after committing the synthetic abort assistant message (#1304).
+- `mcp`: multi-server bootstrap is more resilient: discovery failure no longer emits misleading connected lifecycle events, configured servers start concurrently, and missing connect/discovery timeouts default to bounded values while explicit `null` remains an opt-out (#1305).
+- `plugins/web`: allow/deny domain filters now enforce the documented wildcard and subdomain semantics consistently in Rust and the Playwright bridge (#1306).
+- `artifacts`: file-backed artifact version allocation now uses process-wide filesystem locking so separate processes sharing a root do not overwrite the same `vN` (#1307).
+- `auth`: credential backend errors no longer expose raw secret-bearing source errors through standard error-chain formatting (#1308).
+- `eval`: JSON eval sets now run the same duplicate-case and invalid-case validation as YAML before execution (#1309).
+- `rpc`: protocol/client consumers no longer pull core default tools by default; the daemon feature opts into built-in tools explicitly (#1310).
+
 
 ## [0.14.1] - 2026-09-12
 
@@ -684,7 +695,7 @@ are folded in here rather than kept as a phantom release.
 
 Major additions: Gemma 4 local inference, `BlockAccumulator` for streaming event assembly, `schemars`-based proc-macro engine, multi-agent patterns and artifact service, MCP integration, plugin system, policy slots, credential management, TUI session management, and web browse plugin. 42 specs implemented across the 0.6 lifecycle.
 
-[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.14.1...HEAD
 [0.14.1]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.13.2...v0.14.0
 [0.13.2]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.13.1...v0.13.2
