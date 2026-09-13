@@ -4,6 +4,7 @@
 //! [`AssistantMessageEvent`] values by incrementally streaming responses
 //! from the llama.cpp inference engine via the internal `LlamaRunner`.
 
+use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -996,6 +997,10 @@ impl StreamState {
         }
     }
 
+    fn drain_pending_events(&mut self) -> Vec<AssistantMessageEvent> {
+        std::mem::take(&mut self.events)
+    }
+
     fn process_default_tool_call_text(&mut self, text: &str) -> Option<String> {
         let (calls, remaining) = self.default_tool_call_parser.process(text);
         for call in calls {
@@ -1204,7 +1209,7 @@ fn local_stream<'a>(
         })
         .await
         {
-            return stream::iter(vec![AssistantMessageEvent::Start, event]);
+            return boxed_event_stream(vec![AssistantMessageEvent::Start, event]);
         }
 
         #[cfg(feature = "gemma4")]
@@ -1229,14 +1234,14 @@ fn local_stream<'a>(
         let state_guard = match local_model.runner().await {
             Ok(guard) => guard,
             Err(e) => {
-                return stream::iter(vec![
+                return boxed_event_stream(vec![
                     AssistantMessageEvent::Start,
                     AssistantMessageEvent::error(format!("model runner unavailable: {e}")),
                 ]);
             }
         };
         let LoaderState::Ready { runner } = &*state_guard else {
-            return stream::iter(vec![
+            return boxed_event_stream(vec![
                 AssistantMessageEvent::Start,
                 AssistantMessageEvent::error("model in unexpected state"),
             ]);
@@ -1259,7 +1264,7 @@ fn local_stream<'a>(
                 Ok(messages) => messages,
                 Err(e) => {
                     error!(error = %e, "prompt truncation failed");
-                    return stream::iter(vec![
+                    return boxed_event_stream(vec![
                         AssistantMessageEvent::Start,
                         AssistantMessageEvent::error(format!("prompt truncation error: {e}")),
                     ]);
@@ -1270,7 +1275,7 @@ fn local_stream<'a>(
             Ok(prompt) => prompt,
             Err(e) => {
                 error!(error = %e, "chat template application failed");
-                return stream::iter(vec![
+                return boxed_event_stream(vec![
                     AssistantMessageEvent::Start,
                     AssistantMessageEvent::error(format!("chat template error: {e}")),
                 ]);
@@ -1281,7 +1286,7 @@ fn local_stream<'a>(
             Ok(t) => t,
             Err(e) => {
                 error!(error = %e, "tokenization failed");
-                return stream::iter(vec![
+                return boxed_event_stream(vec![
                     AssistantMessageEvent::Start,
                     AssistantMessageEvent::error(format!("tokenization error: {e}")),
                 ]);
@@ -1300,10 +1305,16 @@ fn local_stream<'a>(
         // Arc keeps the model alive independently.
         drop(state_guard);
 
-        let events = drain_token_stream(rx, &cancellation_token, is_gemma4).await;
-        stream::iter(events)
+        Box::pin(token_event_stream(rx, cancellation_token, is_gemma4))
+            as Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send>>
     })
     .flatten()
+}
+
+fn boxed_event_stream<'a>(
+    events: Vec<AssistantMessageEvent>,
+) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+    Box::pin(stream::iter(events))
 }
 
 // ─── Context truncation ─────────────────────────────────────────────────────
@@ -1382,52 +1393,98 @@ fn drop_leading_tool_results(messages: &mut Vec<crate::convert::LocalMessage>) {
     }
 }
 
+#[cfg(test)]
 async fn drain_token_stream(
-    mut rx: tokio::sync::mpsc::Receiver<TokenEvent>,
+    rx: tokio::sync::mpsc::Receiver<TokenEvent>,
     cancellation_token: &CancellationToken,
     is_gemma4: bool,
 ) -> Vec<AssistantMessageEvent> {
-    let mut state = StreamState::new(is_gemma4);
-    loop {
-        let event = tokio::select! {
-            biased;
-            () = cancellation_token.cancelled() => {
-                drop(rx);
-                return state.finalize_cancelled();
-            }
-            event = rx.recv() => event,
-        };
+    token_event_stream(rx, cancellation_token.clone(), is_gemma4)
+        .collect()
+        .await
+}
 
-        let Some(event) = event else {
-            break;
-        };
+struct TokenEventStreamState {
+    rx: Option<tokio::sync::mpsc::Receiver<TokenEvent>>,
+    cancellation_token: CancellationToken,
+    state: Option<StreamState>,
+    pending: VecDeque<AssistantMessageEvent>,
+}
 
-        match event {
-            TokenEvent::Token(text) => state.process_token(&text),
-            TokenEvent::Done {
-                prompt_tokens,
-                completion_tokens,
-                finish_reason,
-            } => {
-                state.prompt_tokens = prompt_tokens;
-                state.completion_tokens = completion_tokens;
-                state.finish_reason = finish_reason;
-                state.saw_done = true;
-                break;
-            }
-            TokenEvent::Error(msg) => {
-                error!(error = %msg, "error during local streaming");
-                return state.finalize_error(format!("local inference error: {msg}"));
-            }
-        }
-    }
+fn token_event_stream(
+    rx: tokio::sync::mpsc::Receiver<TokenEvent>,
+    cancellation_token: CancellationToken,
+    is_gemma4: bool,
+) -> impl Stream<Item = AssistantMessageEvent> + Send {
+    stream::unfold(
+        TokenEventStreamState {
+            rx: Some(rx),
+            cancellation_token,
+            state: Some(StreamState::new(is_gemma4)),
+            pending: VecDeque::new(),
+        },
+        |mut stream_state| async move {
+            loop {
+                if let Some(event) = stream_state.pending.pop_front() {
+                    return Some((event, stream_state));
+                }
 
-    if state.saw_done {
-        state.finalize()
-    } else {
-        warn!("local stream ended without Done; emitting terminal error");
-        state.finalize_eof_without_done()
-    }
+                let mut state = stream_state.state.take()?;
+                if !state.events.is_empty() {
+                    stream_state.pending = state.drain_pending_events().into();
+                    stream_state.state = Some(state);
+                    continue;
+                }
+
+                let rx = stream_state.rx.as_mut()?;
+
+                let event = tokio::select! {
+                    biased;
+                    () = stream_state.cancellation_token.cancelled() => {
+                        drop(stream_state.rx.take());
+                        stream_state.pending = state.finalize_cancelled().into();
+                        stream_state.state = None;
+                        continue;
+                    }
+                    event = rx.recv() => event,
+                };
+
+                match event {
+                    Some(TokenEvent::Token(text)) => {
+                        state.process_token(&text);
+                        stream_state.pending = state.drain_pending_events().into();
+                        stream_state.state = Some(state);
+                    }
+                    Some(TokenEvent::Done {
+                        prompt_tokens,
+                        completion_tokens,
+                        finish_reason,
+                    }) => {
+                        state.prompt_tokens = prompt_tokens;
+                        state.completion_tokens = completion_tokens;
+                        state.finish_reason = finish_reason;
+                        state.saw_done = true;
+                        drop(stream_state.rx.take());
+                        stream_state.pending = state.finalize().into();
+                        stream_state.state = None;
+                    }
+                    Some(TokenEvent::Error(msg)) => {
+                        error!(error = %msg, "error during local streaming");
+                        drop(stream_state.rx.take());
+                        stream_state.pending = state
+                            .finalize_error(format!("local inference error: {msg}"))
+                            .into();
+                        stream_state.state = None;
+                    }
+                    None => {
+                        warn!("local stream ended without Done; emitting terminal error");
+                        stream_state.pending = state.finalize_eof_without_done().into();
+                        stream_state.state = None;
+                    }
+                }
+            }
+        },
+    )
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
