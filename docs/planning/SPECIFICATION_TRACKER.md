@@ -187,7 +187,7 @@ evaluation — each depends only on the core library.
   - Branch: `022-local-llm-crate`
   - Status: Complete (58/58 tasks, merged to main)
   - Depends on: 0.3
-- [ ] **4.3** Eval: Trajectory & Matching — TrajectoryCollector, TrajectoryMatcher, EfficiencyEvaluator, ResponseCriteria
+- [x] **4.3** Eval: Trajectory & Matching — TrajectoryCollector, TrajectoryMatcher, EfficiencyEvaluator, ResponseCriteria
   - Spec: `specs/023-eval-trajectory-matching/spec.md`
   - Branch: `023-eval-trajectory-matching`
   - Status: Complete (108/108 tasks) — original 40-task scope shipped and merged; the 2026-04-21 scope expansion (Phase 13 BudgetGuard→BudgetPolicy migration) was verified implemented and closed 2026-07-06
