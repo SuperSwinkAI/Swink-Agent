@@ -40,7 +40,7 @@ uuid.workspace = true
 # PKCE (RFC 7636): verifier entropy, S256 challenge, base64url encoding.
 rand.workspace = true
 sha2.workspace = true
-base64 = "0.23.1"
+base64.workspace = true
 keyring = { workspace = true, optional = true }
 
 [dev-dependencies]

@@ -17,6 +17,7 @@ tokio-util = "0.7.19"
 tokio-stream = "0.1.19"
 futures = "0.3.33"
 tracing = "0.1.44"
+tracing-appender = "0.2.5"
 # Base pin only — no feature opinions here. Each crate opts into the features
 # it needs (fmt, env-filter, registry) at its own dependency entry.
 tracing-subscriber = "0.3.23"
@@ -77,6 +78,7 @@ syn = { version = "3.0.3", features = ["full", "extra-traits"] }
 quote = "1.0.47"
 proc-macro2 = "1.0.107"
 bytes = "1.12.1"
+base64 = "0.23.1"
 dirs = "7.0.0"
 regex = "1.13.1"
 keyring = "4.1.6"

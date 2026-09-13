@@ -32,7 +32,7 @@ serde_json.workspace = true
 tracing.workspace = true
 clap = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"], optional = true }
-tracing-appender = { version = "0.2.5", optional = true }
+tracing-appender = { workspace = true, optional = true }
 dirs = { workspace = true, optional = true }
 
 [dev-dependencies]
