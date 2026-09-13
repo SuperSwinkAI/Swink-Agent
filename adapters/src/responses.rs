@@ -465,10 +465,16 @@ impl ResponsesState {
         output_index: usize,
         item: &OutputItem,
         events: &mut Vec<AssistantMessageEvent>,
-    ) {
+        provider: &str,
+    ) -> Result<(), String> {
         if self.tools.contains_key(&output_index) {
-            return;
+            return Ok(());
         }
+        let Some(name) = item.name.as_deref().filter(|name| !name.trim().is_empty()) else {
+            return Err(format!(
+                "{provider} function_call output item at index {output_index} is missing a non-empty name"
+            ));
+        };
         if let Some(ev) = self.blocks.close_thinking(None) {
             events.push(ev);
         }
@@ -480,9 +486,7 @@ impl ResponsesState {
             .clone()
             .or_else(|| item.id.clone())
             .unwrap_or_else(|| format!("call_{output_index}"));
-        let (content_index, start) = self
-            .blocks
-            .open_tool_call(id, item.name.clone().unwrap_or_default());
+        let (content_index, start) = self.blocks.open_tool_call(id, name.to_owned());
         events.push(start);
         self.saw_tool_call = true;
         self.tools.insert(
@@ -492,6 +496,7 @@ impl ResponsesState {
                 streamed: 0,
             },
         );
+        Ok(())
     }
 
     /// Handle one paired SSE event. Returns `Some` when the stream is over.
@@ -503,7 +508,14 @@ impl ResponsesState {
                 if let Some(item) = &payload.item
                     && item.r#type == "function_call"
                 {
-                    self.open_tool_call(payload.output_index.unwrap_or(0), item, &mut events);
+                    let output_index = payload.output_index.unwrap_or(0);
+                    if let Err(message) =
+                        self.open_tool_call(output_index, item, &mut events, provider)
+                    {
+                        return SseAction::Done(
+                            self.terminal(AssistantMessageEvent::error(message)),
+                        );
+                    }
                 }
             }
             "response.output_text.delta" => {
@@ -563,7 +575,13 @@ impl ResponsesState {
                             let index = payload.output_index.unwrap_or(0);
                             // A call that arrived only in `done` (no `added`).
                             if !self.tools.contains_key(&index) {
-                                self.open_tool_call(index, item, &mut events);
+                                if let Err(message) =
+                                    self.open_tool_call(index, item, &mut events, provider)
+                                {
+                                    return SseAction::Done(
+                                        self.terminal(AssistantMessageEvent::error(message)),
+                                    );
+                                }
                                 if let (Some(entry), Some(arguments)) =
                                     (self.tools.get_mut(&index), item.arguments.as_deref())
                                     && !arguments.is_empty()

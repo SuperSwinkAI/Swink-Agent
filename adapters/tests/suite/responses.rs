@@ -299,6 +299,42 @@ async fn tool_call_arriving_only_in_done_still_streams_arguments() {
 }
 
 #[tokio::test]
+async fn function_call_without_name_is_terminal_protocol_error() {
+    let body = sse(&[
+        (
+            "response.output_item.added",
+            serde_json::json!({"type": "response.output_item.added", "output_index": 0, "item": {"type": "function_call", "id": "fc_1", "call_id": "call_x", "arguments": ""}}),
+        ),
+        completed(serde_json::json!({"input_tokens": 1, "output_tokens": 1})),
+    ]);
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let events = collect(
+        &ResponsesStreamFn::new(server.uri(), "k"),
+        &test_context(),
+        StreamOptions::default(),
+    )
+    .await;
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AssistantMessageEvent::ToolCallStart { .. })),
+        "malformed function_call must not open a tool call: {events:?}"
+    );
+    let error = find_error_message(&events).expect("missing terminal Error event");
+    assert!(
+        error.contains("missing a non-empty name"),
+        "expected provider diagnostic, got: {error}"
+    );
+    assert_eq!(find_error_kind(&events), Some(None));
+    assert_eq!(names(&events), ["Start", "Error"], "{events:?}");
+}
+
+#[tokio::test]
 async fn usage_accounting_splits_cached_and_keeps_reasoning_tokens() {
     let body = sse(&[
         (
