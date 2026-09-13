@@ -135,6 +135,31 @@ fn chatml_export_omits_metadata_when_not_requested() {
     );
 }
 
+/// ChatML export preserves system and user prompts carried by EvalCaseResult.
+#[test]
+fn chatml_export_uses_case_prompts_from_case_result() {
+    let result = make_case_result("prompted", 1.0).with_prompts(
+        "You are precise.",
+        vec![
+            "Summarize the change.".to_string(),
+            "Keep it short.".to_string(),
+        ],
+    );
+    let traces = vec![ScoredTrace::from_case_result(&result)];
+    let opts = ExportOptions::chatml_sft(0.0);
+    let bytes = ChatMlExporter::new().export(&traces, &opts).unwrap();
+    let output = String::from_utf8(bytes).unwrap();
+    let record: serde_json::Value = serde_json::from_str(output.lines().next().unwrap()).unwrap();
+
+    let messages = record["messages"].as_array().unwrap();
+    assert_eq!(messages[0]["role"], "system");
+    assert_eq!(messages[0]["content"], "You are precise.");
+    assert_eq!(messages[1]["role"], "user");
+    assert_eq!(messages[1]["content"], "Summarize the change.");
+    assert_eq!(messages[2]["role"], "user");
+    assert_eq!(messages[2]["content"], "Keep it short.");
+}
+
 // ─── Quality Threshold ───────────────────────────────────────────────────────
 
 /// Quality threshold filters out traces below the threshold.
@@ -261,6 +286,26 @@ fn sharegpt_export_produces_valid_jsonl_with_human_gpt_turns() {
     let has_gpt = conversations.iter().any(|c| c["from"] == "gpt");
     assert!(has_system, "should have system turn");
     assert!(has_gpt, "should have gpt turn");
+}
+
+/// ShareGPT export preserves system and user prompts carried by EvalCaseResult.
+#[test]
+fn sharegpt_export_uses_case_prompts_from_case_result() {
+    let result = make_case_result("sharegpt-prompted", 1.0).with_prompts(
+        "Act as a reviewer.",
+        vec!["Inspect this trace.".to_string()],
+    );
+    let traces = vec![ScoredTrace::from_case_result(&result)];
+    let opts = ExportOptions::sharegpt();
+    let bytes = ShareGptExporter::new().export(&traces, &opts).unwrap();
+    let output = String::from_utf8(bytes).unwrap();
+    let record: serde_json::Value = serde_json::from_str(output.lines().next().unwrap()).unwrap();
+
+    let conversations = record["conversations"].as_array().unwrap();
+    assert_eq!(conversations[0]["from"], "system");
+    assert_eq!(conversations[0]["value"], "Act as a reviewer.");
+    assert_eq!(conversations[1]["from"], "human");
+    assert_eq!(conversations[1]["value"], "Inspect this trace.");
 }
 
 // ─── ScoredTrace from EvalCaseResult ────────────────────────────────────────

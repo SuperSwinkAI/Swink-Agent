@@ -501,6 +501,8 @@ fn scored_case_result(
     };
     EvalCaseResult {
         case_id: case.id.clone(),
+        system_prompt: case.system_prompt.clone(),
+        user_messages: case.user_messages.clone(),
         invocation,
         metric_results,
         verdict,
@@ -743,6 +745,8 @@ async fn acquire_case_permit(
 fn cancelled_case_result(case: &EvalCase) -> EvalCaseResult {
     EvalCaseResult {
         case_id: case.id.clone(),
+        system_prompt: case.system_prompt.clone(),
+        user_messages: case.user_messages.clone(),
         invocation: error_invocation(None),
         metric_results: vec![cancelled_metric_result(
             "runner cancellation observed before case completion",
@@ -763,6 +767,8 @@ fn error_case_result(case: &EvalCase, err: &EvalError) -> EvalCaseResult {
     warn!(case_id = %case.id, error = %err, "eval case failed with error");
     EvalCaseResult {
         case_id: case.id.clone(),
+        system_prompt: case.system_prompt.clone(),
+        user_messages: case.user_messages.clone(),
         invocation: error_invocation(Some(err.to_string())),
         metric_results: vec![EvalMetricResult {
             evaluator_name: "error".to_string(),

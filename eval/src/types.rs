@@ -1461,6 +1461,13 @@ impl EvalMetricResult {
 pub struct EvalCaseResult {
     /// The case ID that was evaluated.
     pub case_id: String,
+    /// System prompt from the originating eval case, captured so downstream
+    /// reporters/exporters can reconstruct the training input.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub system_prompt: String,
+    /// User messages from the originating eval case.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub user_messages: Vec<String>,
     /// The captured invocation trace.
     pub invocation: Invocation,
     /// Per-evaluator metric results.
@@ -1475,10 +1482,24 @@ impl EvalCaseResult {
     pub fn new(case_id: impl Into<String>, invocation: Invocation, verdict: Verdict) -> Self {
         Self {
             case_id: case_id.into(),
+            system_prompt: String::new(),
+            user_messages: Vec::new(),
             invocation,
             metric_results: Vec::new(),
             verdict,
         }
+    }
+
+    /// Set the originating case prompts.
+    #[must_use]
+    pub fn with_prompts(
+        mut self,
+        system_prompt: impl Into<String>,
+        user_messages: Vec<String>,
+    ) -> Self {
+        self.system_prompt = system_prompt.into();
+        self.user_messages = user_messages;
+        self
     }
 
     /// Set the per-evaluator metric results.

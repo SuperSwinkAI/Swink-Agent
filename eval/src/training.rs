@@ -151,6 +151,10 @@ pub struct ScoredTrace {
     pub score: f64,
     /// Identifier of the eval case this trace was produced by.
     pub case_id: String,
+    /// System prompt from the originating eval case, when available.
+    pub system_prompt: String,
+    /// User messages from the originating eval case, when available.
+    pub user_messages: Vec<String>,
 }
 
 impl ScoredTrace {
@@ -161,7 +165,21 @@ impl ScoredTrace {
             invocation,
             score,
             case_id: case_id.into(),
+            system_prompt: String::new(),
+            user_messages: Vec::new(),
         }
+    }
+
+    /// Attach the originating eval prompts to this trace.
+    #[must_use]
+    pub fn with_prompts(
+        mut self,
+        system_prompt: impl Into<String>,
+        user_messages: Vec<String>,
+    ) -> Self {
+        self.system_prompt = system_prompt.into();
+        self.user_messages = user_messages;
+        self
     }
 
     /// Construct a `ScoredTrace` from an [`EvalCaseResult`].
@@ -181,6 +199,8 @@ impl ScoredTrace {
             invocation: result.invocation.clone(),
             score,
             case_id: result.case_id.clone(),
+            system_prompt: result.system_prompt.clone(),
+            user_messages: result.user_messages.clone(),
         }
     }
 }
@@ -295,25 +315,25 @@ fn build_chatml_record<'a>(trace: &'a ScoredTrace, opts: &ExportOptions) -> Chat
     let inv = &trace.invocation;
     let mut messages: Vec<ChatMlMessage> = Vec::new();
 
-    // System message — derive from the first user message context if there is
-    // relevant text, otherwise use an empty string.  The system prompt is not
-    // stored on `Invocation` directly; we emit a placeholder so downstream
-    // pipelines always have a system slot to fill from their own case data.
     messages.push(ChatMlMessage {
         role: "system",
-        content: String::new(),
+        content: trace.system_prompt.clone(),
         tool_calls: None,
     });
 
+    for user_message in &trace.user_messages {
+        messages.push(ChatMlMessage {
+            role: "user",
+            content: user_message.clone(),
+            tool_calls: None,
+        });
+    }
+
     for turn in &inv.turns {
-        // User turn: synthesise from tool results of the *previous* turn or
-        // from the first turn where we have no tool results to carry.
-        // For turn 0 the user message is implicit (not stored in Invocation).
-        // We add a user placeholder only for turn 0.
-        if turn.turn_index == 0 {
+        if turn.turn_index == 0 && trace.user_messages.is_empty() {
             messages.push(ChatMlMessage {
                 role: "user",
-                content: String::new(), // prompt not stored in Invocation
+                content: String::new(),
                 tool_calls: None,
             });
         }
@@ -544,17 +564,23 @@ fn build_sharegpt_record(trace: &ScoredTrace, opts: &ExportOptions) -> ShareGptR
     let inv = &trace.invocation;
     let mut conversations: Vec<ShareGptTurn> = Vec::new();
 
-    // System placeholder
     conversations.push(ShareGptTurn {
         from: "system",
-        value: String::new(),
+        value: trace.system_prompt.clone(),
     });
 
+    for user_message in &trace.user_messages {
+        conversations.push(ShareGptTurn {
+            from: "human",
+            value: user_message.clone(),
+        });
+    }
+
     for turn in &inv.turns {
-        if turn.turn_index == 0 {
+        if turn.turn_index == 0 && trace.user_messages.is_empty() {
             conversations.push(ShareGptTurn {
                 from: "human",
-                value: String::new(), // user prompt not stored in Invocation
+                value: String::new(),
             });
         }
         let content = extract_assistant_text(&turn.assistant_message);
