@@ -573,6 +573,33 @@ async fn incomplete_max_output_tokens_is_done_with_length() {
 }
 
 #[tokio::test]
+async fn incomplete_unknown_reason_is_terminal_error() {
+    let body = sse(&[(
+        "response.incomplete",
+        serde_json::json!({"type": "response.incomplete", "response": {"status": "incomplete", "incomplete_details": {"reason": "server_overloaded"}}}),
+    )]);
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+    let events = collect(
+        &ResponsesStreamFn::new(server.uri(), "k"),
+        &test_context(),
+        StreamOptions::default(),
+    )
+    .await;
+    assert_eq!(names(&events), ["Start", "Error"], "{events:?}");
+    assert_eq!(find_error_kind(&events), Some(None), "{events:?}");
+    assert!(
+        find_error_message(&events)
+            .unwrap()
+            .contains("unrecognized reason `server_overloaded`"),
+        "{events:?}"
+    );
+}
+
+#[tokio::test]
 async fn http_429_maps_to_throttled_and_rate_limit_headers_reach_the_caller() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))

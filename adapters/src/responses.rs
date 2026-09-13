@@ -624,7 +624,9 @@ impl ResponsesState {
                             "{provider} response stopped by content filter"
                         )),
                     )),
-                    _ => SseAction::Done(self.done(StopReason::Stop)),
+                    _ => SseAction::Done(self.terminal(AssistantMessageEvent::error(format!(
+                        "{provider} response incomplete with unrecognized reason `{reason}`"
+                    )))),
                 };
             }
             "response.failed" => {
