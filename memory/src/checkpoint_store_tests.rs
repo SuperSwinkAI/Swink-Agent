@@ -81,7 +81,7 @@ async fn retention_prunes_oldest_to_limit() {
 }
 
 #[tokio::test]
-async fn retention_defaults_to_bounded() {
+async fn retention_defaults_to_unbounded() {
     let dir = tempfile::tempdir().unwrap();
     let store = FileCheckpointStore::new(dir.path().to_path_buf()).unwrap();
 
@@ -96,8 +96,8 @@ async fn retention_defaults_to_bounded() {
     let ids = store.list_checkpoints().await.unwrap();
     assert_eq!(
         ids.len(),
-        FileCheckpointStore::DEFAULT_MAX_CHECKPOINTS,
-        "default retention must cap the checkpoint count"
+        total,
+        "default retention must keep every checkpoint"
     );
     assert_eq!(
         ids[0],
@@ -105,8 +105,8 @@ async fn retention_defaults_to_bounded() {
         "newest checkpoint must survive pruning"
     );
     assert!(
-        !ids.contains(&"cp-000".to_string()),
-        "oldest checkpoint must be pruned"
+        ids.contains(&"cp-000".to_string()),
+        "oldest checkpoint must not be pruned by default"
     );
 }
 

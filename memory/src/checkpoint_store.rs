@@ -37,31 +37,32 @@ fn validate_checkpoint_id(id: &str) -> io::Result<()> {
 /// access and therefore must not contain path separators, `..`, `:`, or ASCII
 /// control characters.
 ///
-/// Retention is bounded by default: after each save, only the
-/// [`DEFAULT_MAX_CHECKPOINTS`](Self::DEFAULT_MAX_CHECKPOINTS) most recent
-/// checkpoints (by `created_at`) are kept. Use
-/// [`with_max_checkpoints`](Self::with_max_checkpoints) to change the bound
-/// or [`unbounded`](Self::unbounded) to keep every checkpoint.
+/// Retention is unbounded by default. Use
+/// [`with_max_checkpoints`](Self::with_max_checkpoints) to prune older
+/// checkpoints after each save.
 pub struct FileCheckpointStore {
     checkpoints_dir: PathBuf,
     max_checkpoints: Option<usize>,
 }
 
 impl FileCheckpointStore {
-    /// Number of most-recent checkpoints a new store retains by default.
+    /// Recommended bound for callers that want capped checkpoint retention.
+    ///
+    /// New stores are unbounded by default for backwards compatibility with
+    /// the public checkpoint policy contract.
     pub const DEFAULT_MAX_CHECKPOINTS: usize = 20;
 
     /// Create a new store rooted at the given directory.
     ///
     /// Creates the directory (and parents) if it does not already exist.
     ///
-    /// The store keeps at most [`Self::DEFAULT_MAX_CHECKPOINTS`] checkpoints;
-    /// see [`Self::with_max_checkpoints`] and [`Self::unbounded`].
+    /// The store keeps every checkpoint by default; see
+    /// [`Self::with_max_checkpoints`] to opt into bounded retention.
     pub fn new(checkpoints_dir: PathBuf) -> io::Result<Self> {
         std::fs::create_dir_all(&checkpoints_dir)?;
         Ok(Self {
             checkpoints_dir,
-            max_checkpoints: Some(Self::DEFAULT_MAX_CHECKPOINTS),
+            max_checkpoints: None,
         })
     }
 
@@ -73,8 +74,9 @@ impl FileCheckpointStore {
     /// Keep at most `n` checkpoints, pruning the oldest (by `created_at`)
     /// after each save.
     ///
-    /// The default is [`Self::DEFAULT_MAX_CHECKPOINTS`]. The checkpoint just
-    /// saved counts toward the limit, so `n` should be at least 1.
+    /// The checkpoint just saved counts toward the limit, so `n` should be at
+    /// least 1. [`Self::DEFAULT_MAX_CHECKPOINTS`] is a reasonable preset for
+    /// callers that do not need every historical checkpoint.
     ///
     /// Pruning only considers files in the store directory that parse as
     /// checkpoints; foreign or malformed files are never deleted. Pruning is
@@ -88,9 +90,11 @@ impl FileCheckpointStore {
 
     /// Disable retention pruning and keep every checkpoint.
     ///
-    /// Disk usage then grows without bound: a per-turn checkpoint policy
-    /// leaves one growing file per turn, so an N-turn session stores O(N²)
-    /// bytes. Prefer a bound unless every historical checkpoint is needed.
+    /// This is the default for new stores. It is also useful after a builder
+    /// chain has temporarily selected a bound. Disk usage then grows without
+    /// bound: a per-turn checkpoint policy leaves one growing file per turn,
+    /// so an N-turn session stores O(N²) bytes. Prefer a bound unless every
+    /// historical checkpoint is needed.
     #[must_use]
     pub fn unbounded(mut self) -> Self {
         self.max_checkpoints = None;
