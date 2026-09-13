@@ -267,6 +267,50 @@ async fn http_429_produces_rate_limit_error() {
 }
 
 #[tokio::test]
+async fn http_429_reports_rate_limit_headers_and_body() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/stream"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("x-ratelimit-remaining-requests", "0")
+                .insert_header("retry-after", "17")
+                .set_body_string(r#"{"error":{"message":"slow down","type":"rate_limit"}}"#),
+        )
+        .mount(&server)
+        .await;
+
+    let seen: Arc<Mutex<Option<swink_agent::RateLimitSnapshot>>> = Arc::new(Mutex::new(None));
+    let sink = Arc::clone(&seen);
+    let options = StreamOptions::default()
+        .with_on_rate_limit(Arc::new(move |s| *sink.lock().unwrap() = Some(s.clone())));
+
+    let proxy = ProxyStreamFn::new(server.uri(), "token");
+    let events = collect_events_with_options(&proxy, options).await;
+
+    assert_eq!(events.len(), 2);
+    assert!(matches!(events[0], AssistantMessageEvent::Start));
+    match &events[1] {
+        AssistantMessageEvent::Error {
+            error_message,
+            error_kind,
+            ..
+        } => {
+            assert!(
+                error_message.contains("slow down"),
+                "expected response body diagnostic, got: {error_message}"
+            );
+            assert_eq!(*error_kind, Some(swink_agent::StreamErrorKind::Throttled));
+        }
+        other => panic!("expected Error event, got {other:?}"),
+    }
+
+    let snapshot = seen.lock().unwrap().clone().expect("callback fired on 429");
+    assert_eq!(snapshot.remaining_requests, Some(0));
+    assert_eq!(snapshot.resets_in, Some(std::time::Duration::from_secs(17)));
+}
+
+#[tokio::test]
 async fn proxy_on_raw_payload_observes_runtime_sse_lines() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
