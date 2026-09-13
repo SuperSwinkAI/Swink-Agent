@@ -171,6 +171,7 @@ async fn bash_inherits_entire_host_environment() {
             // exec-ing protected binaries such as `/bin/zsh`, below any
             // control of ours (`cargo test` sets DYLD_FALLBACK_LIBRARY_PATH,
             // so the suite only trips this under plain `cargo test`).
+            // On Windows, `cmd /C set` cannot print drive pseudo-vars like `=D:`.
             !key.is_empty()
                 && !value.contains('\n')
                 && !value.contains('\r')
@@ -178,6 +179,7 @@ async fn bash_inherits_entire_host_environment() {
                 && key != "SHLVL"
                 && key != "PWD"
                 && key != "OLDPWD"
+                && !(cfg!(windows) && key.starts_with('='))
                 && !(cfg!(target_os = "macos") && key.starts_with("DYLD_"))
                 && !text.contains(&format!("{key}={value}"))
         })
