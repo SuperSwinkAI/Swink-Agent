@@ -128,8 +128,14 @@ impl EvolutionRunner {
         // Phase: mutate (with panic isolation).
         let mut all_candidates: Vec<Candidate> = Vec::new();
         let mut mutation_errors: Vec<(String, String)> = Vec::new();
+        let mut mutation_budget_exhausted = false;
 
         for weak_point in &weak_points {
+            if self.config.budget.is_exhausted() {
+                mutation_budget_exhausted = true;
+                break;
+            }
+
             let target_value = target_component_value(&self.target, &weak_point.component);
             let context = MutationContext {
                 weak_point: weak_point.clone(),
@@ -141,6 +147,11 @@ impl EvolutionRunner {
             };
 
             for strategy in &self.config.strategies {
+                if self.config.budget.is_exhausted() {
+                    mutation_budget_exhausted = true;
+                    break;
+                }
+
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     strategy.mutate(&target_value, &context)
                 }));
@@ -155,9 +166,34 @@ impl EvolutionRunner {
                             .push((strategy.name().to_string(), format!("Panic: {msg}")));
                     }
                 }
+
+                if self.config.budget.is_exhausted() {
+                    mutation_budget_exhausted = true;
+                    break;
+                }
             }
 
             all_candidates = deduplicate(all_candidates, &target_value);
+
+            if mutation_budget_exhausted {
+                break;
+            }
+        }
+
+        if mutation_budget_exhausted {
+            return Ok(Self::cycle_result(
+                cycle_number,
+                baseline,
+                weak_points,
+                0,
+                AcceptanceResult::empty(),
+                Cost::default(),
+                CycleStatus::BudgetExhausted {
+                    phase: "mutation".to_string(),
+                },
+                None,
+                mutation_errors,
+            ));
         }
 
         if all_candidates.is_empty() {
