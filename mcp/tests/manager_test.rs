@@ -15,7 +15,7 @@ use rmcp::transport::streamable_http_server::{
 };
 use serde_json::json;
 use swink_agent::AgentEvent;
-use swink_agent_mcp::{McpManager, McpServerConfig, McpToolInfo, McpTransport};
+use swink_agent_mcp::{McpError, McpManager, McpServerConfig, McpToolInfo, McpTransport};
 use tokio::sync::{Notify, mpsc::unbounded_channel};
 
 /// T019: Connect to two mock servers with prefixes, verify tools are prefixed
@@ -134,6 +134,51 @@ fn sanitized_tool_name_collision_is_detected() {
     assert!(
         err_msg.contains("read_file"),
         "sanitized colliding name should be reported, got: {err_msg}"
+    );
+}
+
+#[tokio::test]
+async fn connect_all_rejects_duplicate_server_names_before_connecting() {
+    let mut manager = McpManager::new(vec![
+        McpServerConfig::new(
+            "duplicate",
+            McpTransport::Stdio {
+                command: "missing-command-a".into(),
+                args: vec![],
+                env: HashMap::default(),
+            },
+        )
+        .with_tool_prefix("a"),
+        McpServerConfig::new(
+            "duplicate",
+            McpTransport::Stdio {
+                command: "missing-command-b".into(),
+                args: vec![],
+                env: HashMap::default(),
+            },
+        )
+        .with_tool_prefix("b"),
+    ]);
+
+    let result = manager.connect_all().await;
+    let err =
+        result.expect_err("duplicate server names should be rejected even when prefixes differ");
+    assert!(
+        matches!(err, McpError::DuplicateServerName { ref name } if name == "duplicate"),
+        "expected duplicate server name error, got: {err}"
+    );
+}
+
+#[test]
+fn from_connections_rejects_duplicate_server_names() {
+    let conn_a = swink_agent_mcp::McpConnection::disconnected(mock_config("duplicate"));
+    let conn_b = swink_agent_mcp::McpConnection::disconnected(mock_config("duplicate"));
+
+    let err = McpManager::from_connections(vec![conn_a, conn_b])
+        .expect_err("duplicate server names should be rejected");
+    assert!(
+        matches!(err, McpError::DuplicateServerName { ref name } if name == "duplicate"),
+        "expected duplicate server name error, got: {err}"
     );
 }
 

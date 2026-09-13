@@ -4,7 +4,7 @@
 //! optional name prefixing, detects name collisions, and exposes a flat list
 //! of [`AgentTool`] implementations ready for use in an agent.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -95,6 +95,8 @@ impl McpManager {
     /// discovered tools, and checks for name collisions. Useful for testing
     /// with in-process mock servers.
     pub fn from_connections(connections: Vec<McpConnection>) -> Result<Self, McpError> {
+        validate_unique_server_names(connections.iter().map(|conn| conn.config.name.as_str()))?;
+
         let mut all_tools: Vec<(String, String, Arc<dyn AgentTool>)> = Vec::new();
         let mut arc_connections = Vec::with_capacity(connections.len());
 
@@ -119,9 +121,12 @@ impl McpManager {
     ///
     /// Servers that fail to connect are logged and skipped; the remaining
     /// servers' tools are still available. Repeated calls replace the prior
-    /// connection set instead of appending to it. Returns an error only if a
-    /// tool name collision is detected across servers.
+    /// connection set instead of appending to it. Returns an error if duplicate
+    /// server names are configured or if a tool name collision is detected
+    /// across servers.
     pub async fn connect_all(&mut self) -> Result<(), McpError> {
+        validate_unique_server_names(self.configs.iter().map(|config| config.name.as_str()))?;
+
         if !self.connections.is_empty() || !self.tools.is_empty() {
             self.shutdown().await;
         }
@@ -217,6 +222,20 @@ impl std::fmt::Debug for McpManager {
             .field("credential_resolver", &self.credential_resolver.is_some())
             .finish()
     }
+}
+
+fn validate_unique_server_names<'a>(
+    names: impl IntoIterator<Item = &'a str>,
+) -> Result<(), McpError> {
+    let mut seen = HashSet::new();
+    for name in names {
+        if !seen.insert(name) {
+            return Err(McpError::DuplicateServerName {
+                name: name.to_string(),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Check for tool name collisions and return the flat tool list.

@@ -185,6 +185,8 @@ pub enum McpError {
         reason: String,
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
+    /// Duplicate server name detected in manager configuration.
+    DuplicateServerName { name: String },
     /// Tool name collision detected across servers.
     ToolNameCollision { name: String, server_a: String, server_b: String },
     /// MCP server returned an error during tool call.

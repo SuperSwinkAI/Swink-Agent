@@ -17,6 +17,8 @@ pub enum McpError {
         reason: String,
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
+    /// Duplicate server name detected in manager configuration.
+    DuplicateServerName { name: String },
     /// Tool name collision detected across servers.
     ToolNameCollision {
         name: String,
@@ -46,6 +48,9 @@ impl fmt::Display for McpError {
             }
             Self::ConnectionFailed { server, reason, .. } => {
                 write!(f, "failed to connect to MCP server '{server}': {reason}")
+            }
+            Self::DuplicateServerName { name } => {
+                write!(f, "duplicate MCP server name '{name}'")
             }
             Self::ToolNameCollision {
                 name,
@@ -90,7 +95,7 @@ impl std::error::Error for McpError {
             Self::ConnectionFailed { source, .. } | Self::ToolCallFailed { source, .. } => source
                 .as_deref()
                 .map(|s| s as &(dyn std::error::Error + 'static)),
-            Self::ToolNameCollision { .. } => None,
+            Self::DuplicateServerName { .. } | Self::ToolNameCollision { .. } => None,
         }
     }
 }
