@@ -12,7 +12,10 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::common::{MockStreamFn, default_convert, default_model, text_only_events, user_msg};
+use crate::common::{
+    MockContextCapturingStreamFn, MockStreamFn, default_convert, default_model, text_only_events,
+    user_msg,
+};
 
 use swink_agent::{
     Agent, AgentMessage, AgentOptions, AssistantMessage, AssistantMessageEvent, Cost, LlmMessage,
@@ -207,6 +210,21 @@ impl PostLoopPolicy for CountingPostLoop {
     }
 }
 
+struct StoppingPostLoop {
+    calls: Arc<AtomicUsize>,
+}
+
+impl PostLoopPolicy for StoppingPostLoop {
+    fn name(&self) -> &str {
+        "stopping-post-loop"
+    }
+
+    fn evaluate(&self, _ctx: &PolicyContext<'_>) -> PolicyVerdict {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        PolicyVerdict::Stop("halted by post-loop policy".to_string())
+    }
+}
+
 #[tokio::test]
 async fn post_loop_policy_fires_exactly_once_via_public_builder() {
     let calls = Arc::new(AtomicUsize::new(0));
@@ -227,6 +245,51 @@ async fn post_loop_policy_fires_exactly_once_via_public_builder() {
         calls.load(Ordering::SeqCst),
         1,
         "post-loop policy registered via with_post_loop_policy should fire exactly once after the (single-iteration) outer loop exits"
+    );
+}
+
+#[tokio::test]
+async fn post_loop_stop_exits_before_queued_follow_up_runs() {
+    let post_loop_calls = Arc::new(AtomicUsize::new(0));
+    let stream_fn = Arc::new(MockContextCapturingStreamFn::new(vec![
+        text_only_events("first reply"),
+        text_only_events("unexpected follow-up reply"),
+    ]));
+
+    let options = AgentOptions::new("test", default_model(), stream_fn.clone(), default_convert)
+        .with_post_loop_policy(StoppingPostLoop {
+            calls: Arc::clone(&post_loop_calls),
+        });
+    let mut agent = Agent::new(options);
+    agent.follow_up(user_msg("queued follow-up"));
+
+    let result = agent
+        .prompt_async(vec![user_msg("hi")])
+        .await
+        .expect("prompt_async should succeed");
+
+    assert_eq!(
+        post_loop_calls.load(Ordering::SeqCst),
+        1,
+        "PostLoop::Stop policy should run once after the first turn"
+    );
+    assert_eq!(
+        stream_fn.captured_message_counts.lock().unwrap().as_slice(),
+        &[1],
+        "PostLoop::Stop must exit before queued follow-up messages trigger a second stream call"
+    );
+
+    let committed_text: String = result
+        .messages
+        .iter()
+        .filter_map(|message| match message {
+            AgentMessage::Llm(LlmMessage::Assistant(assistant)) => Some(assistant_text(assistant)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        committed_text, "first reply",
+        "the queued follow-up response must not be committed after PostLoop::Stop"
     );
 }
 
