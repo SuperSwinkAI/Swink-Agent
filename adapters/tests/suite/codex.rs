@@ -1,6 +1,10 @@
 //! Wiremock-based tests for `CodexStreamFn` (issue #1265).
 
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
+use std::time::Duration;
 
 use base64::Engine as _;
 use futures::StreamExt;
@@ -10,7 +14,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use swink_agent::{
     AssistantMessageEvent, CredentialError, CredentialFuture, CredentialResolver, ModelSpec,
-    ResolvedCredential, StreamErrorKind, StreamFn, StreamOptions,
+    ResolvedCredential, StopReason, StreamErrorKind, StreamFn, StreamOptions,
 };
 use swink_agent_adapters::{CODEX_DEFAULT_CREDENTIAL_KEY, CodexError, CodexStreamFn};
 
@@ -66,6 +70,35 @@ impl CredentialResolver for StaticResolver {
     }
 }
 
+/// Parks forever after recording that credential resolution started.
+#[derive(Default)]
+struct PendingResolver {
+    calls: AtomicUsize,
+    resolving: tokio::sync::Notify,
+}
+
+impl PendingResolver {
+    fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    async fn wait_for_resolve(&self) {
+        self.resolving.notified().await;
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+impl CredentialResolver for PendingResolver {
+    fn resolve(&self, _key: &str) -> CredentialFuture<'_, ResolvedCredential> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.resolving.notify_one();
+        Box::pin(std::future::pending())
+    }
+}
+
 fn completed_body() -> String {
     "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}}\n\n".to_owned()
 }
@@ -79,6 +112,64 @@ async fn collect(stream_fn: &CodexStreamFn, options: StreamOptions) -> Vec<Assis
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn cancellation_wins_while_credential_resolution_is_pending() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(sse_response(""))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let resolver = PendingResolver::new();
+    let stream_fn = CodexStreamFn::new(resolver.clone(), "superswink")
+        .unwrap()
+        .with_base_url(server.uri());
+    let model = ModelSpec::new("codex", "gpt-5.6-luna");
+    let context = test_context();
+    let options = StreamOptions::default();
+    let cancellation_token = CancellationToken::new();
+    let mut stream = stream_fn.stream(&model, &context, &options, cancellation_token.clone());
+
+    let first = {
+        let first = stream.next();
+        tokio::pin!(first);
+        tokio::select! {
+            () = resolver.wait_for_resolve() => {}
+            event = &mut first => panic!("stream produced an event before credential resolution completed: {event:?}"),
+        }
+
+        assert_eq!(resolver.calls(), 1);
+        cancellation_token.cancel();
+        tokio::time::timeout(Duration::from_secs(1), &mut first)
+            .await
+            .expect("stream should finish promptly after cancellation")
+            .expect("stream should emit a Start event before the terminal cancellation error")
+    };
+    assert!(matches!(first, AssistantMessageEvent::Start));
+
+    let second = tokio::time::timeout(Duration::from_secs(1), stream.next())
+        .await
+        .expect("stream should emit a terminal cancellation error")
+        .expect("stream should emit a terminal cancellation error");
+    assert!(
+        matches!(
+            second,
+            AssistantMessageEvent::Error {
+                stop_reason: StopReason::Aborted,
+                ..
+            }
+        ),
+        "{second:?}"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("stream should close after the cancellation error")
+            .is_none()
+    );
+}
 
 #[tokio::test]
 async fn sends_bearer_account_id_beta_originator_and_a_fresh_session_id() {
@@ -314,10 +405,16 @@ fn crate_source_never_references_the_codex_cli_token_file() {
 
 #[test]
 fn factory_builds_a_codex_connection_without_an_api_key() {
-    let preset = swink_agent_adapters::preset("gpt-5.6-luna").expect("openai row is first");
+    let preset = swink_agent_adapters::preset("gpt-5.6-luna").expect("compiled row exists");
+    #[cfg(feature = "openai")]
     assert_eq!(
         preset.provider_key, "openai",
         "provider-blind lookup keeps the metered row"
+    );
+    #[cfg(not(feature = "openai"))]
+    assert_eq!(
+        preset.provider_key, "codex",
+        "provider-blind adapter lookup only returns compiled providers"
     );
     let codex = swink_agent::model_catalog()
         .preset("codex", "gpt_5_6_luna")

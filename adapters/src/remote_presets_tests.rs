@@ -110,6 +110,7 @@ fn remote_presets_subset_of_all_remote_presets() {
     feature = "xai",
     feature = "mistral",
     feature = "bedrock",
+    feature = "codex",
 )))]
 #[test]
 fn remote_presets_empty_when_no_adapters_compiled() {

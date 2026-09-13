@@ -311,22 +311,29 @@ impl StreamFn for CodexStreamFn {
             stream::once(async move {
                 let fail = |event| stream::iter(crate::base::pre_stream_error(event)).left_stream();
 
-                let token = match resolver.resolve(&key).await {
-                    Ok(
-                        ResolvedCredential::OAuth2AccessToken(token)
-                        | ResolvedCredential::Bearer(token)
-                        | ResolvedCredential::ApiKey(token),
-                    ) => token,
-                    Ok(_) => {
-                        return fail(AssistantMessageEvent::error_auth(
-                            "Codex: credential resolved to an unsupported type; expected an OAuth2 access token",
-                        ));
-                    }
-                    Err(error) => {
-                        return fail(AssistantMessageEvent::error_auth(format!(
-                            "Codex: could not resolve the ChatGPT credential ({error}); sign in again"
-                        )));
-                    }
+                let token = match crate::base::race_pre_stream_cancellation(
+                    &cancellation_token,
+                    "Codex credential resolution cancelled",
+                    async {
+                        match resolver.resolve(&key).await {
+                            Ok(
+                                ResolvedCredential::OAuth2AccessToken(token)
+                                | ResolvedCredential::Bearer(token)
+                                | ResolvedCredential::ApiKey(token),
+                            ) => Ok(token),
+                            Ok(_) => Err(AssistantMessageEvent::error_auth(
+                                "Codex: credential resolved to an unsupported type; expected an OAuth2 access token",
+                            )),
+                            Err(error) => Err(AssistantMessageEvent::error_auth(format!(
+                                "Codex: could not resolve the ChatGPT credential ({error}); sign in again"
+                            ))),
+                        }
+                    },
+                )
+                .await
+                {
+                    Ok(token) => token,
+                    Err(event) => return fail(event),
                 };
                 let Some(account_id) = account_id_from_token(&token) else {
                     return fail(AssistantMessageEvent::error_auth(
