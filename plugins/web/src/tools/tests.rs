@@ -94,6 +94,18 @@ fn playwright_internal_timeout_resets_cached_bridge() {
 }
 
 #[test]
+fn playwright_communication_errors_reset_cached_bridge() {
+    let mut bridge = Some(());
+
+    reset_bridge_after_ambiguous_playwright_error(
+        &mut bridge,
+        &PlaywrightError::Communication("bridge process closed stdout".to_owned()),
+    );
+
+    assert!(bridge.is_none());
+}
+
+#[test]
 fn ordinary_playwright_errors_keep_cached_bridge() {
     let mut bridge = Some(());
 

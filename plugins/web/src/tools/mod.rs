@@ -80,7 +80,10 @@ fn reset_bridge_after_ambiguous_playwright_error<T>(
     bridge: &mut Option<T>,
     error: &PlaywrightError,
 ) {
-    if matches!(error, PlaywrightError::Timeout(_)) {
+    if matches!(
+        error,
+        PlaywrightError::Communication(_) | PlaywrightError::Timeout(_)
+    ) {
         *bridge = None;
     }
 }
