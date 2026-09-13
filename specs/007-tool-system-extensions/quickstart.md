@@ -108,10 +108,12 @@ let with_logging = ToolMiddleware::with_logging(bash.clone(), |name, id, is_star
 });
 
 // Custom middleware
-let custom = ToolMiddleware::new(bash, |inner, id, params, cancel, on_update| {
+let custom = ToolMiddleware::new(bash, |inner, id, params, cancel, on_update, state, credential| {
     Box::pin(async move {
         println!("before execute");
-        let result = inner.execute(&id, params, cancel, on_update).await;
+        let result = inner
+            .execute(&id, params, cancel, on_update, state, credential)
+            .await;
         println!("after execute");
         result
     })
