@@ -12,6 +12,8 @@ use crate::domain::{DomainFilter, ResolvedHost};
 use crate::policy::ContentSanitizerPolicy;
 use crate::tools::sanitize_web_tool_text;
 
+const MAX_RESPONSE_BODY_BYTES: usize = 10 * 1024 * 1024;
+
 /// Tool for fetching and reading web pages.
 ///
 /// Sends an HTTP GET request, extracts readable content from HTML responses
@@ -125,7 +127,7 @@ impl FetchTool {
         } {
             if body.len().saturating_add(chunk.len()) > max_bytes {
                 return Err(format!(
-                    "Response body exceeded configured limit of {max_bytes} bytes before readability extraction."
+                    "Response body exceeded internal safety limit of {max_bytes} bytes before readability extraction."
                 ));
             }
 
@@ -338,11 +340,12 @@ impl AgentTool for FetchTool {
                 ));
             }
 
-            // Bound the raw response body before readability extraction so the
-            // configured content limit caps network and parsing cost too.
+            // Bound the raw response body with an internal safety cap. The
+            // configured max content length applies after readability
+            // extraction so large HTML shells can still yield compact articles.
             let bytes = match Self::read_body_with_cap(
                 &mut response,
-                self.max_content_length,
+                MAX_RESPONSE_BODY_BYTES,
                 &cancellation_token,
             )
             .await

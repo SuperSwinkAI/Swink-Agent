@@ -64,11 +64,13 @@ async fn execute_returns_readable_content_for_html_under_cap() {
 }
 
 #[tokio::test]
-async fn execute_rejects_body_that_exceeds_cap_before_extraction() {
+async fn execute_applies_content_cap_after_readability_extraction() {
     let server = MockServer::start().await;
     let oversized_html = format!(
-        "<!DOCTYPE html><html><body><article><p>{}</p></article></body></html>",
-        "x".repeat(2_048)
+        "<!DOCTYPE html><html><head><title>Readable</title><script>{}</script></head>\
+         <body><article><p>{}</p></article></body></html>",
+        "let ignored = 1;".repeat(512),
+        "Compact readable content. ".repeat(8)
     );
     Mock::given(method("GET"))
         .and(path("/oversized"))
@@ -92,10 +94,46 @@ async fn execute_rejects_body_that_exceeds_cap_before_extraction() {
         )
         .await;
 
-    assert!(result.is_error);
+    assert!(!result.is_error);
     let text = format!("{:?}", result.content);
-    assert!(text.contains("Response body exceeded configured limit of 512 bytes"));
-    assert!(text.contains("before readability extraction"));
+    assert!(text.contains("Readable"));
+    assert!(text.contains("Compact readable content"));
+    assert!(!text.contains("Response body exceeded"));
+}
+
+#[tokio::test]
+async fn execute_truncates_extracted_content_when_readable_text_exceeds_cap() {
+    let server = MockServer::start().await;
+    let long_article = format!(
+        "<!DOCTYPE html><html><body><article><p>{}</p></article></body></html>",
+        "readable ".repeat(256)
+    );
+    Mock::given(method("GET"))
+        .and(path("/long-article"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(long_article, "text/html; charset=utf-8"),
+        )
+        .mount(&server)
+        .await;
+
+    let tool =
+        FetchTool::new(512, Duration::from_secs(5)).with_domain_filter(localhost_filter(), 10);
+    let state = Arc::new(RwLock::new(SessionState::default()));
+    let result = tool
+        .execute(
+            "call-2b",
+            json!({ "url": format!("{}/long-article", server.uri()) }),
+            CancellationToken::new(),
+            None,
+            state,
+            None,
+        )
+        .await;
+
+    assert!(!result.is_error);
+    let text = format!("{:?}", result.content);
+    assert!(text.contains("content truncated"));
+    assert!(text.contains("readable"));
 }
 
 #[tokio::test]
