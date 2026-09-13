@@ -364,6 +364,11 @@ if (selectorPlan.selector !== '.card' || selectorPlan.preset !== null) {{
   throw new Error('unexpected selector plan: ' + JSON.stringify(selectorPlan));
 }}
 
+const defaultPlan = bridge.buildExtractionPlan({{}});
+if (defaultPlan.selector !== 'body' || defaultPlan.preset !== 'text') {{
+  throw new Error('unexpected default plan: ' + JSON.stringify(defaultPlan));
+}}
+
 const customElement = bridge.extractElementData(
   {{
     tagName: 'DIV',
@@ -378,6 +383,22 @@ const customElement = bridge.extractElementData(
 );
 if (customElement.tag !== 'div' || customElement.text !== 'Hello world' || customElement.attributes['data-id'] !== '42') {{
   throw new Error('unexpected custom element: ' + JSON.stringify(customElement));
+}}
+
+const textElement = bridge.extractElementData(
+  {{
+    tagName: 'BODY',
+    textContent: '  Whole page text  ',
+    attributes: [{{ name: 'data-secret', value: 'ignore-me' }}],
+    getAttribute() {{
+      return null;
+    }},
+    innerHTML: '<main>Whole page text</main>',
+  }},
+  'text'
+);
+if (textElement.tag !== 'body' || textElement.text !== 'Whole page text' || Object.keys(textElement.attributes).length !== 0) {{
+  throw new Error('unexpected text element: ' + JSON.stringify(textElement));
 }}
 
 const linkElement = bridge.extractElementData(

@@ -451,7 +451,7 @@ function buildExtractionPlan(req) {
   }
 
   if (!selector) {
-    return { error: 'No selector or preset provided' };
+    return { selector: 'body', preset: 'text' };
   }
 
   return { selector, preset: req.preset || null };
@@ -468,9 +468,16 @@ function collectAttributes(el) {
 
 function extractElementData(el, preset) {
   const tag = (el.tagName || '').toLowerCase();
-  const text = (el.textContent || '').trim().slice(0, 500);
+  const fullText = (el.textContent || '').trim();
+  const text = fullText.slice(0, 500);
 
   switch (preset) {
+    case 'text':
+      return {
+        tag,
+        text: fullText,
+        attributes: {},
+      };
     case 'links':
       return {
         tag,
@@ -523,9 +530,16 @@ async function handleExtract(req) {
 
         function extractElementData(el, activePreset) {
           const tag = el.tagName.toLowerCase();
-          const text = (el.textContent || '').trim().slice(0, 500);
+          const fullText = (el.textContent || '').trim();
+          const text = fullText.slice(0, 500);
 
           switch (activePreset) {
+            case 'text':
+              return {
+                tag,
+                text: fullText,
+                attributes: {},
+              };
             case 'links':
               return {
                 tag,
