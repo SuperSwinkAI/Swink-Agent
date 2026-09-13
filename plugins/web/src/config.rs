@@ -28,6 +28,8 @@ pub struct WebPluginConfig {
     pub max_content_length: usize,
     pub max_redirects: u32,
     pub max_search_results: usize,
+    /// Optional path to the Node.js executable used to run the embedded
+    /// Playwright bridge script.
     pub playwright_path: Option<PathBuf>,
     pub screenshot_timeout: Duration,
     pub request_timeout: Duration,
@@ -163,6 +165,8 @@ impl WebPluginConfigBuilder {
         self
     }
 
+    /// Override the Node.js executable used to run the embedded Playwright
+    /// bridge script.
     #[must_use]
     pub fn with_playwright_path(mut self, path: PathBuf) -> Self {
         self.config.playwright_path = Some(path);
