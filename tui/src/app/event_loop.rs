@@ -258,6 +258,7 @@ impl App {
                     .unwrap_or(0);
                 self.mode.available_models = available;
                 self.mode.model_name.clone_from(&current.model_id);
+                self.set_context_budget_from_model(&current);
                 // Perform the cycle the F4 press asked for, now that the
                 // list is known; the chosen model is applied via `SetModel`
                 // on the next send, as usual. Guarded so a backend that

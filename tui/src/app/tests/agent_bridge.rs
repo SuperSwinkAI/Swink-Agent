@@ -4,7 +4,7 @@ use swink_agent::testing::ScriptedStreamFn;
 use swink_agent::testing::text_events;
 use swink_agent::{
     AgentEvent, AgentToolResult, AssistantMessage, AssistantMessageEvent, ContentBlock, LlmMessage,
-    ModelSpec, StopReason, StreamFn, ToolResultMessage, TurnSnapshot, Usage,
+    ModelCapabilities, ModelSpec, StopReason, StreamFn, ToolResultMessage, TurnSnapshot, Usage,
 };
 
 use crate::config::TuiConfig;
@@ -137,9 +137,40 @@ async fn three_turn_conversation() {
 }
 
 #[tokio::test]
+async fn set_agent_uses_model_context_window_for_gauge_budget() {
+    let model = ModelSpec::new("test", "wide-model")
+        .with_capabilities(ModelCapabilities::none().with_max_context_window(250_000));
+    let agent = make_test_agent_with_models(
+        model,
+        Arc::new(ScriptedStreamFn::new(vec![])) as Arc<dyn StreamFn>,
+        vec![],
+    );
+
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+
+    assert_eq!(app.usage.context_budget, 250_000);
+}
+
+#[tokio::test]
+async fn set_agent_hides_context_gauge_when_model_window_is_unknown() {
+    let agent = make_test_agent(Arc::new(ScriptedStreamFn::new(vec![])));
+
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+
+    assert_eq!(app.usage.context_budget, 0);
+}
+
+#[tokio::test]
 async fn message_end_updates_context_tokens_used() {
     let stream_fn = Arc::new(ScriptedStreamFn::new(vec![text_events("hi")]));
-    let agent = make_test_agent(stream_fn);
+    let agent = make_test_agent_with_models(
+        ModelSpec::new("test", "mock-model")
+            .with_capabilities(ModelCapabilities::none().with_max_context_window(100_000)),
+        stream_fn,
+        vec![],
+    );
 
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
@@ -277,6 +308,32 @@ async fn cycle_model_applies_and_restores_provider_binding_on_send() {
             .any(|m| m.role == MessageRole::Assistant && m.content == "from primary after restore")
     );
     assert_eq!(app.mode.model_name, primary_model.model_id);
+}
+
+#[tokio::test]
+async fn cycle_model_updates_context_budget_from_selected_model() {
+    let primary_model = ModelSpec::new("test", "small-model")
+        .with_capabilities(ModelCapabilities::none().with_max_context_window(32_000));
+    let extra_model = ModelSpec::new("test", "large-model")
+        .with_capabilities(ModelCapabilities::none().with_max_context_window(256_000));
+    let stream = Arc::new(ScriptedStreamFn::new(vec![])) as Arc<dyn StreamFn>;
+    let agent = make_test_agent_with_models(
+        primary_model.clone(),
+        Arc::clone(&stream),
+        vec![(extra_model.clone(), stream)],
+    );
+
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+    assert_eq!(app.usage.context_budget, 32_000);
+
+    app.cycle_model();
+    assert_eq!(app.mode.model_name, extra_model.model_id);
+    assert_eq!(app.usage.context_budget, 256_000);
+
+    app.cycle_model();
+    assert_eq!(app.mode.model_name, primary_model.model_id);
+    assert_eq!(app.usage.context_budget, 32_000);
 }
 
 #[tokio::test]

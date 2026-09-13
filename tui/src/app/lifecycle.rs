@@ -236,6 +236,10 @@ impl App {
         )
     }
 
+    pub(super) fn set_context_budget_from_model(&mut self, model: &swink_agent::ModelSpec) {
+        self.usage.context_budget = model.capabilities().max_context_window.unwrap_or(0);
+    }
+
     /// Set the agent instance for this app.
     pub fn set_agent(&mut self, agent: Agent) {
         self.mode
@@ -245,7 +249,7 @@ impl App {
             .available_models
             .clone_from(&agent.state().available_models);
         self.mode.model_index = 0;
-        self.usage.context_budget = 100_000;
+        self.set_context_budget_from_model(&agent.state().model);
         self.agent_io.agent = Some(agent);
     }
 
@@ -484,6 +488,7 @@ impl App {
         self.mode.model_index = (self.mode.model_index + 1) % self.mode.available_models.len();
         let next = self.mode.available_models[self.mode.model_index].clone();
         self.mode.model_name.clone_from(&next.model_id);
+        self.set_context_budget_from_model(&next);
         self.mode.pending_model = Some(next);
     }
 
