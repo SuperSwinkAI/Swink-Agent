@@ -605,6 +605,20 @@ fn user_entry(text: &str, ts: u64) -> SessionEntry {
     ))
 }
 
+fn stale_meta(id: &str) -> SessionMeta {
+    let old = chrono::DateTime::from_timestamp(1_710_500_000, 0)
+        .unwrap()
+        .to_utc();
+    SessionMeta {
+        id: id.to_string(),
+        title: "stale".to_string(),
+        created_at: old,
+        updated_at: old,
+        version: 1,
+        sequence: 0,
+    }
+}
+
 #[test]
 fn append_entries_appends_without_rewriting_existing_lines() {
     let dir = tempfile::tempdir().unwrap();
@@ -678,6 +692,33 @@ fn append_entries_rejects_sequence_conflict() {
         .append_entries("append-conflict", &stale, &[user_entry("second", 2)])
         .unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+}
+
+#[test]
+fn append_entries_refreshes_updated_at_when_sequence_advances() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+    let meta = stale_meta("refresh-append-entries");
+    store
+        .save_entries("refresh-append-entries", &meta, &[user_entry("first", 1)])
+        .unwrap();
+    let (mut created_meta, _) = store.load_entries("refresh-append-entries").unwrap();
+    created_meta.updated_at = meta.updated_at;
+
+    let returned = store
+        .append_entries(
+            "refresh-append-entries",
+            &created_meta,
+            &[user_entry("second", 2)],
+        )
+        .unwrap();
+
+    assert_eq!(returned.sequence, created_meta.sequence + 1);
+    assert!(
+        returned.updated_at > meta.updated_at,
+        "append_entries should refresh updated_at when it bumps sequence"
+    );
 }
 
 #[test]
@@ -763,6 +804,24 @@ fn save_canonicalizes_mismatched_metadata_id() {
 }
 
 #[test]
+fn save_refreshes_updated_at_when_sequence_advances() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+    let meta = stale_meta("refresh-save");
+    store
+        .save("refresh-save", &meta, &[user_msg("refreshed", 10)])
+        .unwrap();
+
+    let (loaded_meta, _) = store.load("refresh-save", None).unwrap();
+    assert_eq!(loaded_meta.sequence, 1);
+    assert!(
+        loaded_meta.updated_at > meta.updated_at,
+        "save should refresh updated_at when it bumps sequence"
+    );
+}
+
+#[test]
 fn save_full_canonicalizes_returned_and_persisted_metadata_id() {
     let dir = tempfile::tempdir().unwrap();
     let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
@@ -780,6 +839,49 @@ fn save_full_canonicalizes_returned_and_persisted_metadata_id() {
     let (loaded_meta, _, loaded_state) = store.load_full("canonical-full", None).unwrap();
     assert_eq!(loaded_meta.id, "canonical-full");
     assert_eq!(loaded_state, Some(serde_json::json!({"persisted": true})));
+}
+
+#[test]
+fn save_full_refreshes_updated_at_when_sequence_advances() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+    let meta = stale_meta("refresh-full");
+    let persisted_meta = store
+        .save_full(
+            "refresh-full",
+            &meta,
+            &[user_msg("full refresh", 10)],
+            &serde_json::json!({"cursor": 1}),
+        )
+        .unwrap();
+
+    assert_eq!(persisted_meta.sequence, 1);
+    assert!(
+        persisted_meta.updated_at > meta.updated_at,
+        "save_full should refresh updated_at when it bumps sequence"
+    );
+
+    let (loaded_meta, _, _) = store.load_full("refresh-full", None).unwrap();
+    assert_eq!(loaded_meta.updated_at, persisted_meta.updated_at);
+}
+
+#[test]
+fn save_entries_refreshes_updated_at_when_sequence_advances() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+    let meta = stale_meta("refresh-entries");
+    store
+        .save_entries("refresh-entries", &meta, &[user_entry("entry refresh", 10)])
+        .unwrap();
+
+    let (loaded_meta, _) = store.load_entries("refresh-entries").unwrap();
+    assert_eq!(loaded_meta.sequence, 1);
+    assert!(
+        loaded_meta.updated_at > meta.updated_at,
+        "save_entries should refresh updated_at when it bumps sequence"
+    );
 }
 
 #[test]
