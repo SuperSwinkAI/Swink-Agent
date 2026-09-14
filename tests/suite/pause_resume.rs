@@ -271,3 +271,198 @@ fn loop_checkpoint_to_standard_checkpoint_integration() {
     assert_eq!(standard.system_prompt, "sys");
     assert_eq!(standard.messages.len(), 1);
 }
+
+// ─── Issue #1312: pause must not checkpoint stale loop context ─────────────
+
+/// Replays scripted responses, then never yields again so the loop parks
+/// inside the LLM call and `pause()` observes a mid-turn snapshot.
+struct ScriptThenPendStreamFn {
+    responses:
+        std::sync::Mutex<std::collections::VecDeque<Vec<swink_agent::AssistantMessageEvent>>>,
+}
+
+impl ScriptThenPendStreamFn {
+    fn new(responses: Vec<Vec<swink_agent::AssistantMessageEvent>>) -> Self {
+        Self {
+            responses: std::sync::Mutex::new(responses.into()),
+        }
+    }
+}
+
+impl swink_agent::StreamFn for ScriptThenPendStreamFn {
+    fn stream<'a>(
+        &'a self,
+        _model: &'a swink_agent::ModelSpec,
+        _context: &'a swink_agent::AgentContext,
+        _options: &'a swink_agent::StreamOptions,
+        _cancellation_token: tokio_util::sync::CancellationToken,
+    ) -> std::pin::Pin<
+        Box<dyn futures::Stream<Item = swink_agent::AssistantMessageEvent> + Send + 'a>,
+    > {
+        use futures::StreamExt;
+        let next = self.responses.lock().unwrap().pop_front();
+        match next {
+            Some(events) => futures::stream::iter(events).boxed(),
+            None => futures::stream::pending().boxed(),
+        }
+    }
+}
+
+async fn drive_until(
+    stream: &mut std::pin::Pin<Box<dyn futures::Stream<Item = swink_agent::AgentEvent> + Send>>,
+    is_target: impl Fn(&swink_agent::AgentEvent) -> bool + Send + Sync,
+) {
+    use futures::StreamExt;
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while let Some(event) = stream.next().await {
+            if is_target(&event) {
+                return;
+            }
+        }
+        panic!("event stream ended before target event");
+    })
+    .await
+    .expect("timed out waiting for target event");
+}
+
+fn message_text(message: &swink_agent::AgentMessage) -> &str {
+    use swink_agent::{AgentMessage, ContentBlock, LlmMessage};
+    let content = match message {
+        AgentMessage::Llm(LlmMessage::User(user)) => &user.content,
+        AgentMessage::Llm(LlmMessage::Assistant(assistant)) => &assistant.content,
+        other => panic!("unexpected message {other:?}"),
+    };
+    content
+        .iter()
+        .find_map(|block| match block {
+            ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn pause_after_context_transform_checkpoints_transformed_context() {
+    let options = AgentOptions::new(
+        "Be helpful.",
+        default_model(),
+        Arc::new(ScriptThenPendStreamFn::new(vec![])),
+        default_convert,
+    )
+    .with_transform_context_fn(|messages, _overflow| {
+        messages.push(user_msg("transformed"));
+    });
+    let mut agent = Agent::new(options);
+
+    let mut stream = agent.prompt_stream(vec![user_msg("start")]).unwrap();
+    drive_until(&mut stream, |e| {
+        matches!(e, swink_agent::AgentEvent::BeforeLlmCall { .. })
+    })
+    .await;
+
+    let checkpoint = agent.pause().expect("agent should be running");
+    let restored = checkpoint.restore_messages(None);
+    let texts: Vec<&str> = restored.iter().map(message_text).collect();
+    assert_eq!(
+        texts,
+        ["start", "transformed"],
+        "pause must checkpoint the post-transform context"
+    );
+}
+
+#[tokio::test]
+async fn pause_after_cache_hints_checkpoints_annotated_context() {
+    let options = AgentOptions::new(
+        "Be helpful.",
+        default_model(),
+        Arc::new(ScriptThenPendStreamFn::new(vec![])),
+        default_convert,
+    )
+    .with_cache_config(swink_agent::CacheConfig::new(
+        std::time::Duration::from_secs(300),
+        0,
+        3,
+    ));
+    let mut agent = Agent::new(options);
+
+    let mut stream = agent.prompt_stream(vec![user_msg("start")]).unwrap();
+    drive_until(&mut stream, |e| {
+        matches!(e, swink_agent::AgentEvent::BeforeLlmCall { .. })
+    })
+    .await;
+
+    let checkpoint = agent.pause().expect("agent should be running");
+    let restored = checkpoint.restore_messages(None);
+    assert_eq!(restored.len(), 1);
+    match &restored[0] {
+        swink_agent::AgentMessage::Llm(swink_agent::LlmMessage::User(user)) => assert!(
+            user.cache_hint.is_some(),
+            "pause must checkpoint the cache-hint-annotated context"
+        ),
+        other => panic!("expected user message, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn pause_during_overflow_recovery_checkpoints_compacted_context() {
+    struct OverflowMarker;
+
+    impl swink_agent::ContextTransformer for OverflowMarker {
+        fn transform(
+            &self,
+            messages: &mut Vec<swink_agent::AgentMessage>,
+            overflow: bool,
+        ) -> Option<swink_agent::CompactionReport> {
+            overflow.then(|| {
+                messages.push(user_msg("compacted"));
+                swink_agent::CompactionReport::new(0, 0, 0, true)
+            })
+        }
+    }
+
+    let options = AgentOptions::new(
+        "Be helpful.",
+        default_model(),
+        Arc::new(ScriptThenPendStreamFn::new(vec![vec![
+            swink_agent::AssistantMessageEvent::error_context_overflow("context_length_exceeded"),
+        ]])),
+        default_convert,
+    )
+    .with_transform_context(OverflowMarker);
+    let mut agent = Agent::new(options);
+
+    let mut stream = agent.prompt_stream(vec![user_msg("start")]).unwrap();
+    drive_until(&mut stream, |e| {
+        matches!(e, swink_agent::AgentEvent::ContextCompacted { .. })
+    })
+    .await;
+
+    let checkpoint = agent.pause().expect("agent should be running");
+    let restored = checkpoint.restore_messages(None);
+    let texts: Vec<&str> = restored.iter().map(message_text).collect();
+    assert_eq!(
+        texts,
+        ["start", "compacted"],
+        "pause must checkpoint the overflow-compacted context"
+    );
+}
+
+#[tokio::test]
+async fn pause_after_turn_end_checkpoints_committed_turn() {
+    let mut agent = simple_agent(vec![text_only_events("reply")]);
+
+    let mut stream = agent.prompt_stream(vec![user_msg("start")]).unwrap();
+    drive_until(&mut stream, |e| {
+        matches!(e, swink_agent::AgentEvent::TurnEnd { .. })
+    })
+    .await;
+
+    let checkpoint = agent.pause().expect("agent should be running");
+    let restored = checkpoint.restore_messages(None);
+    let texts: Vec<&str> = restored.iter().map(message_text).collect();
+    assert_eq!(
+        texts,
+        ["start", "reply"],
+        "pause after TurnEnd must include the committed assistant reply"
+    );
+}
