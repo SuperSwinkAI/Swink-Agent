@@ -196,3 +196,110 @@ async fn typed_execute_reports_deserialization_errors() {
         result.content
     );
 }
+
+fn bearer_auth() -> crate::AuthConfig {
+    crate::AuthConfig::new(
+        "api",
+        crate::AuthScheme::BearerHeader,
+        crate::CredentialType::Bearer,
+    )
+}
+
+#[tokio::test]
+async fn context_execute_receives_session_state() {
+    let tool = FnTool::new("ctx", "Ctx", "Context signature.").with_execute_context(
+        |id, _params, _cancel, _on_update, state, credential| async move {
+            let seen: String = state.read().unwrap().get("seed").unwrap();
+            state.write().unwrap().set("written", &id).unwrap();
+            AgentToolResult::text(format!("{seen}:{}", credential.is_none()))
+        },
+    );
+    let state = test_state();
+    state.write().unwrap().set("seed", "hello").unwrap();
+
+    let result = tool
+        .execute(
+            "call_7",
+            json!({}),
+            CancellationToken::new(),
+            None,
+            std::sync::Arc::clone(&state),
+            None,
+        )
+        .await;
+
+    assert_eq!(ContentBlock::extract_text(&result.content), "hello:true");
+    let written: String = state.read().unwrap().get("written").unwrap();
+    assert_eq!(written, "call_7");
+}
+
+#[tokio::test]
+async fn context_execute_receives_resolved_credential() {
+    let tool = FnTool::new("auth", "Auth", "Authenticated.")
+        .with_auth_config(bearer_auth())
+        .with_execute_context(
+            |_id, _params, _cancel, _on_update, _state, credential| async move {
+                match credential {
+                    Some(crate::ResolvedCredential::Bearer(token)) => AgentToolResult::text(token),
+                    _ => AgentToolResult::error("no bearer"),
+                }
+            },
+        );
+
+    let result = tool
+        .execute(
+            "id",
+            json!({}),
+            CancellationToken::new(),
+            None,
+            test_state(),
+            Some(crate::ResolvedCredential::Bearer("tok-123".into())),
+        )
+        .await;
+
+    assert!(!result.is_error);
+    assert_eq!(ContentBlock::extract_text(&result.content), "tok-123");
+}
+
+#[test]
+fn auth_config_returns_configured_value() {
+    assert!(sample_tool().auth_config().is_none());
+
+    let tool = sample_tool().with_auth_config(crate::AuthConfig::new(
+        "weather-key",
+        crate::AuthScheme::ApiKeyHeader("X-Api-Key".into()),
+        crate::CredentialType::ApiKey,
+    ));
+    let config = tool.auth_config().expect("auth config set");
+    assert_eq!(config.credential_key, "weather-key");
+    assert!(
+        matches!(config.auth_scheme, crate::AuthScheme::ApiKeyHeader(ref h) if h == "X-Api-Key")
+    );
+    assert!(matches!(
+        config.credential_type,
+        crate::CredentialType::ApiKey
+    ));
+}
+
+#[tokio::test]
+async fn lightweight_constructors_unaffected_by_state_and_credential() {
+    let tool = FnTool::new("simple", "Simple", "Simple.")
+        .with_auth_config(bearer_auth())
+        .with_execute_simple(|params, _cancel| async move {
+            AgentToolResult::text(params["msg"].as_str().unwrap_or("none").to_owned())
+        });
+
+    let result = tool
+        .execute(
+            "id",
+            json!({"msg": "unchanged"}),
+            CancellationToken::new(),
+            None,
+            test_state(),
+            Some(crate::ResolvedCredential::Bearer("tok".into())),
+        )
+        .await;
+
+    assert!(!result.is_error);
+    assert_eq!(ContentBlock::extract_text(&result.content), "unchanged");
+}
