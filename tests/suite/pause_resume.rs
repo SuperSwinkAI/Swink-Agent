@@ -300,7 +300,8 @@ impl swink_agent::StreamFn for ScriptThenPendStreamFn {
         Box<dyn futures::Stream<Item = swink_agent::AssistantMessageEvent> + Send + 'a>,
     > {
         use futures::StreamExt;
-        match self.responses.lock().unwrap().pop_front() {
+        let next = self.responses.lock().unwrap().pop_front();
+        match next {
             Some(events) => futures::stream::iter(events).boxed(),
             None => futures::stream::pending().boxed(),
         }
@@ -309,7 +310,7 @@ impl swink_agent::StreamFn for ScriptThenPendStreamFn {
 
 async fn drive_until(
     stream: &mut std::pin::Pin<Box<dyn futures::Stream<Item = swink_agent::AgentEvent> + Send>>,
-    is_target: impl Fn(&swink_agent::AgentEvent) -> bool,
+    is_target: impl Fn(&swink_agent::AgentEvent) -> bool + Send + Sync,
 ) {
     use futures::StreamExt;
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
