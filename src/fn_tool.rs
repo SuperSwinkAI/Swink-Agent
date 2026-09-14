@@ -21,12 +21,14 @@
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
+use crate::SessionState;
+use crate::credential::{AuthConfig, ResolvedCredential};
 use crate::tool::{
     AgentTool, AgentToolResult, ToolFuture, debug_validated_schema, permissive_object_schema,
     validated_schema_for,
@@ -40,6 +42,8 @@ type ExecuteFn = Arc<
             Value,
             CancellationToken,
             Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+            Arc<RwLock<SessionState>>,
+            Option<ResolvedCredential>,
         ) -> ToolFuture<'static>
         + Send
         + Sync,
@@ -63,6 +67,7 @@ pub struct FnTool {
     execution_root: Option<PathBuf>,
     execute_fn: ExecuteFn,
     approval_context_fn: Option<ApprovalContextFn>,
+    auth_config: Option<AuthConfig>,
 }
 
 impl FnTool {
@@ -83,10 +88,11 @@ impl FnTool {
             schema: permissive_object_schema(),
             requires_approval: false,
             execution_root: None,
-            execute_fn: Arc::new(|_, _, _, _| {
+            execute_fn: Arc::new(|_, _, _, _, _, _| {
                 Box::pin(async { AgentToolResult::error("not implemented") })
             }),
             approval_context_fn: None,
+            auth_config: None,
         }
     }
 
@@ -136,9 +142,73 @@ impl FnTool {
             + 'static,
         Fut: Future<Output = AgentToolResult> + Send + 'static,
     {
-        self.execute_fn = Arc::new(move |id, params, cancel, on_update| {
+        self.execute_fn = Arc::new(move |id, params, cancel, on_update, _state, _credential| {
             Box::pin(f(id, params, cancel, on_update))
         });
+        self
+    }
+
+    /// Set the execution function using the complete [`AgentTool::execute`]
+    /// context.
+    ///
+    /// The closure receives `(tool_call_id, params, cancellation_token,
+    /// on_update, state, credential)`. `credential` is `Some` only when an
+    /// [`AuthConfig`] was set via [`Self::with_auth_config`] and the framework
+    /// resolved it.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use swink_agent::{
+    ///     AgentTool, AgentToolResult, AuthConfig, AuthScheme, CredentialType, FnTool,
+    ///     ResolvedCredential,
+    /// };
+    ///
+    /// let tool = FnTool::new("call_api", "Call API", "Call an authenticated API.")
+    ///     .with_auth_config(AuthConfig::new(
+    ///         "my-api",
+    ///         AuthScheme::BearerHeader,
+    ///         CredentialType::Bearer,
+    ///     ))
+    ///     .with_execute_context(|_id, _params, _cancel, _on_update, state, credential| async move {
+    ///         let calls: u64 = state.read().unwrap().get("calls").unwrap_or(0);
+    ///         state.write().unwrap().set("calls", calls + 1).unwrap();
+    ///         match credential {
+    ///             Some(ResolvedCredential::Bearer(_token)) => AgentToolResult::text("ok"),
+    ///             _ => AgentToolResult::error("missing bearer token"),
+    ///         }
+    ///     });
+    ///
+    /// assert!(tool.auth_config().is_some());
+    /// ```
+    #[must_use]
+    pub fn with_execute_context<F, Fut>(mut self, f: F) -> Self
+    where
+        F: Fn(
+                String,
+                Value,
+                CancellationToken,
+                Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+                Arc<RwLock<SessionState>>,
+                Option<ResolvedCredential>,
+            ) -> Fut
+            + Send
+            + Sync
+            + 'static,
+        Fut: Future<Output = AgentToolResult> + Send + 'static,
+    {
+        self.execute_fn = Arc::new(move |id, params, cancel, on_update, state, credential| {
+            Box::pin(f(id, params, cancel, on_update, state, credential))
+        });
+        self
+    }
+
+    /// Declare the credential this tool needs resolved before execution.
+    ///
+    /// Read the resolved credential with [`Self::with_execute_context`].
+    #[must_use]
+    pub fn with_auth_config(mut self, config: AuthConfig) -> Self {
+        self.auth_config = Some(config);
         self
     }
 
@@ -152,8 +222,9 @@ impl FnTool {
         F: Fn(Value, CancellationToken) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = AgentToolResult> + Send + 'static,
     {
-        self.execute_fn =
-            Arc::new(move |_id, params, cancel, _on_update| Box::pin(f(params, cancel)));
+        self.execute_fn = Arc::new(
+            move |_id, params, cancel, _on_update, _state, _credential| Box::pin(f(params, cancel)),
+        );
         self
     }
 
@@ -183,17 +254,19 @@ impl FnTool {
         Fut: Future<Output = AgentToolResult> + Send + 'static,
     {
         self.schema = validated_schema_for::<T>();
-        self.execute_fn = Arc::new(move |_id, params, cancel, _on_update| {
-            let parsed: T = match serde_json::from_value(params) {
-                Ok(parsed) => parsed,
-                Err(err) => {
-                    return Box::pin(async move {
-                        AgentToolResult::error(format!("invalid parameters: {err}"))
-                    });
-                }
-            };
-            Box::pin(f(parsed, cancel))
-        });
+        self.execute_fn = Arc::new(
+            move |_id, params, cancel, _on_update, _state, _credential| {
+                let parsed: T = match serde_json::from_value(params) {
+                    Ok(parsed) => parsed,
+                    Err(err) => {
+                        return Box::pin(async move {
+                            AgentToolResult::error(format!("invalid parameters: {err}"))
+                        });
+                    }
+                };
+                Box::pin(f(parsed, cancel))
+            },
+        );
         self
     }
 
@@ -240,22 +313,27 @@ impl AgentTool for FnTool {
         self.approval_context_fn.as_ref().and_then(|f| f(params))
     }
 
+    fn auth_config(&self) -> Option<AuthConfig> {
+        self.auth_config.clone()
+    }
+
     fn execute(
         &self,
         tool_call_id: &str,
         params: Value,
         cancellation_token: CancellationToken,
         on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
-        _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
-        _credential: Option<crate::credential::ResolvedCredential>,
+        state: Arc<RwLock<SessionState>>,
+        credential: Option<ResolvedCredential>,
     ) -> ToolFuture<'_> {
-        let fut = (self.execute_fn)(
+        (self.execute_fn)(
             tool_call_id.to_owned(),
             params,
             cancellation_token,
             on_update,
-        );
-        Box::pin(fut)
+            state,
+            credential,
+        )
     }
 }
 
