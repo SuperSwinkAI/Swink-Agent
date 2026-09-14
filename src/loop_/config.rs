@@ -23,9 +23,10 @@ pub(crate) struct AgentLoopRuntimeState {
 
     /// Shared snapshot of the loop's full `context_messages` for pause checkpoints.
     ///
-    /// Updated after each turn's pending-message drain so that `Agent::pause()`
-    /// can reconstruct the complete message history even for messages that have
-    /// been moved out of the shared pending queue and into loop-local context.
+    /// Updated after each turn's pending-message drain, after every in-turn
+    /// context mutation (transformers, overflow recovery, cache hints), and
+    /// when a turn commits, so that `Agent::pause()` never checkpoints stale
+    /// loop context.
     loop_context: Arc<crate::pause_state::LoopContextSnapshot>,
 }
 

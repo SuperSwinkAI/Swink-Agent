@@ -227,6 +227,9 @@ pub async fn run_single_turn(
                 None
             }
         };
+        // Cache hints rewrote messages in place; refresh the pause snapshot
+        // before any await so `pause()` checkpoints the annotated context.
+        sync_loop_context_snapshot(config, state);
 
         // Emit CacheAction event (after guard is dropped)
         if let Some((hint, prefix_tokens)) = cache_event {
@@ -487,20 +490,29 @@ pub(super) async fn run_context_transformers(
     let messages = messages.make_mut();
     let mut any_compacted = false;
 
+    // Each transformer may mutate context even without reporting compaction.
+    // Refresh the pause snapshot right after each run — before the awaited
+    // `ContextCompacted` emit — so a concurrent `pause()` never checkpoints
+    // the pre-transform history (issue #1312).
+
     // Async transformer runs first
-    if let Some(ref async_transformer) = config.async_transform_context
-        && let Some(report) = async_transformer.transform(messages, overflow).await
-    {
-        any_compacted = true;
-        let _ = emit(tx, AgentEvent::ContextCompacted { report }).await;
+    if let Some(ref async_transformer) = config.async_transform_context {
+        let report = async_transformer.transform(messages, overflow).await;
+        config.runtime_state.replace_loop_context(messages);
+        if let Some(report) = report {
+            any_compacted = true;
+            let _ = emit(tx, AgentEvent::ContextCompacted { report }).await;
+        }
     }
 
     // Sync transformer runs second
-    if let Some(ref transformer) = config.transform_context
-        && let Some(report) = transformer.transform(messages, overflow)
-    {
-        any_compacted = true;
-        let _ = emit(tx, AgentEvent::ContextCompacted { report }).await;
+    if let Some(ref transformer) = config.transform_context {
+        let report = transformer.transform(messages, overflow);
+        config.runtime_state.replace_loop_context(messages);
+        if let Some(report) = report {
+            any_compacted = true;
+            let _ = emit(tx, AgentEvent::ContextCompacted { report }).await;
+        }
     }
 
     any_compacted
@@ -998,6 +1010,9 @@ async fn handle_no_tool_calls(
         assistant_ctx_index,
         AgentMessage::Llm(LlmMessage::Assistant(assistant_message.clone())),
     );
+    // Publish the committed turn so a `pause()` between `TurnEnd` and the
+    // next snapshot refresh does not drop the assistant reply.
+    sync_loop_context_snapshot(config, state);
 
     // Classify against the committed (post-policy) message: a turn that
     // produced only hidden-channel reasoning gets the structural
@@ -1247,6 +1262,8 @@ async fn handle_tool_calls(
         assistant_ctx_index,
         AgentMessage::Llm(LlmMessage::Assistant(msg_for_turn_end.clone())),
     );
+    // Publish the committed assistant + tool results for `pause()`.
+    sync_loop_context_snapshot(config, state);
 
     // xiii-a. Transfer signal detection: if a tool signaled a transfer,
     // validate against the transfer chain for safety, then enrich and exit.
@@ -1298,6 +1315,7 @@ async fn handle_tool_calls(
                         break;
                     }
                 }
+                sync_loop_context_snapshot(config, state);
 
                 let _ = emit(
                     tx,
