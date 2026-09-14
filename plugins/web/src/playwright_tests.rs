@@ -346,6 +346,7 @@ try {{
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // mostly one embedded node script
 fn bridge_script_exports_data_only_extract_helpers() {
     assert!(!BRIDGE_SCRIPT.contains("eval("));
 

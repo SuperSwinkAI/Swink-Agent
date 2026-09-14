@@ -17,8 +17,6 @@ pub enum McpError {
         reason: String,
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
-    /// Duplicate server name detected in manager configuration.
-    DuplicateServerName { name: String },
     /// Tool name collision detected across servers.
     ToolNameCollision {
         name: String,
@@ -38,6 +36,8 @@ pub enum McpError {
         context: &'static str,
         source: Box<dyn std::error::Error + Send + Sync>,
     },
+    /// Duplicate server name detected in manager configuration.
+    DuplicateServerName { name: String },
 }
 
 impl fmt::Display for McpError {
