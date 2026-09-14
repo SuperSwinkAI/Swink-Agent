@@ -21,7 +21,7 @@ path = "src/main.rs"
 required-features = ["cli"]
 
 [dependencies]
-swink-agent = { path = "..", version = "0.14.1", default-features = false, features = ["builtin-tools", "transfer"] }
+swink-agent = { path = "..", version = "0.14.1", default-features = false }
 swink-agent-adapters = { path = "../adapters", version = "0.14.1", default-features = false, features = ["anthropic", "openai", "ollama", "proxy"], optional = true }
 swink-agent-memory = { path = "../memory", version = "0.14.1" }
 swink-agent-local-llm = { path = "../local-llm", version = "0.14.1", optional = true }
@@ -45,17 +45,21 @@ tempfile.workspace = true
 serde_yaml_ng = { workspace = true, optional = true }
 
 [features]
-default = ["cli"]
+default = ["cli", "builtin-tools", "transfer"]
 cli = ["adapters"]
+# Forward root local-execution features. Remote-only consumers (e.g.
+# `swink-agent-tui-remote`) disable TUI defaults to keep them off.
+builtin-tools = ["swink-agent/builtin-tools"]
+transfer = ["swink-agent/transfer"]
 adapters = ["dep:swink-agent-adapters"]
-full = ["local", "cli"]
+full = ["local", "cli", "builtin-tools", "transfer"]
 local = ["dep:swink-agent-local-llm"]
 # Filesystem-backed skills discovery (`TuiExtensions::with_skill_dirs`).
 skills = ["dep:serde_yaml_ng"]
 
 [[example]]
 name = "custom_agent"
-required-features = ["cli"]
+required-features = ["cli", "builtin-tools"]
 
 [dev-dependencies]
 swink-agent = { path = "..", default-features = false, features = ["testkit"] }

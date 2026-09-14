@@ -85,6 +85,24 @@ ProgressCallbackFn, ProgressEvent
 
 > **Note:** The root crate does not forward adapter or local-llm features. Consumers depend on `swink-agent-adapters` and `swink-agent-local-llm` directly for provider selection.
 
+## swink-agent-tui
+
+### Features
+
+| Feature | Activates | Description |
+|---------|-----------|-------------|
+| `default` | `cli`, `builtin-tools`, `transfer` | Standalone `swink` binary behavior |
+| `cli` | `adapters` | `swink` binary with remote adapters |
+| `builtin-tools` | `swink-agent/builtin-tools` | Root built-in local tools |
+| `transfer` | `swink-agent/transfer` | Root TransferToAgent tool |
+| `full` | `local`, `cli`, `builtin-tools`, `transfer` | Everything |
+
+The TUI depends on `swink-agent` with `default-features = false`; root local-execution features are only enabled through the forwarding features above.
+
+## swink-agent-tui-remote
+
+Depends on `swink-agent` and `swink-agent-tui` with `default-features = false`, so neither `swink-agent/builtin-tools` nor `swink-agent/transfer` is activated. Guarded by `tui-remote/tests/feature_surface.rs`.
+
 ## Consumer Examples
 
 ```toml
