@@ -1,5 +1,6 @@
 //! Integration tests for `EvalRunner` — suite execution, empty suites, and error continuation.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tokio_util::sync::CancellationToken;
@@ -9,8 +10,8 @@ use swink_agent::{
     testing::SimpleMockStreamFn,
 };
 use swink_agent_eval::{
-    AgentFactory, EvalCase, EvalError, EvalMetricResult, EvalRunner, EvalSet, Evaluator,
-    EvaluatorRegistry, Invocation, Score, Verdict,
+    AgentFactory, EvalCase, EvalError, EvalMetricResult, EvalRunner, EvalSet, EvaluationDataStore,
+    Evaluator, EvaluatorRegistry, Invocation, LocalFileTaskResultStore, Score, Verdict,
 };
 
 /// Factory that creates agents with a deterministic mock stream returning the
@@ -312,6 +313,94 @@ async fn run_case_cancels_factory_token_when_prompt_stream_fails() {
         factory.observed_cancel().is_cancelled(),
         "runner should cancel the factory token on prompt_stream startup failure"
     );
+}
+
+struct CallCountingEvaluator {
+    calls: Arc<AtomicUsize>,
+}
+
+impl Evaluator for CallCountingEvaluator {
+    fn name(&self) -> &'static str {
+        "call_counter"
+    }
+
+    fn evaluate(&self, _case: &EvalCase, _invocation: &Invocation) -> Option<EvalMetricResult> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Some(EvalMetricResult::new(self.name(), Score::pass()))
+    }
+}
+
+fn counting_registry(calls: &Arc<AtomicUsize>) -> EvaluatorRegistry {
+    let mut registry = EvaluatorRegistry::new();
+    registry.register(CallCountingEvaluator {
+        calls: Arc::clone(calls),
+    });
+    registry
+}
+
+#[tokio::test]
+async fn run_case_honors_num_runs() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let runner = EvalRunner::new(counting_registry(&calls)).with_num_runs(3);
+
+    let result = runner
+        .run_case(&make_case("num-runs"), &MockFactory::new(vec!["Hello"]))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        3,
+        "evaluators run per num_runs"
+    );
+    assert_eq!(runner.agent_invocation_count(), 1, "invocation is reused");
+    let details = result.metric_results[0].details.as_deref().unwrap();
+    assert!(details.contains("num_runs=3"), "{details}");
+}
+
+#[tokio::test]
+async fn run_case_uses_configured_cache() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let store: Arc<dyn EvaluationDataStore> = Arc::new(LocalFileTaskResultStore::new(dir.path()));
+    let runner = EvalRunner::new(EvaluatorRegistry::new()).with_cache(store);
+    let factory = MockFactory::new(vec!["Hello"]);
+    let case = make_case("cached");
+
+    runner.run_case(&case, &factory).await.unwrap();
+    runner.run_case(&case, &factory).await.unwrap();
+
+    assert_eq!(
+        runner.agent_invocation_count(),
+        1,
+        "second run_case should be served from the cache"
+    );
+}
+
+#[tokio::test]
+async fn run_case_observes_cancellation() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let token = CancellationToken::new();
+    token.cancel();
+    let runner = EvalRunner::new(counting_registry(&calls)).with_cancellation(token);
+    let factory = TrackingFactory::new(vec!["Hello"]);
+
+    let result = runner
+        .run_case(&make_case("cancelled"), &factory)
+        .await
+        .unwrap();
+
+    assert_eq!(result.verdict, Verdict::Fail);
+    assert!(
+        result
+            .metric_results
+            .iter()
+            .any(|metric| metric.evaluator_name == "cancelled"),
+        "{:?}",
+        result.metric_results
+    );
+    assert_eq!(runner.agent_invocation_count(), 0);
+    assert!(factory.observed_cancel.lock().unwrap().is_none());
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
