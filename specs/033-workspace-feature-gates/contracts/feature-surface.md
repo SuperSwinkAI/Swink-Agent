@@ -1,36 +1,45 @@
 # Feature Surface Contract: Workspace Feature Gates
 
-**Date**: 2026-03-25
+**Date**: 2026-03-25 (**Updated 2026-09-14**: re-verified every row against `adapters/Cargo.toml`, `local-llm/Cargo.toml`, and root `Cargo.toml` — issue #1313)
 
-This document defines the public feature flag contract that consumers depend on. Changes to feature names or semantics are breaking changes.
+This document defines the public feature flag contract that consumers depend on. Changes to feature names or semantics are breaking changes. The feature-to-feature implications below are enforced by `adapters/tests/suite/cargo_manifest.rs`; update both together.
 
 ## swink-agent-adapters
 
 ### Features
 
-| Feature | Status | Description |
-|---------|--------|-------------|
+| Feature | Implies | Description |
+|---------|---------|-------------|
 | `default` | — | No adapters enabled by default |
-| `full` / `all` | — | Enables all 9 adapter features |
-| `anthropic` | Implemented | Anthropic Messages API |
-| `openai` | Implemented | OpenAI Chat Completions API |
-| `ollama` | Implemented | Ollama local inference (NDJSON) |
-| `gemini` | Implemented | Google Gemini API |
-| `proxy` | Implemented | Generic proxy endpoint |
-| `azure` | Implemented | Azure OpenAI (OpenAI-compatible) |
-| `bedrock` | Implemented | AWS Bedrock Converse API |
-| `mistral` | Implemented | Mistral (OpenAI-compatible) |
-| `xai` | Implemented | xAI Grok (OpenAI-compatible, implies `openai`) |
+| `all` | `anthropic`, `openai`, `ollama`, `gemini`, `proxy`, `azure`, `bedrock`, `mistral`, `xai`, `responses`, `codex` | Enables all 11 provider features |
+| `full` | `all` | Alias for `all` |
+| `anthropic` | — | Anthropic Messages API |
+| `openai` | `openai-compat`, `responses` | OpenAI Chat Completions API (plus the Responses shell) |
+| `responses` | — | Generic OpenAI Responses-API adapter |
+| `codex` | `responses` (+ `dep:swink-agent-auth`, `dep:base64`) | ChatGPT-subscription Codex provider over the Responses shell. Opt-in; read the `codex` module docs before enabling |
+| `ollama` | — | Ollama local inference (NDJSON) |
+| `gemini` | — | Google Gemini API |
+| `proxy` | — | Generic proxy endpoint |
+| `azure` | `dep:swink-agent-auth` | Azure OpenAI (OpenAI-compatible) |
+| `bedrock` | AWS SigV4 / smithy deps | AWS Bedrock Converse API |
+| `mistral` | — | Mistral (OpenAI-compatible) |
+| `xai` | `openai-compat` | xAI Grok (OpenAI-compatible). Does **not** imply `openai` |
+| `openai-compat` | — | Internal umbrella implied by `openai` and `xai`; enables no adapter on its own |
+| `__no_default_features_sentinel` | — | Hidden feature-leak detection flag; not consumer-facing |
 
 ### Public Re-exports by Feature
 
 ```
 anthropic → AnthropicStreamFn
-openai    → OpenAiStreamFn
+openai    → OpenAiStreamFn, OpenAiWire, InvalidOpenAiWire, OPENAI_API_ENV
+responses → ResponsesStreamFn
+codex     → CodexStreamFn, CodexError, CODEX_BASE_URL, CODEX_CLIENT_ID,
+            CODEX_REDIRECT_URI, CODEX_DEFAULT_CREDENTIAL_KEY, DEFAULT_ORIGINATOR,
+            codex_authorization_config
 ollama    → OllamaStreamFn
 gemini    → GeminiStreamFn
 proxy     → ProxyStreamFn
-azure     → AzureStreamFn
+azure     → AzureStreamFn, AzureAuth, AzureCloud
 bedrock   → BedrockStreamFn
 mistral   → MistralStreamFn
 xai       → XAiStreamFn
@@ -42,20 +51,24 @@ xai       → XAiStreamFn
 pub mod classify;
 pub mod sse;
 pub mod convert;
-pub fn remote_presets::*;
+pub use remote_presets::*;   // incl. is_provider_compiled
+pub use base::ensure_default_crypto_provider;
+pub use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 ```
 
 ## swink-agent-local-llm
 
 ### Features
 
-| Feature | Forwards to | Description |
-|---------|------------|-------------|
+| Feature | Implies | Description |
+|---------|---------|-------------|
+| `gemma4` | — | Gemma 4 model presets (`ModelPreset::Gemma4E2B`, `Gemma4E4B`, `Gemma4_26B`, `Gemma4_31B`) and channel-thought parsing |
 | `metal` | `llama-cpp-2/metal` | Apple Metal GPU acceleration |
 | `cuda` | `llama-cpp-2/cuda` | NVIDIA CUDA GPU acceleration |
+| `cudnn` | `cuda` | Alias for `cuda` (no separate llama-cpp-2 flag) |
 | `vulkan` | `llama-cpp-2/vulkan` | Vulkan GPU acceleration |
 
-No default backend feature. Without any backend feature, CPU inference is used.
+No default features. Without any backend feature, CPU inference is used.
 
 ### Public API
 
@@ -63,8 +76,11 @@ Unchanged. All types always available when the crate is compiled:
 ```
 LocalStreamFn, LocalModel, ModelConfig, ModelState,
 ModelPreset, LocalModelError, EmbeddingModel, EmbeddingConfig,
-ProgressCallbackFn, ProgressEvent
+ProgressCallbackFn, ProgressEvent, LocalPresetError,
+DEFAULT_LOCAL_PRESET_ID, default_local_connection
 ```
+
+`gemma4` adds the Gemma 4 `ModelPreset` variants (plus gated helpers such as `is_gemma4`); it adds or removes no top-level types.
 
 ## swink-agent (root)
 
@@ -73,12 +89,12 @@ ProgressCallbackFn, ProgressEvent
 | Feature | Activates | Description |
 |---------|-----------|-------------|
 | `default` | `builtin-tools`, `transfer` | Current behavior preserved |
-| `builtin-tools` | — | BashTool, ReadFileTool, WriteFileTool |
-| `transfer` | — | TransferToAgent tool |
+| `builtin-tools` | `dep:sha2` | BashTool, ReadFileTool, WriteFileTool, EditFileTool, `builtin_tools()` |
+| `transfer` | — | TransferToAgentTool, TransferChain, TransferSignal, TransferError |
 | `testkit` | — | Test utility re-exports (mock StreamFn, tools, builders) |
 | `plugins` | — | Plugin trait, PluginRegistry, NamespacedTool |
 | `artifact-store` | `dep:bytes` | Artifact storage traits and types |
-| `artifact-tools` | `artifact-store` | Artifact read/write agent tools |
+| `artifact-tools` | `artifact-store` | ListArtifactsTool, LoadArtifactTool, SaveArtifactTool, `artifact_tools()` |
 | `hot-reload` | `dep:notify` | File-watcher-based hot reload |
 | `tiktoken` | `dep:tiktoken-rs` | Precise token counting via tiktoken |
 | `otel` | tracing-opentelemetry stack | OpenTelemetry tracing export |
