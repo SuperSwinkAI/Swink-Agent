@@ -56,14 +56,28 @@ impl DomainFilter {
     /// 4. The host must not appear in the denylist.
     /// 5. If `block_private_ips` is enabled, DNS-resolved addresses are checked
     ///    against private/loopback/link-local ranges (SSRF protection).
+    ///
+    /// Step 5 performs a *blocking* DNS lookup for domain hosts. Do not call
+    /// this from an async executor thread; the crate's own async tool paths
+    /// resolve on tokio's blocking pool instead.
     pub fn is_allowed(&self, url: &Url) -> Result<(), DomainFilterError> {
-        self.validate_and_resolve(url).map(|_| ())
+        if let Some((domain, port)) = self.check_without_dns(url)? {
+            let addrs = resolve_blocking(&domain, port);
+            first_public_addr(domain, addrs)?;
+        }
+        Ok(())
     }
 
-    pub(crate) fn validate_and_resolve(
+    /// Run every check that needs no I/O: scheme, host, allow/deny lists,
+    /// and private-IP classification of IP-literal hosts.
+    ///
+    /// Returns `Some((domain, port))` when the host is a domain name that
+    /// still has to be DNS-resolved and checked for private addresses, i.e.
+    /// the URL is *not* fully validated yet.
+    pub(crate) fn check_without_dns(
         &self,
         url: &Url,
-    ) -> Result<Option<ResolvedHost>, DomainFilterError> {
+    ) -> Result<Option<(String, u16)>, DomainFilterError> {
         // 1. Scheme check.
         let scheme = url.scheme();
         if scheme != "http" && scheme != "https" {
@@ -91,53 +105,77 @@ impl DomainFilter {
         // literals in `host_str()` keep their brackets ("[::1]"), which
         // neither `Ipv6Addr` parsing nor getaddrinfo accepts, so IP literals
         // are classified directly from the already-parsed address.
-        if self.block_private_ips {
-            match url.host() {
-                Some(url::Host::Ipv4(ip)) => {
-                    if is_private_ip(&IpAddr::V4(ip)) {
-                        return Err(DomainFilterError::PrivateIp(ip.to_string()));
-                    }
-                }
-                Some(url::Host::Ipv6(ip)) => {
-                    if is_private_ip(&IpAddr::V6(ip)) {
-                        return Err(DomainFilterError::PrivateIp(ip.to_string()));
-                    }
-                }
-                Some(url::Host::Domain(domain)) => {
-                    let port = url.port_or_known_default().unwrap_or(80);
-                    let mut first_public_addr = None;
-                    let addrs = (domain, port).to_socket_addrs().map_err(|e| {
-                        DomainFilterError::DnsError(domain.to_string(), e.to_string())
-                    })?;
-
-                    for addr in addrs {
-                        if is_private_ip(&addr.ip()) {
-                            return Err(DomainFilterError::PrivateIp(addr.ip().to_string()));
-                        }
-                        if first_public_addr.is_none() {
-                            first_public_addr = Some(addr);
-                        }
-                    }
-
-                    let addr = first_public_addr.ok_or_else(|| {
-                        DomainFilterError::DnsError(
-                            domain.to_string(),
-                            "no addresses found".to_string(),
-                        )
-                    })?;
-                    return Ok(Some(ResolvedHost {
-                        host: domain.to_string(),
-                        addr,
-                    }));
-                }
-                None => {
-                    return Err(DomainFilterError::InvalidUrl("URL has no host".to_string()));
-                }
-            }
+        if !self.block_private_ips {
+            return Ok(None);
         }
-
-        Ok(None)
+        match url.host() {
+            Some(url::Host::Ipv4(ip)) if is_private_ip(&IpAddr::V4(ip)) => {
+                Err(DomainFilterError::PrivateIp(ip.to_string()))
+            }
+            Some(url::Host::Ipv6(ip)) if is_private_ip(&IpAddr::V6(ip)) => {
+                Err(DomainFilterError::PrivateIp(ip.to_string()))
+            }
+            Some(url::Host::Ipv4(_) | url::Host::Ipv6(_)) => Ok(None),
+            Some(url::Host::Domain(domain)) => Ok(Some((
+                domain.to_string(),
+                url.port_or_known_default().unwrap_or(80),
+            ))),
+            None => Err(DomainFilterError::InvalidUrl("URL has no host".to_string())),
+        }
     }
+
+    /// Full validation for async paths. DNS resolution runs on tokio's
+    /// blocking pool so a slow or wedged lookup never stalls the executor.
+    ///
+    /// Returns the pinned public address for domain hosts when
+    /// `block_private_ips` is enabled.
+    pub(crate) async fn validate_and_resolve(
+        &self,
+        url: &Url,
+    ) -> Result<Option<ResolvedHost>, DomainFilterError> {
+        self.validate_and_resolve_with(url, resolve_blocking).await
+    }
+
+    async fn validate_and_resolve_with<R>(
+        &self,
+        url: &Url,
+        resolve: R,
+    ) -> Result<Option<ResolvedHost>, DomainFilterError>
+    where
+        R: FnOnce(&str, u16) -> std::io::Result<Vec<SocketAddr>> + Send + 'static,
+    {
+        let Some((domain, port)) = self.check_without_dns(url)? else {
+            return Ok(None);
+        };
+        let lookup_domain = domain.clone();
+        let addrs = tokio::task::spawn_blocking(move || resolve(&lookup_domain, port))
+            .await
+            .map_err(|e| DomainFilterError::DnsError(domain.clone(), e.to_string()))?;
+        first_public_addr(domain, addrs).map(Some)
+    }
+}
+
+fn resolve_blocking(domain: &str, port: u16) -> std::io::Result<Vec<SocketAddr>> {
+    (domain, port).to_socket_addrs().map(Iterator::collect)
+}
+
+/// Reject the host if *any* resolved address is private; otherwise pin the
+/// first address.
+fn first_public_addr(
+    domain: String,
+    addrs: std::io::Result<Vec<SocketAddr>>,
+) -> Result<ResolvedHost, DomainFilterError> {
+    let addrs = addrs.map_err(|e| DomainFilterError::DnsError(domain.clone(), e.to_string()))?;
+    if let Some(private) = addrs.iter().find(|addr| is_private_ip(&addr.ip())) {
+        return Err(DomainFilterError::PrivateIp(private.ip().to_string()));
+    }
+    let Some(&addr) = addrs.first() else {
+        return Err(DomainFilterError::DnsError(
+            domain,
+            "no addresses found".to_string(),
+        ));
+    };
+    Ok(ResolvedHost { host: domain, addr })
 }
 
 fn host_matches_any(entries: &[String], host: &str) -> bool {

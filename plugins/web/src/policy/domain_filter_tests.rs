@@ -71,3 +71,25 @@ fn policy_blocks_denied_and_invalid_urls() {
         PreDispatchVerdict::Skip(_)
     ));
 }
+
+#[test]
+fn policy_blocks_private_ip_literals_without_dns_lookup() {
+    let policy = DomainFilterPolicy::new(DomainFilter::blocking_private_ips());
+    let state = SessionState::default();
+
+    let mut literal = json!({"url": "http://127.0.0.1/admin"});
+    let mut literal_ctx = make_dispatch_ctx("web_fetch", "call_6", &mut literal, &state);
+    assert!(matches!(
+        policy.evaluate(&mut literal_ctx),
+        PreDispatchVerdict::Skip(_)
+    ));
+
+    // Domain hosts are not resolved here (sync policy path); the tool
+    // resolves and rejects them off the executor before sending.
+    let mut domain = json!({"url": "http://localhost/admin"});
+    let mut domain_ctx = make_dispatch_ctx("web_fetch", "call_7", &mut domain, &state);
+    assert!(matches!(
+        policy.evaluate(&mut domain_ctx),
+        PreDispatchVerdict::Continue
+    ));
+}

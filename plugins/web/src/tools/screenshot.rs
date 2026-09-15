@@ -77,6 +77,9 @@ impl AgentTool for ScreenshotTool {
         &self.schema
     }
 
+    // One linear request flow (validate → render → re-validate → shape result);
+    // splitting it would scatter the cancellation racing across helpers.
+    #[allow(clippy::too_many_lines)]
     fn execute(
         &self,
         _tool_call_id: &str,
@@ -102,6 +105,7 @@ impl AgentTool for ScreenshotTool {
             };
             if let Err(error) =
                 validate_url_against_filter(self.domain_filter.as_ref(), &parsed_url, "Initial")
+                    .await
             {
                 return AgentToolResult::error(error);
             }
@@ -162,13 +166,16 @@ impl AgentTool for ScreenshotTool {
             };
 
             let result = match operation {
-                OperationOutcome::Completed(Ok(screenshot)) => build_screenshot_result(
-                    &url,
-                    width,
-                    height,
-                    screenshot,
-                    self.domain_filter.as_ref(),
-                ),
+                OperationOutcome::Completed(Ok(screenshot)) => {
+                    build_screenshot_result(
+                        &url,
+                        width,
+                        height,
+                        screenshot,
+                        self.domain_filter.as_ref(),
+                    )
+                    .await
+                }
                 OperationOutcome::Completed(Err(PlaywrightError::NotInstalled)) => {
                     AgentToolResult::error(
                         "Playwright/Node.js not found. Install with:\n\
@@ -220,7 +227,7 @@ fn image_size_bytes(content: &[ContentBlock]) -> usize {
         .sum()
 }
 
-fn build_screenshot_result(
+async fn build_screenshot_result(
     url: &str,
     width: u32,
     height: u32,
@@ -229,7 +236,9 @@ fn build_screenshot_result(
 ) -> AgentToolResult {
     match Url::parse(&screenshot.final_url) {
         Ok(final_url) => {
-            if let Err(error) = validate_url_against_filter(domain_filter, &final_url, "Final") {
+            if let Err(error) =
+                validate_url_against_filter(domain_filter, &final_url, "Final").await
+            {
                 return AgentToolResult::error(error);
             }
         }
