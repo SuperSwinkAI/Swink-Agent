@@ -133,6 +133,7 @@ impl AgentTool for ExtractTool {
             };
             if let Err(error) =
                 validate_url_against_filter(self.domain_filter.as_ref(), &parsed_url, "Initial")
+                    .await
             {
                 return AgentToolResult::error(error);
             }
@@ -189,11 +190,14 @@ impl AgentTool for ExtractTool {
             };
 
             let result = match operation {
-                OperationOutcome::Completed(Ok(extraction)) => build_extract_result(
-                    extraction,
-                    self.domain_filter.as_ref(),
-                    self.sanitizer.as_ref(),
-                ),
+                OperationOutcome::Completed(Ok(extraction)) => {
+                    build_extract_result(
+                        extraction,
+                        self.domain_filter.as_ref(),
+                        self.sanitizer.as_ref(),
+                    )
+                    .await
+                }
                 OperationOutcome::Completed(Err(PlaywrightError::NotInstalled)) => {
                     AgentToolResult::error(
                         "Playwright/Node.js not found. Install with:\n\
@@ -251,7 +255,7 @@ fn content_size_bytes(content: &[ContentBlock]) -> usize {
         .sum()
 }
 
-fn build_extract_result(
+async fn build_extract_result(
     extraction: ExtractOutput,
     domain_filter: Option<&DomainFilter>,
     sanitizer: Option<&ContentSanitizerPolicy>,
@@ -263,7 +267,9 @@ fn build_extract_result(
 
     match Url::parse(&final_url) {
         Ok(final_url) => {
-            if let Err(error) = validate_url_against_filter(domain_filter, &final_url, "Final") {
+            if let Err(error) =
+                validate_url_against_filter(domain_filter, &final_url, "Final").await
+            {
                 return AgentToolResult::error(error);
             }
         }

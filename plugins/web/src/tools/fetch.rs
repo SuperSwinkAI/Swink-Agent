@@ -150,7 +150,7 @@ impl FetchTool {
             } else {
                 "Redirect"
             };
-            let resolved_host = self.validate_url_for_fetch(&current_url, phase)?;
+            let resolved_host = self.validate_url_for_fetch(&current_url, phase).await?;
             let client = self.client_for_request(resolved_host)?;
 
             let request = client
@@ -194,7 +194,7 @@ impl FetchTool {
         ))
     }
 
-    fn validate_url_for_fetch(
+    async fn validate_url_for_fetch(
         &self,
         url: &Url,
         phase: &str,
@@ -205,6 +205,7 @@ impl FetchTool {
 
         filter
             .validate_and_resolve(url)
+            .await
             .map_err(|error| format!("{phase} URL blocked by domain filter: {error}"))
     }
 

@@ -3,8 +3,8 @@ use url::Url;
 
 use crate::domain::DomainFilter;
 
-/// `PreDispatchPolicy` that enforces domain allowlist/denylist and SSRF
-/// protection on all `web_*` tool calls.
+/// `PreDispatchPolicy` that enforces domain allowlist/denylist and IP-literal
+/// SSRF protection on all `web_*` tool calls without performing DNS lookups.
 pub struct DomainFilterPolicy {
     filter: DomainFilter,
 }
@@ -41,9 +41,12 @@ impl PreDispatchPolicy for DomainFilterPolicy {
             }
         };
 
-        // Run the domain filter.
-        match self.filter.is_allowed(&parsed) {
-            Ok(()) => PreDispatchVerdict::Continue,
+        // Run the I/O-free part of the domain filter. This policy is
+        // evaluated synchronously, so it must not do blocking DNS; the web
+        // tools re-run the full filter (including DNS-resolved private-IP
+        // checks) on tokio's blocking pool before any request is sent.
+        match self.filter.check_without_dns(&parsed) {
+            Ok(_) => PreDispatchVerdict::Continue,
             Err(e) => PreDispatchVerdict::Skip(e.to_string()),
         }
     }
