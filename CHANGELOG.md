@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `auth`: credential backend errors no longer expose raw secret-bearing source errors through standard error-chain formatting (#1308).
 - `eval`: JSON eval sets now run the same duplicate-case and invalid-case validation as YAML before execution (#1309).
 - `rpc`: protocol/client consumers no longer pull core default tools by default; the daemon feature opts into built-in tools explicitly (#1310).
+- `local-llm`: interrupted model downloads resume from the partial `{blob}.incomplete` with an HTTP range request instead of restarting, and processes sharing a cache take an exclusive `{blob}.lock` so a model is downloaded once rather than once per process.
 
 
 ## [0.14.1] - 2026-09-12
