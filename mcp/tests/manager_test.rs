@@ -14,7 +14,9 @@ use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
 use serde_json::json;
-use swink_agent_mcp::{McpManager, McpServerConfig, McpToolInfo, McpTransport};
+use swink_agent::AgentEvent;
+use swink_agent_mcp::{McpError, McpManager, McpServerConfig, McpToolInfo, McpTransport};
+use tokio::sync::{Notify, mpsc::unbounded_channel};
 
 /// T019: Connect to two mock servers with prefixes, verify tools are prefixed
 /// correctly (`prefix_toolname`).
@@ -132,6 +134,51 @@ fn sanitized_tool_name_collision_is_detected() {
     assert!(
         err_msg.contains("read_file"),
         "sanitized colliding name should be reported, got: {err_msg}"
+    );
+}
+
+#[tokio::test]
+async fn connect_all_rejects_duplicate_server_names_before_connecting() {
+    let mut manager = McpManager::new(vec![
+        McpServerConfig::new(
+            "duplicate",
+            McpTransport::Stdio {
+                command: "missing-command-a".into(),
+                args: vec![],
+                env: HashMap::default(),
+            },
+        )
+        .with_tool_prefix("a"),
+        McpServerConfig::new(
+            "duplicate",
+            McpTransport::Stdio {
+                command: "missing-command-b".into(),
+                args: vec![],
+                env: HashMap::default(),
+            },
+        )
+        .with_tool_prefix("b"),
+    ]);
+
+    let result = manager.connect_all().await;
+    let err =
+        result.expect_err("duplicate server names should be rejected even when prefixes differ");
+    assert!(
+        matches!(err, McpError::DuplicateServerName { ref name } if name == "duplicate"),
+        "expected duplicate server name error, got: {err}"
+    );
+}
+
+#[test]
+fn from_connections_rejects_duplicate_server_names() {
+    let conn_a = swink_agent_mcp::McpConnection::disconnected(mock_config("duplicate"));
+    let conn_b = swink_agent_mcp::McpConnection::disconnected(mock_config("duplicate"));
+
+    let err = McpManager::from_connections(vec![conn_a, conn_b])
+        .expect_err("duplicate server names should be rejected");
+    assert!(
+        matches!(err, McpError::DuplicateServerName { ref name } if name == "duplicate"),
+        "expected duplicate server name error, got: {err}"
     );
 }
 
@@ -288,6 +335,68 @@ impl ServerHandler for HangingDiscoveryServer {
     }
 }
 
+#[derive(Clone)]
+struct BlockedDiscoveryServer {
+    release: Arc<Notify>,
+}
+
+impl ServerHandler for BlockedDiscoveryServer {
+    fn get_info(&self) -> ServerInfo {
+        let mut info = ServerInfo::default();
+        info.instructions = Some("Mock MCP server with externally blocked discovery".into());
+        info.capabilities = ServerCapabilities::builder().enable_tools().build();
+        info
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, rmcp::ErrorData> {
+        self.release.notified().await;
+        Ok(ListToolsResult::default())
+    }
+}
+
+async fn spawn_blocked_discovery_server(
+    release: Arc<Notify>,
+) -> (
+    tokio_util::sync::CancellationToken,
+    tokio::task::JoinHandle<()>,
+    String,
+) {
+    let shutdown = tokio_util::sync::CancellationToken::new();
+    let service = StreamableHttpService::new(
+        move || {
+            Ok(BlockedDiscoveryServer {
+                release: Arc::clone(&release),
+            })
+        },
+        Arc::new(LocalSessionManager::default()),
+        StreamableHttpServerConfig::default()
+            .with_sse_keep_alive(None)
+            .with_cancellation_token(shutdown.child_token()),
+    );
+
+    let router = Router::new().nest_service("/mcp", service);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener should bind");
+    let addr = listener
+        .local_addr()
+        .expect("listener should expose an address");
+    let task = tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            let _ = axum::serve(listener, router)
+                .with_graceful_shutdown(async move { shutdown.cancelled_owned().await })
+                .await;
+        }
+    });
+
+    (shutdown, task, format!("http://{addr}/mcp"))
+}
+
 async fn spawn_hanging_discovery_server() -> (
     tokio_util::sync::CancellationToken,
     tokio::task::JoinHandle<()>,
@@ -319,6 +428,87 @@ async fn spawn_hanging_discovery_server() -> (
     });
 
     (shutdown, task, format!("http://{addr}/mcp"))
+}
+
+#[tokio::test]
+async fn connect_all_starts_later_servers_while_earlier_discovery_is_blocked() {
+    let (event_tx, mut event_rx) = unbounded_channel::<AgentEvent>();
+    let release_blocked = Arc::new(Notify::new());
+    let (blocked_shutdown, blocked_task, blocked_url) =
+        spawn_blocked_discovery_server(Arc::clone(&release_blocked)).await;
+
+    let healthy_session_manager = Arc::new(LocalSessionManager::default());
+    let (healthy_shutdown, healthy_task, healthy_url) =
+        spawn_mock_sse_server(Arc::clone(&healthy_session_manager)).await;
+
+    let mut manager = McpManager::new(vec![
+        McpServerConfig::new(
+            "blocked-discovery",
+            McpTransport::StreamableHttp {
+                url: blocked_url,
+                bearer_token: None,
+                bearer_auth: None,
+                headers: HashMap::default(),
+            },
+        )
+        .with_tool_prefix("blocked")
+        .with_requires_approval(false),
+        McpServerConfig::new(
+            "healthy",
+            McpTransport::StreamableHttp {
+                url: healthy_url,
+                bearer_token: None,
+                bearer_auth: None,
+                headers: HashMap::default(),
+            },
+        )
+        .with_tool_prefix("healthy")
+        .with_requires_approval(false),
+    ])
+    .with_event_tx(event_tx);
+
+    let connect_task = tokio::spawn(async move {
+        let result = manager.connect_all().await;
+        (manager, result)
+    });
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match event_rx.recv().await {
+                Some(AgentEvent::McpToolsDiscovered { server_name, .. })
+                    if server_name == "healthy" =>
+                {
+                    break;
+                }
+                Some(_) => {}
+                None => panic!("manager dropped event sender before healthy discovery"),
+            }
+        }
+    })
+    .await
+    .expect("healthy server discovery should not wait for an earlier blocked server");
+
+    release_blocked.notify_waiters();
+    let (mut manager, result) = tokio::time::timeout(Duration::from_secs(10), connect_task)
+        .await
+        .expect("connect_all should finish once the blocked server is released")
+        .expect("connect_all task should not panic");
+    result.expect("connect_all should keep healthy server and empty blocked server");
+
+    let names: Vec<String> = manager
+        .tools()
+        .iter()
+        .map(|tool| tool.name().into())
+        .collect();
+    assert_eq!(names, vec!["healthy_echo".to_string()]);
+
+    manager.shutdown().await;
+    wait_for_session_cleanup(&healthy_session_manager).await;
+
+    blocked_shutdown.cancel();
+    healthy_shutdown.cancel();
+    let _ = blocked_task.await;
+    let _ = healthy_task.await;
 }
 
 #[tokio::test]
@@ -381,6 +571,59 @@ async fn discovery_timeout_skips_hung_server_and_keeps_healthy_tools() {
         elapsed < Duration::from_secs(30),
         "discovery timeout should keep bootstrap bounded, elapsed: {elapsed:?}"
     );
+
+    manager.shutdown().await;
+    wait_for_session_cleanup(&healthy_session_manager).await;
+
+    hanging_shutdown.cancel();
+    healthy_shutdown.cancel();
+    let _ = hanging_task.await;
+    let _ = healthy_task.await;
+}
+
+#[tokio::test]
+async fn default_discovery_timeout_skips_hung_server_and_keeps_healthy_tools() {
+    let (hanging_shutdown, hanging_task, hanging_url) = spawn_hanging_discovery_server().await;
+    let healthy_session_manager = Arc::new(LocalSessionManager::default());
+    let (healthy_shutdown, healthy_task, healthy_url) =
+        spawn_mock_sse_server(Arc::clone(&healthy_session_manager)).await;
+
+    let mut manager = McpManager::new(vec![
+        McpServerConfig::new(
+            "hung-discovery-default",
+            McpTransport::StreamableHttp {
+                url: hanging_url,
+                bearer_token: None,
+                bearer_auth: None,
+                headers: HashMap::default(),
+            },
+        )
+        .with_tool_prefix("hung")
+        .with_requires_approval(false),
+        McpServerConfig::new(
+            "healthy-default",
+            McpTransport::StreamableHttp {
+                url: healthy_url,
+                bearer_token: None,
+                bearer_auth: None,
+                headers: HashMap::default(),
+            },
+        )
+        .with_tool_prefix("healthy")
+        .with_requires_approval(false),
+    ]);
+
+    tokio::time::timeout(Duration::from_secs(10), manager.connect_all())
+        .await
+        .expect("default discovery timeout should keep bootstrap bounded")
+        .expect("healthy server should still connect");
+
+    let names: Vec<String> = manager
+        .tools()
+        .iter()
+        .map(|tool| tool.name().into())
+        .collect();
+    assert_eq!(names, vec!["healthy_echo".to_string()]);
 
     manager.shutdown().await;
     wait_for_session_cleanup(&healthy_session_manager).await;

@@ -13,6 +13,10 @@ use crate::common::{
     RecordingPostTurnPolicy, default_convert, default_model, text_only_events, user_msg,
 };
 
+/// Serializes tests that reset and read `MOCK_PLUGIN_GLOBAL_ORDER`; the test
+/// harness runs them in parallel threads, and a concurrent reset corrupts order.
+static GLOBAL_ORDER_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 fn make_agent_with_plugins(plugins: Vec<Arc<dyn Plugin>>) -> Agent {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
     let options = AgentOptions::new("test", default_model(), stream_fn, default_convert)
@@ -90,6 +94,7 @@ async fn plugin_event_observer_called_for_agent_start() {
 #[tokio::test]
 async fn higher_priority_plugin_policy_runs_first() {
     // Reset global counter for this test.
+    let _order_guard = GLOBAL_ORDER_LOCK.lock().await;
     MOCK_PLUGIN_GLOBAL_ORDER.store(0, Ordering::SeqCst);
 
     let low_order = Arc::new(AtomicUsize::new(usize::MAX));
@@ -127,6 +132,7 @@ async fn higher_priority_plugin_policy_runs_first() {
 
 #[tokio::test]
 async fn same_priority_plugins_preserve_insertion_order() {
+    let _order_guard = GLOBAL_ORDER_LOCK.lock().await;
     MOCK_PLUGIN_GLOBAL_ORDER.store(0, Ordering::SeqCst);
 
     let first_order = Arc::new(AtomicUsize::new(usize::MAX));
@@ -163,6 +169,7 @@ async fn same_priority_plugins_preserve_insertion_order() {
 
 #[tokio::test]
 async fn higher_priority_stop_short_circuits_lower_priority() {
+    let _order_guard = GLOBAL_ORDER_LOCK.lock().await;
     MOCK_PLUGIN_GLOBAL_ORDER.store(0, Ordering::SeqCst);
 
     let low_order = Arc::new(AtomicUsize::new(usize::MAX));
@@ -254,6 +261,7 @@ async fn plugin_stop_prevents_direct_policy_evaluation() {
 
 #[tokio::test]
 async fn plugin_policy_runs_before_direct_policy() {
+    let _order_guard = GLOBAL_ORDER_LOCK.lock().await;
     MOCK_PLUGIN_GLOBAL_ORDER.store(0, Ordering::SeqCst);
 
     let plugin_order = Arc::new(AtomicUsize::new(usize::MAX));
@@ -293,6 +301,7 @@ async fn plugin_policy_runs_before_direct_policy() {
 
 #[tokio::test]
 async fn no_plugins_direct_policies_behave_identically() {
+    let _order_guard = GLOBAL_ORDER_LOCK.lock().await;
     MOCK_PLUGIN_GLOBAL_ORDER.store(0, Ordering::SeqCst);
 
     let first_order = Arc::new(AtomicUsize::new(usize::MAX));

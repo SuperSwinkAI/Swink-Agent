@@ -169,6 +169,65 @@ async fn token_stream_cancellation_beats_ready_buffered_event() {
     ));
 }
 
+#[tokio::test]
+async fn token_event_stream_yields_text_before_done() {
+    let (tx, rx) = tokio::sync::mpsc::channel(1);
+    let token = CancellationToken::new();
+    let mut stream = Box::pin(token_event_stream(rx, token, false));
+
+    let first = tokio::time::timeout(std::time::Duration::from_secs(1), stream.next())
+        .await
+        .expect("stream should yield Start promptly")
+        .expect("stream should not end before Start");
+    assert!(matches!(first, AssistantMessageEvent::Start));
+
+    tx.send(TokenEvent::Token("hello".to_string()))
+        .await
+        .unwrap();
+
+    let mut saw_text_delta = false;
+    for _ in 0..2 {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), stream.next())
+            .await
+            .expect("stream should yield token-derived events before Done")
+            .expect("stream should not end before Done");
+        match event {
+            AssistantMessageEvent::TextDelta { delta, .. } => {
+                assert_eq!(delta, "hello");
+                saw_text_delta = true;
+                break;
+            }
+            AssistantMessageEvent::Done { .. } => {
+                panic!("stream emitted Done before runner sent Done")
+            }
+            _ => {}
+        }
+    }
+    assert!(saw_text_delta, "expected token text before Done");
+
+    tx.send(TokenEvent::Done {
+        prompt_tokens: 1,
+        completion_tokens: 1,
+        finish_reason: FinishReason::Stop,
+    })
+    .await
+    .unwrap();
+
+    let rest = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        stream.collect::<Vec<_>>(),
+    )
+    .await
+    .expect("stream should finalize after Done");
+    assert!(matches!(
+        rest.last(),
+        Some(AssistantMessageEvent::Done {
+            stop_reason: StopReason::Stop,
+            ..
+        })
+    ));
+}
+
 #[test]
 fn think_tag_single_chunk() {
     let mut parser = ThinkTagParser::new();

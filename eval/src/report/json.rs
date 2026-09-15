@@ -228,6 +228,8 @@ impl CaseDocOwned {
         let duration = millis_to_duration(self.duration_ms, "case duration_ms")?;
         Ok(EvalCaseResult {
             case_id: self.case_id,
+            system_prompt: String::new(),
+            user_messages: Vec::new(),
             invocation: Invocation {
                 turns: Vec::new(),
                 total_usage: Usage::default(),

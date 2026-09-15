@@ -66,6 +66,33 @@ fn classify_429_is_throttled() {
 }
 
 #[test]
+fn zero_rate_limit_allowance_detects_limit_headers_only() {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert("x-ratelimit-limit-req-minute", "0".parse().unwrap());
+
+    assert!(has_zero_rate_limit_allowance(&headers));
+}
+
+#[test]
+fn zero_rate_limit_allowance_ignores_remaining_headers() {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert("x-ratelimit-remaining-requests", "0".parse().unwrap());
+    headers.insert("retry-after", "0".parse().unwrap());
+
+    assert!(!has_zero_rate_limit_allowance(&headers));
+}
+
+#[test]
+fn zero_rate_limit_allowance_ignores_nonzero_or_unparseable_limits() {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert("x-ratelimit-limit-requests", "125".parse().unwrap());
+    assert!(!has_zero_rate_limit_allowance(&headers));
+
+    headers.insert("ratelimit-limit", "0;w=60".parse().unwrap());
+    assert!(!has_zero_rate_limit_allowance(&headers));
+}
+
+#[test]
 fn classify_408_is_network() {
     assert_eq!(classify_http_status(408), Some(HttpErrorKind::Network));
 }

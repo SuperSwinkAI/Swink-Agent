@@ -12,6 +12,8 @@ use crate::domain::{DomainFilter, ResolvedHost};
 use crate::policy::ContentSanitizerPolicy;
 use crate::tools::sanitize_web_tool_text;
 
+const MAX_RESPONSE_BODY_BYTES: usize = 10 * 1024 * 1024;
+
 /// Tool for fetching and reading web pages.
 ///
 /// Sends an HTTP GET request, extracts readable content from HTML responses
@@ -125,7 +127,7 @@ impl FetchTool {
         } {
             if body.len().saturating_add(chunk.len()) > max_bytes {
                 return Err(format!(
-                    "Response body exceeded configured limit of {max_bytes} bytes before readability extraction."
+                    "Response body exceeded internal safety limit of {max_bytes} bytes before readability extraction."
                 ));
             }
 
@@ -148,7 +150,7 @@ impl FetchTool {
             } else {
                 "Redirect"
             };
-            let resolved_host = self.validate_url_for_fetch(&current_url, phase)?;
+            let resolved_host = self.validate_url_for_fetch(&current_url, phase).await?;
             let client = self.client_for_request(resolved_host)?;
 
             let request = client
@@ -192,7 +194,7 @@ impl FetchTool {
         ))
     }
 
-    fn validate_url_for_fetch(
+    async fn validate_url_for_fetch(
         &self,
         url: &Url,
         phase: &str,
@@ -203,6 +205,7 @@ impl FetchTool {
 
         filter
             .validate_and_resolve(url)
+            .await
             .map_err(|error| format!("{phase} URL blocked by domain filter: {error}"))
     }
 
@@ -338,11 +341,12 @@ impl AgentTool for FetchTool {
                 ));
             }
 
-            // Bound the raw response body before readability extraction so the
-            // configured content limit caps network and parsing cost too.
+            // Bound the raw response body with an internal safety cap. The
+            // configured max content length applies after readability
+            // extraction so large HTML shells can still yield compact articles.
             let bytes = match Self::read_body_with_cap(
                 &mut response,
-                self.max_content_length,
+                MAX_RESPONSE_BODY_BYTES,
                 &cancellation_token,
             )
             .await

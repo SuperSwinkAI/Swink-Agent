@@ -107,11 +107,13 @@ assert!(!strategy.should_retry(&AgentError::ModelThrottled, 3)); // attempt == m
 
 ## Verification Checklist
 
-- [ ] Mock tool validates arguments against schema
-- [ ] Invalid arguments rejected with field-level errors
-- [ ] Mock stream accumulates into finalized AssistantMessage
-- [ ] Out-of-order events produce errors
-- [ ] Empty stream produces error
-- [ ] Default retry retries only ModelThrottled and NetworkError
-- [ ] Exponential delays increase correctly and cap at max_delay
-- [ ] Jitter varies delays within [0.5, 1.5) range
+Verified by `tests/suite/tool.rs`, `tests/suite/stream.rs`, and `tests/suite/retry.rs`.
+
+- [x] Mock tool validates arguments against schema
+- [x] Invalid arguments rejected with field-level errors
+- [x] Mock stream accumulates into finalized AssistantMessage
+- [x] Out-of-order events produce errors
+- [x] Empty stream produces error
+- [x] Default retry retries only ModelThrottled and NetworkError
+- [x] Exponential delays increase correctly and cap at max_delay
+- [x] Jitter varies delays within [0.5, 1.5) range

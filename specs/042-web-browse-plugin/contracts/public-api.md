@@ -17,28 +17,32 @@ pub use playwright::{ExtractionPreset, ExtractedElement, Viewport};
 ## Plugin Construction (Builder Pattern)
 
 ```rust
-use swink_agent_plugin_web::{WebPlugin, WebPluginConfig, SearchProviderKind};
+use std::path::PathBuf;
+use std::time::Duration;
+
+use swink_agent_plugin_web::{SearchProviderKind, WebPlugin, WebPluginConfig};
 
 // Minimal (zero-config, DuckDuckGo search, all defaults)
 let plugin = WebPlugin::new();
 
 // Full configuration
-let plugin = WebPlugin::builder()
-    .search_provider(SearchProviderKind::Brave)
-    .brave_api_key("sk-...")
-    .domain_denylist(vec!["evil.com".into()])
-    .domain_allowlist(vec!["docs.rs".into(), "crates.io".into()])
-    .block_private_ips(true)          // default: true
-    .rate_limit_rpm(60)               // default: 30
-    .max_content_length(100_000)      // default: 50_000
-    .max_search_results(5)            // default: 10
-    .max_redirects(5)                 // default: 10
-    .playwright_path("/usr/local/bin/npx")
-    .screenshot_timeout(Duration::from_secs(20))  // default: 15s
-    .request_timeout(Duration::from_secs(10))     // default: 30s
-    .viewport(1920, 1080)             // default: 1280x720
-    .sanitizer_enabled(true)          // default: true
+let config = WebPlugin::builder()
+    .with_search_provider(SearchProviderKind::Brave)
+    .with_brave_api_key("sk-...")
+    .with_domain_denylist(vec!["evil.com".into()])
+    .with_domain_allowlist(vec!["docs.rs".into(), "crates.io".into()])
+    .with_block_private_ips(true)          // default: true
+    .with_rate_limit_rpm(60)               // default: 30
+    .with_max_content_length(100_000)      // default: 50_000
+    .with_max_search_results(5)            // default: 10
+    .with_max_redirects(5)                 // default: 10
+    .with_playwright_path(PathBuf::from("/usr/local/bin/node"))
+    .with_screenshot_timeout(Duration::from_secs(20))  // default: 15s
+    .with_request_timeout(Duration::from_secs(10))     // default: 30s
+    .with_viewport(1920, 1080)             // default: 1280x720
+    .with_sanitizer_enabled(true)          // default: true
     .build();
+let plugin = WebPlugin::from_config(config)?;
 ```
 
 ## Plugin Registration

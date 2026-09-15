@@ -320,32 +320,13 @@ impl McpConnection {
         let service = service.into_inner();
         let peer = service.peer().clone();
 
-        // Handshake already completed before we were given the service.
-        emit_event(event_tx.as_ref(), || {
-            crate::event::server_connected(&config.name)
-        });
-
-        let discovered_tools: Vec<McpToolInfo> = peer
-            .list_all_tools()
-            .await
-            .map_err(|source| McpError::ProtocolError {
-                server: config.name.clone(),
-                context: "tool discovery",
-                source: Box::new(source),
-            })?
-            .iter()
-            .map(McpToolInfo::from_rmcp)
-            .collect();
+        let discovered_tools = discover_tools(&config, &peer).await?;
 
         info!(
             server = %config.name,
             tool_count = discovered_tools.len(),
             "MCP server connected via provided service, tools discovered"
         );
-
-        emit_event(event_tx.as_ref(), || {
-            crate::event::tools_discovered(&config.name, discovered_tools.len())
-        });
 
         let state = Arc::new(Mutex::new(McpConnectionState {
             status: McpConnectionStatus::Connected,
@@ -359,6 +340,13 @@ impl McpConnection {
             event_tx.clone(),
         );
         state.lock().unwrap_or_else(PoisonError::into_inner).monitor = Some(monitor);
+
+        emit_event(event_tx.as_ref(), || {
+            crate::event::server_connected(&config.name)
+        });
+        emit_event(event_tx.as_ref(), || {
+            crate::event::tools_discovered(&config.name, discovered_tools.len())
+        });
 
         Ok(Self {
             config,
@@ -409,50 +397,16 @@ impl McpConnection {
             None => Self::connect_transport(&config, credential_resolver.clone()).await?,
         };
 
-        // Handshake succeeded, transport is live.
-        emit_event(event_tx.as_ref(), || {
-            crate::event::server_connected(&config.name)
-        });
-
         let peer = service.peer().clone();
 
         // Discover tools from the server.
-        let discovered_tools = match config.discovery_timeout() {
-            Some(timeout) => tokio::time::timeout(timeout, peer.list_all_tools())
-                .await
-                .map_err(|_| McpError::ConnectionFailed {
-                    server: config.name.clone(),
-                    reason: format!("tool discovery timed out after {} ms", timeout.as_millis()),
-                    source: None,
-                })?
-                .map_err(|source| McpError::ProtocolError {
-                    server: config.name.clone(),
-                    context: "tool discovery",
-                    source: Box::new(source),
-                })?,
-            None => peer
-                .list_all_tools()
-                .await
-                .map_err(|source| McpError::ProtocolError {
-                    server: config.name.clone(),
-                    context: "tool discovery",
-                    source: Box::new(source),
-                })?,
-        };
-        let discovered_tools: Vec<McpToolInfo> = discovered_tools
-            .iter()
-            .map(McpToolInfo::from_rmcp)
-            .collect();
+        let discovered_tools = discover_tools(&config, &peer).await?;
 
         info!(
             server = %config.name,
             tool_count = discovered_tools.len(),
             "MCP server connected, tools discovered"
         );
-
-        emit_event(event_tx.as_ref(), || {
-            crate::event::tools_discovered(&config.name, discovered_tools.len())
-        });
 
         let state = Arc::new(Mutex::new(McpConnectionState {
             status: McpConnectionStatus::Connected,
@@ -466,6 +420,13 @@ impl McpConnection {
             event_tx.clone(),
         );
         state.lock().unwrap_or_else(PoisonError::into_inner).monitor = Some(monitor);
+
+        emit_event(event_tx.as_ref(), || {
+            crate::event::server_connected(&config.name)
+        });
+        emit_event(event_tx.as_ref(), || {
+            crate::event::tools_discovered(&config.name, discovered_tools.len())
+        });
 
         Ok(Self {
             config,
@@ -717,6 +678,39 @@ fn build_stdio_command(
         cmd.env(key, value);
     }
     cmd
+}
+
+async fn discover_tools(
+    config: &McpServerConfig,
+    peer: &Peer<RoleClient>,
+) -> Result<Vec<McpToolInfo>, McpError> {
+    let discovered_tools = match config.discovery_timeout() {
+        Some(timeout) => tokio::time::timeout(timeout, peer.list_all_tools())
+            .await
+            .map_err(|_| McpError::ConnectionFailed {
+                server: config.name.clone(),
+                reason: format!("tool discovery timed out after {} ms", timeout.as_millis()),
+                source: None,
+            })?
+            .map_err(|source| McpError::ProtocolError {
+                server: config.name.clone(),
+                context: "tool discovery",
+                source: Box::new(source),
+            })?,
+        None => peer
+            .list_all_tools()
+            .await
+            .map_err(|source| McpError::ProtocolError {
+                server: config.name.clone(),
+                context: "tool discovery",
+                source: Box::new(source),
+            })?,
+    };
+
+    Ok(discovered_tools
+        .iter()
+        .map(McpToolInfo::from_rmcp)
+        .collect())
 }
 
 async fn resolve_sse_bearer_secret(

@@ -369,7 +369,7 @@ Key points for struct-based tools:
 ToolMiddleware::new(inner: Arc<dyn AgentTool>, f: F) -> Self
 ```
 
-The closure `f` receives `(inner_tool, tool_call_id, params, cancel, on_update)` and can call through to the inner tool's `execute()` at any point, or skip it entirely.
+The closure `f` receives `(inner_tool, tool_call_id, params, cancel, on_update, state, credential)` and can call through to the inner tool's `execute()` at any point, or skip it entirely. Forward `state` and `credential` when delegating so wrapped tools keep access to session state and resolved credentials.
 
 ### Built-in middleware constructors
 
@@ -385,10 +385,12 @@ use std::sync::Arc;
 use swink_agent::{AgentTool, AgentToolResult, BashTool, ToolMiddleware};
 
 let tool = Arc::new(BashTool::new());
-let logged = ToolMiddleware::new(tool, |inner, id, params, cancel, on_update| {
+let logged = ToolMiddleware::new(tool, |inner, id, params, cancel, on_update, state, credential| {
     Box::pin(async move {
         println!("before");
-        let result = inner.execute(&id, params, cancel, on_update).await;
+        let result = inner
+            .execute(&id, params, cancel, on_update, state, credential)
+            .await;
         println!("after");
         result
     })

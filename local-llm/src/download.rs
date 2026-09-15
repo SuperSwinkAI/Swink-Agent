@@ -22,7 +22,8 @@ use std::path::{Component, Path, PathBuf};
 
 use futures::StreamExt as _;
 use reqwest::header::{
-    AUTHORIZATION, CONTENT_LENGTH, ETAG, HeaderMap, HeaderValue, IF_NONE_MATCH, LOCATION,
+    AUTHORIZATION, CONTENT_LENGTH, CONTENT_RANGE, ETAG, HeaderMap, HeaderValue, IF_NONE_MATCH,
+    LOCATION, RANGE,
 };
 use reqwest::{StatusCode, redirect};
 use tokio::io::AsyncWriteExt as _;
@@ -207,10 +208,19 @@ impl HubClient {
             .filter(|n| *n > 0);
 
         let blob = repo.dir.join("blobs").join(&etag);
-        if !blob.exists() {
-            self.fetch_blob(&url, &blob, total_bytes, progress_cb.as_ref())
-                .await?;
-        }
+        // Held through `finalize` so concurrent writers of the snapshot
+        // pointer are serialized too.
+        let _lock = if blob.exists() {
+            None
+        } else {
+            let lock = lock_blob(&blob).await?;
+            // Another process may have finished the blob while we waited.
+            if !blob.exists() {
+                self.fetch_blob(&url, &blob, total_bytes, progress_cb.as_ref())
+                    .await?;
+            }
+            Some(lock)
+        };
         repo.finalize(&commit, filename, &etag)
     }
 
@@ -254,8 +264,10 @@ impl HubClient {
         self.head.head(url).headers(headers).send().await
     }
 
-    /// Stream the file into `blob`, writing a per-process temp file first so
-    /// a crash never leaves a truncated blob under the final name.
+    /// Stream the file into `blob` via `{blob}.incomplete`, so a crash never
+    /// leaves a truncated blob under the final name. A partial left by an
+    /// earlier failed attempt is continued with a range request. Callers hold
+    /// [`lock_blob`], which is what makes the fixed partial name safe.
     async fn fetch_blob(
         &self,
         url: &str,
@@ -263,14 +275,14 @@ impl HubClient {
         total_bytes: Option<u64>,
         progress_cb: Option<&ProgressCallbackFn>,
     ) -> Result<(), DownloadError> {
-        let response = self
-            .http
-            .get(url)
-            .headers(self.auth_headers())
-            .send()
-            .await?
-            .error_for_status()?;
-        let total_bytes = total_bytes.or_else(|| response.content_length().filter(|n| *n > 0));
+        let incomplete = sibling(blob, "incomplete");
+        let (response, offset) = self.open_download(url, &incomplete).await?;
+        let total_bytes = total_bytes.or_else(|| {
+            response
+                .content_length()
+                .map(|n| n + offset)
+                .filter(|n| *n > 0)
+        });
         let emit = |bytes_downloaded: u64| {
             if let Some(cb) = progress_cb {
                 cb(ProgressEvent::DownloadProgress {
@@ -279,25 +291,24 @@ impl HubClient {
                 });
             }
         };
-        emit(0);
+        emit(offset);
 
-        let parent = blob.parent().expect("blob path has a parent");
-        tokio::fs::create_dir_all(parent).await?;
-        // ponytail: no resume and no cross-process lock; two processes fetching
-        // the same blob both complete and the last rename wins (same bytes).
-        let incomplete = parent.join(format!(
-            "{}.{}.incomplete",
-            blob.file_name().and_then(|n| n.to_str()).unwrap_or("blob"),
-            std::process::id()
-        ));
-        let mut file = tokio::fs::File::create(&incomplete).await?;
-        let mut downloaded = 0u64;
+        let mut file = if offset > 0 {
+            tokio::fs::OpenOptions::new()
+                .append(true)
+                .open(&incomplete)
+                .await?
+        } else {
+            tokio::fs::File::create(&incomplete).await?
+        };
+        let mut downloaded = offset;
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
             let chunk = match chunk {
                 Ok(chunk) => chunk,
                 Err(error) => {
-                    let _ = tokio::fs::remove_file(&incomplete).await;
+                    // Keep what arrived; the next attempt resumes from it.
+                    file.flush().await?;
                     return Err(error.into());
                 }
             };
@@ -309,6 +320,47 @@ impl HubClient {
         drop(file);
         tokio::fs::rename(&incomplete, blob).await?;
         Ok(())
+    }
+
+    /// `GET` the blob, asking only for the missing tail when `incomplete`
+    /// holds a partial. Returns the response and the byte offset its body
+    /// starts at (`0` means the body is the whole file).
+    async fn open_download(
+        &self,
+        url: &str,
+        incomplete: &Path,
+    ) -> Result<(reqwest::Response, u64), DownloadError> {
+        let partial = tokio::fs::metadata(incomplete).await.map_or(0, |m| m.len());
+        if partial > 0 {
+            let response = self
+                .http
+                .get(url)
+                .headers(self.auth_headers())
+                .header(RANGE, format!("bytes={partial}-"))
+                .send()
+                .await?;
+            match response.status() {
+                StatusCode::PARTIAL_CONTENT if content_range_start(&response) == Some(partial) => {
+                    debug!(partial, "resuming partial model download");
+                    return Ok((response, partial));
+                }
+                // The partial can't be continued (already complete, or the
+                // server answered a different range): start over below.
+                StatusCode::PARTIAL_CONTENT | StatusCode::RANGE_NOT_SATISFIABLE => {
+                    debug!(partial, "partial model download not resumable; restarting");
+                }
+                // A `200` ignored the range and carries the whole file.
+                _ => return Ok((response.error_for_status()?, 0)),
+            }
+        }
+        let response = self
+            .http
+            .get(url)
+            .headers(self.auth_headers())
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok((response, 0))
     }
 }
 
@@ -372,6 +424,52 @@ impl RepoCache {
         }
         Ok(pointer)
     }
+}
+
+/// Exclusive advisory lock on `{blob}.lock`, held until the returned file is
+/// dropped, so processes sharing a cache download a blob once and never write
+/// the same partial concurrently. The lock file is left in place: deleting it
+/// would race with a process that has just opened it.
+async fn lock_blob(blob: &Path) -> Result<std::fs::File, DownloadError> {
+    let lock_path = sibling(blob, "lock");
+    let file = tokio::task::spawn_blocking(move || {
+        if let Some(parent) = lock_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)?;
+        file.lock()?;
+        Ok::<_, std::io::Error>(file)
+    })
+    .await
+    .map_err(std::io::Error::other)??;
+    Ok(file)
+}
+
+/// `{blob}.{suffix}` next to the blob.
+fn sibling(blob: &Path, suffix: &str) -> PathBuf {
+    let mut name = blob.file_name().unwrap_or_default().to_owned();
+    name.push(".");
+    name.push(suffix);
+    blob.with_file_name(name)
+}
+
+/// Start offset from a `Content-Range: bytes {start}-{end}/{total}` header.
+fn content_range_start(response: &reqwest::Response) -> Option<u64> {
+    response
+        .headers()
+        .get(CONTENT_RANGE)?
+        .to_str()
+        .ok()?
+        .strip_prefix("bytes ")?
+        .split_once('-')?
+        .0
+        .parse()
+        .ok()
 }
 
 fn is_safe_relative(filename: &str) -> bool {

@@ -17,7 +17,7 @@ tavily = []
 all = ["duckduckgo", "brave", "tavily"]
 
 [dependencies]
-swink-agent = { path = "../..", version = "0.14.1", default-features = false, features = ["plugins"] }
+swink-agent = { path = "../..", version = "0.14.2", default-features = false, features = ["plugins"] }
 reqwest.workspace = true
 # Supplies the `ring` crypto provider, installed as the process default
 # before any reqwest client is built (workspace reqwest is
@@ -31,7 +31,7 @@ tracing.workspace = true
 thiserror.workspace = true
 regex.workspace = true
 url.workspace = true
-base64 = "0.23.1"
+base64.workspace = true
 scraper = "0.27.0"
 
 [dev-dependencies]

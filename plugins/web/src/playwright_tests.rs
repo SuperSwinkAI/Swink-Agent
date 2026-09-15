@@ -138,6 +138,18 @@ if (!bridge.isBlockedPrivateHost('127.0.0.1') || !bridge.isBlockedPrivateHost('l
 if (await bridge.blockedByFilter('https://evil.com/path', {{ allowlist: [], denylist: ['evil.com'], blockPrivateIps: true }}) === null) {{
   throw new Error('denylist filter failed');
 }}
+if (await bridge.blockedByFilter('https://sub.evil.com/path', {{ allowlist: [], denylist: ['evil.com'], blockPrivateIps: true }}) === null) {{
+  throw new Error('bare denylist domain should block subdomains');
+}}
+if (await bridge.blockedByFilter('https://deep.docs.example.com/path', {{ allowlist: ['*.example.com'], denylist: [], blockPrivateIps: false }}) !== null) {{
+  throw new Error('wildcard allowlist should allow subdomains');
+}}
+if (await bridge.blockedByFilter('https://example.com/path', {{ allowlist: ['*.example.com'], denylist: [], blockPrivateIps: false }}) === null) {{
+  throw new Error('wildcard allowlist should not allow the apex domain');
+}}
+if (await bridge.blockedByFilter('https://api.blocked.example.com/path', {{ allowlist: ['example.com'], denylist: ['*.blocked.example.com'], blockPrivateIps: false }}) === null) {{
+  throw new Error('denylist wildcard should take precedence over allowlist parent domain');
+}}
 if (await bridge.blockedByFilter('http://127.0.0.1/admin', {{ allowlist: [], denylist: [], blockPrivateIps: true }}) === null) {{
   throw new Error('private IP filter failed');
 }}
@@ -334,6 +346,7 @@ try {{
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // mostly one embedded node script
 fn bridge_script_exports_data_only_extract_helpers() {
     assert!(!BRIDGE_SCRIPT.contains("eval("));
 
@@ -352,6 +365,11 @@ if (selectorPlan.selector !== '.card' || selectorPlan.preset !== null) {{
   throw new Error('unexpected selector plan: ' + JSON.stringify(selectorPlan));
 }}
 
+const defaultPlan = bridge.buildExtractionPlan({{}});
+if (defaultPlan.selector !== 'body' || defaultPlan.preset !== 'text') {{
+  throw new Error('unexpected default plan: ' + JSON.stringify(defaultPlan));
+}}
+
 const customElement = bridge.extractElementData(
   {{
     tagName: 'DIV',
@@ -366,6 +384,22 @@ const customElement = bridge.extractElementData(
 );
 if (customElement.tag !== 'div' || customElement.text !== 'Hello world' || customElement.attributes['data-id'] !== '42') {{
   throw new Error('unexpected custom element: ' + JSON.stringify(customElement));
+}}
+
+const textElement = bridge.extractElementData(
+  {{
+    tagName: 'BODY',
+    textContent: '  Whole page text  ',
+    attributes: [{{ name: 'data-secret', value: 'ignore-me' }}],
+    getAttribute() {{
+      return null;
+    }},
+    innerHTML: '<main>Whole page text</main>',
+  }},
+  'text'
+);
+if (textElement.tag !== 'body' || textElement.text !== 'Whole page text' || Object.keys(textElement.attributes).length !== 0) {{
+  throw new Error('unexpected text element: ' + JSON.stringify(textElement));
 }}
 
 const linkElement = bridge.extractElementData(

@@ -55,7 +55,10 @@ mod manager;
 mod tool;
 mod tool_info;
 
-pub use config::{McpServerConfig, McpTransport, SseBearerAuth, ToolFilter};
+pub use config::{
+    DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_DISCOVERY_TIMEOUT_MS, McpServerConfig, McpTransport,
+    SseBearerAuth, ToolFilter,
+};
 pub use connection::{McpConnection, McpConnectionStatus, McpServiceHandle};
 pub use error::McpError;
 pub use manager::McpManager;

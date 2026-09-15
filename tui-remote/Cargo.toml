@@ -1,4 +1,5 @@
 [package]
+autotests = false
 name = "swink-agent-tui-remote"
 version.workspace = true
 edition.workspace = true
@@ -24,22 +25,26 @@ default = ["cli"]
 cli = ["dep:clap", "dep:tracing-subscriber", "dep:tracing-appender", "dep:dirs"]
 
 [dependencies]
-swink-agent = { path = "..", version = "0.14.1", default-features = false }
-swink-agent-tui = { path = "../tui", version = "0.14.1", default-features = false }
-swink-agent-rpc = { path = "../rpc", version = "0.14.1", default-features = false, features = ["client"] }
+swink-agent = { path = "..", version = "0.14.2", default-features = false }
+swink-agent-tui = { path = "../tui", version = "0.14.2", default-features = false }
+swink-agent-rpc = { path = "../rpc", version = "0.14.2", default-features = false, features = ["client"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
 serde_json.workspace = true
 tracing.workspace = true
 clap = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"], optional = true }
-tracing-appender = { version = "0.2.5", optional = true }
+tracing-appender = { workspace = true, optional = true }
 dirs = { workspace = true, optional = true }
 
 [dev-dependencies]
 swink-agent = { path = "..", default-features = false, features = ["testkit"] }
-swink-agent-rpc = { path = "../rpc", version = "0.14.1" }
+swink-agent-rpc = { path = "../rpc", version = "0.14.2" }
 tokio = { workspace = true, features = ["full", "test-util"] }
 tempfile.workspace = true
 
 [lints]
 workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"

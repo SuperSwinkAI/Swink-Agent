@@ -213,9 +213,24 @@ fn proxy_stream<'a>(
             Err(event) => return stream::iter(crate::base::pre_stream_error(event)).left_stream(),
         };
 
+        crate::base::report_rate_limit(response.headers(), options.on_rate_limit.as_ref());
+
         let status = response.status();
         if !status.is_success() {
-            let event = error_event_from_status(status.as_u16(), "", "Proxy");
+            let code = status.as_u16();
+            let body = match crate::base::read_error_body_or_cancelled(
+                response,
+                &cancellation_token,
+                "operation cancelled",
+            )
+            .await
+            {
+                Ok(body) => body,
+                Err(event) => {
+                    return stream::iter(crate::base::pre_stream_error(event)).left_stream();
+                }
+            };
+            let event = error_event_from_status(code, &body, "Proxy");
             return stream::iter(crate::base::pre_stream_error(event)).left_stream();
         }
 

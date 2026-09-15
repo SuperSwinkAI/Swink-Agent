@@ -62,14 +62,15 @@ fn sanitize_web_tool_text(
     }
 }
 
-fn validate_url_against_filter(
+async fn validate_url_against_filter(
     filter: Option<&DomainFilter>,
     url: &Url,
     phase: &str,
 ) -> Result<(), String> {
     if let Some(filter) = filter {
         filter
-            .is_allowed(url)
+            .validate_and_resolve(url)
+            .await
             .map_err(|error| format!("{phase} URL blocked by domain filter: {error}"))?;
     }
 
@@ -80,7 +81,10 @@ fn reset_bridge_after_ambiguous_playwright_error<T>(
     bridge: &mut Option<T>,
     error: &PlaywrightError,
 ) {
-    if matches!(error, PlaywrightError::Timeout(_)) {
+    if matches!(
+        error,
+        PlaywrightError::Communication(_) | PlaywrightError::Timeout(_)
+    ) {
         *bridge = None;
     }
 }

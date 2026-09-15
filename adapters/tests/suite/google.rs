@@ -963,6 +963,47 @@ async fn google_malformed_function_call_finish_reason_emits_terminal_error() {
     );
 }
 
+#[tokio::test]
+async fn google_function_call_with_empty_name_is_terminal_protocol_error() {
+    let body = [
+        r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"c1","name":"","args":{"city":"Paris"}}}]}}]}"#,
+        "",
+        r#"data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":2,"totalTokenCount":12}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let events = collect_events(&stream_fn).await;
+
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AssistantMessageEvent::ToolCallStart { .. })),
+        "malformed functionCall must not open a tool call: {events:?}"
+    );
+    let error = find_error_message(&events).expect("missing terminal Error event");
+    assert!(
+        error.contains("missing a non-empty name"),
+        "expected provider diagnostic, got: {error}"
+    );
+    assert_eq!(find_error_kind(&events), Some(None));
+    let types: Vec<_> = events.iter().map(event_name).collect();
+    assert_eq!(types, ["Start", "Error"], "{events:?}");
+}
+
 // ── BlockAccumulator regression tests ─────────────────────────────────────────
 //
 // These tests verify the content-index ordering contract introduced when

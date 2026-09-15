@@ -821,6 +821,18 @@ fn process_function_call(
     state: &mut GeminiStreamState,
     events: &mut Vec<AssistantMessageEvent>,
 ) {
+    if function_call.name.trim().is_empty() {
+        warn!("Google Gemini function_call payload is missing a non-empty name");
+        events.extend(state.emit_terminal_error(
+            AssistantMessageEvent::error(
+                "Google Gemini function_call payload is missing a non-empty name",
+            ),
+            true,
+        ));
+        state.terminated = true;
+        return;
+    }
+
     let (key, id) = tool_call_identity(part_index, &function_call, state);
 
     if !state.tool_calls.contains_key(&key) {

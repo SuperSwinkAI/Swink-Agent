@@ -31,6 +31,10 @@ use crate::types::{
     TurnRecord,
 };
 
+/// Eval-set id used to key cache entries written by [`EvalRunner::run_case`],
+/// which has no enclosing [`EvalSet`].
+const RUN_CASE_CACHE_SET_ID: &str = "run_case";
+
 struct FactoryCancellationGuard(CancellationToken);
 
 impl Drop for FactoryCancellationGuard {
@@ -220,26 +224,50 @@ impl EvalRunner {
     }
 
     /// Run a single eval case and return the scored result.
+    ///
+    /// Shares the per-case pipeline with [`Self::run_set`], so it honors
+    /// [`Self::with_num_runs`], [`Self::with_cache`], and
+    /// [`Self::with_cancellation`] identically. Cache entries are stored under
+    /// the eval-set id `"run_case"`. A token that is already cancelled yields a
+    /// failing `"cancelled"` result without invoking the factory. Unlike
+    /// [`Self::run_set`], case-level errors are returned as `Err` rather than
+    /// folded into a failing result, and no telemetry spans are emitted.
     pub async fn run_case(
         &self,
         case: &EvalCase,
         factory: &dyn AgentFactory,
     ) -> Result<EvalCaseResult, EvalError> {
-        info!(case_id = %case.id, case_name = %case.name, "running eval case");
+        if let Some(tok) = &self.cancel
+            && tok.is_cancelled()
+        {
+            return Ok(cancelled_case_result(case));
+        }
         let initial_session = self.load_initial_session()?;
+        let initial_session_json = initial_session
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(EvalError::from)?;
         if let Some(state) = &initial_session {
             factory.with_initial_session(state);
         }
-        let invocation = invoke_agent_impl(
+        execute_case(
             case,
             factory,
+            RUN_CASE_CACHE_SET_ID,
+            self.cache.as_deref(),
+            &self.registry,
+            self.num_runs,
             self.cancel.as_ref(),
             initial_session.as_ref(),
+            initial_session_json.as_ref(),
             &self.agent_invocations,
+            #[cfg(feature = "telemetry")]
+            None,
+            #[cfg(feature = "telemetry")]
+            None,
         )
-        .await?;
-        let metric_results = self.registry.evaluate(case, &invocation);
-        Ok(scored_case_result(case, invocation, metric_results))
+        .await
     }
 
     /// Run an entire eval set and return aggregated results.
@@ -501,6 +529,8 @@ fn scored_case_result(
     };
     EvalCaseResult {
         case_id: case.id.clone(),
+        system_prompt: case.system_prompt.clone(),
+        user_messages: case.user_messages.clone(),
         invocation,
         metric_results,
         verdict,
@@ -743,6 +773,8 @@ async fn acquire_case_permit(
 fn cancelled_case_result(case: &EvalCase) -> EvalCaseResult {
     EvalCaseResult {
         case_id: case.id.clone(),
+        system_prompt: case.system_prompt.clone(),
+        user_messages: case.user_messages.clone(),
         invocation: error_invocation(None),
         metric_results: vec![cancelled_metric_result(
             "runner cancellation observed before case completion",
@@ -763,6 +795,8 @@ fn error_case_result(case: &EvalCase, err: &EvalError) -> EvalCaseResult {
     warn!(case_id = %case.id, error = %err, "eval case failed with error");
     EvalCaseResult {
         case_id: case.id.clone(),
+        system_prompt: case.system_prompt.clone(),
+        user_messages: case.user_messages.clone(),
         invocation: error_invocation(Some(err.to_string())),
         metric_results: vec![EvalMetricResult {
             evaluator_name: "error".to_string(),

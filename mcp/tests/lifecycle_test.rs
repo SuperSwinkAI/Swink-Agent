@@ -6,6 +6,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use rmcp::ServerHandler;
+use rmcp::model::{ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo};
+use rmcp::service::{RequestContext, RoleServer, ServiceExt};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
@@ -16,6 +19,42 @@ use swink_agent_mcp::{
 };
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::oneshot;
+
+#[derive(Clone)]
+struct FailingDiscoveryServer;
+
+impl ServerHandler for FailingDiscoveryServer {
+    fn get_info(&self) -> ServerInfo {
+        let mut info = ServerInfo::default();
+        info.instructions = Some("Mock MCP server with failing discovery".into());
+        info.capabilities = ServerCapabilities::builder().enable_tools().build();
+        info
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, rmcp::ErrorData> {
+        Err(rmcp::ErrorData::internal_error("discovery failed", None))
+    }
+}
+
+async fn spawn_failing_discovery_server_with_client()
+-> rmcp::service::RunningService<rmcp::service::RoleClient, rmcp::model::ClientInfo> {
+    let (client_stream, server_stream) = tokio::io::duplex(4096);
+
+    let _server_handle = tokio::spawn(async move {
+        if let Ok(svc) = FailingDiscoveryServer.serve(server_stream).await {
+            let _ = svc.waiting().await;
+        }
+    });
+
+    rmcp::model::ClientInfo::default()
+        .serve(client_stream)
+        .await
+        .expect("client connection should succeed")
+}
 
 /// T039: Drop `McpManager` cleans up without hang or panic.
 ///
@@ -455,13 +494,13 @@ async fn sse_session_expiry_recovers_without_wrapper_disconnect() {
     let _ = server_task.await;
 }
 
-/// Issue #611: `McpServerConnected` is emitted once the handshake completes.
+/// Issue #611: `McpServerConnected` is emitted once discovery succeeds.
 ///
 /// Uses `from_service` to take a pre-established rmcp service past the
-/// handshake boundary and asserts the connect event is the first lifecycle
-/// event observed.
+/// handshake boundary and asserts the connect event is queued only after
+/// the connection is fully ready.
 #[tokio::test]
-async fn connected_event_emitted_after_handshake() {
+async fn connected_event_emitted_after_discovery() {
     let (event_tx, mut event_rx) = unbounded_channel::<AgentEvent>();
 
     let mock_cfg = common::MockServerConfig::new(vec![]);
@@ -489,6 +528,37 @@ async fn connected_event_emitted_after_handshake() {
         }
         other => panic!("expected McpServerConnected first, got: {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn discovery_failure_does_not_emit_connected_event() {
+    let (event_tx, mut event_rx) = unbounded_channel::<AgentEvent>();
+
+    let service = spawn_failing_discovery_server_with_client().await;
+
+    let config = McpServerConfig::new(
+        "failing-discovery-server",
+        McpTransport::Stdio {
+            command: "mock".into(),
+            args: vec![],
+            env: HashMap::default(),
+        },
+    )
+    .with_requires_approval(false);
+
+    let error =
+        McpConnection::from_service(config, McpServiceHandle::from_rmcp(service), Some(event_tx))
+            .await
+            .expect_err("discovery failure should fail the connection");
+
+    assert!(
+        error.to_string().contains("tool discovery"),
+        "error should identify discovery as the failed phase, got: {error}"
+    );
+    assert!(
+        event_rx.try_recv().is_err(),
+        "failed discovery must not report the server as connected"
+    );
 }
 
 /// Issue #611: `McpToolsDiscovered` is emitted after the `list_tools` round trip

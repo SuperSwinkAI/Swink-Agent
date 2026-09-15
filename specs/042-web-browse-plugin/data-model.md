@@ -33,7 +33,7 @@ Builder-pattern configuration. All fields have sensible defaults.
 | max_redirects | `u32` | `10` | HTTP redirect follow limit |
 | max_search_results | `usize` | `10` | Max results from web.search |
 | user_agent | `String` | `"SwinkAgent/0.5"` | User-Agent header for HTTP requests |
-| playwright_path | `Option<PathBuf>` | `None` (auto-detect) | Path to `npx playwright` or `playwright` binary |
+| playwright_path | `Option<PathBuf>` | `None` (auto-detect) | Optional path to the Node.js executable used to run the embedded Playwright bridge script |
 | screenshot_timeout | `Duration` | `15s` | Playwright operation timeout |
 | request_timeout | `Duration` | `30s` | HTTP request timeout |
 | viewport_width | `u32` | `1280` | Default screenshot viewport width |

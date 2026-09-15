@@ -35,9 +35,35 @@ function normalizeHost(host) {
   return rawHost;
 }
 
+function normalizeDomain(value) {
+  return String(value || '').trim().replace(/\.+$/, '').toLowerCase();
+}
+
+function hostMatchesEntry(host, entry) {
+  const lowerHost = normalizeDomain(host);
+  const lowerEntry = normalizeDomain(entry);
+  if (!lowerHost || !lowerEntry) {
+    return false;
+  }
+
+  if (lowerEntry.startsWith('*.')) {
+    const suffix = lowerEntry.slice(2);
+    return (
+      suffix.length > 0 &&
+      lowerHost.length > suffix.length &&
+      lowerHost.endsWith(suffix) &&
+      lowerHost[lowerHost.length - suffix.length - 1] === '.'
+    );
+  }
+
+  return (
+    lowerHost === lowerEntry ||
+    (lowerHost.length > lowerEntry.length && lowerHost.endsWith(`.${lowerEntry}`))
+  );
+}
+
 function hostMatches(list, host) {
-  const lowerHost = (host || '').toLowerCase();
-  return (list || []).some((entry) => lowerHost === String(entry).toLowerCase());
+  return (list || []).some((entry) => hostMatchesEntry(host, entry));
 }
 
 function parseIpv4Bytes(host) {
@@ -425,7 +451,7 @@ function buildExtractionPlan(req) {
   }
 
   if (!selector) {
-    return { error: 'No selector or preset provided' };
+    return { selector: 'body', preset: 'text' };
   }
 
   return { selector, preset: req.preset || null };
@@ -442,9 +468,16 @@ function collectAttributes(el) {
 
 function extractElementData(el, preset) {
   const tag = (el.tagName || '').toLowerCase();
-  const text = (el.textContent || '').trim().slice(0, 500);
+  const fullText = (el.textContent || '').trim();
+  const text = fullText.slice(0, 500);
 
   switch (preset) {
+    case 'text':
+      return {
+        tag,
+        text: fullText,
+        attributes: {},
+      };
     case 'links':
       return {
         tag,
@@ -497,9 +530,16 @@ async function handleExtract(req) {
 
         function extractElementData(el, activePreset) {
           const tag = el.tagName.toLowerCase();
-          const text = (el.textContent || '').trim().slice(0, 500);
+          const fullText = (el.textContent || '').trim();
+          const text = fullText.slice(0, 500);
 
           switch (activePreset) {
+            case 'text':
+              return {
+                tag,
+                text: fullText,
+                attributes: {},
+              };
             case 'links':
               return {
                 tag,
@@ -614,6 +654,7 @@ module.exports = {
   createFilteringProxy,
   extractElementData,
   filterNeedsProxy,
+  hostMatches,
   installNavigationFilter,
   isBlockedPrivateHost,
   newContextOptions,

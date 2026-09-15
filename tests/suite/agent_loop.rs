@@ -16,8 +16,8 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolResult,
-    AssistantMessage, AssistantMessageEvent, ContentBlock, Cost, CustomMessage,
+    AgentContext, AgentError, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool,
+    AgentToolResult, AssistantMessage, AssistantMessageEvent, ContentBlock, Cost, CustomMessage,
     DefaultRetryStrategy, LlmMessage, MessageProvider, ModelSpec, PolicyContext, PolicyVerdict,
     PostTurnPolicy, PreTurnPolicy, StopReason, StreamFn, StreamOptions, ToolResultMessage,
     TurnPolicyContext, TurnSnapshot, Usage, UserMessage, agent_loop, agent_loop_continue,
@@ -238,6 +238,29 @@ impl Stream for CancelsThenStallsStream {
             }
             StalledStreamState::Pending => Poll::Pending,
         }
+    }
+}
+
+struct ProviderAbortStreamFn;
+
+impl StreamFn for ProviderAbortStreamFn {
+    fn stream<'a>(
+        &'a self,
+        _model: &'a ModelSpec,
+        _context: &'a AgentContext,
+        _options: &'a StreamOptions,
+        _cancellation_token: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        Box::pin(futures::stream::iter(vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::Error {
+                stop_reason: StopReason::Aborted,
+                error_message: AgentError::Aborted.to_string(),
+                usage: None,
+                error_kind: None,
+                retry_after: None,
+            },
+        ]))
     }
 }
 
@@ -2530,6 +2553,44 @@ async fn post_turn_policies_run_on_terminal_aborted_stop() {
             last_message_kind: "assistant",
         },
         "terminal aborted turns should still expose the committed assistant snapshot to post-turn policies"
+    );
+}
+
+#[tokio::test]
+async fn post_turn_policies_run_on_provider_stream_abort() {
+    let stream_fn = Arc::new(ProviderAbortStreamFn);
+    let observations = Arc::new(Mutex::new(Vec::new()));
+
+    let mut config = default_config(stream_fn);
+    config.post_turn_policies = vec![Arc::new(RecordingPostTurnPolicy {
+        observations: Arc::clone(&observations),
+    })];
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::TurnEnd {
+            reason: swink_agent::TurnEndReason::Aborted,
+            ..
+        }
+    )));
+    let recorded = observations.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 1, "post-turn policy should run once");
+    assert_eq!(
+        recorded[0],
+        RecordedTurnContext {
+            message_count: 1,
+            tool_result_count: 0,
+            last_message_kind: "assistant",
+        },
+        "provider stream aborts should expose the committed assistant snapshot to post-turn policies"
     );
 }
 

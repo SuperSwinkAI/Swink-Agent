@@ -92,6 +92,7 @@ impl StreamingArtifactStore for FileArtifactStore {
 
             let lock = self.artifact_lock(session_id, name).await;
             let _guard = lock.lock().await;
+            let _process_guard = self.process_artifact_lock(session_id, name).await?;
 
             tokio::fs::create_dir_all(&dir).await.map_err(storage_err)?;
 
@@ -147,6 +148,7 @@ impl StreamingArtifactStore for FileArtifactStore {
 
             let lock = self.artifact_lock(session_id, name).await;
             let _guard = lock.lock().await;
+            let _process_guard = self.process_artifact_lock(session_id, name).await?;
 
             let meta = self.read_meta(session_id, name).await?;
             self.reject_metadata_content_mismatch(session_id, name, &meta)

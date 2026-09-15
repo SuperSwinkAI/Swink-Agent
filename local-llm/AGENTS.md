@@ -6,7 +6,7 @@
 
 ## Key Facts
 
-- Models lazily downloaded from HuggingFace on first `ensure_ready()` by `src/download.rs` (direct `resolve` endpoint on the workspace reqwest stack, no hf-hub). Cached in the `huggingface_hub` layout under `~/.cache/huggingface/hub/` (`HF_HOME`/`HF_HUB_CACHE`/`HF_TOKEN` honored), so caches are shared with other tools.
+- Models lazily downloaded from HuggingFace on first `ensure_ready()` by `src/download.rs` (direct `resolve` endpoint on the workspace reqwest stack, no hf-hub). Cached in the `huggingface_hub` layout under `~/.cache/huggingface/hub/` (`HF_HOME`/`HF_HUB_CACHE`/`HF_TOKEN` honored), so caches are shared with other tools. A blob download holds an exclusive `blobs/{etag}.lock` (std `File::lock`, taken on the blocking pool) through finalize, and streams into a fixed `{etag}.incomplete` that a later attempt resumes with a `Range` request — the lock is what makes the fixed partial name safe.
 - `ModelState` lifecycle: `Unloaded → Downloading → Loading → Ready | Failed`.
 - `LlamaContext` is `!Send` — inference uses dedicated thread + channel pattern.
 - Per-request overrides (`max_tokens`, `temperature`) go in `GenerateOptions`, not `RunnerConfig`.

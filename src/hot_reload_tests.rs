@@ -63,13 +63,17 @@ description = "Run command"
 command = "echo {input}"
 "#;
     let tool = ScriptTool::from_toml(definition).unwrap();
-    // Input contains a single quote to exercise the '\'' escape path
+    // Input contains a single quote to exercise the POSIX '\'' escape path.
     let cmd = tool.interpolate_command(&json!({"input": "it's; rm -rf /"}));
-    assert!(
-        cmd.contains("'\\''"),
-        "expected '\\'' escape sequence in {cmd}"
-    );
-    assert!(cmd.contains("'it'\\''s; rm -rf /'"));
+    if cfg!(windows) {
+        assert!(cmd.contains("\"it's; rm -rf /\""));
+    } else {
+        assert!(
+            cmd.contains("'\\''"),
+            "expected '\\'' escape sequence in {cmd}"
+        );
+        assert!(cmd.contains("'it'\\''s; rm -rf /'"));
+    }
 }
 
 #[tokio::test]
@@ -91,6 +95,38 @@ command = "echo hello"
         )
         .await;
     assert!(!result.is_error);
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn script_tool_escapes_windows_command_separators() {
+    let dir = tempfile::tempdir().unwrap();
+    let safe_path = dir.path().join("safe.txt");
+    let injected_path = dir.path().join("injected.txt");
+    let command = format!("echo {{input}} > \"{}\"", safe_path.display());
+    let payload = format!("safe & echo injected > {}", injected_path.display());
+    let tool = ScriptTool {
+        def: ScriptToolDef::new("run", "Run command", command),
+        schema: default_schema(),
+    };
+
+    let result = tool
+        .execute(
+            "call_1",
+            json!({ "input": payload }),
+            CancellationToken::new(),
+            None,
+            std::sync::Arc::new(std::sync::RwLock::new(crate::SessionState::new())),
+            None,
+        )
+        .await;
+
+    assert!(!result.is_error, "expected command to succeed: {result:?}");
+    assert!(safe_path.exists(), "expected the intended command to run");
+    assert!(
+        !injected_path.exists(),
+        "expected interpolated argument to stay within the echo command"
+    );
 }
 
 #[test]

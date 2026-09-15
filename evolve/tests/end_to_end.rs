@@ -82,6 +82,44 @@ impl MutationStrategy for HelpfulToUsefulStrategy {
     }
 }
 
+struct BudgetExhaustingStrategy;
+
+impl MutationStrategy for BudgetExhaustingStrategy {
+    fn name(&self) -> &str {
+        "budget_exhausting"
+    }
+    fn mutate(
+        &self,
+        target: &str,
+        context: &MutationContext<'_>,
+    ) -> Result<Vec<Candidate>, MutationError> {
+        if let Some(budget) = context.budget {
+            budget.record(Cost::default().with_total(1.0));
+        }
+        Ok(vec![Candidate::new(
+            context.weak_point.component.clone(),
+            target.to_string(),
+            format!("{target} rewritten"),
+            self.name().to_string(),
+        )])
+    }
+}
+
+struct UnexpectedStrategy;
+
+impl MutationStrategy for UnexpectedStrategy {
+    fn name(&self) -> &str {
+        "unexpected"
+    }
+    fn mutate(
+        &self,
+        _target: &str,
+        _context: &MutationContext<'_>,
+    ) -> Result<Vec<Candidate>, MutationError> {
+        panic!("strategy should not run after budget exhaustion")
+    }
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 fn low_score_case(id: &str) -> EvalCase {
@@ -188,6 +226,34 @@ async fn budget_exhaustion_returns_partial_result() {
         result.status,
     );
     assert_eq!(result.candidates_evaluated, 0);
+}
+
+#[tokio::test]
+async fn mutation_budget_exhaustion_stops_before_next_strategy() {
+    let tmp = tempfile::tempdir().unwrap();
+    let target = OptimizationTarget::new("You are a helpful assistant.", vec![]);
+    let set = make_eval_set(vec![low_score_case("c1")]);
+    let config = OptimizationConfig::new(set, tmp.path())
+        .with_budget(CycleBudget::new(Cost::default().with_total(1.0)))
+        .with_strategies(vec![
+            Box::new(BudgetExhaustingStrategy),
+            Box::new(UnexpectedStrategy),
+        ]);
+    let mut runner = EvolutionRunner::new(target, config, Arc::new(EchoFactory), None);
+
+    let result = runner.run_cycle().await.unwrap();
+
+    assert_eq!(
+        result.status,
+        CycleStatus::BudgetExhausted {
+            phase: "mutation".to_string(),
+        }
+    );
+    assert_eq!(result.candidates_evaluated, 0);
+    assert!(
+        result.mutation_errors.is_empty(),
+        "budget exhaustion should stop cleanly before the next strategy"
+    );
 }
 
 /// Verifies that `run_cycles` applies accepted improvements to the target

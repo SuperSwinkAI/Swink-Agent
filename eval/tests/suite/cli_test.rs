@@ -368,6 +368,59 @@ fn run_returns_one_when_eval_set_fails() {
 }
 
 #[test]
+fn run_rejects_json_eval_set_with_duplicate_case_ids() {
+    let dir = TempDir::new().unwrap();
+    let set_path = write_json(
+        &dir,
+        "set.json",
+        &serde_json::json!({
+            "id": "cli-invalid-json",
+            "name": "CLI invalid JSON",
+            "cases": [
+                {
+                    "id": "duplicate",
+                    "name": "First case",
+                    "system_prompt": "You are a test agent.",
+                    "user_messages": ["hi"],
+                    "expected_response": { "mode": "contains", "substring": "hi" }
+                },
+                {
+                    "id": "duplicate",
+                    "name": "Second case",
+                    "system_prompt": "You are a test agent.",
+                    "user_messages": ["hello"],
+                    "expected_response": { "mode": "contains", "substring": "hello" }
+                }
+            ]
+        }),
+    );
+
+    let out = Command::new(binary_path())
+        .args([
+            "run",
+            "--set",
+            set_path.to_str().unwrap(),
+            "--parallelism",
+            "1",
+            "--reporter",
+            "console",
+        ])
+        .output()
+        .expect("spawn");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "invalid JSON eval set should map to config-error exit 2"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("swink-eval run: loading eval set")
+            && stderr.contains("duplicate case id `duplicate`"),
+        "validation error details should be emitted to stderr; got: {stderr}"
+    );
+}
+
+#[test]
 fn run_loads_and_validates_eval_set_before_configuration_check() {
     let dir = TempDir::new().unwrap();
     let set_path = dir.path().join("set.yaml");

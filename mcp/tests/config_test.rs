@@ -3,7 +3,10 @@
 use std::collections::HashMap;
 
 use swink_agent::CredentialType;
-use swink_agent_mcp::{McpServerConfig, McpTransport, SseBearerAuth, ToolFilter};
+use swink_agent_mcp::{
+    DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_DISCOVERY_TIMEOUT_MS, McpServerConfig, McpTransport,
+    SseBearerAuth, ToolFilter,
+};
 
 #[test]
 fn server_config_construction() {
@@ -24,6 +27,24 @@ fn server_config_construction() {
     assert_eq!(config.tool_prefix.as_deref(), Some("test"));
     assert_eq!(config.connect_timeout_ms, Some(1_500));
     assert_eq!(config.discovery_timeout_ms, Some(2_500));
+}
+
+#[test]
+fn server_config_defaults_include_startup_timeouts() {
+    let config = McpServerConfig::new(
+        "default-timeouts",
+        McpTransport::Stdio {
+            command: "echo".into(),
+            args: vec![],
+            env: HashMap::default(),
+        },
+    );
+
+    assert_eq!(config.connect_timeout_ms, Some(DEFAULT_CONNECT_TIMEOUT_MS));
+    assert_eq!(
+        config.discovery_timeout_ms,
+        Some(DEFAULT_DISCOVERY_TIMEOUT_MS)
+    );
 }
 
 #[test]
@@ -80,6 +101,46 @@ fn sse_transport_deserialization_defaults_headers() {
         }
         other => panic!("expected SSE transport, got {other:?}"),
     }
+}
+
+#[test]
+fn missing_timeout_fields_deserialize_to_bounded_defaults() {
+    let json = r#"{
+        "name": "remote",
+        "transport": {
+            "type": "streamable_http",
+            "url": "http://localhost:8080/sse"
+        },
+        "tool_prefix": null,
+        "tool_filter": null,
+        "requires_approval": false
+    }"#;
+
+    let config: McpServerConfig = serde_json::from_str(json).expect("deserialize");
+
+    assert_eq!(config.connect_timeout_ms, Some(DEFAULT_CONNECT_TIMEOUT_MS));
+    assert_eq!(
+        config.discovery_timeout_ms,
+        Some(DEFAULT_DISCOVERY_TIMEOUT_MS)
+    );
+}
+
+#[test]
+fn null_timeout_fields_deserialize_to_unbounded_opt_out() {
+    let json = r#"{
+        "name": "remote",
+        "transport": {
+            "type": "streamable_http",
+            "url": "http://localhost:8080/sse"
+        },
+        "connect_timeout_ms": null,
+        "discovery_timeout_ms": null
+    }"#;
+
+    let config: McpServerConfig = serde_json::from_str(json).expect("deserialize");
+
+    assert_eq!(config.connect_timeout_ms, None);
+    assert_eq!(config.discovery_timeout_ms, None);
 }
 
 #[test]

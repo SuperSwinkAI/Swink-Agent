@@ -37,6 +37,7 @@ use swink_agent_eval::HtmlReporter;
 use swink_agent_eval::{
     AgentFactory, ConsoleReporter, EvalError, EvalRunner, EvalSet, EvalSetResult, GateConfig,
     JsonReporter, MarkdownReporter, Reporter, ReporterOutput, check_gate, decode_result_json,
+    validate_eval_set,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -387,7 +388,9 @@ fn load_eval_set(path: &Path) -> Result<EvalSet, String> {
         }
         "json" => {
             let bytes = fs::read(path).map_err(|e| e.to_string())?;
-            serde_json::from_slice::<EvalSet>(&bytes).map_err(|e| e.to_string())
+            let set = serde_json::from_slice::<EvalSet>(&bytes).map_err(|e| e.to_string())?;
+            validate_eval_set(&set).map_err(|e| e.to_string())?;
+            Ok(set)
         }
         other => Err(format!("unsupported eval set extension: .{other}")),
     }

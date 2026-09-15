@@ -299,6 +299,42 @@ async fn tool_call_arriving_only_in_done_still_streams_arguments() {
 }
 
 #[tokio::test]
+async fn function_call_without_name_is_terminal_protocol_error() {
+    let body = sse(&[
+        (
+            "response.output_item.added",
+            serde_json::json!({"type": "response.output_item.added", "output_index": 0, "item": {"type": "function_call", "id": "fc_1", "call_id": "call_x", "arguments": ""}}),
+        ),
+        completed(serde_json::json!({"input_tokens": 1, "output_tokens": 1})),
+    ]);
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let events = collect(
+        &ResponsesStreamFn::new(server.uri(), "k"),
+        &test_context(),
+        StreamOptions::default(),
+    )
+    .await;
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AssistantMessageEvent::ToolCallStart { .. })),
+        "malformed function_call must not open a tool call: {events:?}"
+    );
+    let error = find_error_message(&events).expect("missing terminal Error event");
+    assert!(
+        error.contains("missing a non-empty name"),
+        "expected provider diagnostic, got: {error}"
+    );
+    assert_eq!(find_error_kind(&events), Some(None));
+    assert_eq!(names(&events), ["Start", "Error"], "{events:?}");
+}
+
+#[tokio::test]
 async fn usage_accounting_splits_cached_and_keeps_reasoning_tokens() {
     let body = sse(&[
         (
@@ -415,6 +451,10 @@ async fn mid_stream_error_event_closes_open_blocks_then_errors() {
         message.contains("server_error") && message.contains("boom"),
         "{message}"
     );
+    assert_eq!(
+        find_error_kind(&events),
+        Some(Some(StreamErrorKind::Network))
+    );
 }
 
 #[tokio::test]
@@ -437,6 +477,72 @@ async fn rate_limit_error_event_is_throttled() {
     assert_eq!(
         find_error_kind(&events),
         Some(Some(StreamErrorKind::Throttled))
+    );
+}
+
+#[tokio::test]
+async fn response_failed_context_length_is_context_overflow() {
+    let body = sse(&[(
+        "response.failed",
+        serde_json::json!({
+            "type": "response.failed",
+            "response": {
+                "status": "failed",
+                "error": {
+                    "code": "context_length_exceeded",
+                    "message": "This model's maximum context length is 128000 tokens."
+                }
+            }
+        }),
+    )]);
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+    let events = collect(
+        &ResponsesStreamFn::new(server.uri(), "k"),
+        &test_context(),
+        StreamOptions::default(),
+    )
+    .await;
+    assert_eq!(
+        find_error_kind(&events),
+        Some(Some(StreamErrorKind::ContextWindowExceeded)),
+        "{events:?}"
+    );
+}
+
+#[tokio::test]
+async fn response_failed_content_filter_is_content_filtered() {
+    let body = sse(&[(
+        "response.failed",
+        serde_json::json!({
+            "type": "response.failed",
+            "response": {
+                "status": "failed",
+                "error": {
+                    "code": "content_filter",
+                    "message": "The response was filtered due to policy."
+                }
+            }
+        }),
+    )]);
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+    let events = collect(
+        &ResponsesStreamFn::new(server.uri(), "k"),
+        &test_context(),
+        StreamOptions::default(),
+    )
+    .await;
+    assert_eq!(
+        find_error_kind(&events),
+        Some(Some(StreamErrorKind::ContentFiltered)),
+        "{events:?}"
     );
 }
 
@@ -498,6 +604,33 @@ async fn incomplete_max_output_tokens_is_done_with_length() {
     .await;
     assert!(
         matches!(events.last(), Some(AssistantMessageEvent::Done { stop_reason: StopReason::Length, usage, .. }) if usage.output == 99),
+        "{events:?}"
+    );
+}
+
+#[tokio::test]
+async fn incomplete_unknown_reason_is_terminal_error() {
+    let body = sse(&[(
+        "response.incomplete",
+        serde_json::json!({"type": "response.incomplete", "response": {"status": "incomplete", "incomplete_details": {"reason": "server_overloaded"}}}),
+    )]);
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+    let events = collect(
+        &ResponsesStreamFn::new(server.uri(), "k"),
+        &test_context(),
+        StreamOptions::default(),
+    )
+    .await;
+    assert_eq!(names(&events), ["Start", "Error"], "{events:?}");
+    assert_eq!(find_error_kind(&events), Some(None), "{events:?}");
+    assert!(
+        find_error_message(&events)
+            .unwrap()
+            .contains("unrecognized reason `server_overloaded`"),
         "{events:?}"
     );
 }

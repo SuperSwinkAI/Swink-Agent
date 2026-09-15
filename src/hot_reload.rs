@@ -154,10 +154,29 @@ impl ScriptTool {
         }
     }
 
-    /// Shell-escape a string value to prevent command injection.
+    /// Shell-escape a string value for the host shell to prevent command injection.
+    #[cfg(not(windows))]
     fn shell_escape(value: &str) -> String {
         // Single-quote wrapping with internal single-quote escaping
         format!("'{}'", value.replace('\'', "'\\''"))
+    }
+
+    /// Shell-escape a string value for `cmd.exe` to prevent command injection.
+    #[cfg(windows)]
+    fn shell_escape(value: &str) -> String {
+        let mut escaped = String::with_capacity(value.len() + 2);
+        escaped.push('"');
+        for ch in value.chars() {
+            match ch {
+                '^' | '&' | '|' | '<' | '>' | '(' | ')' | '%' | '!' | '"' => {
+                    escaped.push('^');
+                    escaped.push(ch);
+                }
+                _ => escaped.push(ch),
+            }
+        }
+        escaped.push('"');
+        escaped
     }
 
     /// Interpolate parameters into the command template.
@@ -247,6 +266,20 @@ const SHELL: (&str, &str) = ("sh", "-c");
 /// Build a platform-appropriate shell `Command` that executes `command`.
 ///
 /// Unix: `sh -c <command>`. Windows: `cmd /C <command>`.
+#[cfg(windows)]
+fn shell_command(command: &str) -> tokio::process::Command {
+    use std::os::windows::process::CommandExt;
+
+    let (program, flag) = SHELL;
+    let mut cmd = std::process::Command::new(program);
+    cmd.arg(flag).raw_arg(command);
+    tokio::process::Command::from(cmd)
+}
+
+/// Build a platform-appropriate shell `Command` that executes `command`.
+///
+/// Unix: `sh -c <command>`. Windows: `cmd /C <command>`.
+#[cfg(not(windows))]
 fn shell_command(command: &str) -> tokio::process::Command {
     let (program, flag) = SHELL;
     let mut cmd = tokio::process::Command::new(program);

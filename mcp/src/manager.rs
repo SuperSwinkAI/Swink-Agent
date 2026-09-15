@@ -4,9 +4,10 @@
 //! optional name prefixing, detects name collisions, and exposes a flat list
 //! of [`AgentTool`] implementations ready for use in an agent.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use futures::stream::{FuturesUnordered, StreamExt};
 use swink_agent::{AgentEvent, AgentTool, CredentialResolver};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::warn;
@@ -94,6 +95,8 @@ impl McpManager {
     /// discovered tools, and checks for name collisions. Useful for testing
     /// with in-process mock servers.
     pub fn from_connections(connections: Vec<McpConnection>) -> Result<Self, McpError> {
+        validate_unique_server_names(connections.iter().map(|conn| conn.config.name.as_str()))?;
+
         let mut all_tools: Vec<(String, String, Arc<dyn AgentTool>)> = Vec::new();
         let mut arc_connections = Vec::with_capacity(connections.len());
 
@@ -118,38 +121,57 @@ impl McpManager {
     ///
     /// Servers that fail to connect are logged and skipped; the remaining
     /// servers' tools are still available. Repeated calls replace the prior
-    /// connection set instead of appending to it. Returns an error only if a
-    /// tool name collision is detected across servers.
+    /// connection set instead of appending to it. Returns an error if duplicate
+    /// server names are configured or if a tool name collision is detected
+    /// across servers.
     pub async fn connect_all(&mut self) -> Result<(), McpError> {
+        validate_unique_server_names(self.configs.iter().map(|config| config.name.as_str()))?;
+
         if !self.connections.is_empty() || !self.tools.is_empty() {
             self.shutdown().await;
         }
 
-        let mut all_tools: Vec<(String, String, Arc<dyn AgentTool>)> = Vec::new();
-        let mut connections = Vec::new();
-
-        for config in self.configs.clone() {
-            match McpConnection::connect_with_resolver(
-                config.clone(),
-                self.credential_resolver.clone(),
-                self.event_tx.clone(),
-            )
-            .await
-            {
-                Ok(connection) => {
-                    let conn = Arc::new(connection);
-                    all_tools.extend(build_tools_for_connection(&conn));
-                    connections.push(conn);
+        let mut pending = self
+            .configs
+            .clone()
+            .into_iter()
+            .enumerate()
+            .map(|(index, config)| {
+                let credential_resolver = self.credential_resolver.clone();
+                let event_tx = self.event_tx.clone();
+                async move {
+                    let server_name = config.name.clone();
+                    let result =
+                        McpConnection::connect_with_resolver(config, credential_resolver, event_tx)
+                            .await;
+                    (index, server_name, result)
                 }
+            })
+            .collect::<FuturesUnordered<_>>();
+
+        let mut connections = Vec::new();
+        while let Some((index, server_name, result)) = pending.next().await {
+            match result {
+                Ok(connection) => connections.push((index, Arc::new(connection))),
                 Err(e) => {
                     warn!(
-                        server = %config.name,
+                        server = %server_name,
                         error = %e,
                         "MCP server connection failed, continuing without this server"
                     );
                 }
             }
         }
+
+        connections.sort_by_key(|(index, _)| *index);
+        let all_tools = connections
+            .iter()
+            .flat_map(|(_, conn)| build_tools_for_connection(conn))
+            .collect();
+        let connections = connections
+            .into_iter()
+            .map(|(_, conn)| conn)
+            .collect::<Vec<_>>();
 
         let tools = match detect_collisions_and_collect(all_tools) {
             Ok(tools) => tools,
@@ -200,6 +222,20 @@ impl std::fmt::Debug for McpManager {
             .field("credential_resolver", &self.credential_resolver.is_some())
             .finish()
     }
+}
+
+fn validate_unique_server_names<'a>(
+    names: impl IntoIterator<Item = &'a str>,
+) -> Result<(), McpError> {
+    let mut seen = HashSet::new();
+    for name in names {
+        if !seen.insert(name) {
+            return Err(McpError::DuplicateServerName {
+                name: name.to_string(),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Check for tool name collisions and return the flat tool list.

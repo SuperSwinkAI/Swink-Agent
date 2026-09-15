@@ -470,6 +470,7 @@ where
 
         let mut write_meta = meta.clone();
         write_meta.id = id.to_string();
+        write_meta.updated_at = now_utc();
         write_meta.sequence += 1;
         write_op(path, &write_meta, messages, id)
     })
@@ -953,6 +954,7 @@ impl SessionStore for JsonlSessionStore {
 
             let mut write_meta = meta.clone();
             write_meta.id = id.to_string();
+            write_meta.updated_at = now_utc();
             write_meta.sequence += 1;
 
             let mut preserved_lines =
@@ -1340,6 +1342,7 @@ impl JsonlSessionStore {
             // Increment sequence for the write
             let mut write_meta = meta.clone();
             write_meta.id = id.to_string();
+            write_meta.updated_at = now_utc();
             write_meta.sequence += 1;
             let preserved_lines = preserve_existing_lines(&path, id, preserve_for_entry_save)?;
 
@@ -1423,6 +1426,7 @@ impl JsonlSessionStore {
 
             let mut write_meta = meta.clone();
             write_meta.id = id.to_string();
+            write_meta.updated_at = now_utc();
             write_meta.sequence += 1;
 
             let record_lines = entries
