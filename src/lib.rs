@@ -104,7 +104,7 @@ pub use convert::{MessageConverter, ToolSchema, convert_messages, extract_tool_s
 pub use credential::{
     AuthConfig, AuthScheme, AuthorizationHandler, Credential, CredentialError, CredentialFuture,
     CredentialResolver, CredentialStore, CredentialType, DeviceCodeHandler, DeviceCodePrompt,
-    ResolvedCredential,
+    ResolvedCredential, SanitizedStoreError,
 };
 pub use emit::Emission;
 pub use error::{AgentError, DowncastError};
