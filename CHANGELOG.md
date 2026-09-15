@@ -7,7 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+
+## [0.14.2] - 2026-09-15
+
+### Security
+- Bump `rustls` to 0.23.45 (RUSTSEC-2026-0285) (#1348).
+
+### Added
+- `core`: `FnTool` closures can access session state, the resolved credential, and the tool's auth config (#1346).
+- `core`: `SanitizedStoreError` lets a credential store mark a message as secret-free so `CredentialError::StoreError` shows the reason; other backend errors stay redacted (#1353).
+- `auth`: `KeychainBackend::max_secret_len()` (defaults to `None`) declares a per-entry size limit (#1353).
+
 ### Fixed
+- `auth`: on Windows, `KeychainCredentialStore` now stores credentials larger than Credential Manager's 2560-byte limit (e.g. Codex OAuth2 tokens) by splitting them across chunk entries, committed atomically; previously every such sign-in failed with a bare "credential store error" (#1353).
+- `core`: pause snapshots refresh after in-turn context mutations (#1344).
+- `core`: `FileCheckpointStore` filesystem work runs on the blocking pool (#1350).
+- `plugins/web`: domain-filter DNS resolution moved off the async executor (#1349); the Playwright bridge resets after IPC errors; fetch content truncation honors its limit.
+- `eval`: `EvalRunner::run_case` routes through the shared `execute_case` path (#1345).
+- `tui`: root built-in tools stay out of remote TUI builds (#1347); the context gauge uses the correct budget.
+- `adapters`: Codex credential resolution races cancellation; nameless provider tool calls are rejected.
+- `core`: `ScriptTool` escaping fixed on Windows.
+- Feature-surface contract synced with the adapters and local-llm manifests (#1343).
 - `local-llm`: local model output now streams token events incrementally instead of buffering the whole generation before consumers see text, thinking, or tool-call deltas (#1302).
 - `adapters`: Responses SSE terminal failures now share HTTP-path structured error classification, preserving retry, auth, content-filter, model-retired, and context-overflow handling (#1303).
 - `core`: provider-originated abort turns now run PostTurn policies after committing the synthetic abort assistant message (#1304).
