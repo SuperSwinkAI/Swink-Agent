@@ -281,10 +281,16 @@ impl fmt::Debug for CredentialError {
                 .field("expected", expected)
                 .field("actual", actual)
                 .finish(),
-            Self::StoreError(_) => f
-                .debug_tuple("CredentialError::StoreError")
-                .field(&"[REDACTED]")
-                .finish(),
+            Self::StoreError(error) => match error.downcast_ref::<SanitizedStoreError>() {
+                Some(sanitized) => f
+                    .debug_tuple("CredentialError::StoreError")
+                    .field(sanitized)
+                    .finish(),
+                None => f
+                    .debug_tuple("CredentialError::StoreError")
+                    .field(&"[REDACTED]")
+                    .finish(),
+            },
             Self::Timeout { key } => f
                 .debug_struct("CredentialError::Timeout")
                 .field("key", key)
@@ -319,8 +325,12 @@ impl std::fmt::Display for CredentialError {
                 "credential type mismatch for {key}: expected {expected:?}, got {actual:?}"
             ),
             // Backend store failures may contain arbitrary vendor text, so the
-            // user-facing `Display` output stays generic.
-            Self::StoreError(_) => f.write_str("credential store error"),
+            // user-facing `Display` output stays generic unless the store has
+            // vouched for the message via `SanitizedStoreError`.
+            Self::StoreError(error) => match error.downcast_ref::<SanitizedStoreError>() {
+                Some(sanitized) => write!(f, "credential store error: {sanitized}"),
+                None => f.write_str("credential store error"),
+            },
             Self::Timeout { key } => write!(f, "credential resolution timed out for {key}"),
             Self::AuthorizationFailed { key, reason } => {
                 write!(f, "authorization failed for {key}: {reason}")
@@ -358,9 +368,12 @@ impl Clone for CredentialError {
                 expected: *expected,
                 actual: *actual,
             },
-            Self::StoreError(error) => {
-                Self::StoreError(Box::new(std::io::Error::other(error.to_string())))
-            }
+            Self::StoreError(error) => match error.downcast_ref::<SanitizedStoreError>() {
+                Some(sanitized) => {
+                    Self::StoreError(Box::new(SanitizedStoreError(sanitized.0.clone())))
+                }
+                None => Self::StoreError(Box::new(std::io::Error::other(error.to_string()))),
+            },
             Self::Timeout { key } => Self::Timeout { key: key.clone() },
             Self::AuthorizationFailed { key, reason } => Self::AuthorizationFailed {
                 key: key.clone(),
@@ -370,6 +383,32 @@ impl Clone for CredentialError {
         }
     }
 }
+
+/// A credential-store failure whose message is known to hold no secret
+/// material.
+///
+/// [`CredentialError::StoreError`] redacts arbitrary backend errors, since
+/// vendor text can quote credential values. A store that builds its messages
+/// from sanitized parts wraps them in this type so the reason (a size limit, a
+/// locked keyring) survives into `Display` and `Debug`.
+#[derive(Debug)]
+pub struct SanitizedStoreError(String);
+
+impl SanitizedStoreError {
+    /// Wrap a message the caller guarantees contains no secret values.
+    #[must_use]
+    pub fn new(message: impl Into<String>) -> Self {
+        Self(message.into())
+    }
+}
+
+impl fmt::Display for SanitizedStoreError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for SanitizedStoreError {}
 
 /// Boxed async result used by credential traits.
 pub type CredentialFuture<'a, T> =

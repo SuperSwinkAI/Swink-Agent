@@ -22,6 +22,10 @@ use swink_agent_auth::{KeychainBackend, KeychainCredentialStore, KeychainError};
 struct FakeState {
     entries: Mutex<HashMap<(String, String), String>>,
     deletes: AtomicUsize,
+    /// Per-entry cap in UTF-16 code units, enforced like Windows does.
+    limit: Option<usize>,
+    /// Number of further `set` calls that succeed before every `set` fails.
+    sets_before_failure: Mutex<Option<usize>>,
 }
 
 /// In-process stand-in for the platform keychain.
@@ -60,6 +64,32 @@ impl FakeKeychain {
     fn delete_calls(&self) -> usize {
         self.state.deletes.load(Ordering::SeqCst)
     }
+
+    /// A fake enforcing Windows Credential Manager's 2560-byte UTF-16 blob cap.
+    fn windows_sized() -> Self {
+        Self {
+            state: Arc::new(FakeState {
+                limit: Some(2560 / 2),
+                ..FakeState::default()
+            }),
+        }
+    }
+
+    fn fail_sets_after(&self, successes: usize) {
+        *self.state.sets_before_failure.lock().unwrap() = Some(successes);
+    }
+
+    fn entry_count(&self) -> usize {
+        self.state.entries.lock().unwrap().len()
+    }
+
+    fn remove_raw_where(&self, predicate: impl Fn(&str) -> bool) {
+        self.state
+            .entries
+            .lock()
+            .unwrap()
+            .retain(|(_, account), _| !predicate(account));
+    }
 }
 
 impl KeychainBackend for FakeKeychain {
@@ -68,6 +98,21 @@ impl KeychainBackend for FakeKeychain {
     }
 
     fn set(&self, service: &str, account: &str, secret: &str) -> Result<(), KeychainError> {
+        if let Some(remaining) = self.state.sets_before_failure.lock().unwrap().as_mut() {
+            if *remaining == 0 {
+                return Err(KeychainError::Access("injected write failure".into()));
+            }
+            *remaining -= 1;
+        }
+        if self
+            .state
+            .limit
+            .is_some_and(|limit| secret.encode_utf16().count() > limit)
+        {
+            return Err(KeychainError::Access(
+                "secret exceeds platform limit".into(),
+            ));
+        }
         self.state.entries.lock().unwrap().insert(
             (service.to_string(), account.to_string()),
             secret.to_string(),
@@ -83,6 +128,10 @@ impl KeychainBackend for FakeKeychain {
             .unwrap()
             .remove(&(service.to_string(), account.to_string()));
         Ok(())
+    }
+
+    fn max_secret_len(&self) -> Option<usize> {
+        self.state.limit
     }
 }
 
@@ -136,6 +185,162 @@ fn oauth2_credential() -> Credential {
         client_secret: Some("cs-789".into()),
         scopes: vec!["calendar.read".into()],
     }
+}
+
+/// An `OAuth2` credential shaped like a Codex sign-in: JWT-sized tokens whose
+/// JSON is far past Windows' 1280-UTF-16-unit entry cap. The multi-byte and
+/// astral characters make chunk boundaries land near non-ASCII text.
+fn large_oauth2_credential() -> Credential {
+    Credential::OAuth2 {
+        access_token: format!("eyJ{}", "a".repeat(2500)),
+        refresh_token: Some(format!("rt-{}", "é😀".repeat(700))),
+        expires_at: None,
+        token_url: "https://auth.example.test/oauth/token".into(),
+        client_id: "app_codex".into(),
+        client_secret: None,
+        scopes: vec!["openid".into(), "offline_access".into()],
+    }
+}
+
+fn access_token(credential: &Credential) -> &str {
+    match credential {
+        Credential::OAuth2 { access_token, .. } => access_token,
+        other => panic!("expected OAuth2, got {other:?}"),
+    }
+}
+
+// ─── Size-limited backends (#1353) ──────────────────────────────────────────
+
+#[tokio::test]
+async fn credential_over_windows_blob_limit_roundtrips() {
+    let backend = FakeKeychain::windows_sized();
+    let store = KeychainCredentialStore::with_backend(backend.clone());
+    let credential = large_oauth2_credential();
+
+    store.set("codex", credential.clone()).await.unwrap();
+
+    assert!(backend.entry_count() > 1, "credential was not split");
+    let got = store.get("codex").await.unwrap().unwrap();
+    assert_eq!(
+        serde_json::to_string(&got).unwrap(),
+        serde_json::to_string(&credential).unwrap()
+    );
+}
+
+#[tokio::test]
+async fn small_credential_stays_a_single_entry_on_limited_backend() {
+    let backend = FakeKeychain::windows_sized();
+    let store = KeychainCredentialStore::with_backend(backend.clone());
+    store.set("google", oauth2_credential()).await.unwrap();
+
+    assert_eq!(backend.entry_count(), 1);
+    assert_eq!(
+        access_token(&store.get("google").await.unwrap().unwrap()),
+        "at-123"
+    );
+}
+
+#[tokio::test]
+async fn rewriting_a_chunked_credential_removes_stale_chunks() {
+    let backend = FakeKeychain::windows_sized();
+    let store = KeychainCredentialStore::with_backend(backend.clone());
+
+    store.set("codex", large_oauth2_credential()).await.unwrap();
+    store.set("codex", large_oauth2_credential()).await.unwrap();
+    let chunked_entries = backend.entry_count();
+    store.set("codex", oauth2_credential()).await.unwrap();
+
+    assert!(chunked_entries > 1);
+    assert_eq!(backend.entry_count(), 1);
+    assert_eq!(
+        access_token(&store.get("codex").await.unwrap().unwrap()),
+        "at-123"
+    );
+}
+
+#[tokio::test]
+async fn delete_removes_every_chunk() {
+    let backend = FakeKeychain::windows_sized();
+    let store = KeychainCredentialStore::with_backend(backend.clone());
+    store.set("codex", large_oauth2_credential()).await.unwrap();
+
+    store.delete("codex").await.unwrap();
+
+    assert_eq!(backend.entry_count(), 0);
+    assert!(store.get("codex").await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn failed_chunked_write_keeps_previous_credential_readable() {
+    let backend = FakeKeychain::windows_sized();
+    let store = KeychainCredentialStore::with_backend(backend.clone());
+    store.set("codex", oauth2_credential()).await.unwrap();
+
+    // One chunk lands, the next fails — before the manifest commits.
+    backend.fail_sets_after(1);
+    let error = store
+        .set("codex", large_oauth2_credential())
+        .await
+        .unwrap_err();
+
+    assert!(
+        error.to_string().contains("injected write failure"),
+        "{error}"
+    );
+    assert_eq!(backend.entry_count(), 1, "partial chunks were left behind");
+    assert_eq!(
+        access_token(&store.get("codex").await.unwrap().unwrap()),
+        "at-123"
+    );
+}
+
+#[tokio::test]
+async fn missing_chunk_is_an_error_not_a_partial_credential() {
+    let backend = FakeKeychain::windows_sized();
+    let store = KeychainCredentialStore::with_backend(backend.clone());
+    store.set("codex", large_oauth2_credential()).await.unwrap();
+
+    backend.remove_raw_where(|account| account.ends_with(".0"));
+
+    let error = store.get("codex").await.unwrap_err();
+    assert!(matches!(error, CredentialError::StoreError(_)));
+}
+
+#[tokio::test]
+async fn store_error_display_includes_keychain_reason() {
+    let store = KeychainCredentialStore::with_backend(UnavailableKeychain);
+    let error = store.get("k").await.unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "credential store error: keychain unavailable: no default store"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn system_keychain_reports_windows_blob_limit() {
+    assert_eq!(
+        swink_agent_auth::SystemKeychain::new().max_secret_len(),
+        Some(1280)
+    );
+}
+
+/// Real Credential Manager round-trip; run manually on a Windows desktop with
+/// `cargo test -p swink-agent-auth --features keychain --test integration -- --ignored`.
+#[cfg(windows)]
+#[tokio::test]
+#[ignore = "touches the real Windows Credential Manager"]
+async fn real_windows_credential_manager_roundtrips_large_credential() {
+    let service = format!("swink-agent-auth-test-{}", std::process::id());
+    let store = KeychainCredentialStore::new().with_service(service);
+    let credential = large_oauth2_credential();
+
+    store.set("codex", credential.clone()).await.unwrap();
+    let got = store.get("codex").await.unwrap().unwrap();
+    store.delete("codex").await.unwrap();
+
+    assert_eq!(access_token(&got), access_token(&credential));
+    assert!(store.get("codex").await.unwrap().is_none());
 }
 
 // ─── Roundtrip (SC-007) ─────────────────────────────────────────────────────

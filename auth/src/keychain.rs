@@ -25,10 +25,21 @@
 //! can prompt the user for keychain access). Every operation is therefore
 //! dispatched to [`tokio::task::spawn_blocking`] rather than run inline on an
 //! async worker thread. A Tokio runtime must be active.
+//!
+//! # Size limits
+//!
+//! Windows Credential Manager caps an entry at 2560 bytes of UTF-16, well
+//! below an `OAuth2` credential carrying JWTs. When a credential exceeds
+//! [`KeychainBackend::max_secret_len`], the store writes it across numbered
+//! chunk entries and commits by pointing the primary entry at them, so a
+//! failed write never leaves a readable partial credential.
 
 use std::sync::Arc;
 
-use swink_agent::{Credential, CredentialError, CredentialFuture, CredentialStore};
+use serde::{Deserialize, Serialize};
+use swink_agent::{
+    Credential, CredentialError, CredentialFuture, CredentialStore, SanitizedStoreError,
+};
 
 /// Service name used for keychain entries created by this store.
 ///
@@ -68,7 +79,9 @@ pub enum KeychainError {
 
 impl From<KeychainError> for CredentialError {
     fn from(error: KeychainError) -> Self {
-        Self::StoreError(Box::new(error))
+        // `KeychainError` messages are sanitized by construction, so the
+        // reason may be shown instead of a bare "credential store error".
+        Self::StoreError(Box::new(SanitizedStoreError::new(error.to_string())))
     }
 }
 
@@ -94,7 +107,21 @@ pub trait KeychainBackend: Send + Sync + 'static {
     /// Remove the entry for `service`/`account`. Deleting an absent entry
     /// MUST succeed (idempotent), matching `CredentialStore::delete`.
     fn delete(&self, service: &str, account: &str) -> Result<(), KeychainError>;
+
+    /// Largest secret one entry can hold, in UTF-16 code units, or `None` if
+    /// the backend has no practical limit (the default).
+    ///
+    /// [`KeychainCredentialStore`] splits larger credentials across several
+    /// entries. The unit is UTF-16 because that is what Windows Credential
+    /// Manager measures.
+    fn max_secret_len(&self) -> Option<usize> {
+        None
+    }
 }
+
+/// `CRED_MAX_CREDENTIAL_BLOB_SIZE` (2560 bytes), which
+/// `windows-native-keyring-store` checks after encoding the secret as UTF-16.
+const WINDOWS_MAX_SECRET_UTF16_LEN: usize = 2560 / 2;
 
 // ─── SystemKeychain ─────────────────────────────────────────────────────────
 
@@ -151,6 +178,149 @@ impl KeychainBackend for SystemKeychain {
             Err(error) => Err(map_open_error(error)),
         }
     }
+
+    fn max_secret_len(&self) -> Option<usize> {
+        cfg!(windows).then_some(WINDOWS_MAX_SECRET_UTF16_LEN)
+    }
+}
+
+// ─── Chunked entries ────────────────────────────────────────────────────────
+
+/// Primary-entry content for a credential split across chunk entries.
+///
+/// `deny_unknown_fields` keeps a plain credential (which carries `type`) from
+/// ever parsing as a manifest.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChunkManifest {
+    /// Fresh per write, so a rewrite never overwrites the chunks the current
+    /// manifest points at.
+    chunk_set: String,
+    parts: usize,
+}
+
+impl ChunkManifest {
+    fn accounts(&self, key: &str) -> impl Iterator<Item = String> {
+        let prefix = format!("{key}.chunk.{}", self.chunk_set);
+        (0..self.parts).map(move |index| format!("{prefix}.{index}"))
+    }
+}
+
+/// The manifest the primary entry holds, if any. Read failures count as "no
+/// manifest": the worst case is orphaned, unreadable chunk entries.
+fn read_manifest(backend: &dyn KeychainBackend, service: &str, key: &str) -> Option<ChunkManifest> {
+    let primary = backend.get(service, key).ok().flatten()?;
+    serde_json::from_str(&primary).ok()
+}
+
+/// Best-effort removal of chunk entries no manifest points at any more.
+fn delete_chunks(
+    backend: &dyn KeychainBackend,
+    service: &str,
+    accounts: impl Iterator<Item = String>,
+) {
+    for account in accounts {
+        if let Err(error) = backend.delete(service, &account) {
+            tracing::warn!(%error, "failed to delete stale keychain chunk entry");
+        }
+    }
+}
+
+/// Split `raw` into pieces of at most `limit` UTF-16 code units, never inside
+/// a character.
+fn split_utf16(raw: &str, limit: usize) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let (mut start, mut units) = (0, 0);
+    for (index, ch) in raw.char_indices() {
+        if units + ch.len_utf16() > limit {
+            parts.push(&raw[start..index]);
+            (start, units) = (index, 0);
+        }
+        units += ch.len_utf16();
+    }
+    parts.push(&raw[start..]);
+    parts
+}
+
+fn read_raw(
+    backend: &dyn KeychainBackend,
+    service: &str,
+    key: &str,
+) -> Result<Option<String>, KeychainError> {
+    let Some(primary) = backend.get(service, key)? else {
+        return Ok(None);
+    };
+    let Ok(manifest) = serde_json::from_str::<ChunkManifest>(&primary) else {
+        return Ok(Some(primary));
+    };
+    let mut raw = String::new();
+    for account in manifest.accounts(key) {
+        // A missing part means a concurrent rewrite or delete removed it;
+        // never hand back a partial credential.
+        raw.push_str(
+            &backend
+                .get(service, &account)?
+                .ok_or(KeychainError::Malformed)?,
+        );
+    }
+    Ok(Some(raw))
+}
+
+fn write_raw(
+    backend: &dyn KeychainBackend,
+    service: &str,
+    key: &str,
+    raw: &str,
+) -> Result<(), KeychainError> {
+    let Some(limit) = backend.max_secret_len() else {
+        return backend.set(service, key, raw);
+    };
+    let stale = read_manifest(backend, service, key);
+
+    if raw.encode_utf16().count() <= limit {
+        backend.set(service, key, raw)?;
+    } else {
+        let parts = split_utf16(raw, limit);
+        let manifest = ChunkManifest {
+            chunk_set: uuid::Uuid::new_v4().simple().to_string(),
+            parts: parts.len(),
+        };
+        let manifest_json =
+            serde_json::to_string(&manifest).map_err(|_| KeychainError::Malformed)?;
+        // Chunks first, manifest last: until the primary entry is replaced,
+        // readers still see the previous credential.
+        let written = manifest
+            .accounts(key)
+            .zip(&parts)
+            .try_for_each(|(account, part)| backend.set(service, &account, part))
+            .and_then(|()| backend.set(service, key, &manifest_json));
+        if let Err(error) = written {
+            delete_chunks(backend, service, manifest.accounts(key));
+            return Err(error);
+        }
+    }
+
+    if let Some(stale) = stale {
+        delete_chunks(backend, service, stale.accounts(key));
+    }
+    Ok(())
+}
+
+fn delete_raw(
+    backend: &dyn KeychainBackend,
+    service: &str,
+    key: &str,
+) -> Result<(), KeychainError> {
+    let manifest = backend
+        .max_secret_len()
+        .and_then(|_| read_manifest(backend, service, key));
+    // Primary first, so the credential stops being readable before any chunk
+    // disappears.
+    backend.delete(service, key)?;
+    if let Some(manifest) = manifest {
+        delete_chunks(backend, service, manifest.accounts(key));
+    }
+    Ok(())
 }
 
 // ─── KeychainCredentialStore ────────────────────────────────────────────────
@@ -257,7 +427,7 @@ impl CredentialStore for KeychainCredentialStore {
     fn get(&self, key: &str) -> CredentialFuture<'_, Option<Credential>> {
         let key = key.to_string();
         self.dispatch(move |backend, service| {
-            let Some(raw) = backend.get(service, &key)? else {
+            let Some(raw) = read_raw(backend, service, &key)? else {
                 return Ok(None);
             };
             // The payload is secret, so a parse failure reports only that it
@@ -272,12 +442,12 @@ impl CredentialStore for KeychainCredentialStore {
         let key = key.to_string();
         self.dispatch(move |backend, service| {
             let raw = serde_json::to_string(&credential).map_err(|_| KeychainError::Malformed)?;
-            backend.set(service, &key, &raw)
+            write_raw(backend, service, &key, &raw)
         })
     }
 
     fn delete(&self, key: &str) -> CredentialFuture<'_, ()> {
         let key = key.to_string();
-        self.dispatch(move |backend, service| backend.delete(service, &key))
+        self.dispatch(move |backend, service| delete_raw(backend, service, &key))
     }
 }

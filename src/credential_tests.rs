@@ -139,6 +139,22 @@ fn credential_store_error_display_and_source_chain_redact_backend_details() {
 }
 
 #[test]
+#[allow(clippy::redundant_clone)] // the clone is what is under test
+fn sanitized_store_error_reason_survives_display_debug_and_clone() {
+    let err = CredentialError::StoreError(Box::new(SanitizedStoreError::new(
+        "keychain access failed: value too long",
+    )));
+
+    for rendered in [err.to_string(), format!("{err:?}"), err.clone().to_string()] {
+        assert!(
+            rendered.contains("value too long"),
+            "sanitized reason missing from {rendered:?}"
+        );
+    }
+    assert!(err.source().is_none());
+}
+
+#[test]
 fn credential_store_error_debug_redacts_backend_details() {
     let err = CredentialError::StoreError(Box::new(std::io::Error::other(
         "backend exploded with token=secret-value",

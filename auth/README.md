@@ -60,6 +60,10 @@ Notes:
 - **Headless hosts.** A machine with no unlocked keyring (many CI containers, some
   Linux servers) yields `CredentialError::StoreError`. Keep the in-memory store
   for those deployments.
+- **Size limits.** Windows Credential Manager caps an entry at 2560 bytes of
+  UTF-16. Larger credentials (e.g. OAuth2 tokens carrying JWTs) are split
+  across chunk entries automatically; custom backends opt in via
+  `KeychainBackend::max_secret_len`.
 - **Testing.** Substitute the `KeychainBackend` trait to test against a fake
   instead of the real OS keychain.
 - **Blocking I/O.** Keychain calls can block — for example, macOS may prompt the
