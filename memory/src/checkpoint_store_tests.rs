@@ -199,6 +199,74 @@ async fn file_checkpoint_store_rejects_unsafe_checkpoint_ids() {
     assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn save_load_list_delete_prune_round_trip() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileCheckpointStore::new(dir.path().to_path_buf())
+        .unwrap()
+        .with_max_checkpoints(2);
+
+    for (id, created_at) in [("a", 10), ("b", 20), ("c", 30)] {
+        let mut checkpoint = Checkpoint::new(id, "prompt", "provider", "model", &[]);
+        checkpoint.created_at = created_at;
+        store.save_checkpoint(checkpoint).await.unwrap();
+    }
+
+    assert_eq!(store.list_checkpoints().await.unwrap(), vec!["c", "b"]);
+    assert!(store.load_checkpoint("a").await.unwrap().is_none());
+    assert_eq!(store.load_checkpoint("b").await.unwrap().unwrap().id, "b");
+
+    store.delete_checkpoint("b").await.unwrap();
+    store.delete_checkpoint("b").await.unwrap(); // missing file is not an error
+    assert_eq!(store.list_checkpoints().await.unwrap(), vec!["c"]);
+}
+
+/// Proves checkpoint filesystem work runs off the async worker thread.
+///
+/// A FIFO named `blocker.json` makes `list_checkpoints` block in `open` until
+/// a writer appears. The writer is only opened after a second task on the
+/// same `current_thread` runtime reports progress — which is impossible if
+/// the listing blocks the runtime's only worker thread.
+#[cfg(unix)]
+#[test]
+fn list_checkpoints_does_not_block_current_thread_runtime() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let dir = tempfile::tempdir().unwrap();
+    let fifo = dir.path().join("blocker.json");
+    let status = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap();
+    assert!(status.success(), "mkfifo failed");
+
+    let store = FileCheckpointStore::new(dir.path().to_path_buf()).unwrap();
+    let (progress_tx, progress_rx) = mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        runtime.block_on(async move {
+            let list = tokio::spawn(async move { store.list_checkpoints().await });
+            tokio::spawn(async move { progress_tx.send(()).unwrap() })
+                .await
+                .unwrap();
+            list.await.unwrap()
+        })
+    });
+
+    let progress = progress_rx.recv_timeout(Duration::from_secs(10));
+    // Unblock the FIFO reader either way so the worker thread can finish.
+    drop(std::fs::OpenOptions::new().write(true).open(&fifo).unwrap());
+    assert!(
+        progress.is_ok(),
+        "checkpoint listing blocked the async worker thread"
+    );
+    // The empty FIFO read is skipped as an invalid checkpoint file.
+    assert!(worker.join().unwrap().unwrap().is_empty());
+}
+
 #[test]
 fn validate_checkpoint_id_rejects_colon() {
     let err = validate_checkpoint_id("C:drive").unwrap_err();
