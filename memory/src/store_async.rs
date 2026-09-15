@@ -36,7 +36,10 @@ use crate::search::{SessionHit, SessionSearchOptions};
 /// A boxed future returned by [`BlockingSessionStore`] methods.
 pub type SessionStoreFuture<'a, T> = Pin<Box<dyn Future<Output = io::Result<T>> + Send + 'a>>;
 
-fn spawn_store_call<T: Send + 'static>(
+/// Run blocking filesystem work on Tokio's blocking pool.
+///
+/// A panic in `f` surfaces as an [`io::Error`] rather than being swallowed.
+pub(crate) fn spawn_store_call<T: Send + 'static>(
     f: impl FnOnce() -> io::Result<T> + Send + 'static,
 ) -> SessionStoreFuture<'static, T> {
     Box::pin(async move {
