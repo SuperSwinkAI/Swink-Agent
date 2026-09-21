@@ -18,8 +18,9 @@ name: Release
 #   auth, eval, local-llm, mcp, patterns, plugin-web} → adapters →
 #   swink-agent-rpc → swink-agent-tui → swink-agent-tui-remote
 #
-# A 20-second sleep between each publish gives crates.io time to index the
-# crate before dependent crates attempt to resolve it.
+# After each publish the job polls crates.io until that version is actually
+# serveable, because `cargo publish` returns before the index can resolve it
+# and a dependent crate would otherwise fail to select the version.
 
 on:
   push:
@@ -150,8 +151,8 @@ jobs:
     name: Publish to crates.io
     needs: publish-dry-run
     runs-on: ubuntu-latest
-    # 15 crates, each built + verified by crates.io, with 40s sleeps between
-    # (~8 min of sleep alone) — generous but bounded.
+    # 15 crates, each built + verified by crates.io, then waited on until the
+    # index serves it — generous but bounded.
     timeout-minutes: 90
     environment: release
     steps:
@@ -160,7 +161,7 @@ jobs:
         with:
           toolchain: stable
           cache-key: release-publish
-      # Topological publish order. Each entry is "<sleep_after_secs> <crate>".
+      # Topological publish order.
       #
       # tier 0: swink-agent, swink-agent-macros (no internal deps)
       # tier 1: auth → memory, policies, artifacts, eval, local-llm, mcp,
@@ -174,12 +175,11 @@ jobs:
       # (crates.io rate limit, network, etc.), re-running the workflow
       # skips already-published versions and retries only the missing ones.
       #
-      # Sleep is 40s for version-update releases where all crates already
-      # exist on crates.io. FIRST-PUBLISH releases (where a crate has never
-      # been published) hit crates.io's "5 new crates / 10 min" rate limit
-      # after the 5th new crate. If the rate limit fires, wait 10 minutes
-      # and re-run — skip-if-published picks up where it left off. crates.io
-      # will grant higher limits on request (help@crates.io).
+      # FIRST-PUBLISH releases (where a crate has never been published) hit
+      # crates.io's "5 new crates / 10 min" rate limit after the 5th new
+      # crate. If the rate limit fires, wait 10 minutes and re-run —
+      # skip-if-published picks up where it left off. crates.io will grant
+      # higher limits on request (help@crates.io).
       - name: Publish to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -187,36 +187,61 @@ jobs:
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
 
+          # crates.io answers curl's default User-Agent with 403. Without an
+          # explicit one every lookup reads as "not published", which turns
+          # the skip below into an unconditional re-publish and makes a
+          # re-run die on the first already-published crate.
+          on_crates_io() {
+            # -S is omitted deliberately: a 404 here is the normal "not yet
+            # published" answer, not an error worth printing.
+            curl -sf -o /dev/null \
+              -A "swink-agent-release (https://github.com/SuperSwinkAI/Swink-Agent)" \
+              "https://crates.io/api/v1/crates/$1/$version"
+          }
+
+          # `cargo publish` returns before the index can resolve the version,
+          # so wait for each crate to actually be serveable before publishing
+          # anything that depends on it. Replaces a fixed sleep, which was
+          # both slower on average and too short in the worst case.
+          wait_for_crates_io() {
+            for _ in $(seq 30); do
+              if on_crates_io "$1"; then
+                echo "$1 v$version is live"
+                return 0
+              fi
+              sleep 10
+            done
+            echo "$1 v$version never appeared on crates.io" >&2
+            return 1
+          }
+
           publish_order=(
-            "40 swink-agent"
-            "40 swink-agent-macros"
-            "40 swink-agent-auth"
-            "40 swink-agent-memory"
-            "40 swink-agent-policies"
-            "40 swink-agent-artifacts"
-            "40 swink-agent-eval"
-            "40 swink-agent-local-llm"
-            "40 swink-agent-mcp"
-            "40 swink-agent-patterns"
-            "40 swink-agent-plugin-web"
-            "40 swink-agent-adapters"
-            "40 swink-agent-rpc"
-            "40 swink-agent-tui"
-            "0 swink-agent-tui-remote"
+            swink-agent
+            swink-agent-macros
+            swink-agent-auth
+            swink-agent-memory
+            swink-agent-policies
+            swink-agent-artifacts
+            swink-agent-eval
+            swink-agent-local-llm
+            swink-agent-mcp
+            swink-agent-patterns
+            swink-agent-plugin-web
+            swink-agent-adapters
+            swink-agent-rpc
+            swink-agent-tui
+            swink-agent-tui-remote
           )
 
-          for entry in "${publish_order[@]}"; do
-            read -r sleep_secs crate <<< "$entry"
+          for crate in "${publish_order[@]}"; do
             echo "::group::$crate v$version"
-            if curl -sSf -o /dev/null "https://crates.io/api/v1/crates/$crate/$version"; then
+            if on_crates_io "$crate"; then
               echo "$crate v$version already on crates.io — skipping"
             else
               cargo publish -p "$crate"
+              wait_for_crates_io "$crate"
             fi
             echo "::endgroup::"
-            if [ "$sleep_secs" != "0" ]; then
-              sleep "$sleep_secs"
-            fi
           done
 
   github-release:
