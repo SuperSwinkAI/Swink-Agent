@@ -14,7 +14,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use swink_agent::{Credential, CredentialError, CredentialStore};
-use swink_agent_auth::{KeychainBackend, KeychainCredentialStore, KeychainError};
+use swink_agent_auth::{
+    KeychainBackend, KeychainCredentialStore, KeychainError, StoredEntry, classify_stored_entry,
+};
 
 // ─── Fakes ──────────────────────────────────────────────────────────────────
 
@@ -128,6 +130,19 @@ impl KeychainBackend for FakeKeychain {
             .unwrap()
             .remove(&(service.to_string(), account.to_string()));
         Ok(())
+    }
+
+    fn list(&self, service: &str) -> Result<Option<Vec<String>>, KeychainError> {
+        Ok(Some(
+            self.state
+                .entries
+                .lock()
+                .unwrap()
+                .keys()
+                .filter(|(found, _)| found == service)
+                .map(|(_, account)| account.clone())
+                .collect(),
+        ))
     }
 
     fn max_secret_len(&self) -> Option<usize> {
@@ -341,6 +356,59 @@ async fn real_windows_credential_manager_roundtrips_large_credential() {
 
     assert_eq!(access_token(&got), access_token(&credential));
     assert!(store.get("codex").await.unwrap().is_none());
+}
+
+/// Real OS keychain enumeration (#1358), on whichever platform runs it.
+///
+/// Unlike the round-trip above this is not Windows-specific: `list` is the
+/// one operation with a genuinely different implementation per platform —
+/// Keychain Services and Secret Service filter on `service`, Credential
+/// Manager over-matches a regex and is narrowed afterwards — so the fake
+/// backend cannot cover it, and every platform is worth running it on.
+///
+/// `cargo test -p swink-agent-auth --features keychain --test integration -- --ignored`
+#[tokio::test]
+#[ignore = "touches the real OS keychain"]
+async fn real_keychain_enumerates_only_its_own_service() {
+    let unique = format!("swink-agent-auth-test-{}", std::process::id());
+    let store = KeychainCredentialStore::new().with_service(unique.clone());
+    let neighbour = KeychainCredentialStore::new().with_service(format!("{unique}-other"));
+
+    // An empty service must enumerate as empty, not as unsupported: that
+    // distinction is the whole point of the `Option`.
+    assert_eq!(
+        store.list_keys().await.unwrap(),
+        Some(Vec::new()),
+        "search is unsupported on this platform, or the service was not clean"
+    );
+
+    store
+        .set("alpha", Credential::ApiKey { key: "a".into() })
+        .await
+        .unwrap();
+    store.set("beta", large_oauth2_credential()).await.unwrap();
+    // Written under a different service; must never show up below.
+    neighbour
+        .set("alpha", Credential::ApiKey { key: "n".into() })
+        .await
+        .unwrap();
+
+    let listed = store.list_keys().await.unwrap().expect("enumerable");
+    let mut keys = listed.clone();
+    keys.sort();
+    assert_eq!(keys, vec!["alpha".to_string(), "beta".to_string()]);
+    // Chunk entries are an implementation detail even when the platform
+    // makes them (Windows); none may surface as a key.
+    assert!(
+        !listed.iter().any(|key| key.contains(".chunk.")),
+        "chunk entries leaked into list_keys: {listed:?}"
+    );
+
+    for key in listed {
+        store.delete(&key).await.unwrap();
+    }
+    neighbour.delete("alpha").await.unwrap();
+    assert_eq!(store.list_keys().await.unwrap(), Some(Vec::new()));
 }
 
 // ─── Roundtrip (SC-007) ─────────────────────────────────────────────────────
@@ -624,4 +692,209 @@ async fn concurrent_access_is_safe() {
     for handle in handles {
         handle.await.unwrap();
     }
+}
+
+// ─── Enumeration & classification (#1358) ───────────────────────────────────
+
+/// `list_keys` returns credential keys, not the chunk entries backing them:
+/// a caller sweeping a service must see each credential exactly once.
+#[tokio::test]
+async fn list_keys_reports_each_credential_once_and_hides_chunks() {
+    let backend = FakeKeychain::windows_sized();
+    let store = KeychainCredentialStore::with_backend(backend.clone());
+
+    // Small enough for one entry; large enough to be split across several.
+    store
+        .set("small", Credential::ApiKey { key: "k".into() })
+        .await
+        .unwrap();
+    store.set("large", large_oauth2_credential()).await.unwrap();
+
+    // The large credential really did chunk, or this test proves nothing.
+    assert!(
+        backend.entry_count() > 3,
+        "expected chunk entries, got {} entries",
+        backend.entry_count()
+    );
+
+    let mut keys = store
+        .list_keys()
+        .await
+        .unwrap()
+        .expect("backend enumerates");
+    keys.sort();
+    assert_eq!(keys, vec!["large".to_string(), "small".to_string()]);
+}
+
+/// A backend that cannot enumerate must be distinguishable from an empty one,
+/// so a migration plans around it instead of concluding there is nothing there.
+#[tokio::test]
+async fn list_keys_reports_unsupported_separately_from_empty() {
+    // `UnavailableKeychain` does not override `list`, so it takes the default.
+    let unsupported = KeychainCredentialStore::with_backend(UnavailableKeychain);
+    assert_eq!(unsupported.list_keys().await.unwrap(), None);
+
+    let empty = KeychainCredentialStore::with_backend(FakeKeychain::new());
+    assert_eq!(empty.list_keys().await.unwrap(), Some(Vec::new()));
+}
+
+/// Keys are listed per service, so a store sharing a keychain with another
+/// writer never reports entries filed under a different service.
+#[tokio::test]
+async fn list_keys_is_scoped_to_its_own_service() {
+    let backend = FakeKeychain::new();
+    backend.seed_raw("other-service", "not-ours", "raw-secret");
+    let store = KeychainCredentialStore::with_backend(backend.clone()).with_service("ours");
+    store
+        .set("mine", Credential::ApiKey { key: "k".into() })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store.list_keys().await.unwrap(),
+        Some(vec!["mine".to_string()])
+    );
+}
+
+/// A credential key that itself contains `.chunk.` is still a key: the chunk
+/// filter matches the minted tail, not the substring.
+#[tokio::test]
+async fn list_keys_keeps_a_key_that_merely_looks_chunk_like() {
+    let backend = FakeKeychain::new();
+    let store = KeychainCredentialStore::with_backend(backend.clone());
+    for key in ["a.chunk.not-a-uuid.0", "b.chunk.0"] {
+        store
+            .set(key, Credential::ApiKey { key: "k".into() })
+            .await
+            .unwrap();
+    }
+
+    let mut keys = store.list_keys().await.unwrap().unwrap();
+    keys.sort();
+    assert_eq!(
+        keys,
+        vec!["a.chunk.not-a-uuid.0".to_string(), "b.chunk.0".to_string()]
+    );
+}
+
+/// The three cases a shared service can hold, told apart without the keychain.
+#[test]
+fn classify_separates_credentials_manifests_and_foreign_values() {
+    let envelope = serde_json::to_string(&oauth2_credential()).unwrap();
+    assert_eq!(classify_stored_entry(&envelope), StoredEntry::Credential);
+
+    // The shape a chunked credential's primary entry holds. Classified as a
+    // manifest rather than a secret, which is the case that otherwise gets
+    // handed to a caller as though it were one.
+    let manifest = r#"{"chunk_set":"0123456789abcdef0123456789abcdef","parts":2}"#;
+    assert_eq!(classify_stored_entry(manifest), StoredEntry::ChunkManifest);
+
+    // Raw values another writer owns — including JSON, which a field-sniffing
+    // test would be at risk of misreading.
+    for foreign in ["sk-live-abc123", r#"{"token":"abc","scope":"repo"}"#, ""] {
+        assert_eq!(
+            classify_stored_entry(foreign),
+            StoredEntry::Foreign,
+            "misclassified {foreign:?}"
+        );
+    }
+}
+
+/// End-to-end of the migration this unblocks: enumerate a shared service,
+/// classify each entry, move what this crate wrote, leave the rest alone.
+#[tokio::test]
+async fn enumerate_then_move_migrates_chunked_credentials_between_services() {
+    let backend = FakeKeychain::windows_sized();
+    let source = KeychainCredentialStore::with_backend(backend.clone()).with_service("shared");
+    let target = KeychainCredentialStore::with_backend(backend.clone()).with_service("moved");
+
+    source
+        .set("oauth", large_oauth2_credential())
+        .await
+        .unwrap();
+    // A raw value another writer put in the same service.
+    backend.seed_raw("shared", "their-key", "sk-live-abc123");
+
+    let keys = source.list_keys().await.unwrap().unwrap();
+    let mut moved = Vec::new();
+    for key in keys {
+        let raw = backend.raw("shared", &key).expect("listed key exists");
+        if classify_stored_entry(&raw) == StoredEntry::Foreign {
+            continue;
+        }
+        let credential = source.get(&key).await.unwrap().expect("readable");
+        target.set(&key, credential).await.unwrap();
+        source.delete(&key).await.unwrap();
+        moved.push(key);
+    }
+
+    assert_eq!(moved, vec!["oauth".to_string()]);
+    let moved_credential = target.get("oauth").await.unwrap().expect("moved");
+    assert_eq!(
+        serde_json::to_string(&moved_credential).unwrap(),
+        serde_json::to_string(&large_oauth2_credential()).unwrap()
+    );
+    assert!(source.get("oauth").await.unwrap().is_none());
+    // The other writer's entry was neither moved nor removed.
+    assert_eq!(
+        backend.raw("shared", "their-key").as_deref(),
+        Some("sk-live-abc123")
+    );
+    // And the moved credential left no orphaned chunk entries behind.
+    assert!(
+        source.list_keys().await.unwrap().unwrap().len() == 1,
+        "only the foreign entry should remain under the source service"
+    );
+}
+
+/// The FR-034 case: a raw value left under a key by another writer reads back
+/// intact, while `get` on the same key fails. The distinction Core needs is
+/// carried by the value, not by an error that `Clone` would erase.
+#[tokio::test]
+async fn get_raw_reads_a_foreign_value_that_get_rejects() {
+    let backend = FakeKeychain::new();
+    backend.seed_raw("swink-agent-auth", "legacy", "sk-live-abc123");
+    let store = KeychainCredentialStore::with_backend(backend.clone());
+
+    assert!(
+        store.get("legacy").await.is_err(),
+        "get must still reject it"
+    );
+    assert_eq!(
+        store.get_raw("legacy").await.unwrap().as_deref(),
+        Some("sk-live-abc123")
+    );
+    assert_eq!(
+        classify_stored_entry("sk-live-abc123"),
+        StoredEntry::Foreign
+    );
+}
+
+/// An unreachable keychain stays an error on the raw path too — it must never
+/// look like "absent" or like a legacy value.
+#[tokio::test]
+async fn get_raw_surfaces_an_unreachable_keychain_as_an_error() {
+    let store = KeychainCredentialStore::with_backend(UnavailableKeychain);
+    assert!(store.get_raw("anything").await.is_err());
+
+    // And a genuinely missing key is `None`, not an error.
+    let empty = KeychainCredentialStore::with_backend(FakeKeychain::new());
+    assert_eq!(empty.get_raw("absent").await.unwrap(), None);
+}
+
+/// A chunked credential reassembles on the raw path: callers never see a
+/// manifest, which is the value that would otherwise be mistaken for a secret.
+#[tokio::test]
+async fn get_raw_reassembles_chunks_rather_than_returning_a_manifest() {
+    let backend = FakeKeychain::windows_sized();
+    let store = KeychainCredentialStore::with_backend(backend.clone());
+    store.set("big", large_oauth2_credential()).await.unwrap();
+    assert!(backend.entry_count() > 1, "expected a chunked write");
+
+    let raw = store.get_raw("big").await.unwrap().expect("present");
+    assert_eq!(classify_stored_entry(&raw), StoredEntry::Credential);
+    assert_eq!(
+        raw,
+        serde_json::to_string(&large_oauth2_credential()).unwrap()
+    );
 }

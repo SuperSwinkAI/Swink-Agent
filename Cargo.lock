@@ -5103,6 +5103,7 @@ dependencies = [
  "chrono",
  "futures",
  "keyring",
+ "keyring-core",
  "pretty_assertions",
  "rand 0.10.2",
  "reqwest",

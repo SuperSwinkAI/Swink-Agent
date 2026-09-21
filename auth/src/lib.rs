@@ -39,7 +39,8 @@ mod token_source;
 pub use in_memory::InMemoryCredentialStore;
 #[cfg(feature = "keychain")]
 pub use keychain::{
-    DEFAULT_SERVICE, KeychainBackend, KeychainCredentialStore, KeychainError, SystemKeychain,
+    DEFAULT_SERVICE, KeychainBackend, KeychainCredentialStore, KeychainError, StoredEntry,
+    SystemKeychain, classify_stored_entry,
 };
 pub use loopback::LoopbackAuthorizationHandler;
 pub use oauth2::{AuthorizationConfig, DeviceAuthorizationConfig, PkceVerifier};
