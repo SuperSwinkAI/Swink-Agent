@@ -20,10 +20,10 @@ default = []
 # Persist credentials in the OS keychain (macOS Keychain Services, Windows
 # Credential Manager, Linux/BSD Secret Service). Off by default: it pulls in
 # platform secret-store dependencies that headless deployments do not need.
-keychain = ["dep:keyring", "tokio/rt"]
+keychain = ["dep:keyring", "dep:keyring-core", "tokio/rt"]
 
 [dependencies]
-swink-agent = { path = "..", version = "0.14.2", default-features = false }
+swink-agent = { path = "..", version = "0.14.3", default-features = false }
 reqwest.workspace = true
 # Supplies the `ring` crypto provider, installed as the process default
 # before any reqwest client is built (workspace reqwest is
@@ -42,6 +42,7 @@ rand.workspace = true
 sha2.workspace = true
 base64.workspace = true
 keyring = { workspace = true, optional = true }
+keyring-core = { workspace = true, optional = true }
 
 [dev-dependencies]
 wiremock.workspace = true

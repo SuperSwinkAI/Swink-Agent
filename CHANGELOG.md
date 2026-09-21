@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 
+## [0.14.3] - 2026-09-21
+
+### Added
+- `auth`: `KeychainCredentialStore::list_keys()` enumerates the credential keys held under a service, with chunk entries filtered out. Returns `None` when the platform store cannot enumerate, keeping "unsupported" distinct from "empty" (#1358).
+- `auth`: `KeychainBackend::list()` (defaults to reporting no enumeration support, so existing backends keep compiling), implemented for `SystemKeychain` on macOS, Windows, and Secret Service (#1358).
+- `auth`: `classify_stored_entry()` and `StoredEntry` tell a stored `Credential`, a chunk manifest, and a foreign raw value apart by parsing rather than by sniffing for a field name — so a caller sharing a keychain service with another writer stops depending on this crate's serde shape by accident (#1358).
+- `auth`: `KeychainCredentialStore::get_raw()` reads a stored value without parsing it as a `Credential`, reassembling chunks so a manifest never surfaces. Paired with `classify_stored_entry`, it lets a caller tell a legacy raw value from one of ours without relying on an error type, which `CredentialError`'s `Clone` would erase (#1358).
+
+### Changed
+- `auth`: `keyring-core` is now a direct dependency. It was already in the graph at the same version — `keyring::Entry` is the v1 compatibility wrapper and exposes no search API, while `keyring_core::Entry` does (#1358).
+
 ## [0.14.2] - 2026-09-15
 
 ### Security
