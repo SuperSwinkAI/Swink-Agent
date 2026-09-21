@@ -34,6 +34,7 @@
 //! chunk entries and commits by pointing the primary entry at them, so a
 //! failed write never leaves a readable partial credential.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -108,6 +109,21 @@ pub trait KeychainBackend: Send + Sync + 'static {
     /// MUST succeed (idempotent), matching `CredentialStore::delete`.
     fn delete(&self, service: &str, account: &str) -> Result<(), KeychainError>;
 
+    /// List every account name this backend holds under `service`.
+    ///
+    /// Returns `Ok(None)` when the backend cannot enumerate at all, which is
+    /// a capability statement rather than a failure — callers that need to
+    /// sweep a service (a migration, say) can then plan around it instead of
+    /// mistaking an empty store for an unsupported one. `Ok(Some(vec![]))`
+    /// means enumeration worked and found nothing.
+    ///
+    /// The default implementation reports no enumeration support, so existing
+    /// backends keep compiling.
+    fn list(&self, service: &str) -> Result<Option<Vec<String>>, KeychainError> {
+        let _ = service;
+        Ok(None)
+    }
+
     /// Largest secret one entry can hold, in UTF-16 code units, or `None` if
     /// the backend has no practical limit (the default).
     ///
@@ -179,9 +195,65 @@ impl KeychainBackend for SystemKeychain {
         }
     }
 
+    fn list(&self, service: &str) -> Result<Option<Vec<String>>, KeychainError> {
+        // `keyring::Entry` is the v1 compatibility wrapper and exposes no
+        // search, so enumeration goes through `keyring_core` directly. The
+        // wrapper is what installs the platform store as the process default,
+        // and it only does so on first use — hence the status call first.
+        if let Err(error) = keyring::Entry::store_status() {
+            return Err(KeychainError::Unavailable(error.to_string()));
+        }
+
+        // Search specs are store-specific. Keychain Services and Secret
+        // Service filter on `service`; Credential Manager accepts only a
+        // `pattern` regex over target names, which encode the service but not
+        // in a documented layout — so it over-matches here and the specifier
+        // filter below narrows the result on every platform alike.
+        let escaped;
+        let mut spec = HashMap::new();
+        if cfg!(windows) {
+            escaped = escape_regex(service);
+            spec.insert("pattern", escaped.as_str());
+        } else {
+            spec.insert("service", service);
+        }
+
+        let entries = match keyring_core::Entry::search(&spec) {
+            Ok(entries) => entries,
+            // Not every store implements search; say so rather than failing.
+            Err(keyring_core::Error::NotSupportedByStore(_)) => return Ok(None),
+            Err(error) => return Err(map_open_error(error)),
+        };
+        Ok(Some(
+            entries
+                .iter()
+                .filter_map(keyring_core::Entry::get_specifiers)
+                .filter(|(found, _)| found == service)
+                .map(|(_, account)| account)
+                .collect(),
+        ))
+    }
+
     fn max_secret_len(&self) -> Option<usize> {
         cfg!(windows).then_some(WINDOWS_MAX_SECRET_UTF16_LEN)
     }
+}
+
+/// Escape regex metacharacters so a service name matches itself literally.
+///
+/// Windows Credential Manager's search spec is a regex. An unescaped service
+/// name is not merely imprecise — one containing `(` is an invalid pattern and
+/// fails the search outright.
+fn escape_regex(literal: &str) -> String {
+    const META: &str = r"\.+*?()|[]{}^$#&-~";
+    let mut escaped = String::with_capacity(literal.len());
+    for ch in literal.chars() {
+        if META.contains(ch) {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
 }
 
 // ─── Chunked entries ────────────────────────────────────────────────────────
@@ -203,6 +275,79 @@ impl ChunkManifest {
     fn accounts(&self, key: &str) -> impl Iterator<Item = String> {
         let prefix = format!("{key}.chunk.{}", self.chunk_set);
         (0..self.parts).map(move |index| format!("{prefix}.{index}"))
+    }
+}
+
+/// Whether `account` is one of the chunk entries [`ChunkManifest::accounts`]
+/// mints, rather than a credential key a caller chose.
+///
+/// Matched from the tail (`.chunk.<32 hex>.<index>`) so a credential key that
+/// itself contains `.chunk.` is not mistaken for one.
+fn is_chunk_account(account: &str) -> bool {
+    let Some((head, index)) = account.rsplit_once('.') else {
+        return false;
+    };
+    let Some((head, chunk_set)) = head.rsplit_once('.') else {
+        return false;
+    };
+    let Some((_, marker)) = head.rsplit_once('.') else {
+        return false;
+    };
+    marker == "chunk"
+        && !index.is_empty()
+        && index.bytes().all(|byte| byte.is_ascii_digit())
+        // `Uuid::simple` is exactly 32 hex digits.
+        && chunk_set.len() == 32
+        && chunk_set.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// What a raw value read out of a keychain service turns out to be.
+///
+/// Returned by [`classify_stored_entry`], for callers that share a service
+/// with this store and must tell its entries apart from their own.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredEntry {
+    /// A serialized [`Credential`] written by [`KeychainCredentialStore`].
+    Credential,
+    /// The primary entry of a chunked credential.
+    ///
+    /// It holds a manifest pointing at the chunk entries, **not** a secret —
+    /// handing this value to a caller as though it were one is a bug.
+    ChunkManifest,
+    /// Neither: a raw secret, or JSON some other writer owns.
+    Foreign,
+}
+
+/// Classify a raw keychain value without needing a store or the keychain.
+///
+/// Sharing one service between this store and another writer is supported but
+/// ambiguous: the stored bytes carry no discriminator. Rather than have each
+/// caller re-derive the test by parsing [`Credential`] — and so depend on this
+/// crate's serde shape by accident — this is the supported predicate.
+///
+/// Classification is by parse, not by sniffing for a field name, so an
+/// ordinary JSON secret is not misread as a credential.
+///
+/// ```
+/// use swink_agent::Credential;
+/// use swink_agent_auth::{StoredEntry, classify_stored_entry};
+///
+/// let envelope = serde_json::to_string(&Credential::ApiKey { key: "k".into() }).unwrap();
+/// assert_eq!(classify_stored_entry(&envelope), StoredEntry::Credential);
+/// assert_eq!(classify_stored_entry("plain-secret"), StoredEntry::Foreign);
+/// ```
+#[must_use]
+pub fn classify_stored_entry(raw: &str) -> StoredEntry {
+    // Manifest first. `deny_unknown_fields` means a `Credential` (which
+    // always carries `type`) can never parse as a manifest, but a manifest
+    // has no tag to stop it being tried as a credential.
+    if serde_json::from_str::<ChunkManifest>(raw).is_ok() {
+        StoredEntry::ChunkManifest
+    } else if serde_json::from_str::<Credential>(raw).is_ok() {
+        StoredEntry::Credential
+    } else {
+        StoredEntry::Foreign
     }
 }
 
@@ -379,6 +524,38 @@ impl KeychainCredentialStore {
     pub fn with_service(mut self, service: impl Into<String>) -> Self {
         self.service = service.into();
         self
+    }
+
+    /// List the credential keys this store holds under its service.
+    ///
+    /// Chunk entries are filtered out, so what comes back is the set of keys
+    /// [`CredentialStore::get`] accepts — not the raw account names.
+    ///
+    /// `Ok(None)` means the backing store cannot enumerate (see
+    /// [`KeychainBackend::list`]); `Ok(Some(vec![]))` means it can and the
+    /// service is empty.
+    ///
+    /// # Sharing a service
+    ///
+    /// Keys are listed by name, and names alone cannot say who wrote an
+    /// entry. If another writer shares this service, pair each key with
+    /// [`classify_stored_entry`] (or with a [`CredentialStore::get`] that
+    /// reports [`CredentialError::StoreError`] for entries this crate did not
+    /// write) before acting on it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CredentialError::StoreError`] if the keychain is unreachable
+    /// or the enumeration itself fails.
+    pub fn list_keys(&self) -> CredentialFuture<'_, Option<Vec<String>>> {
+        self.dispatch(|backend, service| {
+            Ok(backend.list(service)?.map(|accounts| {
+                accounts
+                    .into_iter()
+                    .filter(|account| !is_chunk_account(account))
+                    .collect()
+            }))
+        })
     }
 
     /// Run `op` on the blocking pool with an owned backend handle.
