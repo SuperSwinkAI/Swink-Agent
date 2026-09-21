@@ -358,6 +358,59 @@ async fn real_windows_credential_manager_roundtrips_large_credential() {
     assert!(store.get("codex").await.unwrap().is_none());
 }
 
+/// Real OS keychain enumeration (#1358), on whichever platform runs it.
+///
+/// Unlike the round-trip above this is not Windows-specific: `list` is the
+/// one operation with a genuinely different implementation per platform —
+/// Keychain Services and Secret Service filter on `service`, Credential
+/// Manager over-matches a regex and is narrowed afterwards — so the fake
+/// backend cannot cover it, and every platform is worth running it on.
+///
+/// `cargo test -p swink-agent-auth --features keychain --test integration -- --ignored`
+#[tokio::test]
+#[ignore = "touches the real OS keychain"]
+async fn real_keychain_enumerates_only_its_own_service() {
+    let unique = format!("swink-agent-auth-test-{}", std::process::id());
+    let store = KeychainCredentialStore::new().with_service(unique.clone());
+    let neighbour = KeychainCredentialStore::new().with_service(format!("{unique}-other"));
+
+    // An empty service must enumerate as empty, not as unsupported: that
+    // distinction is the whole point of the `Option`.
+    assert_eq!(
+        store.list_keys().await.unwrap(),
+        Some(Vec::new()),
+        "search is unsupported on this platform, or the service was not clean"
+    );
+
+    store
+        .set("alpha", Credential::ApiKey { key: "a".into() })
+        .await
+        .unwrap();
+    store.set("beta", large_oauth2_credential()).await.unwrap();
+    // Written under a different service; must never show up below.
+    neighbour
+        .set("alpha", Credential::ApiKey { key: "n".into() })
+        .await
+        .unwrap();
+
+    let listed = store.list_keys().await.unwrap().expect("enumerable");
+    let mut keys = listed.clone();
+    keys.sort();
+    assert_eq!(keys, vec!["alpha".to_string(), "beta".to_string()]);
+    // Chunk entries are an implementation detail even when the platform
+    // makes them (Windows); none may surface as a key.
+    assert!(
+        !listed.iter().any(|key| key.contains(".chunk.")),
+        "chunk entries leaked into list_keys: {listed:?}"
+    );
+
+    for key in listed {
+        store.delete(&key).await.unwrap();
+    }
+    neighbour.delete("alpha").await.unwrap();
+    assert_eq!(store.list_keys().await.unwrap(), Some(Vec::new()));
+}
+
 // ─── Roundtrip (SC-007) ─────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -791,5 +844,57 @@ async fn enumerate_then_move_migrates_chunked_credentials_between_services() {
     assert!(
         source.list_keys().await.unwrap().unwrap().len() == 1,
         "only the foreign entry should remain under the source service"
+    );
+}
+
+/// The FR-034 case: a raw value left under a key by another writer reads back
+/// intact, while `get` on the same key fails. The distinction Core needs is
+/// carried by the value, not by an error that `Clone` would erase.
+#[tokio::test]
+async fn get_raw_reads_a_foreign_value_that_get_rejects() {
+    let backend = FakeKeychain::new();
+    backend.seed_raw("swink-agent-auth", "legacy", "sk-live-abc123");
+    let store = KeychainCredentialStore::with_backend(backend.clone());
+
+    assert!(
+        store.get("legacy").await.is_err(),
+        "get must still reject it"
+    );
+    assert_eq!(
+        store.get_raw("legacy").await.unwrap().as_deref(),
+        Some("sk-live-abc123")
+    );
+    assert_eq!(
+        classify_stored_entry("sk-live-abc123"),
+        StoredEntry::Foreign
+    );
+}
+
+/// An unreachable keychain stays an error on the raw path too — it must never
+/// look like "absent" or like a legacy value.
+#[tokio::test]
+async fn get_raw_surfaces_an_unreachable_keychain_as_an_error() {
+    let store = KeychainCredentialStore::with_backend(UnavailableKeychain);
+    assert!(store.get_raw("anything").await.is_err());
+
+    // And a genuinely missing key is `None`, not an error.
+    let empty = KeychainCredentialStore::with_backend(FakeKeychain::new());
+    assert_eq!(empty.get_raw("absent").await.unwrap(), None);
+}
+
+/// A chunked credential reassembles on the raw path: callers never see a
+/// manifest, which is the value that would otherwise be mistaken for a secret.
+#[tokio::test]
+async fn get_raw_reassembles_chunks_rather_than_returning_a_manifest() {
+    let backend = FakeKeychain::windows_sized();
+    let store = KeychainCredentialStore::with_backend(backend.clone());
+    store.set("big", large_oauth2_credential()).await.unwrap();
+    assert!(backend.entry_count() > 1, "expected a chunked write");
+
+    let raw = store.get_raw("big").await.unwrap().expect("present");
+    assert_eq!(classify_stored_entry(&raw), StoredEntry::Credential);
+    assert_eq!(
+        raw,
+        serde_json::to_string(&large_oauth2_credential()).unwrap()
     );
 }

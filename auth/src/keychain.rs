@@ -526,6 +526,42 @@ impl KeychainCredentialStore {
         self
     }
 
+    /// Read the value stored under `key` without parsing it as a
+    /// [`Credential`].
+    ///
+    /// Chunked entries are reassembled, so what comes back is the whole
+    /// stored string — never a chunk manifest.
+    ///
+    /// # When this is the right call
+    ///
+    /// [`CredentialStore::get`] fails on an entry this crate did not write,
+    /// and that failure is *not* safely distinguishable from an unreachable
+    /// keychain: [`CredentialError::StoreError`] boxes its payload, and
+    /// `CredentialError`'s `Clone` degrades any box it cannot recognize, so a
+    /// type test on the error is erased the first time one is cloned.
+    /// Treating "keychain is down" as "this is a legacy raw value" would hand
+    /// a caller the wrong secret.
+    ///
+    /// So a caller sharing a service with another writer reads with this and
+    /// classifies with [`classify_stored_entry`], where the distinction is
+    /// carried by the value rather than by an error: a raw legacy value reads
+    /// back fine, and only a genuinely broken keychain returns `Err`.
+    ///
+    /// # Secrets
+    ///
+    /// This returns secret material as a plain `String` — that is the point,
+    /// but it bypasses the parsing that normally keeps values inside
+    /// [`Credential`]. Do not log the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CredentialError::StoreError`] if the keychain is unreachable
+    /// or a chunk of a chunked entry is missing.
+    pub fn get_raw(&self, key: &str) -> CredentialFuture<'_, Option<String>> {
+        let key = key.to_string();
+        self.dispatch(move |backend, service| read_raw(backend, service, &key))
+    }
+
     /// List the credential keys this store holds under its service.
     ///
     /// Chunk entries are filtered out, so what comes back is the set of keys
