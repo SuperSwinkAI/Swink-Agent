@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rmcp::ServerHandler;
-use rmcp::model::{ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo};
+use rmcp::model::{ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig};
 use rmcp::service::{RequestContext, RoleServer, ServiceExt};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
@@ -24,8 +24,8 @@ use tokio::sync::oneshot;
 struct FailingDiscoveryServer;
 
 impl ServerHandler for FailingDiscoveryServer {
-    fn get_info(&self) -> ServerInfo {
-        let mut info = ServerInfo::default();
+    fn get_info(&self) -> ServerConfig {
+        let mut info = ServerConfig::default();
         info.instructions = Some("Mock MCP server with failing discovery".into());
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info
@@ -41,7 +41,7 @@ impl ServerHandler for FailingDiscoveryServer {
 }
 
 async fn spawn_failing_discovery_server_with_client()
--> rmcp::service::RunningService<rmcp::service::RoleClient, rmcp::model::ClientInfo> {
+-> rmcp::service::RunningService<rmcp::service::RoleClient, rmcp::model::ClientConfig> {
     let (client_stream, server_stream) = tokio::io::duplex(4096);
 
     let _server_handle = tokio::spawn(async move {
@@ -50,7 +50,7 @@ async fn spawn_failing_discovery_server_with_client()
         }
     });
 
-    rmcp::model::ClientInfo::default()
+    rmcp::model::ClientConfig::default()
         .serve(client_stream)
         .await
         .expect("client connection should succeed")
@@ -312,7 +312,7 @@ async fn monitor_detects_transport_close_and_emits_event() {
         let _ = svc.cancel().await;
     });
 
-    let service = rmcp::model::ClientInfo::default()
+    let service = rmcp::model::ClientConfig::default()
         .serve(client_stream)
         .await
         .expect("client should connect");

@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{ServerCapabilities, ServerInfo};
+use rmcp::model::{ServerCapabilities, ServerConfig};
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -217,8 +217,8 @@ impl MockMcpServer {
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for MockMcpServer {
-    fn get_info(&self) -> ServerInfo {
-        let mut info = ServerInfo::default();
+    fn get_info(&self) -> ServerConfig {
+        let mut info = ServerConfig::default();
         info.instructions = Some("Mock MCP server for testing".into());
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info
@@ -230,7 +230,7 @@ impl ServerHandler for MockMcpServer {
 /// Uses `tokio::io::duplex()` to create an in-memory bidirectional channel.
 pub async fn spawn_mock_server_with_client(
     config: &MockServerConfig,
-) -> rmcp::service::RunningService<rmcp::service::RoleClient, rmcp::model::ClientInfo> {
+) -> rmcp::service::RunningService<rmcp::service::RoleClient, rmcp::model::ClientConfig> {
     use rmcp::service::ServiceExt;
 
     let server = MockMcpServer::from_config(config);
@@ -247,7 +247,7 @@ pub async fn spawn_mock_server_with_client(
     });
 
     // Connect the client on the other end.
-    rmcp::model::ClientInfo::default()
+    rmcp::model::ClientConfig::default()
         .serve(client_stream)
         .await
         .expect("client connection should succeed")
