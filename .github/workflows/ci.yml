@@ -32,7 +32,7 @@ jobs:
       - run: cargo fmt --check
 
       - name: Spell check
-        uses: crate-ci/typos@d43b6c087ac471e2ea7b8af622ff15f05c0c365b # v1
+        uses: crate-ci/typos@512fc24f32f44ab01972217aaaf3dc86ec234d53 # v1
 
       # --all-features so feature-gated modules are linted too: lints like
       # exhaustive_structs/exhaustive_enums can't flag code that never
