@@ -13,7 +13,7 @@ use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
-use llama_cpp_2::model::{AddBos, LlamaChatMessage, LlamaModel};
+use llama_cpp_2::model::{LlamaChatMessage, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -196,14 +196,10 @@ impl LlamaRunner {
             })
     }
 
-    /// Tokenize a prompt string into token IDs.
-    pub fn tokenize(
-        &self,
-        prompt: &str,
-    ) -> Result<Vec<llama_cpp_2::token::LlamaToken>, LocalModelError> {
-        self.model
-            .str_to_token(prompt, AddBos::Always)
-            .map_err(|e| LocalModelError::inference(format!("tokenization failed: {e}")))
+    /// Tokenize a prompt string into token IDs, adding BOS and parsing
+    /// special tokens.
+    pub fn tokenize(&self, prompt: &str) -> Vec<llama_cpp_2::token::LlamaToken> {
+        self.model.vocab().tokenize(prompt.as_bytes(), true, true)
     }
 
     /// Start streaming token generation on a background thread.
@@ -250,10 +246,7 @@ impl LlamaRunner {
 
     /// Generate embeddings for the given text on a background thread.
     pub fn generate_embedding(&self, text: &str) -> Result<Vec<f32>, LocalModelError> {
-        let tokens = self
-            .model
-            .str_to_token(text, AddBos::Always)
-            .map_err(|e| LocalModelError::embedding(format!("tokenization failed: {e}")))?;
+        let tokens = self.tokenize(text);
 
         let model = Arc::clone(&self.model);
         let backend = Arc::clone(&self.backend);
@@ -369,6 +362,7 @@ fn run_inference(
         "entering generation loop"
     );
 
+    let vocab = model.vocab();
     for step in 0..max_tokens {
         if cancel.is_cancelled() {
             debug!("inference cancelled");
@@ -379,19 +373,15 @@ fn run_inference(
         let new_token = sampler.sample(&ctx, batch.n_tokens() - 1);
         sampler.accept(new_token);
 
-        if model.is_eog_token(new_token) {
+        if vocab.is_eog(new_token) {
             debug!(completion_tokens, token_id = new_token.0, "hit EOG token");
             break;
         }
 
         completion_tokens += 1;
 
-        let token_str = model
-            .token_to_piece_bytes(new_token, 32, true, None)
-            .map_or_else(
-                |_| String::new(),
-                |bytes| String::from_utf8_lossy(&bytes).into_owned(),
-            );
+        let token_str =
+            String::from_utf8_lossy(&vocab.token_to_piece(new_token, true, None)).into_owned();
 
         if completion_tokens <= 3 {
             debug!(
