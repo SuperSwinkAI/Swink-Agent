@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.4] - 2026-10-01
+
+### Fixed
+- `local-llm`: migrate to the `llama-cpp-2` 0.1.158 vocab API (`model.vocab()`), so fresh installs and downstream builds compile again — 0.1.158 removed `AddBos`, `str_to_token`, `is_eog_token`, and `token_to_piece_bytes` in a patch release. The manifest floor moves to 0.1.158. Token pieces longer than 32 bytes are no longer dropped (#1379).
+- `policies`: `RollingCheckpointPolicy` saves land in turn order, so the stored checkpoint can no longer roll back to an earlier turn (#1375).
+
+### Changed
+- `mcp`: bump `rmcp` to 3.5 via 3.4. `swink-agent-mcp` uses `ClientConfig`/`ServerConfig` in place of the deprecated `ClientInfo`/`ServerInfo` aliases, and its manifest floor moves to 3.4.0 (#1368, #1376).
+- `swink-agent`, `eval`, `evolve`: bump the opentelemetry stack (`opentelemetry`, `opentelemetry_sdk`, `opentelemetry-otlp`) to 0.33 and `tracing-opentelemetry` to 0.34 (#1368).
+- `swink-agent`, `eval`: bump `jsonschema` to 0.58 via 0.57 (#1372, #1378).
+- `adapters`: bump `aws-smithy-types` to 1.8, `aws-smithy-runtime-api` to 1.18, and `aws-sigv4` to 1.6 (#1373, #1374, #1377).
+- Dependency patch-group bumps (#1362, #1371); CI pin bumps for `crate-ci/typos` and `anthropics/claude-code-action` (#1360, #1361, #1369, #1370).
+
 
 ## [0.14.3] - 2026-09-21
 
