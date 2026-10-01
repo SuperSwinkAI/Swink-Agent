@@ -60,7 +60,7 @@ strsim = "0.11.1"
 # resolution, which this workspace never does — every schema we compile is
 # inline. External `$ref`s now fail at validator build instead of touching
 # the network or filesystem.
-jsonschema = { version = "0.57.0", default-features = false }
+jsonschema = { version = "0.58.2", default-features = false }
 opentelemetry = "0.33.0"
 opentelemetry_sdk = "0.33.0"
 opentelemetry-otlp = "0.33.0"
