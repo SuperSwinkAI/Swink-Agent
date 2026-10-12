@@ -52,7 +52,7 @@ wiremock = "0.6.5"
 # serde_yaml is unmaintained (archived by its author); serde_yaml_ng is the
 # maintained fork with the same from_str/Value/Error API surface.
 serde_yaml_ng = "0.10.0"
-minijinja = "2.23.0"
+minijinja = "3.0.0"
 backon = "1.6.0"
 strsim = "0.11.1"
 # Default features off: the defaults pull `resolve-http` (reqwest + a TLS
