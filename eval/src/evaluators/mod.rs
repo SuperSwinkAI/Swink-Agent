@@ -602,8 +602,9 @@ fn is_retryable_judge_error(error: &JudgeError) -> bool {
 /// Drive an async future to completion from the sync `Evaluator::evaluate`
 /// entry point, regardless of the caller's Tokio runtime state.
 ///
-/// Multi-thread runtime active → `block_in_place` + the ambient
-/// `Handle::block_on` so the host runtime keeps scheduling other tasks.
+/// Multi-thread runtime active → `block_in_place` on the current thread so
+/// the host runtime keeps scheduling other tasks (see
+/// `crate::blocking::block_in_place_on` for why this avoids `Handle::block_on`).
 /// Current-thread runtime active → offload to a helper thread with its own
 /// current-thread runtime. No runtime active → build an ephemeral
 /// current-thread runtime and `block_on` it.
@@ -614,10 +615,10 @@ where
 {
     use tokio::runtime::{Handle, RuntimeFlavor};
 
-    if let Ok(handle) = Handle::try_current()
-        && handle.runtime_flavor() == RuntimeFlavor::MultiThread
+    if Handle::try_current()
+        .is_ok_and(|handle| handle.runtime_flavor() == RuntimeFlavor::MultiThread)
     {
-        return tokio::task::block_in_place(|| handle.block_on(future));
+        return crate::blocking::block_in_place_on(future);
     }
 
     if Handle::try_current().is_ok() {
@@ -702,8 +703,8 @@ pub fn finish_metric_result(
 ///
 /// Mirrors the pattern documented on
 /// [`crate::SemanticToolSelectionEvaluator`] (spec 023): when a multi-thread
-/// Tokio runtime is active we use `block_in_place` + the ambient
-/// `Handle::block_on`; when a current-thread runtime is active we offload to
+/// Tokio runtime is active we block in place on the current thread; when a
+/// current-thread runtime is active we offload to
 /// a helper thread with its own runtime; otherwise we build an ephemeral
 /// current-thread runtime.
 pub fn drive_judge_call<F, Fut, T>(make_future: F) -> T
@@ -714,10 +715,10 @@ where
 {
     use tokio::runtime::{Handle, RuntimeFlavor};
 
-    if let Ok(handle) = Handle::try_current()
-        && handle.runtime_flavor() == RuntimeFlavor::MultiThread
+    if Handle::try_current()
+        .is_ok_and(|handle| handle.runtime_flavor() == RuntimeFlavor::MultiThread)
     {
-        return tokio::task::block_in_place(|| handle.block_on(make_future()));
+        return crate::blocking::block_in_place_on(make_future());
     }
 
     if Handle::try_current().is_ok() {

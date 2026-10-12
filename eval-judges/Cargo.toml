@@ -46,6 +46,7 @@ live-judges = []
 swink-agent-eval = { path = "../eval", version = "0.14.4", default-features = false }
 swink-agent-adapters = { path = "../adapters", version = "0.14.4", default-features = false, optional = true }
 backon = { workspace = true, features = ["tokio-sleep"] }
+futures.workspace = true
 reqwest = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true

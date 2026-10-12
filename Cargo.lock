@@ -5117,6 +5117,7 @@ name = "swink-agent-eval-judges"
 version = "0.14.4"
 dependencies = [
  "backon",
+ "futures",
  "reqwest",
  "serde",
  "serde_json",
@@ -5134,6 +5135,7 @@ name = "swink-agent-evolve"
 version = "0.14.4"
 dependencies = [
  "chrono",
+ "futures",
  "opentelemetry",
  "pretty_assertions",
  "rand 0.10.3",
