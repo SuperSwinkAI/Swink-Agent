@@ -11,6 +11,7 @@ description = "Eval-driven self-improvement loop for swink-agent prompts and too
 [dependencies]
 swink-agent      = { path = "..", version = "0.14.4", default-features = false }
 swink-agent-eval = { path = "../eval", version = "0.14.4", default-features = false, features = ["judge-core"] }
+futures          = { workspace = true }
 serde            = { workspace = true }
 serde_json       = { workspace = true }
 tokio            = { workspace = true, features = ["macros", "rt", "sync"] }

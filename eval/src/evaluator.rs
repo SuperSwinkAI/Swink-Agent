@@ -364,9 +364,10 @@ where
 {
     match Handle::try_current() {
         Ok(handle) if handle.runtime_flavor() == RuntimeFlavor::MultiThread => {
-            tokio::task::block_in_place(|| {
-                handle.block_on(isolate_panic_async(location, async move { action() }))
-            })
+            crate::blocking::block_in_place_on(isolate_panic_async(
+                location,
+                async move { action() },
+            ))
         }
         _ => isolate_panic_inline(location, action),
     }

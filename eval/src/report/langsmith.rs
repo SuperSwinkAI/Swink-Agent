@@ -392,10 +392,10 @@ fn drive_async<F, T>(future: F) -> Result<T, LangSmithExportError>
 where
     F: std::future::Future<Output = Result<T, LangSmithExportError>>,
 {
-    if let Ok(handle) = Handle::try_current()
-        && handle.runtime_flavor() == RuntimeFlavor::MultiThread
+    if Handle::try_current()
+        .is_ok_and(|handle| handle.runtime_flavor() == RuntimeFlavor::MultiThread)
     {
-        return tokio::task::block_in_place(|| handle.block_on(future));
+        return crate::blocking::block_in_place_on(future);
     }
 
     let runtime = tokio::runtime::Builder::new_current_thread()
