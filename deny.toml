@@ -1,5 +1,9 @@
 [advisories]
-ignore = []
+ignore = [
+    # chrono is unmaintained (RUSTSEC-2026-0543); no safe upgrade exists.
+    # Tracked for replacement with jiff or time — remove ignore once migrated.
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained; migration to jiff/time pending" },
+]
 
 [licenses]
 # `unlicensed = "deny"` was removed in cargo-deny 0.16 (see PR #611);
