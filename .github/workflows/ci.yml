@@ -277,4 +277,7 @@ jobs:
             git fetch origin main
           fi
 
-      - run: cargo semver-checks --workspace --exclude swink-agent-local-llm --baseline-rev "${{ steps.baseline.outputs.ref }}"
+      # swink-agent-tui is excluded alongside local-llm: tui depends on local-llm,
+      # so when local-llm's baseline fails to compile (broken llama-cpp-2 API),
+      # tui's rustdoc build also fails, producing a spurious semver error.
+      - run: cargo semver-checks --workspace --exclude swink-agent-local-llm --exclude swink-agent-tui --baseline-rev "${{ steps.baseline.outputs.ref }}"
