@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.14.4] - 2026-10-01
 
+### Security
+- Bump `rustls` to 0.23.46 (RUSTSEC-2026-0346/0347/0348/0349/0382/0383: TLS secrets in Debug output, ECH rejection bypass, Brotli decompression issue, ServerHello downgrade, certificate verification, distrusted intermediates).
+- Bump `url` to 2.5.9 (RUSTSEC-2026-0592: stack overflow in `Url::origin()` on certain inputs).
+- Bump `rustls-webpki` to 0.103.17 (RUSTSEC-2026-0383) and `webpki-root-certs` to 1.0.12.
+- Suppress RUSTSEC-2026-0543 (`chrono` unmaintained) in `deny.toml`; migration to `jiff`/`time` tracked separately.
+
 ### Fixed
 - `local-llm`: migrate to the `llama-cpp-2` 0.1.158 vocab API (`model.vocab()`), so fresh installs and downstream builds compile again — 0.1.158 removed `AddBos`, `str_to_token`, `is_eog_token`, and `token_to_piece_bytes` in a patch release. The manifest floor moves to 0.1.158. Token pieces longer than 32 bytes are no longer dropped (#1379).
 - `policies`: `RollingCheckpointPolicy` saves land in turn order, so the stored checkpoint can no longer roll back to an earlier turn (#1375).
