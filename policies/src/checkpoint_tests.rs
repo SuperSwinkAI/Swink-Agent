@@ -446,3 +446,66 @@ async fn checkpoint_contains_restorable_session_state() {
         Some(&serde_json::json!({"tier": "pro", "score": 42}))
     );
 }
+
+/// Store whose turn-0 save is slow, so an unordered turn-1 save would land
+/// first and then be overwritten by the stale turn-0 checkpoint.
+struct SlowFirstTurnStore {
+    inner: MockCheckpointStore,
+    saves: std::sync::atomic::AtomicUsize,
+}
+
+impl CheckpointStore for SlowFirstTurnStore {
+    fn save_checkpoint(&self, checkpoint: Checkpoint) -> CheckpointFuture<'_, ()> {
+        Box::pin(async move {
+            if checkpoint.turn_count == 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            self.inner.save_checkpoint(checkpoint).await?;
+            self.saves.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.inner.saved.notify_waiters();
+            Ok(())
+        })
+    }
+
+    fn load_checkpoint(&self, id: &str) -> CheckpointFuture<'_, Option<Checkpoint>> {
+        self.inner.load_checkpoint(id)
+    }
+
+    fn list_checkpoints(&self) -> CheckpointFuture<'_, Vec<String>> {
+        self.inner.list_checkpoints()
+    }
+
+    fn delete_checkpoint(&self, id: &str) -> CheckpointFuture<'_, ()> {
+        self.inner.delete_checkpoint(id)
+    }
+}
+
+#[tokio::test]
+async fn rolling_policy_saves_land_in_turn_order() {
+    let store = Arc::new(SlowFirstTurnStore {
+        inner: MockCheckpointStore::new(),
+        saves: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let policy = RollingCheckpointPolicy::new(store.clone() as Arc<dyn CheckpointStore>);
+
+    let usage = Usage::default();
+    let cost = Cost::default();
+    let state = swink_agent::SessionState::new();
+    let msg = sample_assistant_message();
+    let model = sample_model_spec();
+    let messages = sample_messages();
+
+    // Evaluate both turns back-to-back without waiting for either save.
+    for turn_index in 0..2 {
+        let ctx = make_policy_ctx(turn_index, 2, &usage, &cost, &state);
+        let turn = make_turn_ctx(&msg, "rolling prompt", &model, &messages);
+        policy.evaluate(&ctx, &turn);
+    }
+
+    while store.saves.load(std::sync::atomic::Ordering::SeqCst) < 2 {
+        store.inner.saved.notified().await;
+    }
+
+    let cp = store.inner.get("rolling").unwrap();
+    assert_eq!(cp.turn_count, 1, "a stale turn-0 save overwrote turn 1");
+}

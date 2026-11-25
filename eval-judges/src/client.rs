@@ -200,7 +200,7 @@ where
 {
     match Handle::try_current() {
         Ok(handle) if handle.runtime_flavor() == RuntimeFlavor::MultiThread => {
-            tokio::task::block_in_place(|| handle.block_on(future))
+            block_in_place_on(future)
         }
         Ok(_) => std::thread::Builder::new()
             .name("swink-blocking-judge".to_string())
@@ -212,6 +212,17 @@ where
             .map_err(|_| JudgeError::Other("blocking judge thread panicked".to_string()))?,
         Err(_) => block_on_owned_runtime(future),
     }
+}
+
+/// Block the current multi-thread-runtime thread until `future` completes.
+///
+/// Drives the future with `futures::executor::block_on` rather than
+/// `Handle::block_on`: this thread may itself be driving an outer
+/// `Runtime::block_on` (a `#[tokio::main]` body, say), and a nested
+/// `Handle::block_on` parks on the same per-thread Tokio parker, where it can
+/// consume a wakeup meant for the outer call and hang it.
+fn block_in_place_on<F: Future>(future: F) -> F::Output {
+    tokio::task::block_in_place(|| futures::executor::block_on(future))
 }
 
 fn block_on_owned_runtime<Fut>(future: Fut) -> Result<JudgeVerdict, JudgeError>
@@ -248,7 +259,7 @@ where
     {
         match Handle::try_current() {
             Ok(handle) if handle.runtime_flavor() == RuntimeFlavor::MultiThread => {
-                tokio::task::block_in_place(|| handle.block_on(self))
+                block_in_place_on(self)
             }
             Ok(_) => panic!(
                 "BlockingExt::block_on cannot run inside a current-thread Tokio runtime; use an async API instead"

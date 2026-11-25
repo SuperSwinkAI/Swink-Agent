@@ -1259,7 +1259,7 @@ fn local_stream<'a>(
         let local_messages =
             match truncate_messages_to_context(local_messages, max_prompt_tokens, |messages| {
                 let prompt = build_prompt(runner, messages, use_manual_format)?;
-                runner.tokenize(&prompt).map(|tokens| tokens.len())
+                Ok::<_, LocalModelError>(runner.tokenize(&prompt).len())
             }) {
                 Ok(messages) => messages,
                 Err(e) => {
@@ -1282,16 +1282,7 @@ fn local_stream<'a>(
             }
         };
 
-        let tokens = match runner.tokenize(&prompt) {
-            Ok(t) => t,
-            Err(e) => {
-                error!(error = %e, "tokenization failed");
-                return boxed_event_stream(vec![
-                    AssistantMessageEvent::Start,
-                    AssistantMessageEvent::error(format!("tokenization error: {e}")),
-                ]);
-            }
-        };
+        let tokens = runner.tokenize(&prompt);
 
         debug!(token_count = tokens.len(), "prompt tokenized");
 

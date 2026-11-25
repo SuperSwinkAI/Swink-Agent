@@ -5,6 +5,7 @@ pub mod templates;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use minijinja::value::Serde;
 use minijinja::{Environment, ErrorKind, UndefinedBehavior};
 use serde::Serialize;
 use thiserror::Error;
@@ -257,7 +258,9 @@ impl JudgePromptTemplate for MinijinjaTemplate {
         let template = env
             .get_template(&self.version)
             .map_err(|err| render_error(&err))?;
-        template.render(ctx).map_err(|err| render_error(&err))
+        template
+            .render(Serde(ctx))
+            .map_err(|err| render_error(&err))
     }
 
     fn family(&self) -> PromptFamily {

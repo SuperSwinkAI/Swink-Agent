@@ -1,7 +1,9 @@
 //! Checkpoint policy — persists agent state after each turn.
 #![forbid(unsafe_code)]
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
+
+use tokio::task::JoinHandle;
 
 #[cfg(test)]
 use swink_agent::CheckpointFuture;
@@ -132,6 +134,8 @@ impl PostTurnPolicy for CheckpointPolicy {
 ///
 /// Uses `tokio::spawn` to avoid blocking the sync policy evaluation loop, and
 /// always returns [`PolicyVerdict::Continue`] — persistence is a side effect.
+/// Saves are chained in turn order, so the checkpoint never regresses to an
+/// earlier turn when a slow write finishes after a later one.
 ///
 /// # Example
 /// ```rust,ignore
@@ -145,6 +149,10 @@ pub struct RollingCheckpointPolicy {
     store: Arc<dyn CheckpointStore>,
     handle: tokio::runtime::Handle,
     id: String,
+    /// The most recently spawned save. Every turn overwrites the same ID, so
+    /// each save waits for its predecessor — otherwise an earlier turn's save
+    /// could land last and roll the checkpoint back.
+    last_save: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl RollingCheckpointPolicy {
@@ -160,6 +168,7 @@ impl RollingCheckpointPolicy {
             store,
             handle: tokio::runtime::Handle::current(),
             id: Self::DEFAULT_ID.to_string(),
+            last_save: Mutex::new(None),
         }
     }
 
@@ -199,7 +208,21 @@ impl PostTurnPolicy for RollingCheckpointPolicy {
 
     fn evaluate(&self, ctx: &PolicyContext<'_>, turn: &TurnPolicyContext<'_>) -> PolicyVerdict {
         let checkpoint = build_checkpoint(self.id.clone(), ctx, turn);
-        spawn_save(&self.handle, &self.store, checkpoint);
+        let mut last_save = self
+            .last_save
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let previous = last_save.take();
+        let store = Arc::clone(&self.store);
+        *last_save = Some(self.handle.spawn(async move {
+            if let Some(previous) = previous {
+                // A failed or panicked predecessor must not block this save.
+                let _ = previous.await;
+            }
+            if let Err(e) = store.save_checkpoint(checkpoint).await {
+                tracing::warn!(error = %e, "checkpoint save failed");
+            }
+        }));
         PolicyVerdict::Continue
     }
 }

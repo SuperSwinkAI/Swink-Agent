@@ -37,10 +37,12 @@ impl MutationStrategy for LlmGuided {
         let component = context.weak_point.component.clone();
         let prompt = build_mutation_prompt(target, context);
 
-        let verdict = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(self.judge.judge(&prompt))
-        })
-        .map_err(|e| MutationError::JudgeUnavailable(e.to_string()))?;
+        // `futures::executor::block_on`, not `Handle::block_on`: a nested
+        // `Handle::block_on` shares the thread's Tokio parker with any outer
+        // `Runtime::block_on` driving this call and can swallow its wakeup.
+        let verdict =
+            tokio::task::block_in_place(|| futures::executor::block_on(self.judge.judge(&prompt)))
+                .map_err(|e| MutationError::JudgeUnavailable(e.to_string()))?;
 
         // FR-012 / SC-005: record this judge call against the cycle budget
         // before consuming `verdict`.

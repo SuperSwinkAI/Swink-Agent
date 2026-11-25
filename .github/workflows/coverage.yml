@@ -25,7 +25,7 @@ jobs:
         with:
           cache-key: coverage
 
-      - uses: cargo-bins/cargo-binstall@b874e25ea559687bec77e281e9b271aa1367b624 # v1.23.0
+      - uses: cargo-bins/cargo-binstall@5885714d0a40a14b2535c6ffc051fd8e49aa9665 # v1.27.0
 
       - run: cargo binstall --no-confirm --force cargo-tarpaulin
 
@@ -55,7 +55,7 @@ jobs:
           print(f"## Coverage: {pct:.1f}% ({covered}/{total} lines)")
           PY
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-report
           path: target/tarpaulin/

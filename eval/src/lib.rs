@@ -42,6 +42,7 @@ pub(crate) fn ensure_default_crypto_provider() {
 
 pub mod aggregator;
 mod audit;
+mod blocking;
 mod budget;
 pub mod cache;
 #[cfg(feature = "cli")]

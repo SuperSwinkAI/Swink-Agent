@@ -142,10 +142,10 @@ where
 {
     use tokio::runtime::{Handle, RuntimeFlavor};
 
-    if let Ok(handle) = Handle::try_current()
-        && handle.runtime_flavor() == RuntimeFlavor::MultiThread
+    if Handle::try_current()
+        .is_ok_and(|handle| handle.runtime_flavor() == RuntimeFlavor::MultiThread)
     {
-        return tokio::task::block_in_place(|| handle.block_on(make_future()));
+        return crate::blocking::block_in_place_on(make_future());
     }
 
     if Handle::try_current().is_ok() {

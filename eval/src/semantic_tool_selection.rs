@@ -97,9 +97,9 @@ impl Evaluator for SemanticToolSelectionEvaluator {
         // driven through whichever runtime context the caller provides:
         //
         // - Inside a multi-thread Tokio runtime (e.g. `#[tokio::main]`
-        //   or `flavor = "multi_thread"`): use `block_in_place` + the
-        //   ambient `Handle::block_on` so the active runtime keeps
-        //   scheduling other tasks while this evaluator waits.
+        //   or `flavor = "multi_thread"`): block in place on the current
+        //   thread so the active runtime keeps scheduling other tasks while
+        //   this evaluator waits.
         // - Inside a current-thread runtime: delegate to a helper thread
         //   with its own current-thread runtime because Tokio cannot block
         //   the runtime's only worker thread.
@@ -147,9 +147,9 @@ impl Evaluator for SemanticToolSelectionEvaluator {
 /// pattern an earlier revision of this evaluator used. This helper picks
 /// the right strategy at call time:
 ///
-/// * Multi-thread runtime active → `block_in_place` + the ambient
-///   `Handle::block_on` so the host runtime keeps scheduling other tasks
-///   while we wait on the judge.
+/// * Multi-thread runtime active → block in place on the current thread so
+///   the host runtime keeps scheduling other tasks while we wait on the
+///   judge (see `crate::blocking::block_in_place_on`).
 /// * Current-thread runtime active → move the work onto a helper thread
 ///   with its own current-thread runtime, avoiding Tokio's nested-runtime
 ///   panic.
@@ -164,10 +164,10 @@ where
 {
     use tokio::runtime::{Handle, RuntimeFlavor};
 
-    if let Ok(handle) = Handle::try_current()
-        && handle.runtime_flavor() == RuntimeFlavor::MultiThread
+    if Handle::try_current()
+        .is_ok_and(|handle| handle.runtime_flavor() == RuntimeFlavor::MultiThread)
     {
-        return tokio::task::block_in_place(|| handle.block_on(make_future()));
+        return crate::blocking::block_in_place_on(make_future());
     }
 
     if Handle::try_current().is_ok() {

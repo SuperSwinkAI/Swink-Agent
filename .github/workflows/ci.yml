@@ -32,7 +32,7 @@ jobs:
       - run: cargo fmt --check
 
       - name: Spell check
-        uses: crate-ci/typos@d43b6c087ac471e2ea7b8af622ff15f05c0c365b # v1
+        uses: crate-ci/typos@276087d9a4f06398b3e04825487805e2d7375888 # v1
 
       # --all-features so feature-gated modules are linted too: lints like
       # exhaustive_structs/exhaustive_enums can't flag code that never
@@ -42,7 +42,7 @@ jobs:
       # on hosted runners.
       - run: cargo clippy --workspace --all-features --exclude swink-agent-local-llm --all-targets --locked -- -D warnings
 
-      - uses: cargo-bins/cargo-binstall@b874e25ea559687bec77e281e9b271aa1367b624 # v1.23.0
+      - uses: cargo-bins/cargo-binstall@5885714d0a40a14b2535c6ffc051fd8e49aa9665 # v1.27.0
 
       - run: cargo binstall --no-confirm --force --locked cargo-nextest
 
@@ -75,7 +75,7 @@ jobs:
         with:
           cache-key: check-macos
 
-      - uses: cargo-bins/cargo-binstall@b874e25ea559687bec77e281e9b271aa1367b624 # v1.23.0
+      - uses: cargo-bins/cargo-binstall@5885714d0a40a14b2535c6ffc051fd8e49aa9665 # v1.27.0
 
       - run: cargo binstall --no-confirm --force --locked cargo-nextest
 
@@ -162,7 +162,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+      - uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2
 
   # ── CVE scan: complements cargo-deny's advisory check ───────────────────
   # The --ignore list mirrors the `[advisories] ignore` list in deny.toml so
@@ -179,7 +179,7 @@ jobs:
       # pure overhead.
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
-      - uses: cargo-bins/cargo-binstall@b874e25ea559687bec77e281e9b271aa1367b624 # v1.23.0
+      - uses: cargo-bins/cargo-binstall@5885714d0a40a14b2535c6ffc051fd8e49aa9665 # v1.27.0
 
       - run: cargo binstall --no-confirm --force cargo-audit
 
@@ -221,7 +221,7 @@ jobs:
 
       - run: cargo clippy --workspace --locked -- -D warnings
 
-      - uses: cargo-bins/cargo-binstall@b874e25ea559687bec77e281e9b271aa1367b624 # v1.23.0
+      - uses: cargo-bins/cargo-binstall@5885714d0a40a14b2535c6ffc051fd8e49aa9665 # v1.27.0
 
       - run: cargo binstall --no-confirm --force cargo-nextest
 
@@ -256,7 +256,7 @@ jobs:
         with:
           cache-key: semver
 
-      - uses: cargo-bins/cargo-binstall@b874e25ea559687bec77e281e9b271aa1367b624 # v1.23.0
+      - uses: cargo-bins/cargo-binstall@5885714d0a40a14b2535c6ffc051fd8e49aa9665 # v1.27.0
 
       - run: cargo binstall --no-confirm --force cargo-semver-checks
 
@@ -277,4 +277,7 @@ jobs:
             git fetch origin main
           fi
 
-      - run: cargo semver-checks --workspace --exclude swink-agent-local-llm --baseline-rev "${{ steps.baseline.outputs.ref }}"
+      # swink-agent-tui is excluded alongside local-llm: tui depends on local-llm,
+      # so when local-llm's baseline fails to compile (broken llama-cpp-2 API),
+      # tui's rustdoc build also fails, producing a spurious semver error.
+      - run: cargo semver-checks --workspace --exclude swink-agent-local-llm --exclude swink-agent-tui --baseline-rev "${{ steps.baseline.outputs.ref }}"

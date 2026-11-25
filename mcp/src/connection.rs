@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use futures::stream::BoxStream;
 use reqwest::header::{HeaderName, HeaderValue};
-use rmcp::model::{CallToolRequestParams, ClientInfo, Implementation};
+use rmcp::model::{CallToolRequestParams, ClientConfig, Implementation};
 use rmcp::service::{Peer, QuitReason, RoleClient, RunningService, ServiceExt};
 use rmcp::transport::TokioChildProcess;
 use rmcp::transport::streamable_http_client::{
@@ -38,7 +38,7 @@ use crate::tool_info::McpToolInfo;
 /// Wraps an `rmcp` `RunningService` so [`McpConnection::from_service`] and the
 /// rest of the crate's public API stay free of `rmcp` types.
 pub struct McpServiceHandle {
-    inner: RunningService<RoleClient, ClientInfo>,
+    inner: RunningService<RoleClient, ClientConfig>,
 }
 
 impl McpServiceHandle {
@@ -52,12 +52,12 @@ impl McpServiceHandle {
     /// without a swink-agent-mcp major bump; every other public signature in
     /// this crate uses owned types and is insulated.
     #[must_use]
-    pub fn from_rmcp(service: RunningService<RoleClient, ClientInfo>) -> Self {
+    pub fn from_rmcp(service: RunningService<RoleClient, ClientConfig>) -> Self {
         Self { inner: service }
     }
 
     /// Unwrap back into the underlying `rmcp` service.
-    pub(crate) fn into_inner(self) -> RunningService<RoleClient, ClientInfo> {
+    pub(crate) fn into_inner(self) -> RunningService<RoleClient, ClientConfig> {
         self.inner
     }
 }
@@ -442,7 +442,7 @@ impl McpConnection {
         args: &[String],
         env: &std::collections::HashMap<String, String>,
         server_name: &str,
-    ) -> Result<RunningService<RoleClient, ClientInfo>, McpError> {
+    ) -> Result<RunningService<RoleClient, ClientConfig>, McpError> {
         let cmd = build_stdio_command(command, args, env);
 
         let transport = TokioChildProcess::new(cmd).map_err(|e| McpError::SpawnFailed {
@@ -471,7 +471,7 @@ impl McpConnection {
         bearer_token: Option<&str>,
         headers: &HashMap<String, String>,
         server_name: &str,
-    ) -> Result<RunningService<RoleClient, ClientInfo>, McpError> {
+    ) -> Result<RunningService<RoleClient, ClientConfig>, McpError> {
         crate::ensure_default_crypto_provider();
         let mut config = StreamableHttpClientTransportConfig::with_uri(url);
         if let Some(token) = bearer_token {
@@ -496,7 +496,7 @@ impl McpConnection {
     async fn connect_transport(
         config: &McpServerConfig,
         credential_resolver: Option<Arc<dyn CredentialResolver>>,
-    ) -> Result<RunningService<RoleClient, ClientInfo>, McpError> {
+    ) -> Result<RunningService<RoleClient, ClientConfig>, McpError> {
         match &config.transport {
             McpTransport::Stdio { command, args, env } => {
                 Self::connect_stdio(command, args, env, &config.name).await
@@ -551,7 +551,7 @@ impl McpConnection {
         credential_resolver: Arc<dyn CredentialResolver>,
         headers: &HashMap<String, String>,
         server_name: &str,
-    ) -> Result<RunningService<RoleClient, ClientInfo>, McpError> {
+    ) -> Result<RunningService<RoleClient, ClientConfig>, McpError> {
         resolve_sse_bearer_secret(bearer_auth, credential_resolver.as_ref())
             .await
             .map_err(|error| sse_bearer_resolution_error(error, server_name))?;
@@ -881,9 +881,9 @@ pub fn emit_event(
     }
 }
 
-/// Build the `ClientInfo` used for MCP handshakes.
-fn client_info() -> ClientInfo {
-    let mut info = ClientInfo::default();
+/// Build the `ClientConfig` used for MCP handshakes.
+fn client_info() -> ClientConfig {
+    let mut info = ClientConfig::default();
     info.client_info = Implementation::new("swink-agent-mcp", env!("CARGO_PKG_VERSION"));
     info
 }
@@ -896,7 +896,7 @@ fn client_info() -> ClientInfo {
 /// (`QuitReason::Cancelled`) and join errors are silently ignored since they
 /// are initiated by the caller via `shutdown()`.
 fn spawn_monitor(
-    service: RunningService<RoleClient, ClientInfo>,
+    service: RunningService<RoleClient, ClientConfig>,
     state: Arc<Mutex<McpConnectionState>>,
     server_name: String,
     event_tx: Option<UnboundedSender<AgentEvent>>,

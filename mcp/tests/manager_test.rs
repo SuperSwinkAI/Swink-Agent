@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use axum::Router;
 use rmcp::ServerHandler;
-use rmcp::model::{ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo};
+use rmcp::model::{ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig};
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
@@ -318,8 +318,8 @@ async fn connect_all_collision_rolls_back_open_sessions() {
 struct HangingDiscoveryServer;
 
 impl ServerHandler for HangingDiscoveryServer {
-    fn get_info(&self) -> ServerInfo {
-        let mut info = ServerInfo::default();
+    fn get_info(&self) -> ServerConfig {
+        let mut info = ServerConfig::default();
         info.instructions = Some("Mock MCP server with hanging discovery".into());
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info
@@ -341,8 +341,8 @@ struct BlockedDiscoveryServer {
 }
 
 impl ServerHandler for BlockedDiscoveryServer {
-    fn get_info(&self) -> ServerInfo {
-        let mut info = ServerInfo::default();
+    fn get_info(&self) -> ServerConfig {
+        let mut info = ServerConfig::default();
         info.instructions = Some("Mock MCP server with externally blocked discovery".into());
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info
